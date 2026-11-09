@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Keys in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>Keys <span class="muted">in {{ vault }}</span></h1>
+<p class="actions"><a class="button" href="/keys/new">Create a key</a> <a href="/keys/deleted">Deleted keys</a></p>
+<p class="muted">Keys never leave Key Vault. Keyring only shows their public parts.</p>
+{% if total == 0 %}
+<div class="empty-state">
+  <p><strong>This vault has no keys yet.</strong></p>
+  <p>Create one to encrypt, sign or wrap other keys.</p>
+</div>
+{% else %}
+<form class="filters" method="get" action="/keys" role="search" data-live-filter="key-table">
+  <div>
+    <label for="q">Search by name or tag</label>
+    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+  </div>
+  <div class="filters-submit"><button type="submit">Filter</button>{% if !filter.q.is_empty() %} <a href="/keys">Clear</a>{% endif %}</div>
+</form>
+{% if rows.is_empty() %}
+<div class="empty-state"><p>No keys match. Try a shorter search.</p></div>
+{% else %}
+<div class="table-wrap">
+<table id="key-table">
+  <caption class="visually-hidden">Keys in {{ vault }}</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
+      <th scope="row"><a class="mono" href="/keys/{{ row.name }}">{{ row.name }}</a></th>
+      <td>{% include "keys/_status.html" %}</td>
+      <td>{{ row.created }}</td>
+      <td>{% if row.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ row.expires }} <span class="muted">({{ row.expires_note }})</span>{% endif %}</td>
+      <td>{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted" data-live-filter-empty hidden>No keys match.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Rotate {{ name }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Rotate <span class="mono">{{ name }}</span> in {{ vault }}?</h1>
+  <p>Key Vault will make a <strong>new version</strong> of the key, and it becomes current. Anything that asks for the key by name starts using the new version.</p>
+  <p class="muted">Older versions stay, so data encrypted or signed with them can still be decrypted or verified.</p>
+  <form method="post" action="/keys/{{ name }}/rotate">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    <div class="actions"><button type="submit">Make a new version</button><a href="/keys/{{ name }}">Cancel</a></div>
+  </form>
+</div>
+{% endblock %}

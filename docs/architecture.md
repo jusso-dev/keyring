@@ -169,6 +169,13 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 - `.cer` (DER) and PEM downloads are the public certificate only, and need certificate read access.
 - The private key lives in the certificate's backing secret. "Download with private key" is only offered when the policy marks the key exportable. It shows a warning and needs the name typed, then reads the backing secret (so it also needs secret read access) and sends it with `no-store`. The backing secret URL from Key Vault is only used if it points at the same vault and name. Each download logs at `warn` with subject, vault and name.
 
+## Keys
+
+- Keyring only ever reads keys with `GET /keys/{name}` and the list and versions calls, which return the public part. There is no export, backup, release, decrypt, unwrap or sign call anywhere; a test checks the keys client source for them.
+- The JWK type only has public fields (`n`, `e`, `crv`, `x`, `y`). Any private field Key Vault might send is dropped while parsing.
+- Public keys are shown as JWK and as PEM (SubjectPublicKeyInfo). The PEM is built with a few lines of DER encoding and tested byte for byte against openssl output for RSA and EC.
+- Create defaults to RSA 3072 with every RSA operation, or sign and verify for EC. Rotate now and the rotation policy (rotate after, expiry, near-expiry event) use Key Vault's own rotation API.
+
 ## Audit
 
 The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVAuditLogs` resource-specific table) from the Log Analytics workspace linked to each vault, again as the signed-in user. If the user can't read the workspace, the page says so.
