@@ -294,6 +294,31 @@ impl IntoResponse for PageError {
     }
 }
 
+/// A response that ends a handler early, boxed so `Result<_, Halt>` stays
+/// small. Lets handlers use `?` on checks that produce a page.
+pub struct Halt(Box<Response>);
+
+impl IntoResponse for Halt {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+
+impl From<PageError> for Halt {
+    fn from(e: PageError) -> Self {
+        Self(Box::new(e.into_response()))
+    }
+}
+
+impl From<Response> for Halt {
+    fn from(r: Response) -> Self {
+        Self(Box::new(r))
+    }
+}
+
+/// What most page handlers return.
+pub type PageResult = Result<Response, Halt>;
+
 #[cfg(test)]
 mod tests {
     use super::*;

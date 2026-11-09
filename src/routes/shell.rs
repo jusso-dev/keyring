@@ -59,7 +59,7 @@ impl Section {
 
     /// Sections that aren't built yet show a short note instead.
     pub fn is_ready(self) -> bool {
-        matches!(self, Self::Home | Self::Vaults)
+        matches!(self, Self::Home | Self::Vaults | Self::Secrets)
     }
 }
 
