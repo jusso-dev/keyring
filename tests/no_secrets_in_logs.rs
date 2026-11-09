@@ -53,6 +53,26 @@ async fn values_never_reach_the_logs() {
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
     let _ = w.post("/secrets/db-password/reveal", &[]).await;
 
+    // A certificate upload with a password, through to import.
+    let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
+    let res = w
+        .post_multipart(
+            "/certificates/upload",
+            &[
+                support::Part::File("file", "web.pfx", pfx),
+                support::Part::Text("name", "web-tls"),
+                support::Part::Text("password", "Upl0ad-Passw0rd"),
+            ],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    *w.kv.state.fail.lock().unwrap() = None;
+    let id = support::hidden_value(&html, "upload_id").unwrap();
+    let _ = w
+        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .await;
+    assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
+
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
         logs.contains("secret value revealed"),

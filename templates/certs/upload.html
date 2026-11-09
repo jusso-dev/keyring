@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Upload a certificate - Keyring{% endblock %}
+{% block content %}
+<p><a href="/certificates">Back to certificates</a></p>
+<h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1>
+<p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, for up to 10 minutes, then forgets it.</p>
+
+{% if !errors.is_empty() %}
+<div class="notice notice-error" role="alert">
+  <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
+  <ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul>
+  <p>For safety, choose the file and type the password again.</p>
+</div>
+{% endif %}
+
+<form method="post" action="/certificates/upload" enctype="multipart/form-data" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+
+  <label for="file">Certificate file</label>
+  <p class="field-help" id="file-help">.pfx, .p12 or .pem, up to {{ max_kb }} KB.</p>
+  <input id="file" name="file" type="file" required accept=".pfx,.p12,.pem,application/x-pkcs12,application/x-pem-file" aria-describedby="file-help{% if error_for("file").is_some() %} file-error{% endif %}"{% if error_for("file").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("file") %}<p class="field-error" id="file-error">{{ m }}</p>{% endif %}
+
+  <label for="password">Password <span class="muted">(if the .pfx has one)</span></label>
+  <input id="password" name="password" type="password" autocomplete="off">
+
+  <label for="name">Name in Key Vault</label>
+  <p class="field-help" id="name-help">Letters, numbers and hyphens only. Up to 127 characters.</p>
+  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false" aria-describedby="name-help{% if error_for("name").is_some() %} name-error{% endif %}"{% if error_for("name").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("name") %}<p class="field-error" id="name-error">{{ m }}</p>{% endif %}
+
+  <label for="tags">Tags <span class="muted">(optional)</span></label>
+  <p class="field-help" id="tags-help">One per line, as name=value. Up to 15.</p>
+  <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="tags-help">{{ form.tags }}</textarea>
+  {% if let Some(m) = error_for("tags") %}<p class="field-error" id="tags-error">{{ m }}</p>{% endif %}
+
+  <div class="checkbox">
+    <input id="enabled" name="enabled" type="checkbox"{% if form.enabled %} checked{% endif %}>
+    <label for="enabled">Enabled</label>
+  </div>
+  <div class="checkbox">
+    <input id="exportable" name="exportable" type="checkbox"{% if form.exportable %} checked{% endif %}>
+    <label for="exportable">Allow the private key to be downloaded later</label>
+  </div>
+  <p class="field-help">Untick to keep the private key inside Key Vault for good.</p>
+
+  <div class="actions">
+    <button type="submit">Check the file</button>
+    <a href="/certificates">Cancel</a>
+  </div>
+</form>
+{% endblock %}
