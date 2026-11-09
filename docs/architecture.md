@@ -67,7 +67,30 @@ Logging uses `tracing`. Only metadata is logged (method, path, status, timing). 
 - Adding a crate needs a reason in the PR. Prefer crates that are widely used, maintained and light on dependencies.
 - Dependabot opens weekly, grouped updates for `cargo`, `docker` and `github-actions`.
 - GitHub Actions are pinned by full commit SHA.
-- CI produces an SBOM for the image. Signed build provenance is optional.
+- CI produces a CycloneDX SBOM for the image (Syft) and keeps it as a build artifact. Signed build provenance is left for the deploy milestone, when there's an image to publish.
+
+### Dependency policy
+
+What CI checks, on every PR, every push to `main` and weekly:
+
+| Check | Tool | Fails when |
+| --- | --- | --- |
+| Licences | `cargo deny` | A crate's licence isn't on the allow-list in `deny.toml` (permissive licences only) |
+| Advisories | `cargo deny`, `cargo audit` | A crate has a RustSec advisory, is unmaintained or is yanked |
+| Bans | `cargo deny` | A banned crate turns up (`openssl`, `native-tls`) or a dependency uses a `*` version |
+| Sources | `cargo deny` | A crate comes from anywhere other than crates.io |
+| Lock file | `--locked` | `Cargo.lock` is out of date |
+
+Duplicate versions of the same crate are reported as warnings, not failures. Trim them when it's easy.
+
+To add a crate:
+
+1. Check you need it. A few lines of our own code often beat a new dependency.
+2. Prefer crates that are widely used, actively maintained and pull in little else. Turn off default features and enable only what's used.
+3. Run `cargo deny check` and `cargo audit` locally.
+4. In the PR, say what the crate is for and what it adds to `Cargo.lock`.
+
+To accept an advisory that doesn't affect Keyring, add its ID to `ignore` in `deny.toml` with a comment saying why, and link an issue to revisit it.
 
 ## Container
 
