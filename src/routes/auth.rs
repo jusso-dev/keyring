@@ -12,6 +12,7 @@ use crate::AppState;
 use crate::auth::oidc::{PendingLogin, SignInError};
 use crate::auth::{LOGIN_COOKIE, SESSION_COOKIE, cookies, crypto, return_to};
 use crate::routes::assets::render;
+use crate::routes::error::{PageError, Problem};
 use crate::routes::shell::Shell;
 
 /// How long someone has to finish signing in at Entra.
@@ -160,12 +161,7 @@ pub async fn sign_out(
     };
     match state.sessions.get(id) {
         Some(s) if !s.csrf_matches(&form.csrf) => {
-            return problem(
-                StatusCode::FORBIDDEN,
-                "That didn't work",
-                "The page was out of date. Go back, refresh and try again.",
-                "/",
-            );
+            return PageError::new(Shell::anonymous(), Problem::stale_form()).into_response();
         }
         _ => {}
     }

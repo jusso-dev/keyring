@@ -301,3 +301,24 @@ fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response
         )
     }
 }
+
+/// An app plus a cookie for a session that's already signed in.
+pub fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String) {
+    use keyring::auth::session::{User, UserTokens};
+    use keyring::secret::Secret;
+    let state = keyring::AppState::new(config);
+    let id = state.sessions.create(
+        User {
+            name: "Alex Example".into(),
+            username: Some("alex@example.com".into()),
+            subject: "sub".into(),
+        },
+        UserTokens {
+            access_token: Secret::new("user-api-token"),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            refresh_token: None,
+        },
+    );
+    let app = keyring::app(state.clone());
+    (state, app, format!("keyring_session={id}"))
+}

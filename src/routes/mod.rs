@@ -2,25 +2,39 @@
 
 pub mod assets;
 mod auth;
+pub mod confirm;
+pub mod error;
+pub mod flash;
+mod headers;
 mod health;
 mod home;
+mod sections;
 pub mod shell;
 
 use axum::Router;
 use axum::middleware;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
 use crate::AppState;
+use crate::routes::error::{PageError, Problem};
+use crate::routes::shell::Shell;
 
 pub fn router(state: AppState) -> Router<AppState> {
     // Everything here needs a signed-in session. New pages go in this list.
-    let protected =
-        Router::new()
-            .route("/", get(home::index))
-            .route_layer(middleware::from_fn_with_state(
-                state,
-                crate::auth::require_session,
-            ));
+    let protected = Router::new()
+        .route("/", get(home::index))
+        .route("/vaults", get(sections::vaults))
+        .route("/secrets", get(sections::secrets))
+        .route("/certificates", get(sections::certificates))
+        .route("/keys", get(sections::keys))
+        .route("/expiry", get(sections::expiry))
+        .route("/generator", get(sections::generator))
+        .route("/audit", get(sections::audit))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::require_session,
+        ));
 
     let public = Router::new()
         .route("/healthz", get(health::healthz))
@@ -31,5 +45,13 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/auth/sign-out", post(auth::sign_out))
         .route("/auth/signed-out", get(auth::signed_out));
 
-    protected.merge(public)
+    protected
+        .merge(public)
+        .fallback(not_found)
+        .layer(middleware::from_fn_with_state(state.clone(), flash::layer))
+        .layer(middleware::from_fn_with_state(state, headers::layer))
+}
+
+async fn not_found(shell: Shell) -> Response {
+    PageError::new(shell, Problem::not_found()).into_response()
 }
