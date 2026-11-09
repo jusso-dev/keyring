@@ -7,11 +7,13 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
+const APP_JS: &str = include_str!("../../static/app.js");
 
 /// Look up an embedded asset by file name.
 fn lookup(file: &str) -> Option<(&'static str, &'static str)> {
     match file {
         "style.css" => Some((STYLE_CSS, "text/css; charset=utf-8")),
+        "app.js" => Some((APP_JS, "text/javascript; charset=utf-8")),
         _ => None,
     }
 }

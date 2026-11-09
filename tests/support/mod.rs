@@ -322,3 +322,126 @@ pub fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String
     let app = keyring::app(state.clone());
     (state, app, format!("keyring_session={id}"))
 }
+
+/// A mock Azure Resource Manager that answers Resource Graph queries.
+pub struct MockArm {
+    pub addr: SocketAddr,
+    pub state: Arc<ArmState>,
+}
+
+pub struct ArmState {
+    /// Vault rows returned, split into pages of `page_size`.
+    pub vaults: Mutex<Vec<serde_json::Value>>,
+    pub subscriptions: Mutex<Vec<serde_json::Value>>,
+    pub page_size: Mutex<usize>,
+    /// If set, every query fails with this status and Azure error code.
+    pub fail: Mutex<Option<(u16, &'static str)>>,
+    /// Request bodies received, in order.
+    pub requests: Mutex<Vec<serde_json::Value>>,
+    /// Bearer tokens received.
+    pub bearers: Mutex<Vec<String>>,
+}
+
+impl MockArm {
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+}
+
+pub fn vault_row(name: &str, sub: &str, rbac: bool) -> serde_json::Value {
+    json!({
+        "id": format!("/subscriptions/{sub}/resourceGroups/rg-{name}/providers/Microsoft.KeyVault/vaults/{name}"),
+        "name": name,
+        "resourceGroup": format!("rg-{name}"),
+        "subscriptionId": sub,
+        "location": "australiaeast",
+        "tags": {"env": "prod"},
+        "enableRbacAuthorization": rbac,
+        "enableSoftDelete": true,
+        "enablePurgeProtection": false,
+    })
+}
+
+pub async fn start_arm() -> MockArm {
+    let state = Arc::new(ArmState {
+        vaults: Mutex::new(Vec::new()),
+        subscriptions: Mutex::new(Vec::new()),
+        page_size: Mutex::new(1000),
+        fail: Mutex::new(None),
+        requests: Mutex::new(Vec::new()),
+        bearers: Mutex::new(Vec::new()),
+    });
+    let app = Router::new()
+        .route(
+            "/providers/Microsoft.ResourceGraph/resources",
+            post(resource_graph),
+        )
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    MockArm { addr, state }
+}
+
+async fn resource_graph(
+    State(s): State<Arc<ArmState>>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    s.requests.lock().unwrap().push(body.clone());
+    s.bearers.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    if let Some((status, code)) = *s.fail.lock().unwrap() {
+        return json_response(
+            StatusCode::from_u16(status).unwrap(),
+            json!({"error": {"code": code, "message": "mock failure"}}),
+        );
+    }
+    let query = body["query"].as_str().unwrap_or_default();
+    let rows = if query.contains("resourcecontainers") {
+        s.subscriptions.lock().unwrap().clone()
+    } else {
+        s.vaults.lock().unwrap().clone()
+    };
+    let size = *s.page_size.lock().unwrap();
+    let start: usize = body["options"]["$skipToken"]
+        .as_str()
+        .and_then(|t| t.strip_prefix("skip-"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    let end = (start + size).min(rows.len());
+    let mut out = json!({
+        "totalRecords": rows.len(),
+        "count": end - start,
+        "data": rows[start..end].to_vec(),
+    });
+    if end < rows.len() {
+        out["$skipToken"] = json!(format!("skip-{end}"));
+    }
+    json_response(StatusCode::OK, out)
+}
+
+/// Config pointing sign-in at `idp` and ARM at `arm`.
+pub fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
+    let authority = idp.authority();
+    let arm_url = arm.url();
+    Config::from_lookup(move |k| {
+        Some(match k {
+            "ENTRA_TENANT_ID" => TENANT.to_owned(),
+            "ENTRA_CLIENT_ID" => CLIENT_ID.to_owned(),
+            "ENTRA_CLIENT_SECRET" => CLIENT_SECRET.to_owned(),
+            "ENTRA_AUTHORITY_HOST" => authority.clone(),
+            "KEYRING_TEST_MANAGEMENT_URL" => arm_url.clone(),
+            "APP_BASE_URL" => "http://localhost:3000".to_owned(),
+            "SESSION_SECRET" => "0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            _ => return None,
+        })
+    })
+    .expect("test config")
+}

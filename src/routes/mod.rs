@@ -10,6 +10,7 @@ mod health;
 mod home;
 mod sections;
 pub mod shell;
+mod vaults;
 
 use axum::Router;
 use axum::middleware;
@@ -24,7 +25,8 @@ pub fn router(state: AppState) -> Router<AppState> {
     // Everything here needs a signed-in session. New pages go in this list.
     let protected = Router::new()
         .route("/", get(home::index))
-        .route("/vaults", get(sections::vaults))
+        .route("/vaults", get(vaults::list))
+        .route("/vaults/select", post(vaults::select))
         .route("/secrets", get(sections::secrets))
         .route("/certificates", get(sections::certificates))
         .route("/keys", get(sections::keys))

@@ -34,8 +34,8 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> Self {
-        let oidc = Oidc::new(&config);
-        let http = oidc.http().clone();
+        let http = http::client(config.outbound_https_only());
+        let oidc = Oidc::new(&config, http.clone());
         let broker = Arc::new(TokenBroker::new(&config, http.clone()));
         Self {
             sessions: Arc::new(SessionStore::default()),

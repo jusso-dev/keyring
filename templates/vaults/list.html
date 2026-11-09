@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Vaults - Keyring{% endblock %}
+{% block content %}
+<h1>Vaults</h1>
+{% if total == 0 %}
+<div class="empty-state">
+  <p><strong>You can't see any vaults yet.</strong></p>
+  <p>Keyring lists the vaults your account can see in Azure. You'll need at least the Reader role on a vault, its resource group or its subscription.</p>
+  <p class="hint"><strong>What to ask for:</strong> ask your admin for the Reader role where your team's vaults live, plus a Key Vault role (such as Key Vault Secrets User) on the vaults you need.</p>
+</div>
+{% else %}
+<p class="muted">You can see {{ total }} vault{% if total != 1 %}s{% endif %}. Seeing a vault here doesn't always mean you can open its secrets.</p>
+
+<form class="filters" method="get" action="/vaults" role="search" data-live-filter="vault-table">
+  <div>
+    <label for="q">Search by name or resource group</label>
+    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+  </div>
+  <div>
+    <label for="subscription">Subscription</label>
+    <select id="subscription" name="subscription">
+      <option value="">All subscriptions</option>
+      {% for s in subscriptions %}
+      <option value="{{ s.id }}"{% if s.selected %} selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="tag">Tag</label>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" placeholder="env or env=prod" autocomplete="off">
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+    {% if !filter.is_empty() %}<a href="/vaults">Clear</a>{% endif %}
+  </div>
+</form>
+
+{% if vaults.is_empty() %}
+<div class="empty-state">
+  <p>No vaults match. Try a shorter search or clear the filters.</p>
+</div>
+{% else %}
+<div class="table-wrap">
+<table id="vault-table">
+  <caption class="visually-hidden">Vaults you can see</caption>
+  <thead>
+    <tr>
+      <th scope="col">Name</th>
+      <th scope="col">Subscription</th>
+      <th scope="col">Resource group</th>
+      <th scope="col">Location</th>
+      <th scope="col">Access model</th>
+      <th scope="col">Soft delete</th>
+      <th scope="col">Purge protection</th>
+      <th scope="col"><span class="visually-hidden">Actions</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for v in vaults %}
+    <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
+      <th scope="row" class="mono">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
+      <td>{{ v.subscription_name }}</td>
+      <td>{{ v.resource_group }}</td>
+      <td>{{ v.location }}</td>
+      <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
+      <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>
+      <td>{% if v.purge_protection %}On{% else %}Off{% endif %}</td>
+      <td>
+        <form method="post" action="/vaults/select">
+          <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+          <input type="hidden" name="name" value="{{ v.name }}">
+          <button type="submit" class="button-small">Open<span class="visually-hidden"> {{ v.name }}</span></button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted" data-live-filter-empty hidden>No vaults on this page match.</p>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if let Some(url) = prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}, vaults {{ shown_from + 1 }} to {{ shown_from + vaults.len() }}</span>
+  {% if let Some(url) = next_url %}<a href="{{ url }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

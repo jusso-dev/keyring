@@ -25,6 +25,11 @@ pub struct Config {
     pub allow_purge: bool,
     pub listen: SocketAddr,
     pub log_level: String,
+    /// Azure Resource Manager base URL. Only changed by tests.
+    pub management_url: String,
+    /// Replaces `https://<vault>.vault.azure.net` with `<base>/<vault>`.
+    /// Only set by tests, to point at a mock Key Vault.
+    pub keyvault_test_base: Option<String>,
 }
 
 /// Why the configuration couldn't be loaded. Messages are written for the
@@ -130,7 +135,17 @@ impl Config {
                 reason: "expected an address and port such as 127.0.0.1:3000".into(),
             })?;
 
+        let management_url = checked_url(
+            "KEYRING_TEST_MANAGEMENT_URL",
+            &get("KEYRING_TEST_MANAGEMENT_URL").unwrap_or_else(|| DEFAULT_MANAGEMENT_URL.into()),
+        )?;
+        let keyvault_test_base = get("KEYRING_TEST_KEYVAULT_URL")
+            .map(|v| checked_url("KEYRING_TEST_KEYVAULT_URL", &v))
+            .transpose()?;
+
         Ok(Self {
+            management_url,
+            keyvault_test_base,
             tenant_id,
             client_id,
             authority_host,
@@ -149,6 +164,26 @@ impl Config {
         self.base_url.starts_with("https://")
     }
 
+    /// True when every outbound endpoint is HTTPS, so the HTTP client can
+    /// refuse plain HTTP. Only false in tests against local mocks.
+    pub fn outbound_https_only(&self) -> bool {
+        self.authority_host.starts_with("https://")
+            && self.management_url.starts_with("https://")
+            && self
+                .keyvault_test_base
+                .as_deref()
+                .is_none_or(|b| b.starts_with("https://"))
+    }
+
+    /// Data-plane URL for a vault. `name` must already be checked with
+    /// [`crate::azure::vaults::is_valid_vault_name`].
+    pub fn vault_url(&self, name: &str) -> String {
+        match &self.keyvault_test_base {
+            Some(base) => format!("{base}/{name}"),
+            None => format!("https://{name}.vault.azure.net"),
+        }
+    }
+
     /// The Entra ID issuer for this tenant.
     pub fn issuer(&self) -> String {
         format!("{}/{}/v2.0", self.authority_host, self.tenant_id)
@@ -164,6 +199,9 @@ impl Config {
         format!("{}/auth/signed-out", self.base_url)
     }
 }
+
+/// Default Azure Resource Manager endpoint.
+pub const DEFAULT_MANAGEMENT_URL: &str = "https://management.azure.com";
 
 /// Default Entra ID sign-in host.
 pub const DEFAULT_AUTHORITY_HOST: &str = "https://login.microsoftonline.com";

@@ -67,7 +67,7 @@ Logging uses `tracing`. Only metadata is logged (method, path, status, timing). 
 - Sessions live in server memory. The browser only gets a random 256-bit ID in an http-only, `SameSite=Lax` cookie (`Secure` and `__Host-` prefixed over HTTPS). Tokens never leave the server. Sessions end after an hour idle or 12 hours in total. A restart signs everyone out; running several copies needs sticky sessions.
 - Every route except sign-in, callback, signed-out, `/healthz` and `/static` sits behind a middleware that requires a session. Without one, GET requests are sent to sign-in with the path remembered. Return paths must be local (`/` but not `//`, no backslashes or control characters).
 - Sign-out is a form post with a per-session token. It drops the session here, then sends the browser to Entra's end-session endpoint, which returns to `/auth/signed-out`.
-- `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider.
+- `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider. `KEYRING_TEST_MANAGEMENT_URL` and `KEYRING_TEST_KEYVAULT_URL` do the same for ARM and Key Vault. Leave all three unset in real deployments. Plain `http://` is only accepted for localhost.
 
 ## On-behalf-of tokens
 
@@ -144,6 +144,12 @@ resources
 | where type =~ 'microsoft.keyvault/vaults'
 | project id, name, resourceGroup, subscriptionId, location, properties.enableRbacAuthorization, properties.enableSoftDelete, properties.enablePurgeProtection
 ```
+
+Results are fetched in pages of 1000 (the Resource Graph maximum), following `$skipToken` up to 100 pages. A second query reads subscription names from `resourcecontainers`; if that fails the list still shows, with subscription IDs instead of names. Missing flags take Azure's defaults (soft delete on, RBAC and purge protection off).
+
+The list is filtered on the server (name or resource group, subscription, tag as `key` or `key=value`) and shown 200 to a page. The one JavaScript file, `static/app.js`, also filters the visible rows as you type; without it the form submits and the server filters.
+
+The chosen vault is kept in the session only. Its name is checked against Key Vault naming rules before it's stored or put into a URL. Seeing a vault in Resource Graph only needs the ARM Reader role, so opening it can still fail with 403 on the data plane; the secrets pages handle that with the role to ask for.
 
 ## Audit
 

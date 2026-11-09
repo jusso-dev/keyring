@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod token;
+pub mod vaults;
 
 pub use client::{AzureClient, AzureError};
 pub use token::{AccessToken, Resource, TokenBroker, TokenError};
