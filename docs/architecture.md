@@ -69,6 +69,23 @@ Logging uses `tracing`. Only metadata is logged (method, path, status, timing). 
 - Sign-out is a form post with a per-session token. It drops the session here, then sends the browser to Entra's end-session endpoint, which returns to `/auth/signed-out`.
 - `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider.
 
+## On-behalf-of tokens
+
+- `azure::TokenBroker` swaps the user's access token (issued for Keyring's own API scope at sign-in) for a token scoped to Key Vault, ARM or Log Analytics, using the OBO grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`, `requested_token_use=on_behalf_of`).
+- If the user's own token has less than five minutes left, the broker refreshes it with the refresh token first, keeping any rotated refresh token.
+- Exchanged tokens are cached in the session, in memory, per resource, and reused until five minutes before expiry. Sessions never share tokens.
+- Entra errors are mapped: `interaction_required`, `invalid_grant` and `login_required` mean sign in again (MFA, conditional access, revoked or expired refresh token). `consent_required` and AADSTS 65001, 65004 and 650057 mean an admin must consent. Only the error code is logged, never the description.
+- There is no client-credentials grant, managed identity or app-only token in the Azure data path. The client secret is only used to authenticate the OBO and refresh requests.
+- Tokens live in `AccessToken` and `Secret` wrappers whose `Debug` and `Display` print `[redacted]`.
+
+### Plain REST, not the `azure_*` crates
+
+`azure::AzureClient` calls the Key Vault, ARM, Resource Graph and Log Analytics REST APIs directly with `reqwest`. The official Rust SDK crates are still in beta, change often between releases and pull in a large dependency tree of their own, including their own identity and HTTP layers we'd have to work around to plug in OBO tokens. The REST APIs Keyring uses are a handful of stable, versioned endpoints, so a thin typed wrapper is less code to trust. We'll revisit when the SDK reaches a stable 1.0.
+
+The client attaches the user's token to every call. On a 401 it drops the cached token, gets a fresh one and tries once more. Error replies keep the status and Azure's error code for the UI; Azure's message is shown to the user but not logged, since it can name items.
+
+Concurrent requests in one session can each refresh the user's token at the same moment. That's harmless (Entra keeps old refresh tokens valid for a while) and not worth a lock yet.
+
 ## HTTP client and TLS
 
 All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
