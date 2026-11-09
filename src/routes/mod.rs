@@ -9,6 +9,7 @@ pub mod flash;
 mod headers;
 mod health;
 mod home;
+mod keys;
 pub mod lifecycle;
 mod secrets;
 mod sections;
@@ -104,7 +105,31 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/certificates/{name}/download-key",
             get(certs::download::pfx_form).post(certs::download::pfx),
         )
-        .route("/keys", get(sections::keys))
+        .route("/keys", get(keys::list))
+        .route(
+            "/keys/new",
+            get(keys::edit::create_form).post(keys::edit::create),
+        )
+        .route("/keys/deleted", get(keys::delete::list_deleted))
+        .route("/keys/deleted/{name}", get(keys::delete::deleted_detail))
+        .route("/keys/deleted/{name}/recover", post(keys::delete::recover))
+        .route(
+            "/keys/deleted/{name}/purge",
+            get(keys::delete::purge_form).post(keys::delete::purge),
+        )
+        .route("/keys/{name}", get(keys::detail))
+        .route(
+            "/keys/{name}/rotate",
+            get(keys::edit::rotate_form).post(keys::edit::rotate),
+        )
+        .route(
+            "/keys/{name}/rotation",
+            get(keys::edit::rotation_form).post(keys::edit::save_rotation),
+        )
+        .route(
+            "/keys/{name}/delete",
+            get(keys::delete::delete_form).post(keys::delete::delete),
+        )
         .route("/expiry", get(sections::expiry))
         .route("/generator", get(sections::generator))
         .route("/audit", get(sections::audit))

@@ -57,6 +57,11 @@ pub struct KvState {
     pub deleted_certs: Mutex<BTreeMap<String, super::certs::DeletedCert>>,
     pub imports: Mutex<Vec<super::certs::ImportRecord>>,
     pub creates: Mutex<Vec<super::certs::ImportRecord>>,
+    pub keys: Mutex<BTreeMap<String, super::keys::StoredKey>>,
+    pub deleted_keys: Mutex<BTreeMap<String, super::keys::DeletedKey>>,
+    pub key_creates: Mutex<Vec<serde_json::Value>>,
+    /// Whether the vault allows HSM keys.
+    pub premium: Mutex<bool>,
     seq: Mutex<i64>,
 }
 
@@ -121,6 +126,53 @@ impl KvState {
             .unwrap()
             .get(name)
             .map(|s| s.versions.len())
+            .unwrap_or(0)
+    }
+
+    /// Add a key version. Returns the version ID.
+    pub fn add_key_with(
+        &self,
+        name: &str,
+        kty: &str,
+        edit: impl FnOnce(&mut super::keys::KeyVersion),
+    ) -> String {
+        let version = self.new_version();
+        let t = self.tick();
+        let mut v = super::keys::KeyVersion {
+            version: version.clone(),
+            kty: kty.into(),
+            crv: None,
+            ops: vec![
+                "encrypt".into(),
+                "decrypt".into(),
+                "sign".into(),
+                "verify".into(),
+            ],
+            enabled: true,
+            created: t,
+            exp: None,
+            tags: BTreeMap::new(),
+        };
+        edit(&mut v);
+        self.keys
+            .lock()
+            .unwrap()
+            .entry(name.into())
+            .or_insert_with(|| super::keys::StoredKey {
+                versions: Vec::new(),
+                rotation: serde_json::json!({"lifetimeActions": []}),
+            })
+            .versions
+            .push(v);
+        version
+    }
+
+    pub fn key_versions(&self, name: &str) -> usize {
+        self.keys
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|k| k.versions.len())
             .unwrap_or(0)
     }
 
@@ -237,6 +289,7 @@ pub async fn start() -> MockKeyVault {
         )
         .route("/{vault}/deletedsecrets/{name}/recover", post(recover))
         .merge(super::certs::router(state.clone()))
+        .merge(super::keys::router())
         .layer(axum::middleware::from_fn_with_state(state.clone(), record))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

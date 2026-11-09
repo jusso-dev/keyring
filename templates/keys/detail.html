@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ row.name }} - Keyring{% endblock %}
+{% block content %}
+<p><a href="/keys">Back to keys in {{ vault }}</a></p>
+<h1 class="mono">{{ row.name }}</h1>
+<p>{% include "keys/_status.html" %}</p>
+<div class="actions">
+  {% if !row.managed %}
+  <a class="button" href="/keys/{{ row.name }}/rotate">Rotate now</a>
+  <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
+  <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
+  {% else %}
+  <p class="muted">This key belongs to a certificate. Manage it from the certificate.</p>
+  {% endif %}
+</div>
+
+<section aria-labelledby="key-heading">
+  <h2 id="key-heading">Current version</h2>
+  <dl class="props">
+    <dt>Type</dt><dd>{{ kind }}{% if hsm %} <span class="muted">(protected by a hardware security module)</span>{% endif %}</dd>
+    <dt>Allowed to</dt><dd>{% if operations.is_empty() %}<span class="muted">Not set</span>{% else %}{{ operations|join(", ") }}{% endif %}</dd>
+    <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
+    <dt>Created</dt><dd>{{ row.created }}</dd>
+    <dt>Expires</dt><dd>{% if row.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ row.expires }} ({{ row.expires_note }}){% endif %}</dd>
+    <dt>Tags</dt><dd>{% if row.tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+  </dl>
+</section>
+
+<section aria-labelledby="public-heading">
+  <h2 id="public-heading">Public key</h2>
+  <p class="muted">Safe to share. The private key never leaves Key Vault.</p>
+  {% if let Some(pem) = pem %}
+  <label for="public-pem">PEM</label>
+  <textarea id="public-pem" class="mono secret-value" rows="8" readonly spellcheck="false">{{ pem }}</textarea>
+  <p><button type="button" class="button-secondary" data-copy-plain="public-pem" hidden>Copy PEM</button></p>
+  {% endif %}
+  <label for="public-jwk">JWK</label>
+  <textarea id="public-jwk" class="mono secret-value" rows="8" readonly spellcheck="false">{{ jwk }}</textarea>
+  <p><button type="button" class="button-secondary" data-copy-plain="public-jwk" hidden>Copy JWK</button> <span class="muted" role="status" aria-live="polite" data-copy-plain-status></span></p>
+</section>
+
+{% if let Some(r) = rotation %}
+<section aria-labelledby="rotation-heading">
+  <h2 id="rotation-heading">Rotation policy</h2>
+  {% if r.any %}
+  <dl class="props">
+    <dt>Rotates</dt><dd>{% if r.rotate_after.is_empty() %}<span class="muted">Not automatically</span>{% else %}{{ r.rotate_after }}{% endif %}</dd>
+    <dt>Each version lasts</dt><dd>{% if r.expiry.is_empty() %}<span class="muted">No limit</span>{% else %}{{ r.expiry }}{% endif %}</dd>
+    <dt>Near-expiry event</dt><dd>{% if r.notify_before.is_empty() %}<span class="muted">None</span>{% else %}{{ r.notify_before }} before expiry{% endif %}</dd>
+  </dl>
+  {% else %}
+  <p class="muted">No rotation policy. The key only changes when someone rotates it.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section aria-labelledby="versions-heading">
+  <h2 id="versions-heading">Versions</h2>
+  <p class="muted">Older versions can still decrypt and verify what they made, unless disabled.</p>
+  <div class="table-wrap">
+  <table>
+    <caption class="visually-hidden">Versions of {{ row.name }}</caption>
+    <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Status</th><th scope="col">Expires</th></tr></thead>
+    <tbody>
+      {% for v in versions %}
+      <tr>
+        <th scope="row" class="mono" title="{{ v.version }}">{{ v.short_version() }}{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
+        <td>{{ v.created }}</td>
+        <td>{% if v.enabled %}Enabled{% else %}<span class="badge badge-muted">Disabled</span>{% endif %}</td>
+        <td>{% if v.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ v.expires }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

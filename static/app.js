@@ -116,6 +116,24 @@
     });
   }
 
+  // Copy something that isn't secret, such as a public key. No clearing.
+  function copyPlain(button) {
+    var field = document.getElementById(button.getAttribute("data-copy-plain"));
+    var status = document.querySelector("[data-copy-plain-status]");
+    if (!field || !navigator.clipboard || !navigator.clipboard.writeText) {
+      return;
+    }
+    button.hidden = false;
+    button.addEventListener("click", function () {
+      navigator.clipboard.writeText(field.value).then(function () {
+        if (status) {
+          status.textContent = "Copied.";
+        }
+      });
+    });
+  }
+
   document.querySelectorAll("form[data-live-filter]").forEach(liveFilter);
+  document.querySelectorAll("[data-copy-plain]").forEach(copyPlain);
   document.querySelectorAll("[data-reveal]").forEach(reveal);
 })();
