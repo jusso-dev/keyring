@@ -75,3 +75,43 @@ a { color: var(--accent); }
 .notice-ok { background: var(--ok-bg); color: var(--ok-ink); }
 .notice-warn { background: var(--warn-bg); color: var(--warn-ink); }
 .notice-error { background: var(--err-bg); color: var(--err-ink); }
+
+.account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.account form { margin: 0; }
+.account-name { color: var(--muted); }
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  background: var(--bg);
+}
+.narrow { max-width: 36rem; }
+
+.button,
+button {
+  display: inline-block;
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.button:hover,
+button:hover { filter: brightness(1.1); }
+
+.button-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+}
