@@ -170,7 +170,7 @@ async fn partly_readable_vaults_say_what_is_missing() {
     assert!(html.contains(">a-secret<"), "what could be read is shown");
     assert!(!html.contains(">a-key<"));
     assert!(
-        html.contains("Its keys couldn&#39;t be read"),
+        html.contains("Its keys couldn&#39;t be read (you don&#39;t have a Key Vault role on it)"),
         "{}",
         &html[html.find("notice-warn").unwrap_or(0)..][..300]
     );

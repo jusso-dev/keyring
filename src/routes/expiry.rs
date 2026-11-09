@@ -115,6 +115,16 @@ fn reason(err: &AzureError) -> String {
     }
 }
 
+/// "You don't have..." becomes "you don't have...", leaving names like
+/// "Key Vault" and "Azure" alone.
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_lowercase().chain(c).collect(),
+        None => String::new(),
+    }
+}
+
 async fn read_vault(
     azure: AzureClient,
     session: Arc<Session>,
@@ -208,7 +218,7 @@ async fn read_vault(
                 reason: format!(
                     "Its {} couldn't be read ({}). The rest is included",
                     kinds.join(" and "),
-                    reason(&some[0].1).to_lowercase()
+                    lower_first(&reason(&some[0].1))
                 ),
                 vault,
             })
