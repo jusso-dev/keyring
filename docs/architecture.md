@@ -12,10 +12,13 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 ## Request flow
 
 1. The browser signs in with Entra ID using OIDC (authorisation code flow with PKCE).
-2. The server keeps the user's tokens in an encrypted, http-only session cookie or a server-side memory session. Nothing is persisted.
+2. The server keeps the user's tokens in a server-side memory session. The browser only holds an http-only cookie with a signed, random session ID. Tokens never reach the browser and nothing is persisted.
 3. For each Azure call, the server exchanges the user's token via OBO for a token scoped to:
    - `https://vault.azure.net/.default` for Key Vault data plane
    - `https://management.azure.com/.default` for ARM and Resource Graph
+
+   Each session gets its own MSAL client and in-memory token cache. OBO tokens are cached per resource and refreshed five minutes before they expire. If Entra needs the person to consent or satisfy conditional access, Keyring sends them to a page that explains why, with a button to sign in again.
+
 4. Results go back to the browser. Errors from Azure (403, 404, throttling) are mapped to plain-English messages.
 
 ## Components
@@ -33,7 +36,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 | Next.js (App Router), TypeScript strict            | Pages render on the server, so tokens never reach the browser. Route handlers and server actions give us a backend for frontend without a second service. |
 | Node.js runtime only                               | The Azure SDKs and MSAL need Node. No edge runtime.                                                                                                       |
 | `@azure/msal-node`                                 | Maintained by Microsoft. Handles the auth code flow with PKCE, token validation and the on-behalf-of exchange. We don't hand-roll any of it.              |
-| In-memory server session, sealed session ID cookie | Nothing is persisted. A restart signs everyone out, which is fine for this app.                                                                           |
+| In-memory server session, signed session ID cookie | Nothing is persisted. A restart signs everyone out, which is fine for this app.                                                                           |
 | Tailwind CSS                                       | Small, no runtime, easy to keep contrast and focus styles consistent. Components are written in the repo rather than pulled from a large library.         |
 | Vitest and Testing Library                         | Fast unit tests for server helpers and components.                                                                                                        |
 | ESLint (Next config) and Prettier                  | Standard lint and format. `no-console` is on so nothing logs by accident.                                                                                 |
