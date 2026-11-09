@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::azure::secrets::{Attributes, SetSecret, UpdateSecret, is_valid_secret_name};
+use crate::azure::secrets::{
+    Attributes, DateChange, SetSecret, UpdateAttributes, UpdateSecret, is_valid_secret_name,
+};
 use crate::dates;
 use crate::secret::Secret;
 
@@ -263,16 +265,32 @@ pub fn for_new_value(form: &SecretForm, now: i64) -> Result<SetSecret, Vec<Field
     }
 }
 
-/// Check an edit-properties form. The body has no value, so this can never
-/// create a new version.
-pub fn for_update(form: &SecretForm, now: i64) -> Result<UpdateSecret, Vec<FieldError>> {
+/// Check an edit-properties form against the current version. The body
+/// has no value, so this can never create a new version. Dates that didn't
+/// change are left out; removed dates are sent as `null`.
+pub fn for_update(
+    form: &SecretForm,
+    current: &Attributes,
+    now: i64,
+) -> Result<UpdateSecret, Vec<FieldError>> {
     let mut errors = Vec::new();
-    let props = properties(form, now, &mut errors);
+    // An expiry that's already passed but wasn't touched isn't an error.
+    let mut props = properties(form, now, &mut errors);
+    let wanted_exp = props.attributes.expires;
+    let expires = DateChange::between(current.expires, wanted_exp);
+    if expires == DateChange::Keep {
+        errors.retain(|e| e.field != "expires" || !e.message.contains("already passed"));
+    }
     if errors.is_empty() {
+        props.attributes.enabled.get_or_insert(true);
         Ok(UpdateSecret {
             // Send an empty string to clear a content type that was removed.
             content_type: Some(props.content_type.unwrap_or_default()),
-            attributes: props.attributes,
+            attributes: UpdateAttributes {
+                enabled: props.attributes.enabled,
+                not_before: DateChange::between(current.not_before, props.attributes.not_before),
+                expires,
+            },
             tags: Some(props.tags),
         })
     } else {
@@ -363,10 +381,43 @@ mod tests {
     }
 
     #[test]
+    fn update_keeps_untouched_dates_exactly() {
+        // Expires at 10:00 UTC on 2027-02-06; the form shows that day.
+        let current = Attributes {
+            expires: Some(1_801_908_000),
+            enabled: Some(true),
+            ..Attributes::default()
+        };
+        let mut f = form();
+        f.expires = "2027-02-06".into();
+        f.tags = "env=prod".into();
+        let body = for_update(&f, &current, NOW).unwrap();
+        let j = serde_json::to_value(&body).unwrap();
+        assert!(
+            j["attributes"].get("exp").is_none(),
+            "unchanged expiry not sent"
+        );
+        f.expires = String::new();
+        let j = serde_json::to_value(for_update(&f, &current, NOW).unwrap()).unwrap();
+        assert!(
+            j["attributes"]["exp"].is_null(),
+            "cleared expiry sent as null"
+        );
+        // An expiry that passed earlier today, left alone, doesn't block other edits.
+        let past = Attributes {
+            expires: Some(NOW - 60),
+            ..Attributes::default()
+        };
+        let mut f = form();
+        f.expires = crate::dates::iso_date(NOW - 60);
+        assert!(for_update(&f, &past, NOW).is_ok());
+    }
+
+    #[test]
     fn update_never_has_a_value() {
         let mut f = form();
         f.value = Some("should be ignored".into());
-        let body = for_update(&f, NOW).unwrap();
+        let body = for_update(&f, &Attributes::default(), NOW).unwrap();
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("value").is_none());
         assert_eq!(json["contentType"], "");

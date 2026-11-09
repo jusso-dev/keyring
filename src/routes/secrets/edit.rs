@@ -380,7 +380,7 @@ pub async fn update(
     let shell = check_csrf(&session, &f.csrf, shell)?;
     f.name = item.name().to_owned();
     f.value = None;
-    let body = match form::for_update(&f, now_ts()) {
+    let body = match form::for_update(&f, &item.attributes, now_ts()) {
         Ok(b) => b,
         Err(errors) => {
             return Ok(form_page(
@@ -459,16 +459,13 @@ pub async fn toggle(
         "off" => false,
         _ => return Err(PageError::new(shell, Problem::not_found()).into()),
     };
-    // Keep everything else as it is.
-    let mut attributes = item.attributes.clone();
-    attributes.enabled = Some(enable);
-    attributes.created = None;
-    attributes.updated = None;
-    attributes.recovery_level = None;
-    attributes.recoverable_days = None;
+    // Only `enabled` is sent. Key Vault keeps everything else.
     let body = UpdateSecret {
         content_type: None,
-        attributes,
+        attributes: crate::azure::secrets::UpdateAttributes {
+            enabled: Some(enable),
+            ..Default::default()
+        },
         tags: None,
     };
     let done = if enable { "Enabled" } else { "Disabled" };

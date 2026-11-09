@@ -79,6 +79,9 @@ struct QueryResponse<T> {
     data: Vec<T>,
     #[serde(rename = "$skipToken")]
     skip_token: Option<String>,
+    /// "true" when Resource Graph cut the result short without a skip token.
+    #[serde(default, rename = "resultTruncated")]
+    result_truncated: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -173,6 +176,9 @@ async fn run_query<T: serde::de::DeserializeOwned>(
             )
             .await?;
         rows.extend(page.data);
+        if page.result_truncated.as_deref() == Some("true") && page.skip_token.is_none() {
+            tracing::warn!("Resource Graph truncated the result; some vaults may be missing");
+        }
         match page.skip_token {
             Some(t) if !t.is_empty() => token = Some(t),
             _ => return Ok(rows),

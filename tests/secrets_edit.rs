@@ -266,3 +266,38 @@ async fn success_flash_is_shown() {
     let (_, html) = w.page("/secrets/db-password").await;
     assert!(html.contains("Saved a new version of db-password"));
 }
+
+#[tokio::test]
+async fn editing_tags_keeps_the_exact_expiry_and_clearing_works() {
+    let w = support::world().await;
+    // Expires at 10:00 UTC, 100 days out.
+    let day = 86_400;
+    let n = keyring::azure::secrets::now_ts();
+    let exp = (n / day + 100) * day + 10 * 3600;
+    w.kv.state
+        .put_with("db-password", "x", |v| v.exp = Some(exp));
+    let shown = keyring::dates::iso_date(exp);
+    let res = w
+        .post(
+            "/secrets/db-password/edit",
+            &[("expires", &shown), ("tags", "env=prod"), ("enabled", "on")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let v = w.kv.state.current("db-password").unwrap();
+    assert_eq!(v.exp, Some(exp), "expiry time unchanged by a tag edit");
+    assert_eq!(v.tags.get("env").map(String::as_str), Some("prod"));
+
+    let res = w
+        .post(
+            "/secrets/db-password/edit",
+            &[("expires", ""), ("enabled", "on")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        w.kv.state.current("db-password").unwrap().exp,
+        None,
+        "cleared"
+    );
+}

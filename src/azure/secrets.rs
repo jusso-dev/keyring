@@ -16,8 +16,6 @@ use crate::secret::Secret;
 pub const API_VERSION: &str = "7.5";
 /// Page size for list calls. 25 is Key Vault's maximum.
 pub const MAX_RESULTS: u32 = 25;
-/// Follow at most this many `nextLink`s (25,000 items).
-pub const MAX_PAGES: usize = 1000;
 
 /// Unix seconds, as Key Vault sends them.
 pub type Timestamp = i64;
@@ -185,15 +183,6 @@ impl DeletedSecretItem {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Page<T> {
-    #[serde(default = "Vec::new")]
-    value: Vec<T>,
-    #[serde(default)]
-    next_link: Option<String>,
-}
-
 /// Key Vault secret names: 1 to 127 letters, digits and hyphens.
 pub fn is_valid_secret_name(name: &str) -> bool {
     crate::routes::vault_ctx::is_valid_object_name(name)
@@ -217,36 +206,11 @@ impl SecretsApi<'_> {
         format!("{}{path}?api-version={API_VERSION}", self.vault_url)
     }
 
-    /// Only follow `nextLink`s that stay on this vault.
-    fn checked_next(&self, link: &str) -> Option<String> {
-        link.starts_with(&format!("{}/", self.vault_url))
-            .then(|| link.to_owned())
-    }
-
     async fn collect<T: serde::de::DeserializeOwned>(
         &self,
         first: String,
     ) -> Result<Vec<T>, AzureError> {
-        let mut out = Vec::new();
-        let mut next = Some(first);
-        let mut pages = 0;
-        while let Some(url) = next.take() {
-            let page: Page<T> = self
-                .azure
-                .get_json(self.session, Resource::KeyVault, &url)
-                .await?;
-            out.extend(page.value);
-            pages += 1;
-            if pages >= MAX_PAGES {
-                tracing::warn!("Key Vault paging stopped at the limit");
-                break;
-            }
-            next = page
-                .next_link
-                .filter(|l| !l.is_empty())
-                .and_then(|l| self.checked_next(&l));
-        }
-        Ok(out)
+        crate::azure::paging::collect(self.azure, self.session, &self.vault_url, first).await
     }
 
     /// Properties of every secret, never values.
@@ -419,6 +383,54 @@ fn expose_secret<S: serde::Serializer>(v: &Secret, s: S) -> Result<S::Ok, S::Err
     s.serialize_str(v.expose())
 }
 
+/// One date in a PATCH. Key Vault merges attributes, so leaving a field
+/// out keeps it, and only an explicit `null` clears it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DateChange {
+    #[default]
+    Keep,
+    Set(Timestamp),
+    Clear,
+}
+
+impl DateChange {
+    fn is_keep(&self) -> bool {
+        *self == Self::Keep
+    }
+
+    /// Compare what the form says with what's there now. An unchanged
+    /// calendar day is kept as it is, so editing tags doesn't move an
+    /// expiry from 10:00 to the end of the day.
+    pub fn between(current: Option<Timestamp>, wanted: Option<Timestamp>) -> Self {
+        match (current, wanted) {
+            (None, None) => Self::Keep,
+            (Some(_), None) => Self::Clear,
+            (Some(c), Some(w)) if c.div_euclid(86_400) == w.div_euclid(86_400) => Self::Keep,
+            (_, Some(w)) => Self::Set(w),
+        }
+    }
+}
+
+impl Serialize for DateChange {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Set(t) => s.serialize_i64(*t),
+            Self::Clear | Self::Keep => s.serialize_none(),
+        }
+    }
+}
+
+/// Attributes for a PATCH. Only what changes is sent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct UpdateAttributes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(rename = "nbf", skip_serializing_if = "DateChange::is_keep")]
+    pub not_before: DateChange,
+    #[serde(rename = "exp", skip_serializing_if = "DateChange::is_keep")]
+    pub expires: DateChange,
+}
+
 /// Body for changing properties only. No value field, so it can't create
 /// a new version.
 #[derive(Debug, Serialize)]
@@ -426,7 +438,7 @@ fn expose_secret<S: serde::Serializer>(v: &Secret, s: S) -> Result<S::Ok, S::Err
 pub struct UpdateSecret {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
-    pub attributes: Attributes,
+    pub attributes: UpdateAttributes,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<BTreeMap<String, String>>,
 }
@@ -506,12 +518,41 @@ mod tests {
     }
 
     #[test]
+    fn date_changes() {
+        let day = 86_400;
+        let midnight = 20_833 * day;
+        let t = midnight + 10 * 3600; // 10:00
+        assert_eq!(
+            DateChange::between(Some(t), Some(midnight + day - 1)),
+            DateChange::Keep,
+            "same day kept"
+        );
+        assert_eq!(DateChange::between(Some(t), None), DateChange::Clear);
+        assert_eq!(DateChange::between(None, None), DateChange::Keep);
+        assert_eq!(
+            DateChange::between(Some(t), Some(t + 2 * day)),
+            DateChange::Set(t + 2 * day)
+        );
+        let a = UpdateAttributes {
+            enabled: Some(true),
+            not_before: DateChange::Keep,
+            expires: DateChange::Clear,
+        };
+        let j = serde_json::to_value(&a).unwrap();
+        assert!(j.get("nbf").is_none(), "kept fields are left out");
+        assert!(
+            j.get("exp").unwrap().is_null(),
+            "cleared fields are sent as null"
+        );
+    }
+
+    #[test]
     fn update_body_never_carries_a_value() {
         let body = UpdateSecret {
             content_type: None,
-            attributes: Attributes {
+            attributes: UpdateAttributes {
                 enabled: Some(false),
-                ..Attributes::default()
+                ..UpdateAttributes::default()
             },
             tags: Some(BTreeMap::from([("env".into(), "prod".into())])),
         };

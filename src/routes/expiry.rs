@@ -99,7 +99,7 @@ fn reason(err: &AzureError) -> String {
             status: 403, code, ..
         } if code
             .as_deref()
-            .is_some_and(|c| c.starts_with("ForbiddenBy")) =>
+            .is_some_and(|c| c == "ForbiddenByFirewall" || c == "ForbiddenByConnection") =>
         {
             "Blocked by the vault's firewall".into()
         }
@@ -120,7 +120,7 @@ async fn read_vault(
     session: Arc<Session>,
     vault_url: String,
     vault: String,
-) -> Result<Vec<Item>, (String, String)> {
+) -> (Vec<Item>, Option<Skipped>) {
     let secrets = SecretsApi {
         azure: &azure,
         session: &session,
@@ -139,10 +139,14 @@ async fn read_vault(
     let work = async { tokio::join!(secrets.list(), certs.list(), keys.list()) };
     let (s, c, k) = match tokio::time::timeout(VAULT_TIMEOUT, work).await {
         Ok(r) => r,
-        Err(_) => return Err((vault, "Took too long to answer".into())),
+        Err(_) => {
+            let reason = "Took too long to answer".into();
+            return (Vec::new(), Some(Skipped { vault, reason }));
+        }
     };
     let mut items = Vec::new();
-    let mut first_err = None;
+    // Which kinds failed, and why.
+    let mut failed: Vec<(&'static str, AzureError)> = Vec::new();
     let tag_vec = |t: &std::collections::BTreeMap<String, String>| {
         t.iter().map(|(a, b)| (a.clone(), b.clone())).collect()
     };
@@ -160,7 +164,7 @@ async fn read_vault(
                     managed: false,
                 }),
         ),
-        Err(e) => first_err = Some(e),
+        Err(e) => failed.push(("secrets", e)),
     }
     match c {
         Ok(list) => items.extend(list.iter().map(|x| Item {
@@ -172,7 +176,7 @@ async fn read_vault(
             tags: tag_vec(x.tags()),
             managed: false,
         })),
-        Err(e) => first_err = first_err.or(Some(e)),
+        Err(e) => failed.push(("certificates", e)),
     }
     match k {
         Ok(list) => items.extend(
@@ -188,14 +192,29 @@ async fn read_vault(
                     managed: false,
                 }),
         ),
-        Err(e) => first_err = first_err.or(Some(e)),
+        Err(e) => failed.push(("keys", e)),
     }
-    // If nothing at all could be read, report the vault as skipped. If only
-    // some types failed (for example no key role), show what we have.
-    match (items.is_empty(), first_err) {
-        (true, Some(e)) => Err((vault, reason(&e))),
-        _ => Ok(items),
-    }
+    // Show what could be read, and say what couldn't. With every kind
+    // failing, the whole vault is listed as not read.
+    let skipped = match failed.as_slice() {
+        [] => None,
+        [(_, e), _, _] => Some(Skipped {
+            vault,
+            reason: reason(e),
+        }),
+        some => {
+            let kinds: Vec<&str> = some.iter().map(|(k, _)| *k).collect();
+            Some(Skipped {
+                reason: format!(
+                    "Its {} couldn't be read ({}). The rest is included",
+                    kinds.join(" and "),
+                    reason(&some[0].1).to_lowercase()
+                ),
+                vault,
+            })
+        }
+    };
+    (items, skipped)
 }
 
 struct Loaded {
@@ -244,9 +263,11 @@ async fn load(
     let mut skipped = Vec::new();
     while let Some(done) = set.join_next().await {
         match done {
-            Ok(Ok(mut v)) => items.append(&mut v),
-            Ok(Err((vault, reason))) => skipped.push(Skipped { vault, reason }),
-            Err(_) => {}
+            Ok((mut v, skip)) => {
+                items.append(&mut v);
+                skipped.extend(skip);
+            }
+            Err(e) => tracing::error!(error = ?e.to_string(), "expiry task failed"),
         }
     }
     skipped.sort_by(|a, b| a.vault.cmp(&b.vault));
