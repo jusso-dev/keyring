@@ -73,8 +73,10 @@ var identityName = '${name}-id'
 // Known before deployment, as the site's identity block needs.
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
 
+// The deployment name depends on the checks, so a failed check stops the
+// deployment before anything is created.
 module config '../modules/config-vault.bicep' = {
-  name: '${name}-config'
+  name: '${name}-config${privateVaultCheck == 'ok' ? '' : '-invalid'}'
   params: {
     location: location
     vaultName: configVaultName

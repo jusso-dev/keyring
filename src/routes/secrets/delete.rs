@@ -148,12 +148,18 @@ pub async fn delete(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = verify(&session, &form, &name, shell, delete_view(&vault, &name))?;
-    if let Ok(item) = api(&state, &session, &vault).properties(&name).await
-        && item.managed.unwrap_or(false)
-    {
-        return Err(crate::routes::secrets::reveal::managed_problem(
-            shell, &name,
-        ));
+    // Refuse a certificate's backing secret, and refuse if we can't tell.
+    match api(&state, &session, &vault).properties(&name).await {
+        Ok(item) if item.managed.unwrap_or(false) => {
+            return Err(crate::routes::secrets::reveal::managed_problem(
+                shell, &name,
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => {
+            let path = format!("/secrets/{name}");
+            return Err(azure_problem(shell, &err, Need::ManageSecrets, &path));
+        }
     }
     match api(&state, &session, &vault).delete(&name).await {
         Ok(()) => {
