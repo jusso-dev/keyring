@@ -189,4 +189,7 @@ Expiry alerts are optional. Since Keyring stores nothing and has no identity of 
 ## Deploy
 
 - The Docker image described above.
-- Bicep for Azure App Service or Azure Container Apps, with optional private endpoint and VNet integration so Keyring can reach private vaults.
+- `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references. It has no role on any other vault, so it can't be used to reach user data.
+- Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
+- `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events (`docs/alerts.md`).
+- CI runs `az bicep build` on every template and example parameter file. Nothing is deployed from this repository.

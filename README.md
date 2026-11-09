@@ -187,7 +187,14 @@ The tests run against mock Entra ID, Resource Graph and Key Vault servers, so th
 | "This vault is blocked from here" | The vault's firewall doesn't allow your network. Ask an admin to allow it or use a private endpoint |
 | Everyone is signed out after a restart | Expected. Sessions are only kept in memory |
 
-Bicep templates for App Service or Container Apps, with private endpoint support, are on the roadmap.
+## Deploying to Azure
+
+Bicep templates for App Service and Container Apps are in `infra/`, with optional private networking and expiry alerts. See:
+
+- [docs/deploy.md](docs/deploy.md): step-by-step deployment
+- [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
+- [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid
+- [docs/troubleshooting.md](docs/troubleshooting.md): common problems
 
 ## Prior art
 

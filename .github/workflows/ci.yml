@@ -79,6 +79,35 @@ jobs:
       - name: cargo audit
         run: cargo audit --deny warnings
 
+  bicep:
+    name: bicep build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Validation only: builds every template and example parameter file.
+      # No sign-in and no deployment.
+      - name: Build templates
+        working-directory: infra
+        run: |
+          az bicep install
+          status=0
+          for f in $(find . -name '*.bicep' -not -path './modules/*') $(find . -name '*.bicepparam'); do
+            echo "::group::$f"
+            case "$f" in
+              *.bicepparam) az bicep build-params --file "$f" --stdout > /dev/null || status=1 ;;
+              *) az bicep build --file "$f" --stdout > /dev/null || status=1 ;;
+            esac
+            echo "::endgroup::"
+          done
+          for f in modules/*.bicep; do
+            az bicep build --file "$f" --stdout > /dev/null || status=1
+          done
+          exit $status
+
   docker:
     name: container build
     runs-on: ubuntu-24.04
