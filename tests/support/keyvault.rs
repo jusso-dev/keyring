@@ -60,6 +60,8 @@ pub struct KvState {
     pub keys: Mutex<BTreeMap<String, super::keys::StoredKey>>,
     pub deleted_keys: Mutex<BTreeMap<String, super::keys::DeletedKey>>,
     pub key_creates: Mutex<Vec<serde_json::Value>>,
+    /// Answer this many requests with 429 before serving normally.
+    pub throttle_next: Mutex<u32>,
     /// Whether the vault allows HSM keys.
     pub premium: Mutex<bool>,
     seq: Mutex<i64>,
@@ -325,6 +327,16 @@ async fn record(
         && method_ok
     {
         return err(status, code);
+    }
+    {
+        let mut t = s.throttle_next.lock().unwrap();
+        if *t > 0 {
+            *t -= 1;
+            let mut res = err(429, "Throttled");
+            res.headers_mut()
+                .insert("retry-after", axum::http::HeaderValue::from_static("0"));
+            return res;
+        }
     }
     next.run(req).await
 }

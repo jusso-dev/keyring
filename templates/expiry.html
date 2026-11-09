@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Expiry - Keyring{% endblock %}
+{% block content %}
+<h1>Expiry</h1>
+<p>Secrets, certificates and keys across your vaults, by when they expire. Only names and dates are read, never values.</p>
+<p class="muted">To get an email before things expire, see <a href="https://github.com/yumaitau/keyring/blob/main/docs/alerts.md">setting up expiry alerts</a>. They use Key Vault's own events, so Keyring doesn't need to run in the background.</p>
+
+<form class="filters" method="get" action="/expiry">
+  <div>
+    <label for="vault">Vault</label>
+    <select id="vault" name="vault">
+      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+      {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="type">Type</label>
+    <select id="type" name="type">
+      <option value="">Everything</option>
+      <option value="secret"{% if filter.kind == "secret" %} selected{% endif %}>Secrets</option>
+      <option value="certificate"{% if filter.kind == "certificate" %} selected{% endif %}>Certificates</option>
+      <option value="key"{% if filter.kind == "key" %} selected{% endif %}>Keys</option>
+    </select>
+  </div>
+  <div>
+    <label for="tag">Tag</label>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" placeholder="env or env=prod" autocomplete="off">
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+    <a href="{{ csv_url }}">Download CSV</a>
+  </div>
+</form>
+
+{% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
+
+{% if !skipped.is_empty() %}
+<div class="notice notice-warn" role="status">
+  <p><strong>{{ skipped.len() }} vault{% if skipped.len() != 1 %}s{% endif %} couldn't be read</strong>, so {% if skipped.len() == 1 %}it isn't{% else %}they aren't{% endif %} included:</p>
+  <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<nav aria-label="Expiry groups">
+<ul class="group-summary">
+  {% for g in groups %}
+  <li><a href="#group-{{ g.group.slug() }}"><span class="badge {{ g.group.css() }}">{{ g.count }}</span> {{ g.group.label() }}</a></li>
+  {% endfor %}
+</ul>
+</nav>
+
+{% if total == 0 %}
+<div class="empty-state"><p>Nothing to show. Either nothing matches the filters, or these vaults are empty.</p></div>
+{% endif %}
+
+{% for g in groups %}
+{% if g.count > 0 %}
+<section aria-labelledby="group-{{ g.group.slug() }}">
+  <h2 id="group-{{ g.group.slug() }}">{{ g.group.label() }} <span class="muted">({{ g.count }})</span></h2>
+  <div class="table-wrap">
+  <table>
+    <caption class="visually-hidden">{{ g.group.label() }}</caption>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+    <tbody>
+      {% for r in g.rows %}
+      <tr{% if !r.enabled %} class="row-muted"{% endif %}>
+        <th scope="row" class="mono">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <td>{{ r.kind.label() }}</td>
+        <td class="mono">{{ r.vault }}</td>
+        <td>{% if r.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ r.expires }} <span class="muted">({{ r.note }})</span>{% endif %}</td>
+        <td>{{ r.tags }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endfor %}
+{% endblock %}
