@@ -20,13 +20,34 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 
 ## Components
 
-| Part | Job |
-| --- | --- |
-| Web UI | Pages for vaults, secrets, certificates, keys, expiry, generator and audit |
-| Server / BFF | Session handling, OBO exchange, thin proxies to Azure SDKs |
-| Azure SDKs | `@azure/keyvault-secrets`, `-certificates`, `-keys`, `@azure/arm-resourcegraph`, `@azure/monitor-query` |
+| Part         | Job                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| Web UI       | Pages for vaults, secrets, certificates, keys, expiry, generator and audit                              |
+| Server / BFF | Session handling, OBO exchange, thin proxies to Azure SDKs                                              |
+| Azure SDKs   | `@azure/keyvault-secrets`, `-certificates`, `-keys`, `@azure/arm-resourcegraph`, `@azure/monitor-query` |
 
-The stack is chosen in the first MVP issue. A TypeScript full-stack framework with server-side rendering fits well, because tokens stay on the server.
+## Stack
+
+| Choice                                             | Why                                                                                                                                                       |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js (App Router), TypeScript strict            | Pages render on the server, so tokens never reach the browser. Route handlers and server actions give us a backend for frontend without a second service. |
+| Node.js runtime only                               | The Azure SDKs and MSAL need Node. No edge runtime.                                                                                                       |
+| `@azure/msal-node`                                 | Maintained by Microsoft. Handles the auth code flow with PKCE, token validation and the on-behalf-of exchange. We don't hand-roll any of it.              |
+| In-memory server session, sealed session ID cookie | Nothing is persisted. A restart signs everyone out, which is fine for this app.                                                                           |
+| Tailwind CSS                                       | Small, no runtime, easy to keep contrast and focus styles consistent. Components are written in the repo rather than pulled from a large library.         |
+| Vitest and Testing Library                         | Fast unit tests for server helpers and components.                                                                                                        |
+| ESLint (Next config) and Prettier                  | Standard lint and format. `no-console` is on so nothing logs by accident.                                                                                 |
+
+Cache Components is off. Every page depends on who's signed in, so there's nothing useful to prerender, and we don't want any response cached.
+
+Folder layout:
+
+```
+app/          pages, layouts and route handlers
+components/   shared UI
+lib/auth/     sign-in, session and token handling (server only)
+lib/azure/    thin wrappers over the Azure SDKs (server only)
+```
 
 ## Vault discovery
 

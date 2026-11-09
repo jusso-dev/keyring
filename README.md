@@ -51,13 +51,13 @@ You'll need one app registration. A full walkthrough lands with the deploy miles
 
 Set these as environment variables. Don't commit them.
 
-| Variable | What it's for |
-| --- | --- |
-| `ENTRA_TENANT_ID` | Your tenant ID |
-| `ENTRA_CLIENT_ID` | The app registration's client ID |
-| `ENTRA_CLIENT_SECRET` | Client secret (or use a certificate) |
-| `APP_BASE_URL` | Public URL of this app, used for redirects |
-| `SESSION_SECRET` | Random string used to encrypt the session cookie |
+| Variable              | What it's for                                     |
+| --------------------- | ------------------------------------------------- |
+| `ENTRA_TENANT_ID`     | Your tenant ID                                    |
+| `ENTRA_CLIENT_ID`     | The app registration's client ID                  |
+| `ENTRA_CLIENT_SECRET` | Client secret (or use a certificate)              |
+| `APP_BASE_URL`        | Public URL of this app, used for redirects        |
+| `SESSION_SECRET`      | Random string used to encrypt the session cookie  |
 | `KEYRING_ALLOW_PURGE` | `true` to allow permanent deletes. Off by default |
 
 ## Running it
