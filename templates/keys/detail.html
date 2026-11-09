@@ -8,6 +8,7 @@
   {% if !row.managed %}
   <a class="button" href="/keys/{{ row.name }}/rotate">Rotate now</a>
   <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
+  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d">Who used it</a>
   <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
   {% else %}
   <p class="muted">This key belongs to a certificate. Manage it from the certificate.</p>

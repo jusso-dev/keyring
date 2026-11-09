@@ -182,6 +182,12 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 
 The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVAuditLogs` resource-specific table) from the Log Analytics workspace linked to each vault, again as the signed-in user. If the user can't read the workspace, the page says so.
 
+- The vault's diagnostic settings are read through ARM to find workspaces receiving `AuditEvent` (or the `audit` or `allLogs` category groups). "Dedicated" destinations use `AZKVAuditLogs`, others `AzureDiagnostics`.
+- Queries go to the Log Analytics resource-centric endpoint (`/v1/<workspace ARM ID>/query`) with the user's OBO token for `https://api.loganalytics.io/.default`.
+- **No query injection.** Filters are checked against strict patterns first (names: letters, digits and hyphens; people: letters, digits, `@ . _ -`; actions: a fixed list), so anything else is refused before a query is sent. Values then appear only as escaped string literals in `let` lines at the top of the query; the rest of the KQL is fixed text. Time ranges come from a fixed list.
+- Operations are shown in plain words ("Viewed secret value" for `SecretGet`). Up to 500 most recent rows. CSV export uses the same query and rows, with formula guarding.
+- Each secret, certificate and key page has "Who used it", which opens the audit view filtered to that item for the last 30 days.
+
 ## Alerts
 
 Expiry alerts are optional. Since Keyring stores nothing and has no identity of its own, alerts are delivered by Azure-native means (Event Grid `SecretNearExpiry` and `CertificateNearExpiry` events), set up through the deploy templates. The app itself never runs background jobs with stored credentials.
