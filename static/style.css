@@ -345,3 +345,6 @@ input[type="number"] {
   border: 1px solid var(--muted);
   border-radius: var(--radius);
 }
+
+.group-summary { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+.group-summary a { text-decoration: none; }
