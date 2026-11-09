@@ -1,6 +1,7 @@
 //! Certificate pages: list, detail, versions and downloads.
 
 pub mod download;
+pub mod upload;
 
 use askama::Template;
 use axum::extract::{Path, Query, State};

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Check and upload {{ name }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Upload <span class="mono">{{ name }}</span> to {{ vault }}?</h1>
+  <p>Here's what's in the {{ kind }} file. Nothing has been saved yet.</p>
+  {% if let Some(c) = cert %}
+  {% if c.expired %}<p class="notice notice-error" role="alert">This certificate has already expired.</p>{% endif %}
+  <dl class="props">
+    <dt>Subject</dt><dd class="mono">{{ c.subject }}</dd>
+    <dt>Other names</dt><dd>{% if c.sans.is_empty() %}<span class="muted">None</span>{% else %}{% for s in c.sans %}<span class="tag">{{ s }}</span> {% endfor %}{% endif %}</dd>
+    <dt>Issued by</dt><dd class="mono">{{ c.issuer }}</dd>
+    <dt>Valid from</dt><dd>{{ c.valid_from }}</dd>
+    <dt>Valid until</dt><dd>{{ c.valid_to }}</dd>
+    {% if chain_len > 1 %}<dt>Chain</dt><dd>{{ chain_len }} certificates</dd>{% endif %}
+  </dl>
+  {% else %}
+  <p class="notice notice-warn">This .pfx is protected by its password, so Keyring can't show what's inside without opening it. Key Vault will check it when you upload, and say if the password is wrong.</p>
+  {% endif %}
+  <dl class="props">
+    <dt>Enabled</dt><dd>{% if enabled %}Yes{% else %}No{% endif %}</dd>
+    <dt>Private key can be downloaded later</dt><dd>{% if exportable %}Yes{% else %}No{% endif %}</dd>
+    <dt>Tags</dt><dd>{% if tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+  </dl>
+  <form method="post" action="/certificates/upload/confirm">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    <input type="hidden" name="upload_id" value="{{ upload_id }}">
+    <div class="actions">
+      <button type="submit">Upload to {{ vault }}</button>
+      <a href="/certificates/upload">Start again</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

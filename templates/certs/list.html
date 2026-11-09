@@ -2,11 +2,12 @@
 {% block title %}Certificates in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <h1>Certificates <span class="muted">in {{ vault }}</span></h1>
+<p class="actions"><a class="button" href="/certificates/upload">Upload a certificate</a></p>
 
 {% if total == 0 %}
 <div class="empty-state">
   <p><strong>This vault has no certificates yet.</strong></p>
-  <p>Certificates added to this vault will appear here.</p>
+  <p>Upload a .pfx or .pem to add one.</p>
 </div>
 {% else %}
 <p class="muted">

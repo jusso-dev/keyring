@@ -16,6 +16,34 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// Sign out after this long regardless of activity.
 pub const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 
+/// How long an uploaded file waits for confirmation.
+pub const PENDING_UPLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// A certificate file waiting to be imported. Never written anywhere.
+pub struct PendingUpload {
+    pub id: String,
+    pub vault: String,
+    pub name: String,
+    /// `application/x-pkcs12` or `application/x-pem-file`.
+    pub content_type: &'static str,
+    /// Base64 PFX or PEM text.
+    pub value: Secret,
+    pub password: Option<Secret>,
+    pub tags: std::collections::BTreeMap<String, String>,
+    pub enabled: bool,
+    pub exportable: bool,
+    pub created: Instant,
+}
+
+impl std::fmt::Debug for PendingUpload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingUpload")
+            .field("vault", &self.vault)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Who is signed in, for display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
@@ -43,6 +71,8 @@ pub struct Session {
     pub azure_tokens: TokenCache,
     /// Vault picked in the header. Lives only as long as the session.
     selected_vault: Mutex<Option<String>>,
+    /// A certificate file between "preview" and "import". Memory only.
+    pending_upload: Mutex<Option<PendingUpload>>,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -59,6 +89,20 @@ impl Session {
 
     pub fn selected_vault(&self) -> Option<String> {
         lock(&self.selected_vault).clone()
+    }
+
+    /// Keep an uploaded certificate until the person confirms it.
+    pub fn set_pending_upload(&self, upload: PendingUpload) {
+        *lock(&self.pending_upload) = Some(upload);
+    }
+
+    /// Take the pending upload if it's for this ID and not too old. It's
+    /// removed either way, so a file is only ever imported once.
+    pub fn take_pending_upload(&self, id: &str) -> Option<PendingUpload> {
+        let upload = lock(&self.pending_upload).take()?;
+        (crate::auth::crypto::constant_time_eq(upload.id.as_bytes(), id.as_bytes())
+            && upload.created.elapsed() < PENDING_UPLOAD_TTL)
+            .then_some(upload)
     }
 
     /// Remember the chosen vault. The caller checks the name is valid.
@@ -101,6 +145,7 @@ impl SessionStore {
             csrf: random_token(32),
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
+            pending_upload: Mutex::new(None),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),
