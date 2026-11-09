@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Generator - Keyring{% endblock %}
+{% block content %}
+<h1>Generator</h1>
+<p>Make a strong password, a GUID or an API key. Values come from your server's secure random source, aren't stored or logged, and only appear on this page.</p>
+
+{% if let Some(e) = error %}<p class="notice notice-error" role="alert">{{ e }}</p>{% endif %}
+
+{% if value.is_some() %}
+<section class="panel reveal" aria-labelledby="gen-heading" data-reveal data-clear-after="{{ clear_after }}">
+  <h2 id="gen-heading">Your {% if is("guid") %}GUID{% elif is("api_key") %}API key{% else %}password{% endif %}</h2>
+  <label for="secret-value" class="visually-hidden">Generated value</label>
+  <textarea id="secret-value" class="secret-value mono" readonly rows="2" spellcheck="false" autocomplete="off" data-secret-value>{{ value() }}</textarea>
+  <div class="actions">
+    <button type="button" data-copy="secret-value" hidden>Copy</button>
+    {% if form.for_secret == "1" %}<button type="button" class="button-secondary" data-use-value hidden>Use this value</button>{% endif %}
+    <a href="/generator" data-hide-link>Hide</a>
+    <span class="muted" role="status" aria-live="polite" data-copy-status></span>
+  </div>
+  <p class="muted" data-countdown hidden>Hiding in <span data-countdown-secs>{{ clear_after }}</span> seconds.</p>
+  {% if form.for_secret == "1" %}<noscript><p class="muted">Copy the value, go back to the secret form and paste it in.</p></noscript>{% endif %}
+</section>
+{% endif %}
+
+<form method="post" action="/generator" class="stacked">
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="for_secret" value="{{ form.for_secret }}">
+  <fieldset>
+    <legend>What to make</legend>
+    <div class="checkbox"><input id="kind-password" name="kind" type="radio" value="password"{% if is("password") %} checked{% endif %}><label for="kind-password">Password</label></div>
+    <div class="checkbox"><input id="kind-guid" name="kind" type="radio" value="guid"{% if is("guid") %} checked{% endif %}><label for="kind-guid">GUID</label></div>
+    <div class="checkbox"><input id="kind-api" name="kind" type="radio" value="api_key"{% if is("api_key") %} checked{% endif %}><label for="kind-api">API key</label></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Password options</legend>
+    <label for="length">Length</label>
+    <p class="field-help">Longer is stronger. 24 characters is plenty for most uses; some old systems cap passwords at 16 or 32.</p>
+    <input id="length" name="length" type="number" min="8" max="256" value="{{ form.length }}">
+    <div class="checkbox"><input id="lower" name="lower" type="checkbox"{% if form.lower.is_some() %} checked{% endif %}><label for="lower">Lower case letters (a to z)</label></div>
+    <div class="checkbox"><input id="upper" name="upper" type="checkbox"{% if form.upper.is_some() %} checked{% endif %}><label for="upper">Capital letters (A to Z)</label></div>
+    <div class="checkbox"><input id="digits" name="digits" type="checkbox"{% if form.digits.is_some() %} checked{% endif %}><label for="digits">Numbers (0 to 9)</label></div>
+    <div class="checkbox"><input id="symbols" name="symbols" type="checkbox"{% if form.symbols.is_some() %} checked{% endif %}><label for="symbols">Symbols, such as ! # % and @</label></div>
+    <div class="checkbox"><input id="no_look_alikes" name="no_look_alikes" type="checkbox"{% if form.no_look_alikes.is_some() %} checked{% endif %}><label for="no_look_alikes">Leave out characters that look alike (0 and O, 1, l and I)</label></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>API key options</legend>
+    <label for="bytes">Random bytes</label>
+    <p class="field-help">32 bytes (256 bits) is a strong default.</p>
+    <input id="bytes" name="bytes" type="number" min="16" max="128" value="{{ form.bytes }}">
+    <div class="checkbox"><input id="fmt-b64" name="format" type="radio" value="base64url"{% if form.format != "hex" %} checked{% endif %}><label for="fmt-b64">Letters, numbers, - and _ (base64url, shorter)</label></div>
+    <div class="checkbox"><input id="fmt-hex" name="format" type="radio" value="hex"{% if form.format == "hex" %} checked{% endif %}><label for="fmt-hex">0 to 9 and a to f (hex)</label></div>
+    <label for="prefix">Prefix <span class="muted">(optional)</span></label>
+    <p class="field-help">Added to the front so the key is easy to spot, such as sk_live_. Letters, numbers, _ and -.</p>
+    <input id="prefix" name="prefix" type="text" maxlength="16" value="{{ form.prefix }}" autocomplete="off">
+  </fieldset>
+
+  <div class="actions"><button type="submit">Generate</button></div>
+</form>
+{% endblock %}

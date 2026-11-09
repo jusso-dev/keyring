@@ -101,6 +101,27 @@
       });
     }
 
+    // From the generator, opened by a secret form: hand the value back.
+    var use = panel.querySelector("[data-use-value]");
+    var sameOriginOpener = false;
+    try {
+      sameOriginOpener = !!window.opener && window.opener.location.origin === window.location.origin;
+    } catch (e) {
+      sameOriginOpener = false;
+    }
+    if (use && sameOriginOpener) {
+      use.hidden = false;
+      use.addEventListener("click", function () {
+        var target = window.opener.document.getElementById("value");
+        if (target) {
+          target.value = field.value;
+          status.textContent = "Added to the secret form.";
+          hide();
+          window.close();
+        }
+      });
+    }
+
     if (hideLink) {
       hideLink.addEventListener("click", function () {
         hide();

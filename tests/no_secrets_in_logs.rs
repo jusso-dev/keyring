@@ -73,6 +73,16 @@ async fn values_never_reach_the_logs() {
         .await;
     assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
 
+    // A generated value.
+    let res = w
+        .post(
+            "/generator",
+            &[("kind", "api_key"), ("bytes", "32"), ("prefix", "GENLEAK_")],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(html.contains("GENLEAK_"));
+
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
         logs.contains("secret value revealed"),
