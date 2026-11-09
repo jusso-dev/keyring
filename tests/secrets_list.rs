@@ -181,3 +181,13 @@ async fn detail_handles_missing_and_bad_names() {
             .all(|l| !l.contains("bad_name"))
     );
 }
+
+#[tokio::test]
+async fn unreachable_vault_explains_private_networks() {
+    // Point Key Vault at a closed port, as if the vault were private.
+    let w = support::world_with(&[("KEYRING_TEST_KEYVAULT_URL", "http://127.0.0.1:9")]).await;
+    let (status, html) = w.page("/secrets").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(html.contains("Can&#39;t reach this vault"));
+    assert!(html.contains("private network"));
+}
