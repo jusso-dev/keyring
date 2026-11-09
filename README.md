@@ -6,7 +6,7 @@ It's a thin layer. Keyring stores nothing. Every call to Key Vault is made as th
 
 Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
 
-> Status: early development. Work is tracked in [issues](https://github.com/yumaitau/keyring/issues) and [milestones](https://github.com/yumaitau/keyring/milestones), starting with the MVP (sign-in and secrets).
+> Status: early development. Every planned feature is built and tested against mock Azure services, but it hasn't yet been run against a real tenant. Work is tracked in [issues](https://github.com/yumaitau/keyring/issues).
 
 ## What it does
 
@@ -15,9 +15,9 @@ Keyring is written in Rust (Axum and Askama) and ships as a single Docker image.
 - **Secrets**: list, search, reveal and copy (the clipboard clears itself), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
 - **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, see what's expiring.
 - **Keys**: list, create, rotate and view. Raw key material is never exported.
-- **Expiry dashboard** with optional alerts.
+- **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Generator** for passwords, GUIDs and API keys.
-- **Audit view** built from Key Vault diagnostic logs.
+- **Audit view** built from Key Vault diagnostic logs, per vault and per item.
 - Deletes need you to type the item's name first.
 
 ## How access works
@@ -197,6 +197,12 @@ Bicep templates for App Service and Container Apps are in `infra/`, with optiona
 - [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
 - [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
+
+## Accessibility
+
+Pages work with a keyboard and without JavaScript. Every form control has a label, each page has one main heading, errors are listed at the top with links to the fields and get focus, and colours meet WCAG AA contrast. Copy countdowns are announced at the start and near the end rather than every second. A test checks labels, headings and landmarks on every page.
+
+If something doesn't work with your assistive technology, please open an issue.
 
 ## Prior art
 

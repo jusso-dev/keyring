@@ -348,3 +348,13 @@ input[type="number"] {
 
 .group-summary { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
 .group-summary a { text-decoration: none; }
+
+[data-error-summary]:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+@media (forced-colors: active) {
+  .badge, .tag, .button, button { border: 1px solid CanvasText; }
+}

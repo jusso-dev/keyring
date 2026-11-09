@@ -363,7 +363,7 @@ pub async fn create(
                 format!("Created {name}.")
             } else {
                 format!(
-                    "Requested {name}. It appears once the issuer signs it; its page shows progress."
+                    "Requested {name}. It appears once the issuer signs it. Its page shows progress."
                 )
             };
             let mut res = Redirect::to(&format!("/certificates/{name}")).into_response();

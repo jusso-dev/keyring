@@ -6,7 +6,7 @@
 <p>Key Vault makes the key and the certificate. Self-signed certificates are ready straight away. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
 
 {% if !errors.is_empty() %}
-<div class="notice notice-error" role="alert">
+<div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
   <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
   <ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul>
 </div>
@@ -17,30 +17,30 @@
 
   <label for="name">Name in Key Vault</label>
   <p class="field-help">Letters, numbers and hyphens only.</p>
-  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false"{% if error_for("name").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("name") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false"{% if error_for("name").is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
+  {% if let Some(m) = error_for("name") %}<p class="field-error" id="name-error">{{ m }}</p>{% endif %}
 
   <label for="common_name">Main name (common name)</label>
   <p class="field-help">The name the certificate is for, usually a website or service address such as app.example.com.</p>
-  <input id="common_name" name="common_name" type="text" value="{{ form.common_name }}" required maxlength="64" autocomplete="off" spellcheck="false"{% if error_for("common_name").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("common_name") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <input id="common_name" name="common_name" type="text" value="{{ form.common_name }}" required maxlength="64" autocomplete="off" spellcheck="false"{% if error_for("common_name").is_some() %} aria-invalid="true" aria-describedby="common_name-error"{% endif %}>
+  {% if let Some(m) = error_for("common_name") %}<p class="field-error" id="common_name-error">{{ m }}</p>{% endif %}
 
   <label for="dns_names">Other names <span class="muted">(optional)</span></label>
   <p class="field-help">More addresses the certificate should cover, one per line. Use *.example.com for every subdomain. The main name is added for you.</p>
   <textarea id="dns_names" name="dns_names" rows="3" class="mono" autocomplete="off" spellcheck="false">{{ form.dns_names }}</textarea>
-  {% if let Some(m) = error_for("dns_names") %}<p class="field-error">{{ m }}</p>{% endif %}
+  {% if let Some(m) = error_for("dns_names") %}<p class="field-error" id="dns_names-error">{{ m }}</p>{% endif %}
 
   <label for="validity_months">Valid for (months)</label>
   <p class="field-help">Public certificate authorities limit this, often to 12 months or less.</p>
-  <input id="validity_months" name="validity_months" type="number" min="1" max="120" value="{{ form.validity_months }}"{% if error_for("validity_months").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("validity_months") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <input id="validity_months" name="validity_months" type="number" min="1" max="120" value="{{ form.validity_months }}"{% if error_for("validity_months").is_some() %} aria-invalid="true" aria-describedby="validity_months-error"{% endif %}>
+  {% if let Some(m) = error_for("validity_months") %}<p class="field-error" id="validity_months-error">{{ m }}</p>{% endif %}
 
   <label for="issuer">Issuer</label>
   <p class="field-help">Self for self-signed (fine for testing and internal use). Otherwise the name of an issuer already set up on this vault in the Azure portal.</p>
   <input id="issuer" name="issuer" type="text" value="{{ form.issuer }}" autocomplete="off" spellcheck="false">
-  {% if let Some(m) = error_for("issuer") %}<p class="field-error">{{ m }}</p>{% endif %}
+  {% if let Some(m) = error_for("issuer") %}<p class="field-error" id="issuer-error">{{ m }}</p>{% endif %}
 
-  <details class="advanced">
+  <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 
     <label for="key">Key type</label>
@@ -48,7 +48,7 @@
     <select id="key" name="key">
       {% for (value, label) in key_choices() %}<option value="{{ value }}"{% if key_selected(value) %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
-    {% if let Some(m) = error_for("key") %}<p class="field-error">{{ m }}</p>{% endif %}
+    {% if let Some(m) = error_for("key") %}<p class="field-error" id="key-error">{{ m }}</p>{% endif %}
 
     <div class="checkbox">
       <input id="exportable" name="exportable" type="checkbox"{% if form.exportable.is_some() %} checked{% endif %}>
@@ -69,13 +69,13 @@
       <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
     </fieldset>
     <label for="renew_days">Days before expiry</label>
-    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% if error_for("renew_days").is_some() %} aria-invalid="true"{% endif %}>
-    {% if let Some(m) = error_for("renew_days") %}<p class="field-error">{{ m }}</p>{% endif %}
+    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% if error_for("renew_days").is_some() %} aria-invalid="true" aria-describedby="renew_days-error"{% endif %}>
+    {% if let Some(m) = error_for("renew_days") %}<p class="field-error" id="renew_days-error">{{ m }}</p>{% endif %}
 
     <label for="tags">Tags <span class="muted">(optional)</span></label>
     <p class="field-help">One per line, as name=value.</p>
     <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false">{{ form.tags }}</textarea>
-    {% if let Some(m) = error_for("tags") %}<p class="field-error">{{ m }}</p>{% endif %}
+    {% if let Some(m) = error_for("tags") %}<p class="field-error" id="tags-error">{{ m }}</p>{% endif %}
   </details>
 
   <div class="actions">
