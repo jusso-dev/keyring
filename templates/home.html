@@ -6,4 +6,9 @@
 {% if allow_purge %}
 <p class="notice notice-warn">Permanent deletes are turned on for this Keyring.</p>
 {% endif %}
+<ul class="card-list">
+  {% for s in sections %}
+  <li><a href="{{ s.path() }}">{{ s.label() }}</a></li>
+  {% endfor %}
+</ul>
 {% endblock %}

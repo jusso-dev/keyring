@@ -3,20 +3,21 @@ use axum::extract::State;
 use axum::response::Html;
 
 use crate::AppState;
-use crate::auth::CurrentSession;
 use crate::routes::assets::render;
-use crate::routes::shell::Shell;
+use crate::routes::shell::{Section, Shell};
 
 #[derive(Template)]
 #[template(path = "home.html")]
 struct HomePage {
     shell: Shell,
     allow_purge: bool,
+    sections: [Section; 7],
 }
 
-pub async fn index(State(state): State<AppState>, session: CurrentSession) -> Html<String> {
+pub async fn index(State(state): State<AppState>, shell: Shell) -> Html<String> {
     render(&HomePage {
-        shell: Shell::for_session(&session),
+        shell: shell.at(Section::Home),
         allow_purge: state.config.allow_purge,
+        sections: Section::NAV,
     })
 }

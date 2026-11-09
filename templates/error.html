@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ problem.heading }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow" role="alert">
+  <h1>{{ problem.heading }}</h1>
+  <p>{{ problem.message }}</p>
+  {% if let Some(hint) = problem.admin_hint %}
+  <p class="hint"><strong>What to ask for:</strong> {{ hint }}</p>
+  {% endif %}
+  <p><a class="button" href="{{ next_url }}">{{ next_label }}</a></p>
+</div>
+{% endblock %}

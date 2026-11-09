@@ -11,6 +11,14 @@
   <header class="site-header">
     <a class="brand" href="/">Keyring</a>
     {% if let Some(user) = shell.user %}
+    <div class="vault-picker">
+      {% if let Some(vault) = shell.vault %}
+      <span class="muted">Vault:</span> <strong>{{ vault.name }}</strong>
+      <a href="/vaults">Change</a>
+      {% else %}
+      <a href="/vaults">Choose a vault</a>
+      {% endif %}
+    </div>
     <div class="account">
       <span class="account-name">{{ user.name }}</span>
       <form method="post" action="/auth/sign-out">
@@ -20,8 +28,22 @@
     </div>
     {% endif %}
   </header>
-  <main id="main" class="content">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="layout{% if shell.user.is_none() %} layout-plain{% endif %}">
+    {% if shell.user.is_some() %}
+    <nav class="side-nav" aria-label="Sections">
+      <ul>
+        {% for s in crate::routes::shell::Section::NAV %}
+        <li><a href="{{ s.path() }}"{% if shell.is_current(s) %} aria-current="page"{% endif %}>{{ s.label() }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+    <main id="main" class="content">
+      {% if let Some(flash) = shell.flash %}
+      <p class="notice {% if flash.is_error() %}notice-error{% else %}notice-ok{% endif %}" role="{% if flash.is_error() %}alert{% else %}status{% endif %}">{{ flash.message }}</p>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 </body>
 </html>
