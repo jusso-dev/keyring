@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
 axum = { version = "0.8", default-features = false, features = ["form", "http1", "multipart", "query", "tokio", "tracing"] }
-base64 = "0.22"
+base64 = "0.23"
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["server", "http1", "tokio", "service", "server-graceful"] }
 openidconnect = { version = "4.1", default-features = false }
