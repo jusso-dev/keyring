@@ -305,3 +305,21 @@ section { margin-top: 1.5rem; }
   background: var(--panel);
 }
 .reveal { margin-bottom: 1.5rem; }
+
+.stacked { max-width: 40rem; }
+.field-help { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.92rem; }
+.field-error { margin: 0.25rem 0 0; color: var(--err-ink); font-weight: 600; }
+[aria-invalid="true"] { border-color: var(--err-ink); border-width: 2px; }
+.field-row { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+.field-row input { width: 12rem; }
+.checkbox { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+.checkbox label { margin: 0; }
+.checkbox input { width: 1.1rem; height: 1.1rem; }
+
+.button-secondary {
+  background: var(--bg);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+button:disabled { opacity: 0.6; cursor: not-allowed; filter: none; }
+.actions form { margin: 0; }
