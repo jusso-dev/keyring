@@ -37,7 +37,27 @@ Rules for the codebase:
 
 - No npm, no Node toolchain, no bundler, no CDN scripts, no Tailwind.
 - Server-rendered HTML first. JavaScript is an optional extra, hand-written and served from the same origin under a strict CSP.
-- `#![forbid(unsafe_code)]` in the crate.
+- No `unsafe` code in the crate (`forbid` lint).
+
+## Code layout
+
+| Path | What's in it |
+| --- | --- |
+| `src/main.rs` | Start-up: load config, start logging, bind and serve |
+| `src/lib.rs` | `AppState` and the router, so tests can drive the app without a socket |
+| `src/config.rs` | Typed config from environment variables. Fails fast with a list of what's missing |
+| `src/secret.rs` | `Secret`, a string wrapper whose `Debug` and `Display` print `[redacted]` |
+| `src/routes/` | Axum handlers, one file per area |
+| `src/auth/` | Sign-in and sessions |
+| `src/azure/` | On-behalf-of exchange and REST clients for Azure |
+| `templates/` | Askama templates, compiled into the binary |
+| `static/` | Hand-written CSS (and later one small JS file), embedded in the binary with `include_str!` |
+
+Static files are compiled in rather than read from disk, so the container needs no writable or readable app directory and nothing can be swapped at run time.
+
+Logging uses `tracing`. Only metadata is logged (method, path, status, timing). Request and response bodies, headers and query strings are never logged.
+
+`unsafe_code` is set to `forbid` in `Cargo.toml` lints, which has the same effect as `#![forbid(unsafe_code)]` on every target in the crate.
 
 ## Supply chain
 
