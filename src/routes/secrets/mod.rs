@@ -1,5 +1,6 @@
 //! Secrets pages: list, search and detail.
 
+pub mod delete;
 pub mod edit;
 pub mod form;
 pub mod reveal;
