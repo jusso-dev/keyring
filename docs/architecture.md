@@ -151,6 +151,17 @@ The list is filtered on the server (name or resource group, subscription, tag as
 
 The chosen vault is kept in the session only. Its name is checked against Key Vault naming rules before it's stored or put into a URL. Seeing a vault in Resource Graph only needs the ARM Reader role, so opening it can still fail with 403 on the data plane; the secrets pages handle that with the role to ask for.
 
+## Secrets
+
+Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
+
+- The list uses `GET /secrets`, which returns properties only, in pages of 25 following `nextLink`. A `nextLink` is only followed if it points at the same vault.
+- A secret's page reads `GET /secrets/{name}/versions` and shows the newest version. That call never returns values, so opening a page doesn't read the secret.
+- Values are only read by the reveal action (next issue).
+- Names from URLs are checked against Key Vault's rules (letters, digits and hyphens, up to 127) and versions must be 32 hex characters, before they go into a request.
+- "Expiring soon" means within 30 days. Dates are shown in UTC.
+- Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
+
 ## Audit
 
 The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVAuditLogs` resource-specific table) from the Log Analytics workspace linked to each vault, again as the signed-in user. If the user can't read the workspace, the page says so.

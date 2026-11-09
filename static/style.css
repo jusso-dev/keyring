@@ -275,3 +275,25 @@ td form { margin: 0; }
   align-items: center;
   margin-top: 1rem;
 }
+
+.tag {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.row-muted th, .row-muted td { color: var(--muted); }
+
+.props {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.5rem;
+}
+.props dt { font-weight: 600; }
+.props dd { margin: 0; overflow-wrap: anywhere; }
+
+section { margin-top: 1.5rem; }

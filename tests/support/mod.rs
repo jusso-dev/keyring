@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod keyvault;
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,7 +28,7 @@ use rsa::pkcs1::EncodeRsaPrivateKey;
 use serde_json::json;
 
 /// JSON response without needing axum's `json` feature in the app.
-fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
+pub fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
     (status, [(CONTENT_TYPE, "application/json")], v.to_string()).into_response()
 }
 
@@ -444,4 +446,108 @@ pub fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
         })
     })
     .expect("test config")
+}
+
+/// Everything a page test needs: mock IdP, ARM and Key Vault, and a
+/// signed-in session.
+pub struct World {
+    pub app: axum::Router,
+    pub state: keyring::AppState,
+    pub cookie: String,
+    pub csrf: String,
+    pub kv: keyvault::MockKeyVault,
+    pub arm: MockArm,
+    pub idp: MockIdp,
+}
+
+pub async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
+    let idp = start_idp().await;
+    let arm = start_arm().await;
+    let kv = keyvault::start().await;
+    let mut env: std::collections::HashMap<&'static str, String> =
+        std::collections::HashMap::from([
+            ("ENTRA_TENANT_ID", TENANT.to_owned()),
+            ("ENTRA_CLIENT_ID", CLIENT_ID.to_owned()),
+            ("ENTRA_CLIENT_SECRET", CLIENT_SECRET.to_owned()),
+            ("ENTRA_AUTHORITY_HOST", idp.authority()),
+            ("KEYRING_TEST_MANAGEMENT_URL", arm.url()),
+            ("KEYRING_TEST_KEYVAULT_URL", kv.url()),
+            ("APP_BASE_URL", "http://localhost:3000".to_owned()),
+            (
+                "SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            ),
+        ]);
+    for (k, v) in extra {
+        env.insert(k, (*v).to_owned());
+    }
+    let config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
+    let (state, app, cookie) = signed_in_app(config);
+    let id = cookie.split('=').nth(1).unwrap().to_owned();
+    let session = state.sessions.get(&id).unwrap();
+    session.select_vault("kv-test".into());
+    let csrf = session.csrf.clone();
+    World {
+        app,
+        state,
+        cookie,
+        csrf,
+        kv,
+        arm,
+        idp,
+    }
+}
+
+pub async fn world() -> World {
+    world_with(&[]).await
+}
+
+impl World {
+    pub async fn get(&self, path: &str) -> axum::http::Response<axum::body::Body> {
+        use tower::ServiceExt;
+        let req = axum::http::Request::get(path)
+            .header("cookie", &self.cookie)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        self.app.clone().oneshot(req).await.unwrap()
+    }
+
+    /// POST a form. `csrf` is added automatically.
+    pub async fn post(
+        &self,
+        path: &str,
+        fields: &[(&str, &str)],
+    ) -> axum::http::Response<axum::body::Body> {
+        use tower::ServiceExt;
+        let mut all = vec![("csrf", self.csrf.as_str())];
+        all.extend_from_slice(fields);
+        let body: String = openidconnect::url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(all)
+            .finish();
+        let req = axum::http::Request::post(path)
+            .header("cookie", &self.cookie)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        self.app.clone().oneshot(req).await.unwrap()
+    }
+
+    /// GET and return status and body text.
+    pub async fn page(&self, path: &str) -> (StatusCode, String) {
+        let res = self.get(path).await;
+        let status = res.status();
+        (status, body_text(res).await)
+    }
+}
+
+pub async fn body_text(res: axum::http::Response<axum::body::Body>) -> String {
+    use http_body_util::BodyExt;
+    String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap()
+}
+
+pub fn location(res: &axum::http::Response<axum::body::Body>) -> String {
+    res.headers()
+        .get("location")
+        .map(|v| v.to_str().unwrap().to_owned())
+        .unwrap_or_default()
 }

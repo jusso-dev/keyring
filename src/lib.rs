@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod azure;
 pub mod config;
+pub mod dates;
 pub mod http;
 pub mod routes;
 pub mod secret;

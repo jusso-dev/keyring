@@ -1,6 +1,7 @@
 //! Calls to Azure, always made as the signed-in user via on-behalf-of.
 
 pub mod client;
+pub mod secrets;
 pub mod token;
 pub mod vaults;
 
