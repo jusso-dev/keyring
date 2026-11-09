@@ -18,6 +18,7 @@ use crate::auth::cookies::CookieOptions;
 use crate::auth::crypto::Sealer;
 use crate::auth::oidc::Oidc;
 use crate::auth::session::SessionStore;
+use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
 
 /// Shared state handed to every request handler.
@@ -28,19 +29,31 @@ pub struct AppState {
     pub oidc: Arc<Oidc>,
     pub sealer: Arc<Sealer>,
     pub cookies: CookieOptions,
+    pub azure: AzureClient,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Self {
+        let oidc = Oidc::new(&config);
+        let http = oidc.http().clone();
+        let broker = Arc::new(TokenBroker::new(&config, http.clone()));
         Self {
             sessions: Arc::new(SessionStore::default()),
-            oidc: Arc::new(Oidc::new(&config)),
+            oidc: Arc::new(oidc),
+            azure: AzureClient::new(http, broker),
             sealer: Arc::new(Sealer::new(&config.session_secret, "login")),
             cookies: CookieOptions {
                 secure: config.is_https(),
             },
             config: Arc::new(config),
         }
+    }
+}
+
+impl AppState {
+    /// The on-behalf-of token broker.
+    pub fn azure_broker(&self) -> &TokenBroker {
+        self.azure.broker()
     }
 }
 
