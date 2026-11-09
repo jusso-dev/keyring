@@ -15,6 +15,7 @@ export async function beginSignIn(
   config: Config,
   msal: ConfidentialClientApplication,
   returnTo: string | null,
+  claims?: string | null,
 ): Promise<{ url: string; flowId: string; flow: AuthFlow }> {
   const { verifier, challenge } = await crypto.generatePkceCodes();
   const flow: AuthFlow = {
@@ -31,7 +32,9 @@ export async function beginSignIn(
     state: flow.state,
     nonce: flow.nonce,
     responseMode: "query",
-    prompt: "select_account",
+    // A claims challenge (conditional access) needs a fresh prompt for that
+    // specific requirement rather than the account picker.
+    ...(claims ? { claims } : { prompt: "select_account" }),
   });
   return { url, flowId: newId(), flow };
 }

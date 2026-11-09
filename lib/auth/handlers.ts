@@ -13,12 +13,24 @@ function noStore(res: NextResponse) {
   return res;
 }
 
+/** Only pass through a claims challenge that is a small JSON object. */
+function validClaims(value: string | null): string | undefined {
+  if (!value || value.length > 2000) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function handleLogin(req: NextRequest, config: Config, makeMsal: MsalFactory) {
   const msal = makeMsal(config);
   const { url, flowId, flow } = await beginSignIn(
     config,
     msal,
     req.nextUrl.searchParams.get("returnTo"),
+    validClaims(req.nextUrl.searchParams.get("claims")),
   );
   stores().flows.set(flowId, flow);
   const res = NextResponse.redirect(url);

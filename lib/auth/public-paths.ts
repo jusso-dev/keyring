@@ -3,6 +3,7 @@ export const PATH_HEADER = "x-keyring-path";
 export const PUBLIC_PATHS = [
   "/sign-in",
   "/signed-out",
+  "/reauth",
   "/auth/login",
   "/auth/callback",
   // Sign-out checks the origin itself, so it must always reach its handler.
