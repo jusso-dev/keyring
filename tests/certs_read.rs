@@ -225,3 +225,47 @@ async fn bad_names_and_versions() {
     let (status, _) = w.page("/certificates/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn backing_secret_cannot_bypass_private_key_download() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", true, "UEZYQllURVM=");
+    // Mark the backing secret as managed, as Key Vault does.
+    w.kv.state
+        .secrets
+        .lock()
+        .unwrap()
+        .get_mut("web-tls")
+        .unwrap()
+        .managed = true;
+    let (_, html) = w.page("/secrets/web-tls").await;
+    assert!(html.contains("belongs to the certificate"));
+    assert!(
+        !html.contains("action=\"/secrets/web-tls/reveal\""),
+        "no Show value button"
+    );
+    assert!(!html.contains("/secrets/web-tls/delete"));
+    for (path, fields) in [
+        ("/secrets/web-tls/reveal", vec![]),
+        (
+            "/secrets/web-tls/value",
+            vec![("value", "x"), ("enabled", "on")],
+        ),
+        ("/secrets/web-tls/edit", vec![("enabled", "on")]),
+        ("/secrets/web-tls/enabled", vec![("state", "off")]),
+        ("/secrets/web-tls/delete", vec![("confirm_name", "web-tls")]),
+    ] {
+        let res = w.post(path, &fields).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
+        assert!(
+            body_text(res).await.contains("belongs to a certificate"),
+            "{path}"
+        );
+    }
+    let (_, html) = w.page("/secrets/web-tls/versions").await;
+    assert!(!html.contains("action=\"/secrets/web-tls/reveal\""));
+    assert!(
+        w.kv.state.value_reads().is_empty(),
+        "no value read through the secrets pages"
+    );
+}

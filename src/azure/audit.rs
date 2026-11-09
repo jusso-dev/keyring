@@ -85,6 +85,19 @@ fn workspaces_from(settings: SettingsList) -> Vec<Workspace> {
     out
 }
 
+/// An ARM resource ID Keyring will put into a URL path: starts with
+/// `/subscriptions/`, and only letters, digits and `/ - _ . ( )`. Rules out
+/// anything that could change the host or add a query (`@`, `?`, `#`,
+/// `:`, `\`) or climb the path (`..`).
+pub fn is_safe_resource_id(id: &str) -> bool {
+    id.len() <= 1024
+        && id.to_ascii_lowercase().starts_with("/subscriptions/")
+        && !id.contains("..")
+        && id.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'(' | b')')
+        })
+}
+
 /// Workspaces for a vault. `vault_id` is the vault's ARM resource ID.
 pub async fn workspaces(
     azure: &AzureClient,
@@ -92,6 +105,9 @@ pub async fn workspaces(
     management_url: &str,
     vault_id: &str,
 ) -> Result<Vec<Workspace>, AzureError> {
+    if !is_safe_resource_id(vault_id) {
+        return Err(AzureError::Unreadable);
+    }
     let url = format!(
         "{management_url}{vault_id}/providers/Microsoft.Insights/diagnosticSettings?api-version={DIAGNOSTICS_API}"
     );
@@ -415,6 +431,9 @@ pub async fn query(
 ) -> Result<Vec<Event>, AzureError> {
     // The resource-centric endpoint takes the workspace's ARM ID, so no
     // separate workspace GUID lookup is needed.
+    if !is_safe_resource_id(&workspace.resource_id) {
+        return Err(AzureError::Unreadable);
+    }
     let url = format!("{loganalytics_url}/v1{}/query", workspace.resource_id);
     let body = serde_json::json!({
         "query": q.kql(workspace.resource_specific),
@@ -531,6 +550,29 @@ mod tests {
                 }
                 prev_backslashes = if c == '\\' { prev_backslashes + 1 } else { 0 };
             }
+        }
+    }
+
+    #[test]
+    fn resource_ids_that_could_change_the_url_are_refused() {
+        assert!(is_safe_resource_id(
+            "/subscriptions/s/resourceGroups/rg-1/providers/Microsoft.KeyVault/vaults/kv"
+        ));
+        assert!(is_safe_resource_id(
+            "/SUBSCRIPTIONS/s/resourceGroups/rg(1)/providers/x/y"
+        ));
+        for bad in [
+            "@evil.example/x",
+            ".evil.example/x",
+            "/subscriptions/x?y",
+            "/subscriptions/x#y",
+            "/subscriptions/../../x",
+            "/subscriptions/x@evil",
+            "https://evil",
+            "/subscriptions/x:443",
+            "",
+        ] {
+            assert!(!is_safe_resource_id(bad), "{bad}");
         }
     }
 

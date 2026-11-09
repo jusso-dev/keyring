@@ -98,7 +98,7 @@ async fn security_headers_on_every_response() {
         assert!(!csp.contains("unsafe-inline"), "{path}");
         assert_eq!(h.get("x-content-type-options").unwrap(), "nosniff");
         assert_eq!(h.get("x-frame-options").unwrap(), "DENY");
-        assert_eq!(h.get("referrer-policy").unwrap(), "no-referrer");
+        assert_eq!(h.get("referrer-policy").unwrap(), "same-origin");
     }
     // HTML isn't cached; static files are.
     let res = get(&app, "/", Some(&cookie)).await;

@@ -55,6 +55,21 @@ impl RevealedPage {
     }
 }
 
+/// The page shown when someone tries to read or change a certificate's
+/// backing secret directly.
+pub fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
+    PageError::new(
+        shell,
+        Problem::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "This secret belongs to a certificate",
+            format!("{name} holds the certificate of the same name, including its private key. Use the certificate's page to download it, so you see the warning first."),
+        )
+        .with_next(crate::routes::error::NextStep::Retry(format!("/certificates/{name}"))),
+    )
+    .into()
+}
+
 /// Mark a response so browsers and proxies keep no copy.
 pub fn no_store(mut res: Response) -> Response {
     let h = res.headers_mut();
@@ -83,6 +98,15 @@ pub async fn reveal(
         return Err(PageError::new(shell, Problem::not_found()).into());
     }
     let path = format!("/secrets/{name}");
+    // A certificate's backing secret holds its private key. That goes
+    // through the certificate's own download, with its warning and typed
+    // name, never through reveal. Checked from properties, so no value is
+    // read.
+    match api(&state, &session, &vault).properties(&name).await {
+        Ok(item) if item.managed.unwrap_or(false) => return Err(managed_problem(shell, &name)),
+        Ok(_) => {}
+        Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
+    }
     let bundle = match api(&state, &session, &vault)
         .get_value(&name, (!version.is_empty()).then_some(version))
         .await

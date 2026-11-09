@@ -83,6 +83,12 @@ async fn values_never_reach_the_logs() {
     let html = support::body_text(res).await;
     assert!(html.contains("GENLEAK_"));
 
+    // A crafted sign-in error can't add a line to the log.
+    let res = w
+        .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
+        .await;
+    let _ = support::body_text(res).await;
+
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
         logs.contains("secret value revealed"),

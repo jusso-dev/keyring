@@ -227,11 +227,12 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
 | Cross-site scripting | Askama escapes all output. CSP `default-src 'none'` with scripts and styles from this site only, no inline code, no `eval`. The one script uses no `innerHTML` (tested) |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
+| Log forging | OAuth error codes from query strings are only kept if they look like codes; error strings are logged with escaping so a crafted value can't start a new log line |
 | Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`. Only metadata is logged. A test captures all `tracing` output at TRACE during reveals, uploads, generation and errors and checks no value, token, password or Azure message appears |
 | Values cached by browsers or proxies | `Cache-Control: no-store` on every HTML page, reveal, download and CSV |
 | Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page, and the clipboard is cleared if it still holds the value |
 | Accidental or malicious deletes | Typed-name confirmation checked on the server. Purge is refused by the server unless `KEYRING_ALLOW_PURGE=true` |
-| Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name |
+| Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name. A certificate's backing secret can't be revealed, rolled back, changed or deleted through the secrets pages |
 | Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed |
 | CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
 | Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault |

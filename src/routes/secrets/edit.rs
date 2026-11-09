@@ -271,6 +271,11 @@ async fn load(
     let (vault, shell) = current_vault(session, shell)?;
     let (name, shell) = checked_name(name, shell)?;
     match api(state, session, &vault).properties(&name).await {
+        // Key Vault refuses changes to a certificate's backing secret;
+        // say why instead of showing a confusing 403.
+        Ok(item) if item.managed.unwrap_or(false) => Err(
+            crate::routes::secrets::reveal::managed_problem(shell, &name),
+        ),
         Ok(item) => Ok((vault, shell, item)),
         Err(err) => Err(azure_problem(
             shell,
@@ -308,6 +313,13 @@ pub async fn set_value(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
+    if let Ok(item) = api(&state, &session, &vault).properties(&name).await
+        && item.managed.unwrap_or(false)
+    {
+        return Err(crate::routes::secrets::reveal::managed_problem(
+            shell, &name,
+        ));
+    }
     f.name = name.clone();
     let body = match form::for_new_value(&f, now_ts()) {
         Ok(b) => b,

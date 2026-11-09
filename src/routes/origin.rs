@@ -28,11 +28,17 @@ fn origin_of(url: &str) -> Option<String> {
     ))
 }
 
-/// True when the request's `Origin` or `Referer` is `expected`.
+/// True when the request came from `expected`, judged by the browser's
+/// `Sec-Fetch-Site`, then `Origin`, then `Referer`.
 pub fn same_origin(headers: &axum::http::HeaderMap, expected: &str) -> bool {
     let expected = origin_of(expected);
-    let get = |name| headers.get(name).and_then(|v| v.to_str().ok());
-    match (get(header::ORIGIN), get(header::REFERER)) {
+    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    // Modern browsers say outright. `same-origin` is trusted; anything
+    // else (`same-site`, `cross-site`, `none`) is refused.
+    if let Some(site) = get("sec-fetch-site") {
+        return site == "same-origin";
+    }
+    match (get(header::ORIGIN.as_str()), get(header::REFERER.as_str())) {
         // Some privacy settings send the literal "null"; treat as missing.
         (Some(o), _) if o != "null" => origin_of(o) == expected,
         (_, Some(r)) => origin_of(r) == expected,
@@ -115,5 +121,22 @@ mod tests {
             &h(Some("http://localhost:3000"), None),
             "http://localhost:3000"
         ));
+    }
+
+    #[test]
+    fn sec_fetch_site_wins() {
+        let base = "https://keyring.example.com";
+        let mut m = h(Some("null"), None);
+        m.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+        assert!(
+            same_origin(&m, base),
+            "what a browser sends under a strict referrer policy"
+        );
+        let mut m = h(Some("https://keyring.example.com"), None);
+        m.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        assert!(!same_origin(&m, base));
+        let mut m = HeaderMap::new();
+        m.insert("sec-fetch-site", HeaderValue::from_static("same-site"));
+        assert!(!same_origin(&m, base), "a sibling subdomain isn't us");
     }
 }

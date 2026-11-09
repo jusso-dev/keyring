@@ -53,6 +53,17 @@ impl std::fmt::Display for SignInError {
     }
 }
 
+/// An OAuth error code from a query string or response, if it looks like
+/// one (`access_denied`, `consent_required` and so on). Anything else is
+/// replaced, so a crafted value can't be written into the logs.
+pub fn safe_code(raw: &str) -> String {
+    if (1..=64).contains(&raw.len()) && raw.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
+        raw.to_owned()
+    } else {
+        "unrecognised".to_owned()
+    }
+}
+
 struct Cached {
     fetched: Instant,
     metadata: Arc<ProviderMetadataWithLogout>,
@@ -181,7 +192,7 @@ impl Oidc {
             .await
             .map_err(|e| match e {
                 openidconnect::RequestTokenError::ServerResponse(r) => SignInError::Provider {
-                    code: r.error().as_ref().to_owned(),
+                    code: safe_code(r.error().as_ref()),
                 },
                 other => SignInError::Unreachable(error_chain(&other)),
             })?;
