@@ -353,7 +353,7 @@ pub async fn rotate(
                 &state,
                 &format!("/keys/{name}"),
                 format!(
-                    "Rotated {name}. Version {short} is now current; older versions still work for decrypting and verifying."
+                    "Rotated {name}. Version {short} is now current. Older versions still work for decrypting and verifying."
                 ),
             ))
         }

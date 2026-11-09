@@ -48,7 +48,7 @@
   <dl class="props">
     <dt>Issuer</dt><dd>{{ pol.issuer }}</dd>
     <dt>Key</dt><dd>{{ pol.key }}</dd>
-    <dt>Private key can be exported</dt><dd>{% if pol.exportable %}Yes{% else %}No, it stays in Key Vault{% endif %}</dd>
+    <dt>Private key can be downloaded</dt><dd>{% if pol.exportable %}Yes{% else %}No, it stays in Key Vault{% endif %}</dd>
     <dt>Stored as</dt><dd>{{ pol.content_type }}</dd>
     {% if !pol.validity.is_empty() %}<dt>Valid for</dt><dd>{{ pol.validity }}</dd>{% endif %}
     <dt>Near expiry</dt><dd>{{ pol.renewal }}</dd>

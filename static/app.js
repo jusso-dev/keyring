@@ -76,15 +76,28 @@
       copied = false;
     }
 
+    // Screen readers hear the countdown at the start and with 10 seconds
+    // left, not every second.
+    var announce = panel.querySelector("[data-countdown-announce]");
+    function say(text) {
+      if (announce) {
+        announce.textContent = text;
+      }
+    }
+
     function tick() {
       left -= 1;
       secs.textContent = String(left);
+      if (left === 10) {
+        say("Hiding in 10 seconds.");
+      }
       if (left <= 0) {
         hide();
       }
     }
 
     countdown.hidden = false;
+    say("Shown for " + delay + " seconds, then hidden.");
     timer = setInterval(tick, 1000);
 
     if (copy && navigator.clipboard && navigator.clipboard.writeText) {
@@ -152,6 +165,13 @@
         }
       });
     });
+  }
+
+  // After a failed form, move focus to the list of problems so keyboard
+  // and screen reader users start there.
+  var summary = document.querySelector("[data-error-summary]");
+  if (summary) {
+    summary.focus();
   }
 
   document.querySelectorAll("form[data-live-filter]").forEach(liveFilter);

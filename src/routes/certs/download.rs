@@ -155,7 +155,7 @@ async fn require_exportable(
             shell,
             Problem::new(
                 StatusCode::FORBIDDEN,
-                "The private key can't be exported",
+                "The private key can't be downloaded",
                 "This certificate's policy keeps its private key inside Key Vault. You can still download the public certificate.",
             ),
         )

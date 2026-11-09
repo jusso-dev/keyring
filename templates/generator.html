@@ -17,7 +17,7 @@
     <a href="/generator" data-hide-link>Hide</a>
     <span class="muted" role="status" aria-live="polite" data-copy-status></span>
   </div>
-  <p class="muted" data-countdown hidden>Hiding in <span data-countdown-secs>{{ clear_after }}</span> seconds.</p>
+  <p class="muted" data-countdown hidden><span aria-hidden="true">Hiding in <span data-countdown-secs>{{ clear_after }}</span> seconds.</span><span class="visually-hidden" role="status" data-countdown-announce></span></p>
   {% if form.for_secret == "1" %}<noscript><p class="muted">Copy the value, go back to the secret form and paste it in.</p></noscript>{% endif %}
 </section>
 {% endif %}
