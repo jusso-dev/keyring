@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Keyring</h1>
+<p class="lead">Find a vault, look up a secret, add a certificate or rotate a key, in plain English.</p>
+<p>Everything you do here happens as you. If you can't do it in the Azure portal, you can't do it here.</p>
+{% if allow_purge %}
+<p class="notice notice-warn">Permanent deletes are turned on for this Keyring.</p>
+{% endif %}
+{% endblock %}
