@@ -207,7 +207,7 @@ textarea {
   margin-top: 1rem;
 }
 
-.button-danger {
+a.button-danger, .button-danger {
   background: var(--err-ink);
   border-color: var(--err-ink);
   color: #ffffff;

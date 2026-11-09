@@ -33,6 +33,23 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/secrets/new",
             get(secrets::edit::new_form).post(secrets::edit::create),
         )
+        .route("/secrets/deleted", get(secrets::delete::list_deleted))
+        .route(
+            "/secrets/deleted/{name}",
+            get(secrets::delete::deleted_detail),
+        )
+        .route(
+            "/secrets/deleted/{name}/recover",
+            post(secrets::delete::recover),
+        )
+        .route(
+            "/secrets/deleted/{name}/purge",
+            get(secrets::delete::purge_form).post(secrets::delete::purge),
+        )
+        .route(
+            "/secrets/{name}/delete",
+            get(secrets::delete::delete_form).post(secrets::delete::delete),
+        )
         .route("/secrets/{name}", get(secrets::detail))
         .route(
             "/secrets/{name}/value",
