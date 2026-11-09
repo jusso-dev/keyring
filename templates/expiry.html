@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Expiry</h1>
 <p>Secrets, certificates and keys across your vaults, by when they expire. Only names and dates are read, never values.</p>
-<p class="muted">To get an email before things expire, see <a href="https://github.com/jusso-dev/keyring/blob/main/docs/alerts.md" rel="noopener noreferrer">setting up expiry alerts</a>. They use Key Vault's own events, so Keyring doesn't need to run in the background.</p>
+<p class="muted">To get an email before things expire, ask whoever runs Keyring to set up <a href="https://github.com/jusso-dev/keyring/blob/main/docs/alerts.md" rel="noopener noreferrer">expiry alerts</a>.</p>
 
 <form class="filters" method="get" action="/expiry">
   <div>
@@ -57,10 +57,10 @@
 {% if g.count > 0 %}
 <section aria-labelledby="group-{{ g.group.slug() }}">
   <h2 id="group-{{ g.group.slug() }}">{{ g.group.label() }} <span class="muted">({{ g.count }})</span></h2>
-  <div class="table-wrap">
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
   <table>
     <caption class="visually-hidden">{{ g.group.label() }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
@@ -69,6 +69,14 @@
         <td class="mono">{{ r.vault }}</td>
         <td>{% if r.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ r.expires }} <span class="muted">({{ r.note }})</span>{% endif %}</td>
         <td>{{ r.tags }}</td>
+        <td>
+          <form method="post" action="/vaults/select">
+            <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+            <input type="hidden" name="name" value="{{ r.vault }}">
+            <input type="hidden" name="return_to" value="{{ r.kind.path() }}/{{ r.name }}">
+            <button type="submit" class="button-small">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

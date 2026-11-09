@@ -14,7 +14,9 @@
   --warn-ink: #6e4b00;
   --err-bg: #ffebe9;
   --err-ink: #a40e26;
-  --focus: #fb8c00;
+  /* Focus ring: dark outline with a white inner ring, so it shows on white,
+     grey and the blue buttons (at least 3:1 against each). */
+  --focus: #1f2328;
   --radius: 6px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
@@ -31,6 +33,7 @@ a { color: var(--accent); }
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px #ffffff;
 }
 
 .skip-link {
@@ -358,3 +361,14 @@ input[type="number"] {
 @media (forced-colors: active) {
   .badge, .tag, .button, button { border: 1px solid CanvasText; }
 }
+
+/* Facts stack on narrow screens so long labels don't push values off. */
+@media (max-width: 30rem) {
+  .props { grid-template-columns: 1fr; }
+  .props dt { margin-top: 0.5rem; }
+}
+
+/* Scrollable tables can be reached and scrolled with a keyboard. */
+.table-wrap:focus-visible { outline-offset: 0; }
+
+.visually-hidden { margin: -1px; padding: 0; border: 0; }

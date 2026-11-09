@@ -31,7 +31,7 @@
 
   <label for="tags">Tags <span class="muted">(optional)</span></label>
   <p class="field-help" id="tags-help">One per line, as name=value. Up to 15.</p>
-  <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="tags-help">{{ form.tags }}</textarea>
+  <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="tags-help{% if error_for("tags").is_some() %} tags-error{% endif %}"{% if error_for("tags").is_some() %} aria-invalid="true"{% endif %}>{{ form.tags }}</textarea>
   {% if let Some(m) = error_for("tags") %}<p class="field-error" id="tags-error">{{ m }}</p>{% endif %}
 
   <div class="checkbox">

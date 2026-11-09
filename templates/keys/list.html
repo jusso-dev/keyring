@@ -20,7 +20,7 @@
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No keys match. Try a shorter search.</p></div>
 {% else %}
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
 <table id="key-table">
   <caption class="visually-hidden">Keys in {{ vault }}</caption>
   <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
@@ -37,7 +37,7 @@
   </tbody>
 </table>
 </div>
-<p class="muted" data-live-filter-empty hidden>No keys match.</p>
+<p class="muted" data-live-filter-empty role="status" hidden>No keys match.</p>
 {% endif %}
 {% endif %}
 {% endblock %}

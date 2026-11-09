@@ -204,7 +204,7 @@ pub async fn list(
 
     let show_options = [
         ("", "All secrets"),
-        ("expiring", "Expired or expiring soon"),
+        ("expiring", "Expired or expiring within 30 days"),
         ("expired", "Expired"),
         ("disabled", "Disabled"),
     ]

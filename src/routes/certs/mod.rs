@@ -175,6 +175,7 @@ struct ListPage {
     show_options: Vec<ShowOption>,
     page: usize,
     pages: usize,
+    shown_from: usize,
     prev_url: Option<String>,
     next_url: Option<String>,
 }
@@ -206,9 +207,10 @@ pub async fn list(
     let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
     let pages = matching.len().div_ceil(PER_PAGE).max(1);
     let page = filter.page.unwrap_or(1).clamp(1, pages);
+    let shown_from = (page - 1) * PER_PAGE;
     let rows = matching
         .into_iter()
-        .skip((page - 1) * PER_PAGE)
+        .skip(shown_from)
         .take(PER_PAGE)
         .collect();
     let show_options = [
@@ -239,6 +241,7 @@ pub async fn list(
         show_options,
         page,
         pages,
+        shown_from,
     })
     .into_response())
 }

@@ -13,6 +13,12 @@
       return;
     }
     var rows = table.querySelectorAll("tbody tr[data-filter-text]");
+    // One quiet status line, so screen readers hear the result once typing
+    // stops changing it, not every row.
+    var count = document.createElement("p");
+    count.className = "visually-hidden";
+    count.setAttribute("role", "status");
+    table.parentNode.insertBefore(count, table);
     input.addEventListener("input", function () {
       var q = input.value.trim().toLowerCase();
       var shown = 0;
@@ -25,6 +31,9 @@
       });
       if (empty) {
         empty.hidden = shown !== 0;
+      }
+      if (count) {
+        count.textContent = q ? shown + " shown." : "";
       }
     });
   }
@@ -43,11 +52,15 @@
     var copied = false;
     var timer = null;
 
+    var extend = panel.querySelector("[data-extend]");
+
     function hide() {
       if (timer) {
         clearInterval(timer);
         timer = null;
       }
+      // Don't strand keyboard focus on a button that's about to vanish.
+      var hadFocus = panel.contains(document.activeElement);
       var value = field.value;
       field.value = "";
       field.hidden = true;
@@ -55,6 +68,12 @@
         copy.hidden = true;
       }
       countdown.hidden = true;
+      if (extend) {
+        extend.hidden = true;
+      }
+      if (hadFocus && hideLink) {
+        hideLink.focus();
+      }
       if (copied && navigator.clipboard && navigator.clipboard.readText) {
         // Reading needs permission. If we can't read, still overwrite: we
         // only ever wrote this value, moments ago.
@@ -89,7 +108,7 @@
       left -= 1;
       secs.textContent = String(left);
       if (left === 10) {
-        say("Hiding in 10 seconds.");
+        say("Hiding in 10 seconds. Choose Show for longer to keep it.");
       }
       if (left <= 0) {
         hide();
@@ -98,6 +117,16 @@
 
     countdown.hidden = false;
     say("Shown for " + delay + " seconds, then hidden.");
+
+    // Anyone can ask for more time, as often as they need.
+    if (extend) {
+      extend.hidden = false;
+      extend.addEventListener("click", function () {
+        left = delay;
+        secs.textContent = String(left);
+        say("Shown for another " + delay + " seconds.");
+      });
+    }
     timer = setInterval(tick, 1000);
 
     if (copy && navigator.clipboard && navigator.clipboard.writeText) {

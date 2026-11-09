@@ -28,7 +28,30 @@ fn controls_have_labels(html: &str, path: &str) {
     }
 }
 
+/// Every id that `aria-describedby` points at must exist, and attribute
+/// quotes must balance (catches template edits that break markup).
+fn describedby_targets_exist(html: &str, path: &str) {
+    for chunk in html.split("aria-describedby=\"").skip(1) {
+        let ids = chunk.split('"').next().unwrap_or_default();
+        for id in ids.split_whitespace() {
+            assert!(
+                html.contains(&format!("id=\"{id}\"")),
+                "{path}: aria-describedby points at missing #{id}"
+            );
+        }
+    }
+    for line in html.lines() {
+        if line.trim_start().starts_with('<') && !line.contains("<script") {
+            assert!(
+                line.matches('"').count() % 2 == 0,
+                "{path}: unbalanced quotes in {line}"
+            );
+        }
+    }
+}
+
 fn page_basics(html: &str, path: &str) {
+    describedby_targets_exist(html, path);
     assert_eq!(html.matches("<h1").count(), 1, "{path}: one h1");
     assert!(html.contains("<html lang=\"en-AU\">"), "{path}");
     assert!(html.contains("href=\"#main\""), "{path}: skip link");
@@ -99,8 +122,17 @@ async fn pages_have_labels_headings_and_landmarks() {
 #[tokio::test]
 async fn error_summaries_take_focus_and_link_to_fields() {
     let w = support::world().await;
-    let cases: [(&str, Vec<(&str, &str)>); 3] = [
-        ("/secrets/new", vec![("name", "bad name"), ("value", "")]),
+    let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
+        (
+            "/secrets/new",
+            vec![
+                ("name", "bad name"),
+                ("value", ""),
+                ("tags", "=x"),
+                ("expires", "2020-01-01"),
+            ],
+        ),
+        ("/keys/new", vec![("name", "k"), ("expires", "nope")]),
         (
             "/certificates/new",
             vec![("name", "bad name"), ("validity_months", "0")],
@@ -111,6 +143,16 @@ async fn error_summaries_take_focus_and_link_to_fields() {
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
                 ("ops", "encrypt"),
+            ],
+        ),
+        (
+            "/certificates/new",
+            vec![
+                ("name", "c"),
+                ("common_name", "a.example.com"),
+                ("validity_months", "12"),
+                ("renew_days", "9999"),
+                ("tags", "=x"),
             ],
         ),
     ];
@@ -130,5 +172,25 @@ async fn error_summaries_take_focus_and_link_to_fields() {
             );
         }
         assert!(html.contains("aria-invalid=\"true\""), "{path}");
+        describedby_targets_exist(&html, path);
     }
+}
+
+#[tokio::test]
+async fn confirm_mismatch_is_an_error_with_focus() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "x");
+    let html = support::body_text(
+        w.post("/secrets/db-password/delete", &[("confirm_name", "nope")])
+            .await,
+    )
+    .await;
+    assert!(
+        html.contains(
+            "role=\"alert\" tabindex=\"-1\" data-error-summary id=\"confirm_name-error\""
+        )
+    );
+    assert!(html.contains("aria-invalid=\"true\" aria-describedby=\"confirm_name-error\""));
+    assert!(html.contains("Nothing was deleted."));
+    describedby_targets_exist(&html, "delete mismatch");
 }

@@ -96,7 +96,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | See where a vault sends its logs (audit view) | Reader | Vault or resource group |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
 
-For access-policy vaults, the matching secret permissions are Get and List for reading, plus Set, Delete, Recover and Purge for the rest.
+For access-policy vaults, the matching permissions are: secrets Get and List for reading, plus Set, Delete, Recover and Purge to change them; certificates Get and List, plus Create, Import, Update, Delete, Recover and Purge; keys Get and List, plus Create, Rotate, Update, Delete, Recover and Purge (and Get rotation policy, Set rotation policy).
 
 Role changes can take a few minutes to apply.
 
@@ -182,6 +182,7 @@ The tests run against mock Entra ID, Resource Graph and Key Vault servers, so th
 | Entra says the redirect URI doesn't match (AADSTS50011) | Add exactly `APP_BASE_URL` + `/auth/callback` as a **Web** redirect URI. Check `http` vs `https`, the port and any trailing slash |
 | Entra says the client secret is wrong (AADSTS7000215) | Use the secret's **Value**, not its Secret ID, and check it hasn't expired |
 | "Your organisation needs to approve Keyring" | An admin needs to select **Grant admin consent** on the API permissions page |
+| "Microsoft sign-in didn't finish" | Entra stopped the sign-in. Try again; if it keeps happening, check the app registration and redirect URI |
 | "Microsoft sign-in said no" with `invalid_scope` or AADSTS65005 | Check step 3: the `access_as_user` scope exists, or `ENTRA_API_SCOPE` matches the scope you made |
 | "Sign-in expired" right after signing in | The sign-in took more than 10 minutes, was started in another tab, or cookies are blocked for the site |
 | Vault list is empty | Ask for Reader on the subscription or resource group. New role assignments can take a few minutes |

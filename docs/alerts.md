@@ -17,6 +17,8 @@ Key Vault raises events for secrets, certificates and keys:
 
 Only items with an expiry date raise events. The expiry dashboard's "No expiry set" group shows what won't.
 
+For keys, a rotation policy can send the near-expiry event earlier than 30 days. Set it on the key's Rotation policy page in Keyring.
+
 ## Set it up
 
 You need Contributor (or Event Grid Contributor and Monitoring Contributor) on the vault's resource group.
@@ -53,5 +55,3 @@ az monitor action-group delete --name <vault>-expiry --resource-group <rg>
 ```
 
 Deleting the system topic also removes its event subscription. Nothing in Keyring needs changing.
-
-For keys, a rotation policy can also send the near-expiry event earlier than 30 days. Set it on the key's Rotation policy page in Keyring.

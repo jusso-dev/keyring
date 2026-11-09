@@ -40,7 +40,7 @@
   <p>No vaults match. Try a shorter search or clear the filters.</p>
 </div>
 {% else %}
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
 <table id="vault-table">
   <caption class="visually-hidden">Vaults you can see</caption>
   <thead>
@@ -77,7 +77,7 @@
   </tbody>
 </table>
 </div>
-<p class="muted" data-live-filter-empty hidden>No vaults on this page match.</p>
+<p class="muted" data-live-filter-empty role="status" hidden>No vaults on this page match.</p>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
   {% if let Some(url) = prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
