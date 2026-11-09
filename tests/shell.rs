@@ -50,7 +50,6 @@ async fn shell_has_nav_vault_picker_and_no_scripts() {
 async fn every_section_has_a_page_with_an_empty_state() {
     let (_, app, cookie) = support::signed_in_app(support::config());
     for path in [
-        "/vaults",
         "/secrets",
         "/certificates",
         "/keys",

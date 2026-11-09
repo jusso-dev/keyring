@@ -59,7 +59,7 @@ impl Section {
 
     /// Sections that aren't built yet show a short note instead.
     pub fn is_ready(self) -> bool {
-        matches!(self, Self::Home)
+        matches!(self, Self::Home | Self::Vaults)
     }
 }
 
@@ -92,6 +92,7 @@ impl Shell {
                 name: session.0.user.name.clone(),
                 csrf: session.0.csrf.clone(),
             }),
+            vault: session.0.selected_vault().map(|name| ShellVault { name }),
             ..Self::default()
         }
     }
