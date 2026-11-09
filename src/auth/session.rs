@@ -41,6 +41,8 @@ pub struct Session {
     pub csrf: String,
     /// Tokens for Azure APIs, exchanged on behalf of this user.
     pub azure_tokens: TokenCache,
+    /// Vault picked in the header. Lives only as long as the session.
+    selected_vault: Mutex<Option<String>>,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -53,6 +55,15 @@ impl Session {
 
     pub fn set_tokens(&self, tokens: UserTokens) {
         *lock(&self.tokens) = tokens;
+    }
+
+    pub fn selected_vault(&self) -> Option<String> {
+        lock(&self.selected_vault).clone()
+    }
+
+    /// Remember the chosen vault. The caller checks the name is valid.
+    pub fn select_vault(&self, name: String) {
+        *lock(&self.selected_vault) = Some(name);
     }
 
     fn expired_at(&self, now: Instant) -> bool {
@@ -89,6 +100,7 @@ impl SessionStore {
             user,
             csrf: random_token(32),
             azure_tokens: TokenCache::default(),
+            selected_vault: Mutex::new(None),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),

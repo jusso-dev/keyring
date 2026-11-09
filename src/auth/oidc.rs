@@ -16,8 +16,8 @@ use openidconnect::{
 use tokio::sync::RwLock;
 
 use crate::auth::session::{User, UserTokens};
-use crate::config::{Config, is_local_http};
-use crate::http::{self, HttpError, OidcHttp};
+use crate::config::Config;
+use crate::http::{HttpError, OidcHttp};
 use crate::secret::Secret;
 
 /// Re-fetch the tenant's discovery document and signing keys this often.
@@ -70,7 +70,7 @@ pub struct Oidc {
 }
 
 impl Oidc {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, http: reqwest::Client) -> Self {
         Self {
             issuer: config.issuer(),
             client_id: config.client_id.clone(),
@@ -78,7 +78,7 @@ impl Oidc {
             redirect_url: config.redirect_url(),
             signed_out_url: config.signed_out_url(),
             api_scope: config.api_scope.clone(),
-            http: OidcHttp(http::client(!is_local_http(&config.authority_host))),
+            http: OidcHttp(http),
             metadata: RwLock::new(None),
         }
     }

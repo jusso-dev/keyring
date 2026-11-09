@@ -48,7 +48,6 @@ macro_rules! placeholder {
     };
 }
 
-placeholder!(vaults, Section::Vaults);
 placeholder!(secrets, Section::Secrets);
 placeholder!(certificates, Section::Certificates);
 placeholder!(keys, Section::Keys);
