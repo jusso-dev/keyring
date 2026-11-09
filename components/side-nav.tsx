@@ -10,7 +10,7 @@ export function SideNav() {
     <nav aria-label="Main" className="w-48 shrink-0 border-r border-zinc-200 px-3 py-4">
       <ul className="flex flex-col gap-1">
         {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname, item);
           return (
             <li key={item.href}>
               <Link

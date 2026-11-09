@@ -1,12 +1,14 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { requireSession } from "@/lib/auth/session";
 import { SideNav } from "@/components/side-nav";
 import { UserMenu } from "@/components/user-menu";
 import { ToastProvider } from "@/components/ui/toast";
+import { VaultPickerServer } from "@/components/vault-picker-server";
 
 export const dynamic = "force-dynamic";
 
-export default async function AppLayout({ children, vaultPicker }: LayoutProps<"/">) {
+export default async function AppLayout({ children }: LayoutProps<"/">) {
   const session = await requireSession();
   return (
     <ToastProvider>
@@ -20,7 +22,11 @@ export default async function AppLayout({ children, vaultPicker }: LayoutProps<"
         <Link href="/" className="text-lg font-semibold">
           Keyring
         </Link>
-        <div className="flex-1">{vaultPicker}</div>
+        <div className="flex-1">
+          <Suspense fallback={null}>
+            <VaultPickerServer />
+          </Suspense>
+        </div>
         <UserMenu name={session.user.name} />
       </header>
       <div className="flex flex-1">
