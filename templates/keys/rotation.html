@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Rotation policy for {{ name }} - Keyring{% endblock %}
+{% block content %}
+<p><a href="/keys/{{ name }}">Back to {{ name }}</a></p>
+<h1>Rotation policy for <span class="mono">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
+<p>Key Vault can make new versions on a schedule. Leave a field blank to turn that part off.</p>
+{% if !errors.is_empty() %}
+<div class="notice notice-error" role="alert"><ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul></div>
+{% endif %}
+<form method="post" action="/keys/{{ name }}/rotation" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <label for="rotate_after">Rotate after (days)</label>
+  <p class="field-help">Make a new version this many days after each one is created. At least 7.</p>
+  <input id="rotate_after" name="rotate_after" type="number" min="7" value="{{ form.rotate_after }}"{% if error_for("rotate_after").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("rotate_after") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <label for="expiry">Each version expires after (days)</label>
+  <p class="field-help">At least 28. Should be longer than the rotation period.</p>
+  <input id="expiry" name="expiry" type="number" min="28" value="{{ form.expiry }}"{% if error_for("expiry").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("expiry") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <label for="notify_before">Send a near-expiry event (days before expiry)</label>
+  <p class="field-help">Raises an Event Grid event that can trigger an alert. At least 7.</p>
+  <input id="notify_before" name="notify_before" type="number" min="7" value="{{ form.notify_before }}"{% if error_for("notify_before").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("notify_before") %}<p class="field-error">{{ m }}</p>{% endif %}
+  <div class="actions"><button type="submit">Save policy</button><a href="/keys/{{ name }}">Cancel</a></div>
+</form>
+{% endblock %}

@@ -2,6 +2,7 @@
 
 pub mod certs;
 pub mod client;
+pub mod keys;
 pub mod secrets;
 pub mod token;
 pub mod vaults;

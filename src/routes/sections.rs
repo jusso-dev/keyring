@@ -48,7 +48,6 @@ macro_rules! placeholder {
     };
 }
 
-placeholder!(keys, Section::Keys);
 placeholder!(expiry, Section::Expiry);
 placeholder!(generator, Section::Generator);
 placeholder!(audit, Section::Audit);

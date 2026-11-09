@@ -91,6 +91,8 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | List and view certificates, download `.cer` | Key Vault Certificate User (or Key Vault Reader) | Vault |
 | Download a certificate with its private key | Key Vault Certificate User and Key Vault Secrets User | Vault |
 | Upload, create, delete and recover certificates | Key Vault Certificates Officer | Vault |
+| List and view keys, copy public keys | Key Vault Reader (or Key Vault Crypto User) | Vault |
+| Create, rotate, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
 
 For access-policy vaults, the matching secret permissions are Get and List for reading, plus Set, Delete, Recover and Purge for the rest.
 
