@@ -14,8 +14,13 @@
 # Both base images are pinned by digest. Dependabot proposes updates.
 
 FROM rust:1.99.1-alpine3.22@sha256:9a744dc47d1ac2a7d17fc3cedfc8b4928b1696dfcba3274ab25bfb40988a9ff0 AS build
+# Use the toolchain already in the pinned image. rust-toolchain.toml isn't
+# copied: it lists rustfmt and clippy, which would make rustup download
+# them, and the release build needs neither. CI checks the image's Rust
+# version matches rust-toolchain.toml.
+ENV RUSTUP_TOOLCHAIN=1.99.1
 WORKDIR /src
-COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
 COPY static ./static

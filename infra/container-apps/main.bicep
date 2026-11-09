@@ -20,8 +20,14 @@ param location string = resourceGroup().location
 @maxLength(18)
 param name string
 
-@description('Container image, pinned by digest, for example ghcr.io/your-org/keyring@sha256:...')
+@description('Container image, pinned by digest, for example myregistry.azurecr.io/keyring@sha256:...')
 param image string
+
+@description('Login server of a private Azure Container Registry, for example myregistry.azurecr.io. The app pulls with its managed identity, which needs AcrPull (see docs/deploy.md). Leave empty for a public image.')
+param registryServer string = ''
+
+@description('Deploy only the config vault and identity, not the app. Container Apps reads Key Vault secrets when it creates the app, so run once with this true, set the secrets, then run again with it false. See docs/deploy.md.')
+param configOnly bool = false
 
 @description('Directory (tenant) ID of the Entra app registration.')
 param tenantId string = subscription().tenantId
@@ -63,6 +69,10 @@ param replicas int = 1
 
 param tags object = {}
 
+var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infrastructureSubnetId) && !empty(vaultPrivateDnsZoneId))
+var privateVaultCheck = privateVaultOk ? 'ok' : fail('configVaultPrivateEndpointSubnetId needs infrastructureSubnetId and vaultPrivateDnsZoneId too, or the app can\'t reach its own secrets.')
+var internalCheck = ingress == 'external' || !empty(infrastructureSubnetId) ? 'ok' : fail('Internal ingress needs infrastructureSubnetId.')
+
 var identityName = '${name}-id'
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
 
@@ -79,7 +89,7 @@ module config '../modules/config-vault.bicep' = {
   }
 }
 
-resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (!configOnly) {
   name: '${name}-logs'
   location: location
   tags: tags
@@ -91,7 +101,7 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
+resource env 'Microsoft.App/managedEnvironments@2024-03-01' = if (!configOnly) {
   name: '${name}-env'
   location: location
   tags: tags
@@ -99,8 +109,8 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: logs.properties.customerId
-        sharedKey: logs.listKeys().primarySharedKey
+        customerId: logs!.properties.customerId
+        sharedKey: logs!.listKeys().primarySharedKey
       }
     }
     vnetConfiguration: empty(infrastructureSubnetId)
@@ -118,7 +128,7 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-resource app 'Microsoft.App/containerApps@2024-03-01' = {
+resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
   name: name
   location: location
   tags: tags
@@ -129,10 +139,18 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     }
   }
   properties: {
-    environmentId: env.id
+    environmentId: env!.id
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
+      registries: empty(registryServer)
+        ? []
+        : [
+            {
+              server: registryServer
+              identity: identityId
+            }
+          ]
       ingress: {
         external: ingress == 'external'
         targetPort: 3000
@@ -201,7 +219,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-output appName string = app.name
-output fqdn string = app.properties.configuration.ingress.fqdn
+output appName string = configOnly ? '' : app.name
+output fqdn string = configOnly ? '' : app!.properties.configuration.ingress.fqdn
+output checks string = '${privateVaultCheck} ${internalCheck}'
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
