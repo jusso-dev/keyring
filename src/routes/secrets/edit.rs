@@ -313,12 +313,18 @@ pub async fn set_value(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
-    if let Ok(item) = api(&state, &session, &vault).properties(&name).await
-        && item.managed.unwrap_or(false)
-    {
-        return Err(crate::routes::secrets::reveal::managed_problem(
-            shell, &name,
-        ));
+    // Refuse a certificate's backing secret, and refuse if we can't tell.
+    match api(&state, &session, &vault).properties(&name).await {
+        Ok(item) if item.managed.unwrap_or(false) => {
+            return Err(crate::routes::secrets::reveal::managed_problem(
+                shell, &name,
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => {
+            let path = format!("/secrets/{name}");
+            return Err(azure_problem(shell, &err, Need::ManageSecrets, &path));
+        }
     }
     f.name = name.clone();
     let body = match form::for_new_value(&f, now_ts()) {

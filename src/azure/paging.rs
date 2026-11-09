@@ -45,7 +45,13 @@ pub fn same_vault(vault_url: &str, link: &str) -> bool {
     match (parts(vault_url), parts(link)) {
         (Some((s1, h1, p1, path1)), Some((s2, h2, p2, path2))) => {
             let base = path1.trim_end_matches('/');
-            s1 == s2 && h1 == h2 && p1 == p2 && path2.starts_with(&format!("{base}/"))
+            // The HTTP client resolves `..` and `%2e`, so refuse them rather
+            // than compare a path that isn't the one that will be fetched.
+            let path_only = path2.split(['?', '#']).next().unwrap_or_default();
+            let lower = path_only.to_ascii_lowercase();
+            let dots =
+                path_only.split('/').any(|seg| seg == "." || seg == "..") || lower.contains("%2e");
+            s1 == s2 && h1 == h2 && p1 == p2 && !dots && path2.starts_with(&format!("{base}/"))
         }
         _ => false,
     }
