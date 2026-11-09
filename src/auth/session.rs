@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::auth::crypto::random_token;
+use crate::azure::token::TokenCache;
 use crate::secret::Secret;
 
 /// Sign out after this long without a request.
@@ -38,6 +39,8 @@ pub struct Session {
     pub user: User,
     /// Per-session token every form posts back, checked on the server.
     pub csrf: String,
+    /// Tokens for Azure APIs, exchanged on behalf of this user.
+    pub azure_tokens: TokenCache,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -85,6 +88,7 @@ impl SessionStore {
         let session = Arc::new(Session {
             user,
             csrf: random_token(32),
+            azure_tokens: TokenCache::default(),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),

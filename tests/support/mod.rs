@@ -84,7 +84,33 @@ pub struct IdpState {
     pub nonce: Mutex<Option<String>>,
     /// Form fields of the last token request.
     pub last_token_form: Mutex<Option<Vec<(String, String)>>>,
+    /// Every token request's form, in order.
+    pub token_requests: Mutex<Vec<Vec<(String, String)>>>,
+    /// If set, on-behalf-of and refresh requests fail with this OAuth error
+    /// and Entra error code.
+    pub grant_error: Mutex<Option<(&'static str, u64)>>,
+    /// Lifetime in seconds of tokens handed out by OBO and refresh.
+    pub grant_expires_in: Mutex<u64>,
 }
+
+impl IdpState {
+    /// Token requests with this `grant_type`.
+    pub fn requests_of(&self, grant_type: &str) -> Vec<Vec<(String, String)>> {
+        self.token_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|f| field(f, "grant_type") == Some(grant_type))
+            .cloned()
+            .collect()
+    }
+}
+
+pub fn field<'a>(form: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    form.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+pub const OBO_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
 impl MockIdp {
     pub fn authority(&self) -> String {
@@ -123,6 +149,9 @@ pub async fn start_idp() -> MockIdp {
         behaviour: Mutex::new(TokenBehaviour::Ok),
         nonce: Mutex::new(None),
         last_token_form: Mutex::new(None),
+        token_requests: Mutex::new(Vec::new()),
+        grant_error: Mutex::new(None),
+        grant_expires_in: Mutex::new(3600),
     });
     let app = Router::new()
         .route(
@@ -131,6 +160,7 @@ pub async fn start_idp() -> MockIdp {
         )
         .route("/keys", get(jwks))
         .route("/token", post(token))
+        .route(&format!("/{TENANT}/oauth2/v2.0/token"), post(token))
         .with_state(state.clone());
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -173,7 +203,12 @@ async fn token(
     State(s): State<Arc<IdpState>>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
-    *s.last_token_form.lock().unwrap() = Some(form);
+    *s.last_token_form.lock().unwrap() = Some(form.clone());
+    s.token_requests.lock().unwrap().push(form.clone());
+    let grant = field(&form, "grant_type").unwrap_or_default().to_owned();
+    if grant == OBO_GRANT || grant == "refresh_token" {
+        return other_grant(&s, &form, &grant);
+    }
     let behaviour = s.behaviour.lock().unwrap().clone();
     if let TokenBehaviour::Error(code) = behaviour {
         return json_response(
@@ -224,4 +259,45 @@ async fn token(
             "id_token": id_token.to_string(),
         }),
     )
+}
+
+/// On-behalf-of and refresh grants. Tokens encode what they were issued for,
+/// so tests can see which token reached the mock Azure API.
+fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response {
+    if field(form, "client_secret") != Some(CLIENT_SECRET) {
+        return json_response(
+            StatusCode::UNAUTHORIZED,
+            json!({ "error": "invalid_client" }),
+        );
+    }
+    if let Some((error, code)) = *s.grant_error.lock().unwrap() {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": error, "error_codes": [code], "error_description": "test" }),
+        );
+    }
+    let expires_in = *s.grant_expires_in.lock().unwrap();
+    let n = s.token_requests.lock().unwrap().len();
+    if grant == OBO_GRANT {
+        let scope = field(form, "scope").unwrap_or_default();
+        let assertion = field(form, "assertion").unwrap_or_default();
+        json_response(
+            StatusCode::OK,
+            json!({
+                "access_token": format!("obo:{scope}:for:{assertion}:{n}"),
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+            }),
+        )
+    } else {
+        json_response(
+            StatusCode::OK,
+            json!({
+                "access_token": format!("refreshed-user-token-{n}"),
+                "refresh_token": format!("rotated-refresh-{n}"),
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+            }),
+        )
+    }
 }

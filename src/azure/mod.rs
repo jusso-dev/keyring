@@ -1,2 +1,7 @@
 //! Calls to Azure, always made as the signed-in user via on-behalf-of.
-//! Filled in by the token exchange work.
+
+pub mod client;
+pub mod token;
+
+pub use client::{AzureClient, AzureError};
+pub use token::{AccessToken, Resource, TokenBroker, TokenError};
