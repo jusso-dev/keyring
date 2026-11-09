@@ -100,9 +100,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Check the image
+        run: |
+          # Non-root, numeric user.
+          test "$(docker inspect keyring:ci --format '{{.Config.User}}')" = "65532:65532"
+          # No shell in the runtime image.
+          if docker run --rm --entrypoint /bin/sh keyring:ci -c true 2>/dev/null; then
+            echo "runtime image has a shell" >&2; exit 1
+          fi
+          # Size, for the README (target under 30 MB).
+          size=$(docker image inspect keyring:ci --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MB"
+          test "$size" -lt $((30 * 1024 * 1024))
+
       - name: Smoke test the image
         run: |
-          docker run -d --name keyring --read-only --cap-drop ALL -p 3000:3000 \
+          docker run -d --name keyring --read-only --cap-drop ALL --security-opt no-new-privileges -p 3000:3000 \
             -e ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
             -e ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
             -e ENTRA_CLIENT_SECRET=ci-placeholder \
@@ -110,7 +123,13 @@ jobs:
             -e SESSION_SECRET=ci-placeholder-ci-placeholder-ci-placeholder \
             keyring:ci
           for i in $(seq 1 20); do
-            if curl -fsS http://localhost:3000/healthz; then exit 0; fi
+            if curl -fsS http://localhost:3000/healthz; then
+              # Health needs no sign-in and says nothing else.
+              test "$(curl -fsS http://localhost:3000/healthz)" = "ok"
+              # Other pages do need sign-in.
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/)" = "303"
+              exit 0
+            fi
             sleep 1
           done
           docker logs keyring

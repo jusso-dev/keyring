@@ -152,8 +152,10 @@ cargo run
 
 ```sh
 docker build -t keyring .
-docker run --rm -p 3000:3000 --env-file .env --read-only --cap-drop ALL keyring
+docker run --rm -p 3000:3000 --env-file .env --read-only --cap-drop ALL --security-opt no-new-privileges keyring
 ```
+
+The image is about 15 MB: a static binary on `gcr.io/distroless/static` with CA certificates and nothing else. It has no shell or package manager, runs as UID 65532, and needs no writable filesystem or Linux capabilities. Templates, CSS and JavaScript are compiled into the binary. `/healthz` answers `ok` without sign-in for health probes.
 
 Then open http://localhost:3000 and sign in.
 
