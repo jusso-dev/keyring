@@ -36,7 +36,7 @@
 
 {% if !skipped.is_empty() %}
 <div class="notice notice-warn" role="status">
-  <p><strong>{{ skipped.len() }} vault{% if skipped.len() != 1 %}s{% endif %} couldn't be read</strong>, so {% if skipped.len() == 1 %}it isn't{% else %}they aren't{% endif %} included:</p>
+  <p><strong>Some of what you can see couldn't be read</strong>, so it isn't included:</p>
   <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
 </div>
 {% endif %}

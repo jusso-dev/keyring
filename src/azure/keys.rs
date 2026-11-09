@@ -16,7 +16,6 @@ use crate::azure::{AzureClient, AzureError, Resource};
 
 pub const API_VERSION: &str = "7.5";
 const MAX_RESULTS: u32 = 25;
-const MAX_PAGES: usize = 1000;
 
 /// Public key in JWK form. Private fields (`d`, `p`, `q`, `dp`, `dq`,
 /// `qi`, `k`) are deliberately not here, so even if Key Vault sent them
@@ -373,15 +372,6 @@ pub fn iso_days(s: &str) -> Option<u32> {
     num.is_empty().then_some(total)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Page<T> {
-    #[serde(default = "Vec::new")]
-    value: Vec<T>,
-    #[serde(default)]
-    next_link: Option<String>,
-}
-
 /// Body for creating a key.
 #[derive(Debug, Serialize)]
 pub struct CreateKey {
@@ -411,19 +401,7 @@ impl KeysApi<'_> {
         &self,
         first: String,
     ) -> Result<Vec<T>, AzureError> {
-        let mut out = Vec::new();
-        let mut next = Some(first);
-        let prefix = format!("{}/", self.vault_url);
-        for _ in 0..MAX_PAGES {
-            let Some(url) = next.take() else { break };
-            let page: Page<T> = self
-                .azure
-                .get_json(self.session, Resource::KeyVault, &url)
-                .await?;
-            out.extend(page.value);
-            next = page.next_link.filter(|l| l.starts_with(&prefix));
-        }
-        Ok(out)
+        crate::azure::paging::collect(self.azure, self.session, &self.vault_url, first).await
     }
 
     pub async fn list(&self) -> Result<Vec<KeyItem>, AzureError> {

@@ -73,6 +73,45 @@ struct ErrorEnvelope {
 struct ErrorBody {
     code: Option<String>,
     message: Option<String>,
+    #[serde(default, rename = "innererror")]
+    inner: Option<Box<InnerError>>,
+}
+
+/// Key Vault puts the useful reason inside: the outer code is just
+/// `Forbidden`, the inner one `ForbiddenByFirewall`, `ForbiddenByRbac`,
+/// `SecretDisabled` and so on. Inner errors can nest.
+#[derive(Deserialize)]
+struct InnerError {
+    code: Option<String>,
+    #[serde(default, rename = "innererror")]
+    inner: Option<Box<InnerError>>,
+}
+
+impl ErrorBody {
+    /// The most specific code: the deepest inner one, else the outer.
+    fn best_code(&self) -> Option<String> {
+        let mut best = self.code.clone();
+        let mut cur = self.inner.as_deref();
+        let mut depth = 0;
+        while let Some(i) = cur {
+            if i.code.is_some() {
+                best = i.code.clone();
+            }
+            cur = i.inner.as_deref();
+            depth += 1;
+            if depth > 8 {
+                break;
+            }
+        }
+        best
+    }
+}
+
+/// The error code and message from an Azure error body, if it has one.
+pub fn error_code(body: &[u8]) -> (Option<String>, Option<String>) {
+    serde_json::from_slice::<ErrorEnvelope>(body)
+        .map(|e| (e.error.best_code(), e.error.message))
+        .unwrap_or((None, None))
 }
 
 #[derive(Clone)]
@@ -152,7 +191,11 @@ impl AzureClient {
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && throttled < MAX_THROTTLE_RETRIES
             {
                 throttled += 1;
-                let wait = retry_after(res.headers().get(reqwest::header::RETRY_AFTER), throttled);
+                let wait = retry_after(res.headers().get(reqwest::header::RETRY_AFTER), throttled)
+                    .max(quota_resets_after(
+                        res.headers().get("x-ms-user-quota-resets-after"),
+                    ))
+                    .min(MAX_RETRY_WAIT);
                 tracing::info!(resource = ?resource, wait_ms = wait.as_millis() as u64, "Azure throttled, waiting");
                 tokio::time::sleep(wait).await;
                 continue;
@@ -161,9 +204,7 @@ impl AzureClient {
             if status.is_success() {
                 return Ok(bytes);
             }
-            let (code, message) = serde_json::from_slice::<ErrorEnvelope>(&bytes)
-                .map(|e| (e.error.code, e.error.message))
-                .unwrap_or((None, None));
+            let (code, message) = error_code(&bytes);
             // Log the status and code only. Messages can name items.
             tracing::info!(status = status.as_u16(), code = ?code, resource = ?resource, "Azure call failed");
             return Err(AzureError::Status {
@@ -194,9 +235,54 @@ pub fn retry_after(
     asked.unwrap_or(fallback).min(MAX_RETRY_WAIT)
 }
 
+/// Resource Graph says when its quota resets as `hh:mm:ss`, instead of
+/// `Retry-After`. Zero if missing or unreadable.
+pub fn quota_resets_after(header: Option<&reqwest::header::HeaderValue>) -> std::time::Duration {
+    let secs = header
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            let mut parts = v.trim().split(':').map(|p| p.parse::<u64>().ok());
+            let (h, m, s) = (parts.next()??, parts.next()??, parts.next()??);
+            parts.next().is_none().then_some(h * 3600 + m * 60 + s)
+        })
+        .unwrap_or(0);
+    std::time::Duration::from_secs(secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_graph_quota_header() {
+        let h = reqwest::header::HeaderValue::from_static("00:00:03");
+        assert_eq!(
+            quota_resets_after(Some(&h)),
+            std::time::Duration::from_secs(3)
+        );
+        let h = reqwest::header::HeaderValue::from_static("01:02:03");
+        assert_eq!(
+            quota_resets_after(Some(&h)),
+            std::time::Duration::from_secs(3723)
+        );
+        let bad = reqwest::header::HeaderValue::from_static("soon");
+        assert_eq!(quota_resets_after(Some(&bad)), std::time::Duration::ZERO);
+        assert_eq!(quota_resets_after(None), std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn inner_error_codes_win() {
+        let firewall = br#"{"error":{"code":"Forbidden","message":"m","innererror":{"code":"ForbiddenByFirewall"}}}"#;
+        assert_eq!(
+            error_code(firewall).0.as_deref(),
+            Some("ForbiddenByFirewall")
+        );
+        let nested = br#"{"error":{"code":"Forbidden","innererror":{"code":"ForbiddenByPolicy","innererror":{"code":"SecretDisabled"}}}}"#;
+        assert_eq!(error_code(nested).0.as_deref(), Some("SecretDisabled"));
+        let plain = br#"{"error":{"code":"SecretNotFound","message":"m"}}"#;
+        assert_eq!(error_code(plain).0.as_deref(), Some("SecretNotFound"));
+        assert_eq!(error_code(b"not json"), (None, None));
+    }
 
     #[test]
     fn retry_after_rules() {

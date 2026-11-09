@@ -72,6 +72,9 @@ pub struct Session {
     /// Vault picked in the header. Lives only as long as the session.
     selected_vault: Mutex<Option<String>>,
     selected_vault_id: Mutex<Option<String>>,
+    /// A conditional access challenge from a failed on-behalf-of exchange,
+    /// sent with the next sign-in so Entra asks for what's missing.
+    claims_challenge: Mutex<Option<String>>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
     tokens: Mutex<UserTokens>,
@@ -95,6 +98,19 @@ impl Session {
     /// The chosen vault's ARM resource ID, if known.
     pub fn selected_vault_id(&self) -> Option<String> {
         lock(&self.selected_vault_id).clone()
+    }
+
+    /// Remember a claims challenge. Only JSON objects up to 4 KB are kept.
+    pub fn set_claims_challenge(&self, claims: &str) {
+        let ok = claims.len() <= 4096
+            && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(claims).is_ok();
+        if ok {
+            *lock(&self.claims_challenge) = Some(claims.to_owned());
+        }
+    }
+
+    pub fn claims_challenge(&self) -> Option<String> {
+        lock(&self.claims_challenge).clone()
     }
 
     pub fn set_selected_vault_id(&self, id: String) {
@@ -157,6 +173,7 @@ impl SessionStore {
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
+            claims_challenge: Mutex::new(None),
             pending_upload: Mutex::new(None),
             tokens: Mutex::new(tokens),
             created: now,

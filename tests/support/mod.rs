@@ -275,10 +275,13 @@ fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response
         );
     }
     if let Some((error, code)) = *s.grant_error.lock().unwrap() {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({ "error": error, "error_codes": [code], "error_description": "test" }),
-        );
+        let mut body =
+            json!({ "error": error, "error_codes": [code], "error_description": "test" });
+        if error == "interaction_required" {
+            body["claims"] =
+                json!(r#"{"access_token":{"capolids":{"essential":true,"values":["policy-1"]}}}"#);
+        }
+        return json_response(StatusCode::BAD_REQUEST, body);
     }
     let expires_in = *s.grant_expires_in.lock().unwrap();
     let n = s.token_requests.lock().unwrap().len();

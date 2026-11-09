@@ -206,7 +206,12 @@ impl Problem {
         let code = code.unwrap_or_default();
         match status {
             401 => Self::from_token(&TokenError::SignInAgain),
-            403 if code.starts_with("ForbiddenBy") => Self::new(
+            403 if code == "SecretDisabled" || code == "KeyDisabled" || code == "CertificateDisabled" => Self::new(
+                StatusCode::FORBIDDEN,
+                "This item is disabled",
+                "Key Vault won't hand out a disabled item. Enable it first, then try again.",
+            ),
+            403 if code == "ForbiddenByFirewall" || code == "ForbiddenByConnection" => Self::new(
                 StatusCode::FORBIDDEN,
                 "This vault is blocked from here",
                 "The vault only accepts connections from certain networks, and Keyring isn't on one of them.",

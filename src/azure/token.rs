@@ -155,6 +155,9 @@ struct TokenFailure {
     error_codes: Vec<u64>,
     #[serde(default)]
     suberror: Option<String>,
+    /// A conditional access challenge (JSON) to pass to the next sign-in.
+    #[serde(default)]
+    claims: Option<String>,
 }
 
 /// Entra error codes that mean an admin must consent.
@@ -215,7 +218,7 @@ impl TokenBroker {
             return Ok(t);
         }
         let user = self.fresh_user_token(session, now).await?;
-        let token = self.exchange(&user.access_token, resource).await?;
+        let token = self.exchange(session, &user.access_token, resource).await?;
         session.azure_tokens.put(resource, token.clone());
         Ok(token)
     }
@@ -244,7 +247,7 @@ impl TokenBroker {
             ("refresh_token", refresh.expose()),
             ("scope", scope.as_str()),
         ];
-        let ok = self.post(&form).await?;
+        let ok = self.post(Some(session), &form).await?;
         let refreshed = UserTokens {
             access_token: Secret::new(ok.access_token),
             expires_at: SystemTime::now() + Duration::from_secs(ok.expires_in.unwrap_or(300)),
@@ -258,6 +261,7 @@ impl TokenBroker {
 
     async fn exchange(
         &self,
+        session: &Session,
         user_token: &Secret,
         resource: Resource,
     ) -> Result<AccessToken, TokenError> {
@@ -269,7 +273,7 @@ impl TokenBroker {
             ("scope", resource.scope()),
             ("requested_token_use", "on_behalf_of"),
         ];
-        let ok = self.post(&form).await?;
+        let ok = self.post(Some(session), &form).await?;
         tracing::debug!(resource = ?resource, "exchanged token on behalf of user");
         Ok(AccessToken::new(
             ok.access_token,
@@ -277,7 +281,11 @@ impl TokenBroker {
         ))
     }
 
-    async fn post(&self, form: &[(&str, &str)]) -> Result<TokenSuccess, TokenError> {
+    async fn post(
+        &self,
+        session: Option<&Session>,
+        form: &[(&str, &str)],
+    ) -> Result<TokenSuccess, TokenError> {
         let res = self
             .http
             .post(&self.token_url)
@@ -293,6 +301,9 @@ impl TokenBroker {
         }
         match serde_json::from_slice::<TokenFailure>(&body) {
             Ok(f) => {
+                if let (Some(c), Some(session)) = (f.claims.as_deref(), session) {
+                    session.set_claims_challenge(c);
+                }
                 // Only codes are logged. Descriptions can be long and aren't needed.
                 tracing::warn!(
                     error = ?f.error,
@@ -334,6 +345,7 @@ mod tests {
             error: error.into(),
             error_codes: codes.to_vec(),
             suberror: None,
+            claims: None,
         }
     }
 

@@ -67,9 +67,18 @@ pub struct StartQuery {
 
 /// Send the browser to Entra ID, keeping state, nonce and the PKCE verifier
 /// in a short-lived encrypted cookie.
-pub async fn start(State(state): State<AppState>, Query(q): Query<StartQuery>) -> Response {
+pub async fn start(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<StartQuery>,
+) -> Response {
     let return_to = return_to::sanitise(q.return_to.as_deref());
-    match state.oidc.begin(return_to.clone()).await {
+    // A claims challenge from this browser's current session, if any. It
+    // comes from Entra, never from the request.
+    let claims = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
+        .and_then(|id| state.sessions.get(id))
+        .and_then(|s| s.claims_challenge());
+    match state.oidc.begin(return_to.clone(), claims).await {
         Ok((url, pending)) => {
             let name = state.cookies.name(LOGIN_COOKIE);
             let json = serde_json::to_vec(&pending).expect("pending login serialises");
