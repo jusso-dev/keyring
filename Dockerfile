@@ -1,6 +1,18 @@
 # syntax=docker/dockerfile:1
+#
+# Keyring container image.
+#
+# Build stage: static musl binary from the pinned Rust toolchain, with
+# Cargo.lock enforced. Templates (Askama) and static files are compiled
+# into the binary, so nothing else is copied across.
+#
+# Runtime stage: distroless static (nonroot). No shell, no package
+# manager, CA certificates included for TLS to Entra ID and Azure.
+# Runs as UID 65532 and works with a read-only root filesystem and no
+# Linux capabilities.
+#
+# Both base images are pinned by digest. Dependabot proposes updates.
 
-# Build a static musl binary.
 FROM rust:1.99.1-alpine3.22@sha256:9a744dc47d1ac2a7d17fc3cedfc8b4928b1696dfcba3274ab25bfb40988a9ff0 AS build
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
@@ -12,9 +24,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked \
  && cp target/release/keyring /keyring
 
-# Runtime: distroless static, no shell, non-root.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-COPY --from=build /keyring /keyring
-USER nonroot:nonroot
+LABEL org.opencontainers.image.title="Keyring" \
+      org.opencontainers.image.description="A plain-English web front end for Azure Key Vault that acts as the signed-in user" \
+      org.opencontainers.image.source="https://github.com/yumaitau/keyring" \
+      org.opencontainers.image.licenses="MIT"
+COPY --from=build --chmod=0555 /keyring /keyring
+# 65532 is distroless's nonroot user. Numeric so Kubernetes' runAsNonRoot
+# check can verify it.
+USER 65532:65532
 EXPOSE 3000
 ENTRYPOINT ["/keyring"]
