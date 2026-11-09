@@ -1,0 +1,53 @@
+# cargo-deny policy. See docs/architecture.md, "Dependency policy".
+
+[graph]
+all-features = false
+
+[advisories]
+# Every RUSTSEC advisory fails the build, including unmaintained and yanked
+# crates. To accept one, add its ID to `ignore` with a reason and an issue link.
+version = 2
+yanked = "deny"
+unmaintained = "all"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive licences only. No copyleft.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+]
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = false
+highlight = "all"
+# Crates we never want. TLS goes through rustls, not OpenSSL.
+deny = [
+    { crate = "openssl", reason = "use rustls" },
+    { crate = "openssl-sys", reason = "use rustls" },
+    { crate = "native-tls", reason = "use rustls" },
+]
+
+[sources]
+# crates.io only. Git or other registries need a reviewed exception here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
