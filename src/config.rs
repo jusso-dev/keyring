@@ -27,6 +27,8 @@ pub struct Config {
     pub log_level: String,
     /// Azure Resource Manager base URL. Only changed by tests.
     pub management_url: String,
+    /// Log Analytics query API base URL. Only changed by tests.
+    pub loganalytics_url: String,
     /// Replaces `https://<vault>.vault.azure.net` with `<base>/<vault>`.
     /// Only set by tests, to point at a mock Key Vault.
     pub keyvault_test_base: Option<String>,
@@ -139,11 +141,17 @@ impl Config {
             "KEYRING_TEST_MANAGEMENT_URL",
             &get("KEYRING_TEST_MANAGEMENT_URL").unwrap_or_else(|| DEFAULT_MANAGEMENT_URL.into()),
         )?;
+        let loganalytics_url = checked_url(
+            "KEYRING_TEST_LOGANALYTICS_URL",
+            &get("KEYRING_TEST_LOGANALYTICS_URL")
+                .unwrap_or_else(|| DEFAULT_LOGANALYTICS_URL.into()),
+        )?;
         let keyvault_test_base = get("KEYRING_TEST_KEYVAULT_URL")
             .map(|v| checked_url("KEYRING_TEST_KEYVAULT_URL", &v))
             .transpose()?;
 
         Ok(Self {
+            loganalytics_url,
             management_url,
             keyvault_test_base,
             tenant_id,
@@ -169,6 +177,7 @@ impl Config {
     pub fn outbound_https_only(&self) -> bool {
         self.authority_host.starts_with("https://")
             && self.management_url.starts_with("https://")
+            && self.loganalytics_url.starts_with("https://")
             && self
                 .keyvault_test_base
                 .as_deref()
@@ -199,6 +208,9 @@ impl Config {
         format!("{}/auth/signed-out", self.base_url)
     }
 }
+
+/// Default Log Analytics query endpoint.
+pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
 
 /// Default Azure Resource Manager endpoint.
 pub const DEFAULT_MANAGEMENT_URL: &str = "https://management.azure.com";

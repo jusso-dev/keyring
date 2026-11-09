@@ -1,6 +1,7 @@
 //! HTTP routes.
 
 pub mod assets;
+mod audit;
 mod auth;
 mod certs;
 pub mod confirm;
@@ -14,7 +15,6 @@ mod home;
 mod keys;
 pub mod lifecycle;
 mod secrets;
-mod sections;
 pub mod shell;
 pub mod vault_ctx;
 mod vaults;
@@ -135,7 +135,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
         .route("/generator", get(generator::page).post(generator::generate))
-        .route("/audit", get(sections::audit))
+        .route("/audit", get(audit::page))
+        .route("/audit.csv", get(audit::csv))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,

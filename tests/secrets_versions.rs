@@ -147,4 +147,5 @@ async fn detail_links_to_history() {
     w.kv.state.put("db-password", "a");
     let (_, html) = w.page("/secrets/db-password").await;
     assert!(html.contains("href=\"/secrets/db-password/versions\""));
+    assert!(html.contains("href=\"/audit?item=db-password&amp;range=30d\""));
 }

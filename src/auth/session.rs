@@ -71,6 +71,7 @@ pub struct Session {
     pub azure_tokens: TokenCache,
     /// Vault picked in the header. Lives only as long as the session.
     selected_vault: Mutex<Option<String>>,
+    selected_vault_id: Mutex<Option<String>>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
     tokens: Mutex<UserTokens>,
@@ -91,6 +92,15 @@ impl Session {
         lock(&self.selected_vault).clone()
     }
 
+    /// The chosen vault's ARM resource ID, if known.
+    pub fn selected_vault_id(&self) -> Option<String> {
+        lock(&self.selected_vault_id).clone()
+    }
+
+    pub fn set_selected_vault_id(&self, id: String) {
+        *lock(&self.selected_vault_id) = Some(id);
+    }
+
     /// Keep an uploaded certificate until the person confirms it.
     pub fn set_pending_upload(&self, upload: PendingUpload) {
         *lock(&self.pending_upload) = Some(upload);
@@ -108,6 +118,7 @@ impl Session {
     /// Remember the chosen vault. The caller checks the name is valid.
     pub fn select_vault(&self, name: String) {
         *lock(&self.selected_vault) = Some(name);
+        *lock(&self.selected_vault_id) = None;
     }
 
     fn expired_at(&self, now: Instant) -> bool {
@@ -145,6 +156,7 @@ impl SessionStore {
             csrf: random_token(32),
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
+            selected_vault_id: Mutex::new(None),
             pending_upload: Mutex::new(None),
             tokens: Mutex::new(tokens),
             created: now,
