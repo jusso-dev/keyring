@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Audit for {{ vault }} - Keyring{% endblock %}
+{% block content %}
+{% if !filter.item.is_empty() %}
+<h1>Who used <span class="mono">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
+<p><a href="/audit">See all events for {{ vault }}</a></p>
+{% else %}
+<h1>Audit <span class="muted">for {{ vault }}</span></h1>
+{% endif %}
+<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events.</p>
+
+{% if let Some(e) = error %}<p class="notice notice-error" role="alert">{{ e }}</p>{% endif %}
+
+<form class="filters" method="get" action="/audit" role="search">
+  <div>
+    <label for="range">When</label>
+    <select id="range" name="range">
+      {% for r in ranges %}<option value="{{ r.slug() }}"{% if *r == range %} selected{% endif %}>{{ r.label() }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="item">Item name</label>
+    <input id="item" name="item" type="text" value="{{ filter.item }}" autocomplete="off" spellcheck="false">
+  </div>
+  <div>
+    <label for="operation">Action</label>
+    <select id="operation" name="operation">
+      <option value="">Any action</option>
+      {% for (op, label) in operations %}<option value="{{ op }}"{% if filter.operation == *op %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="person">Person</label>
+    <input id="person" name="person" type="text" value="{{ filter.person }}" placeholder="name@example.com" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+    {% if unavailable.is_none() && error.is_none() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+  </div>
+</form>
+
+{% if is_no_logging() %}
+<div class="empty-state">
+  <p><strong>This vault isn't sending its audit logs anywhere Keyring can read.</strong></p>
+  <p>Key Vault only keeps a record of who did what if a diagnostic setting sends its AuditEvent logs to a Log Analytics workspace.</p>
+  <p class="hint"><strong>What to ask for:</strong> ask your admin to add a diagnostic setting on {{ vault }} that sends the "audit" log category to a Log Analytics workspace. Events show up here a few minutes later.</p>
+</div>
+{% elif is_no_settings_access() %}
+<div class="empty-state">
+  <p><strong>You can't see where this vault sends its logs.</strong></p>
+  <p class="hint"><strong>What to ask for:</strong> the Reader role on the vault (or its resource group), so Keyring can find its diagnostic settings.</p>
+</div>
+{% elif is_no_workspace_access() %}
+<div class="empty-state">
+  <p><strong>This vault's logs go to a Log Analytics workspace you can't read.</strong></p>
+  <p class="hint"><strong>What to ask for:</strong> the Log Analytics Reader role on the workspace the vault's diagnostic setting uses.</p>
+</div>
+{% elif rows.is_empty() && error.is_none() %}
+<div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
+{% elif !rows.is_empty() %}
+{% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
+<div class="table-wrap">
+<table>
+  <caption class="visually-hidden">Audit events for {{ vault }}</caption>
+  <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="small">{{ r.time }}</td>
+      <td>{{ r.who }}</td>
+      <th scope="row" title="{{ r.operation }}">{{ r.what }}</th>
+      <td class="mono">{{ r.item }}</td>
+      <td>{% if r.ok %}Allowed{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
+      <td class="mono small">{{ r.client_ip }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

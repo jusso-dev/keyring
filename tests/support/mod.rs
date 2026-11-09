@@ -344,6 +344,15 @@ pub struct ArmState {
     pub requests: Mutex<Vec<serde_json::Value>>,
     /// Bearer tokens received.
     pub bearers: Mutex<Vec<String>>,
+    /// Diagnostic settings returned for any vault. `None` means 403.
+    pub diagnostics: Mutex<Option<serde_json::Value>>,
+    /// Log Analytics rows returned: (time, who, operation, item, result, ip).
+    pub audit_rows: Mutex<Vec<[String; 6]>>,
+    /// Make Log Analytics answer 403.
+    pub audit_forbidden: Mutex<bool>,
+    /// KQL queries received.
+    pub audit_queries: Mutex<Vec<String>>,
+    pub audit_bearers: Mutex<Vec<String>>,
 }
 
 impl MockArm {
@@ -374,12 +383,18 @@ pub async fn start_arm() -> MockArm {
         fail: Mutex::new(None),
         requests: Mutex::new(Vec::new()),
         bearers: Mutex::new(Vec::new()),
+        diagnostics: Mutex::new(Some(json!({"value": []}))),
+        audit_rows: Mutex::new(Vec::new()),
+        audit_forbidden: Mutex::new(false),
+        audit_queries: Mutex::new(Vec::new()),
+        audit_bearers: Mutex::new(Vec::new()),
     });
     let app = Router::new()
         .route(
             "/providers/Microsoft.ResourceGraph/resources",
             post(resource_graph),
         )
+        .fallback(arm_fallback)
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -431,6 +446,77 @@ async fn resource_graph(
     json_response(StatusCode::OK, out)
 }
 
+/// Diagnostic settings (GET .../providers/Microsoft.Insights/diagnosticSettings)
+/// and the Log Analytics query API (POST /v1/<workspace id>/query) share this
+/// mock server.
+async fn arm_fallback(
+    State(s): State<Arc<ArmState>>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    let path = uri.path().to_owned();
+    let bearer = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    if method == axum::http::Method::GET
+        && path.ends_with("/providers/Microsoft.Insights/diagnosticSettings")
+    {
+        s.bearers.lock().unwrap().push(bearer);
+        return match s.diagnostics.lock().unwrap().clone() {
+            Some(v) => json_response(StatusCode::OK, v),
+            None => json_response(
+                StatusCode::FORBIDDEN,
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ),
+        };
+    }
+    if method == axum::http::Method::POST && path.starts_with("/v1/") && path.ends_with("/query") {
+        s.audit_bearers.lock().unwrap().push(bearer);
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        s.audit_queries
+            .lock()
+            .unwrap()
+            .push(body["query"].as_str().unwrap_or_default().to_owned());
+        if *s.audit_forbidden.lock().unwrap() {
+            return json_response(
+                StatusCode::FORBIDDEN,
+                json!({"error": {"code": "InsufficientAccessError", "message": "x"}}),
+            );
+        }
+        let rows: Vec<serde_json::Value> = s
+            .audit_rows
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| json!(r))
+            .collect();
+        return json_response(
+            StatusCode::OK,
+            json!({"tables": [{"name": "PrimaryResult", "columns": [
+                {"name": "TimeGenerated", "type": "datetime"}, {"name": "Who", "type": "string"},
+                {"name": "OperationName", "type": "string"}, {"name": "Item", "type": "string"},
+                {"name": "ResultSignature", "type": "string"}, {"name": "CallerIpAddress", "type": "string"}
+            ], "rows": rows}]}),
+        );
+    }
+    json_response(
+        StatusCode::NOT_FOUND,
+        json!({"error": {"code": "NotFound", "message": "x"}}),
+    )
+}
+
+pub fn audit_settings(dedicated: bool) -> serde_json::Value {
+    json!({"value": [{"properties": {
+        "workspaceId": "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/logs",
+        "logAnalyticsDestinationType": if dedicated { json!("Dedicated") } else { json!(null) },
+        "logs": [{"categoryGroup": "audit", "enabled": true}]
+    }}]})
+}
+
 /// Config pointing sign-in at `idp` and ARM at `arm`.
 pub fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
     let authority = idp.authority();
@@ -474,6 +560,7 @@ pub async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
             ("ENTRA_AUTHORITY_HOST", idp.authority()),
             ("KEYRING_TEST_MANAGEMENT_URL", arm.url()),
             ("KEYRING_TEST_KEYVAULT_URL", kv.url()),
+            ("KEYRING_TEST_LOGANALYTICS_URL", arm.url()),
             ("APP_BASE_URL", "http://localhost:3000".to_owned()),
             (
                 "SESSION_SECRET",
