@@ -162,6 +162,13 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 - "Expiring soon" means within 30 days. Dates are shown in UTC.
 - Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
 
+## Certificates
+
+- The list and pages use the certificates API (7.5), which only returns the public certificate. Subject, issuer, validity, serial and other names are read from the DER with `x509-cert` (RustCrypto, pure Rust, reuses `der` and `spki` already in the tree).
+- Expiry bands: expired, within 30 days, within 90 days.
+- `.cer` (DER) and PEM downloads are the public certificate only, and need certificate read access.
+- The private key lives in the certificate's backing secret. "Download with private key" is only offered when the policy marks the key exportable. It shows a warning and needs the name typed, then reads the backing secret (so it also needs secret read access) and sends it with `no-store`. The backing secret URL from Key Vault is only used if it points at the same vault and name. Each download logs at `warn` with subject, vault and name.
+
 ## Audit
 
 The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVAuditLogs` resource-specific table) from the Log Analytics workspace linked to each vault, again as the signed-in user. If the user can't read the workspace, the page says so.

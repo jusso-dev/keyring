@@ -2,6 +2,7 @@
 
 pub mod assets;
 mod auth;
+mod certs;
 pub mod confirm;
 pub mod error;
 pub mod flash;
@@ -11,6 +12,7 @@ mod home;
 mod secrets;
 mod sections;
 pub mod shell;
+pub mod vault_ctx;
 mod vaults;
 
 use axum::Router;
@@ -66,7 +68,13 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(secrets::versions::confirm).post(secrets::versions::rollback),
         )
         .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
-        .route("/certificates", get(sections::certificates))
+        .route("/certificates", get(certs::list))
+        .route("/certificates/{name}", get(certs::detail))
+        .route("/certificates/{name}/cer", get(certs::download::cer))
+        .route(
+            "/certificates/{name}/download-key",
+            get(certs::download::pfx_form).post(certs::download::pfx),
+        )
         .route("/keys", get(sections::keys))
         .route("/expiry", get(sections::expiry))
         .route("/generator", get(sections::generator))

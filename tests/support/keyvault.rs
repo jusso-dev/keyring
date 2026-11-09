@@ -53,6 +53,10 @@ pub struct KvState {
     pub fail: Mutex<Option<(u16, &'static str)>>,
     /// If set, only requests with this method fail.
     pub fail_method: Mutex<Option<Method>>,
+    pub certs: Mutex<BTreeMap<String, super::certs::StoredCert>>,
+    pub deleted_certs: Mutex<BTreeMap<String, super::certs::DeletedCert>>,
+    pub imports: Mutex<Vec<super::certs::ImportRecord>>,
+    pub creates: Mutex<Vec<super::certs::ImportRecord>>,
     seq: Mutex<i64>,
 }
 
@@ -120,6 +124,57 @@ impl KvState {
             .unwrap_or(0)
     }
 
+    /// Add a certificate version. Returns the version ID.
+    pub fn add_cert_version(
+        &self,
+        name: &str,
+        der: Option<Vec<u8>>,
+        policy: serde_json::Value,
+        edit: impl FnOnce(&mut super::certs::CertVersion),
+    ) -> String {
+        let version = self.new_version();
+        let t = self.tick();
+        let mut v = super::certs::CertVersion {
+            version: version.clone(),
+            der,
+            enabled: true,
+            created: t,
+            exp: Some(t + 365 * 86_400),
+            nbf: Some(t),
+            tags: BTreeMap::new(),
+        };
+        edit(&mut v);
+        let mut certs = self.certs.lock().unwrap();
+        let c = certs
+            .entry(name.into())
+            .or_insert_with(|| super::certs::StoredCert {
+                versions: Vec::new(),
+                policy: policy.clone(),
+                pending: None,
+            });
+        c.policy = policy;
+        c.pending = None;
+        c.versions.push(v);
+        version
+    }
+
+    /// Add a certificate with the test cert and a backing secret holding
+    /// `secret_value` (what a .pfx download returns).
+    pub fn add_cert(&self, name: &str, exportable: bool, secret_value: &str) -> String {
+        let der = super::pem_first_cert(super::TEST_CERT_PEM);
+        let v = self.add_cert_version(
+            name,
+            der,
+            super::certs::default_policy(exportable, false),
+            |_| {},
+        );
+        self.put_with(name, secret_value, |sv| {
+            sv.content_type = Some("application/x-pkcs12".into());
+            sv.version = v.clone();
+        });
+        v
+    }
+
     /// Move a secret to the deleted list, as `DELETE` would.
     pub fn soft_delete(&self, name: &str) {
         let sec = self.secrets.lock().unwrap().remove(name).unwrap();
@@ -181,6 +236,7 @@ pub async fn start() -> MockKeyVault {
             get(get_deleted).delete(purge),
         )
         .route("/{vault}/deletedsecrets/{name}/recover", post(recover))
+        .merge(super::certs::router(state.clone()))
         .layer(axum::middleware::from_fn_with_state(state.clone(), record))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
