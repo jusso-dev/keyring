@@ -14,6 +14,7 @@ mod health;
 mod home;
 mod keys;
 pub mod lifecycle;
+mod origin;
 mod secrets;
 pub mod shell;
 pub mod vault_ctx;
@@ -27,6 +28,10 @@ use axum::routing::{get, post};
 use crate::AppState;
 use crate::routes::error::{PageError, Problem};
 use crate::routes::shell::Shell;
+
+/// Largest request body for ordinary forms. Secret values are capped at
+/// 25 KB, so this leaves room for the rest of the form.
+pub const MAX_FORM_BYTES: usize = 64 * 1024;
 
 pub fn router(state: AppState) -> Router<AppState> {
     // Everything here needs a signed-in session. New pages go in this list.
@@ -155,6 +160,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(public)
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(state.clone(), flash::layer))
+        .layer(middleware::from_fn_with_state(state.clone(), origin::layer))
+        // Small forms only by default. The certificate upload route sets
+        // its own larger limit.
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_FORM_BYTES))
         .layer(middleware::from_fn_with_state(state, headers::layer))
 }
 

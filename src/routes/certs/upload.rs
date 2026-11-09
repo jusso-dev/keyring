@@ -354,7 +354,9 @@ pub async fn preview(
 
 #[derive(Deserialize)]
 pub struct ConfirmForm {
+    #[serde(default)]
     csrf: String,
+    #[serde(default)]
     upload_id: String,
 }
 

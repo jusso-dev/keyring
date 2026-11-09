@@ -39,6 +39,7 @@ pub const KEY_CHOICES: [(&str, &str); 5] = [
 
 #[derive(Deserialize, Default, Clone)]
 pub struct CreateForm {
+    #[serde(default)]
     pub csrf: String,
     #[serde(default)]
     pub name: String,

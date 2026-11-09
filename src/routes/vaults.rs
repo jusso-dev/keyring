@@ -42,7 +42,9 @@ struct VaultList {
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
     #[serde(flatten)]
+    #[serde(default)]
     filter: VaultFilter,
+    #[serde(default)]
     page: Option<usize>,
 }
 
@@ -121,7 +123,9 @@ pub async fn list(
 
 #[derive(Deserialize)]
 pub struct SelectForm {
+    #[serde(default)]
     csrf: String,
+    #[serde(default)]
     name: String,
 }
 

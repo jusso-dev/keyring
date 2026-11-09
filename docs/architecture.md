@@ -199,3 +199,50 @@ Expiry alerts are optional. Since Keyring stores nothing and has no identity of 
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
 - `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events (`docs/alerts.md`).
 - CI runs `az bicep build` on every template and example parameter file. Nothing is deployed from this repository.
+
+## Threat model
+
+What Keyring protects, who it protects it from, and how. This is a summary for reviewers, not a guarantee.
+
+### What's worth protecting
+
+- **Secret values, private keys and certificates** in people's vaults.
+- **People's Entra tokens**: their access token for Keyring's API, refresh tokens, and the Key Vault, ARM and Log Analytics tokens exchanged from them.
+- **Keyring's own secrets**: the Entra client secret and the session secret.
+
+### Trust boundaries
+
+- **The browser** is trusted only with a random session ID in an http-only cookie. It never sees tokens.
+- **Keyring's server** holds tokens in memory for each session and passes secret values through memory on the way to the browser. It has **no access of its own** to any vault.
+- **Azure** (Entra ID, Key Vault, ARM, Log Analytics) makes every authorisation decision, as the signed-in person.
+
+### Threats and what stops them
+
+| Threat | Mitigation |
+| --- | --- |
+| Keyring used to reach vaults a person can't | Every Azure call carries the person's own OBO token. Keyring has no managed identity, service principal or app-only token with vault access. Its deployment identity can only read its own two config secrets |
+| Stolen session cookie | Random 256-bit ID, http-only, `SameSite=Lax`, `Secure` and `__Host-` prefixed over HTTPS. One hour idle and 12 hour absolute timeouts. Sign-out removes the session server-side |
+| Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route |
+| Open redirects after sign-in | Return paths must be local paths; absolute URLs, `//host`, backslashes and control characters fall back to `/` |
+| Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
+| Cross-site scripting | Askama escapes all output. CSP `default-src 'none'` with scripts and styles from this site only, no inline code, no `eval`. The one script uses no `innerHTML` (tested) |
+| Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
+| Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`. Only metadata is logged. A test captures all `tracing` output at TRACE during reveals, uploads, generation and errors and checks no value, token, password or Azure message appears |
+| Values cached by browsers or proxies | `Cache-Control: no-store` on every HTML page, reveal, download and CSV |
+| Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page, and the clipboard is cleared if it still holds the value |
+| Accidental or malicious deletes | Typed-name confirmation checked on the server. Purge is refused by the server unless `KEYRING_ALLOW_PURGE=true` |
+| Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name |
+| Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed |
+| CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
+| Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault |
+| Large or slow requests | 64 KB body limit on forms (256 KB for certificate uploads). 90 second limit per request. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
+| Supply chain | Few crates, all from crates.io, licence allow-list, `cargo deny` and `cargo audit` on every change and weekly, `Cargo.lock` and toolchain pinned, actions pinned by SHA, images pinned by digest, SBOM per build. No npm |
+| Memory safety | `unsafe` code is forbidden in the crate |
+| Container escape or tampering | Distroless static image, no shell, non-root, read-only root filesystem, no capabilities |
+
+### Known limits
+
+- **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
+- **Slow request headers.** `axum::serve` doesn't set a header read timeout, so a client sending headers very slowly holds a connection open. App Service and Container Apps front ends limit this; if you run the binary directly on the internet, put a reverse proxy in front. Tracked in #62.
+- **The session secret** only protects short-lived cookies (sign-in state, flash messages, pending uploads). Rotating it signs no one out but cancels sign-ins in progress.
+- Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
