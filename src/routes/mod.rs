@@ -69,6 +69,13 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
         .route("/certificates", get(certs::list))
+        .route(
+            "/certificates/upload",
+            get(certs::upload::form).post(certs::upload::preview).layer(
+                axum::extract::DefaultBodyLimit::max(certs::upload::MAX_BODY_BYTES),
+            ),
+        )
+        .route("/certificates/upload/confirm", post(certs::upload::confirm))
         .route("/certificates/{name}", get(certs::detail))
         .route("/certificates/{name}/cer", get(certs::download::cer))
         .route(

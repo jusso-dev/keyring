@@ -562,3 +562,54 @@ pub fn pem_first_cert(pem: &str) -> Option<Vec<u8>> {
         .into_iter()
         .next()
 }
+
+/// One part of a multipart form.
+pub enum Part<'a> {
+    Text(&'a str, &'a str),
+    File(&'a str, &'a str, &'a [u8]),
+}
+
+impl World {
+    /// POST a multipart form. `csrf` is added automatically.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        parts: &[Part<'_>],
+    ) -> axum::http::Response<axum::body::Body> {
+        use tower::ServiceExt;
+        let boundary = "keyringtestboundary7d1f";
+        let mut body: Vec<u8> = Vec::new();
+        let push_text = |name: &str, value: &str, body: &mut Vec<u8>| {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+        };
+        push_text("csrf", &self.csrf, &mut body);
+        for p in parts {
+            match p {
+                Part::Text(n, v) => push_text(n, v, &mut body),
+                Part::File(n, file_name, bytes) => {
+                    body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{n}\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
+                    body.extend_from_slice(bytes);
+                    body.extend_from_slice(b"\r\n");
+                }
+            }
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        let req = axum::http::Request::post(path)
+            .header("cookie", &self.cookie)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        self.app.clone().oneshot(req).await.unwrap()
+    }
+}
+
+/// Pull `name="field" value="..."` out of a page.
+pub fn hidden_value(html: &str, field: &str) -> Option<String> {
+    let marker = format!("name=\"{field}\" value=\"");
+    let start = html.find(&marker)? + marker.len();
+    let end = html[start..].find('"')? + start;
+    Some(html[start..end].to_owned())
+}
