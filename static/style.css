@@ -323,3 +323,6 @@ section { margin-top: 1.5rem; }
 }
 button:disabled { opacity: 0.6; cursor: not-allowed; filter: none; }
 .actions form { margin: 0; }
+
+.row-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+a.button-small { padding: 0.25rem 0.75rem; font-size: 0.9rem; }

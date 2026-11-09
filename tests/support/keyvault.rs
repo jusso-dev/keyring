@@ -65,8 +65,12 @@ impl KvState {
         BASE_TIME + *s * 60
     }
 
+    /// Key Vault versions look random. Spread the counter's bits so the
+    /// first characters differ between versions, as they do for real.
     fn new_version(&self) -> String {
-        format!("{:032x}", *self.seq.lock().unwrap() + 1)
+        let n = (*self.seq.lock().unwrap() + 1) as u128;
+        let mixed = n.wrapping_mul(0x9E37_79B9_7F4A_7C15_F39C_C060_5CED_C835);
+        format!("{mixed:032x}")
     }
 
     /// Add a secret version directly.
