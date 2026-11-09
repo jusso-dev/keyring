@@ -1153,6 +1153,8 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "openidconnect",
  "reqwest",
  "ring",

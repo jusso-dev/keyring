@@ -24,10 +24,7 @@ async fn main() -> ExitCode {
     tracing::info!(addr = %config.listen, "keyring listening");
 
     let app = keyring::app(keyring::AppState::new(config));
-    if let Err(err) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-    {
+    if let Err(err) = keyring::serve::serve(listener, app, shutdown_signal()).await {
         tracing::error!(error = %err, "server error");
         return ExitCode::FAILURE;
     }
