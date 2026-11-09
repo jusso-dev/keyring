@@ -13,15 +13,15 @@
 <form method="post" action="/keys/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <label for="name">Name</label>
-  <p class="field-help">Letters, numbers and hyphens only.</p>
-  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false"{% if error_for("name").is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
+  <p class="field-help" id="name-help">Letters, numbers and hyphens only.</p>
+  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false" aria-describedby="name-help{% if error_for("name").is_some() %} name-error{% endif %}"{% if error_for("name").is_some() %} aria-invalid="true"{% endif %}>
   {% if let Some(m) = error_for("name") %}<p class="field-error" id="name-error">{{ m }}</p>{% endif %}
 
   <details class="advanced"{% if !errors.is_empty() %} open{% endif %}>
     <summary>Key type, operations, expiry and tags</summary>
     <label for="key_type">Key type</label>
-    <p class="field-help">RSA 3072 is a good default. EC keys are smaller and faster but can only sign.</p>
-    <select id="key_type" name="key_type">
+    <p class="field-help" id="key_type-help">RSA 3072 is a good default. EC keys are smaller and faster but can only sign.</p>
+    <select id="key_type" name="key_type" aria-describedby="key_type-help{% if error_for("key_type").is_some() %} key_type-error{% endif %}"{% if error_for("key_type").is_some() %} aria-invalid="true"{% endif %}>
       {% for (v, l) in key_types() %}<option value="{{ v }}"{% if form.key_type == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}
     </select>
     {% if let Some(m) = error_for("key_type") %}<p class="field-error" id="key_type-error">{{ m }}</p>{% endif %}
@@ -39,11 +39,11 @@
     </fieldset>
     {% if let Some(m) = error_for("ops") %}<p class="field-error" id="ops-error">{{ m }}</p>{% endif %}
     <label for="expires">Expires <span class="muted">(optional)</span></label>
-    <input id="expires" name="expires" type="date" value="{{ form.expires }}">
+    <input id="expires" name="expires" type="date" value="{{ form.expires }}"{% if error_for("expires").is_some() %} aria-describedby="expires-error" aria-invalid="true"{% endif %}>
     {% if let Some(m) = error_for("expires") %}<p class="field-error" id="expires-error">{{ m }}</p>{% endif %}
     <label for="tags">Tags <span class="muted">(optional)</span></label>
-    <p class="field-help">One per line, as name=value.</p>
-    <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false">{{ form.tags }}</textarea>
+    <p class="field-help" id="tags-help">One per line, as name=value.</p>
+    <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="tags-help{% if error_for("tags").is_some() %} tags-error{% endif %}"{% if error_for("tags").is_some() %} aria-invalid="true"{% endif %}>{{ form.tags }}</textarea>
     {% if let Some(m) = error_for("tags") %}<p class="field-error" id="tags-error">{{ m }}</p>{% endif %}
   </details>
   <div class="actions"><button type="submit">Create key</button><a href="/keys">Cancel</a></div>

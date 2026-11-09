@@ -73,10 +73,10 @@ async fn marks_expired_expiring_disabled_and_not_yet_active() {
         .put_with("future-one", "x", |v| v.nbf = Some(n + 5 * DAY));
     let (_, html) = w.page("/secrets").await;
     assert!(html.contains("1 expired"));
-    assert!(html.contains("1 expiring in the next 30 days"));
+    assert!(html.contains("1 expiring within 30 days"));
     assert!(html.contains("1 disabled"));
     assert!(html.contains("badge-error\">Expired"));
-    assert!(html.contains("badge-warn\">Expires soon"));
+    assert!(html.contains("badge-warn\">Expires within 30 days"));
     assert!(html.contains(">Disabled<"));
     assert!(html.contains("Not active yet"));
     assert!(html.contains("in 3 days") || html.contains("in 2 days"));

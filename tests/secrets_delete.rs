@@ -75,7 +75,7 @@ async fn deleted_list_shows_purge_dates_and_recover_restores() {
     let (status, html) = w.page("/secrets/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(">db-password<"));
-    assert!(html.contains("Purged on"));
+    assert!(html.contains("Gone for good on"));
     let purge = w.kv.state.deleted.lock().unwrap()["db-password"].purge;
     assert!(html.contains(&keyring::dates::format_date(purge)));
 

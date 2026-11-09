@@ -6,7 +6,7 @@
 <dl class="props">
   <dt>Vault</dt><dd>{{ vault }}</dd>
   <dt>Deleted</dt><dd>{{ row.deleted }}</dd>
-  <dt>Purged on</dt><dd>{% if row.purge.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.purge }} ({{ row.purge_note }}){% endif %}</dd>
+  <dt>Gone for good on</dt><dd>{% if row.purge.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.purge }} ({{ row.purge_note }}){% endif %}</dd>
 </dl>
 <p>Recovering brings back the {{ kind.noun() }} with every version.</p>
 <div class="actions">

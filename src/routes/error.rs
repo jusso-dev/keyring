@@ -20,6 +20,9 @@ pub enum Need {
     ReadSecrets,
     ManageSecrets,
     ReadCertificates,
+    /// Download a certificate with its private key: needs certificate read
+    /// and read access to its backing secret.
+    ExportCertificate,
     ManageCertificates,
     ReadKeys,
     ManageKeys,
@@ -34,6 +37,9 @@ impl Need {
             Self::ReadSecrets => "Key Vault Secrets User",
             Self::ManageSecrets => "Key Vault Secrets Officer",
             Self::ReadCertificates => "Key Vault Certificate User",
+            Self::ExportCertificate => {
+                "Key Vault Secrets User (as well as Key Vault Certificate User)"
+            }
             Self::ManageCertificates => "Key Vault Certificates Officer",
             Self::ReadKeys => "Key Vault Reader",
             Self::ManageKeys => "Key Vault Crypto Officer",
@@ -48,6 +54,7 @@ impl Need {
             Self::ReadSecrets => "read secrets in this vault",
             Self::ManageSecrets => "change secrets in this vault",
             Self::ReadCertificates => "read certificates in this vault",
+            Self::ExportCertificate => "download this certificate's private key",
             Self::ManageCertificates => "change certificates in this vault",
             Self::ReadKeys => "see keys in this vault",
             Self::ManageKeys => "change keys in this vault",

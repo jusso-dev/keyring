@@ -8,11 +8,11 @@
   {% if !row.managed %}
   <a class="button" href="/keys/{{ row.name }}/rotate">Rotate now</a>
   <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d">Who used it</a>
+  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
   <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
   {% else %}
   <p class="muted">This key belongs to the certificate <a href="/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d">Who used it</a>
+  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
   {% endif %}
 </div>
 
@@ -59,7 +59,7 @@
 <section aria-labelledby="versions-heading">
   <h2 id="versions-heading">Versions</h2>
   <p class="muted">Older versions can still decrypt and verify what they made, unless disabled.</p>
-  <div class="table-wrap">
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
   <table>
     <caption class="visually-hidden">Versions of {{ row.name }}</caption>
     <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Status</th><th scope="col">Expires</th></tr></thead>

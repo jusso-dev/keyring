@@ -36,13 +36,19 @@ pub fn verify(session: &Session, form: &ConfirmForm, expected: &str) -> Result<(
 }
 
 impl ConfirmError {
+    /// The message to show when the typed name didn't match, for an action
+    /// such as "deleted" or "downloaded".
+    pub fn mismatch(expected: &str, nothing_was: &str) -> String {
+        format!("Nothing was {nothing_was}. To confirm, type {expected} exactly as shown.")
+    }
+
     pub fn problem(&self, expected: &str) -> Problem {
         match self {
             Self::StaleForm => Problem::stale_form(),
             Self::NameMismatch => Problem::new(
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 "The name didn't match",
-                format!("Nothing was deleted. To confirm, type {expected} exactly as shown."),
+                Self::mismatch(expected, "deleted"),
             ),
         }
     }
@@ -60,6 +66,8 @@ pub struct ConfirmView {
     pub cancel_url: String,
     /// A second, stronger warning (used for permanent deletes).
     pub second_warning: Option<String>,
+    /// Set when the typed name didn't match.
+    pub error: Option<String>,
 }
 
 #[cfg(test)]
@@ -121,7 +129,9 @@ mod tests {
 
     #[test]
     fn mismatch_message_says_nothing_happened() {
+        // Used for deletes, purges and private key downloads alike.
         let p = ConfirmError::NameMismatch.problem("db-password");
         assert!(p.message.starts_with("Nothing was deleted."));
+        assert!(ConfirmError::mismatch("a", "downloaded").starts_with("Nothing was downloaded."));
     }
 }

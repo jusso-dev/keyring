@@ -99,6 +99,7 @@ fn delete_view(vault: &str, name: &str) -> ConfirmView {
         button: "Delete secret".into(),
         cancel_url: format!("/secrets/{name}"),
         second_warning: None,
+        error: None,
     }
 }
 
@@ -131,8 +132,7 @@ fn verify(
         }
         Err(e @ confirm::ConfirmError::NameMismatch) => {
             let mut view = view;
-            let p = e.problem(expected);
-            view.warning = format!("{} {}", p.message, view.warning);
+            view.error = Some(e.problem(expected).message);
             Err(confirm_page(shell, view, StatusCode::UNPROCESSABLE_ENTITY).into())
         }
     }
@@ -283,6 +283,7 @@ fn purge_view(vault: &str, name: &str) -> ConfirmView {
         second_warning: Some(
             "Only do this if you're sure nothing needs this secret any more, or a policy requires it to be destroyed.".into(),
         ),
+        error: None,
     }
 }
 

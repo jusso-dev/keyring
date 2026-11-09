@@ -30,6 +30,9 @@ pub struct AuditFilter {
     pub operation: String,
     #[serde(default)]
     pub person: String,
+    /// `secret`, `certificate` or `key`, for the link back to the item.
+    #[serde(default)]
+    pub from: String,
 }
 
 impl AuditFilter {
@@ -107,6 +110,18 @@ struct AuditPage {
 }
 
 impl AuditPage {
+    /// Link back to the item this view is filtered to, if we know its kind.
+    fn back_url(&self) -> Option<String> {
+        let base = match self.filter.from.as_str() {
+            "secret" => "/secrets",
+            "certificate" => "/certificates",
+            "key" => "/keys",
+            _ => return None,
+        };
+        crate::routes::vault_ctx::is_valid_object_name(&self.filter.item)
+            .then(|| format!("{base}/{}", self.filter.item))
+    }
+
     fn is_no_logging(&self) -> bool {
         matches!(self.unavailable, Some(Unavailable::Logging))
     }
