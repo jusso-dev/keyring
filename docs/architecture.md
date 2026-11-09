@@ -125,6 +125,8 @@ To accept an advisory that doesn't affect Keyring, add its ID to `ignore` in `de
 
 ## Container
 
+Built by `Dockerfile` and checked in CI on every change: non-root numeric user, no shell, under 30 MB, and a smoke test with `--read-only --cap-drop ALL --security-opt no-new-privileges` that checks `/healthz` answers without sign-in and `/` redirects to sign-in. Size today is about 15 MB.
+
 - Multi-stage Dockerfile. Builder and runtime images pinned by digest.
 - Static binary (musl or static glibc) on `gcr.io/distroless/static` (nonroot) or `scratch`.
 - Runs as non-root, with a read-only root filesystem and no extra capabilities. No shell in the runtime image.
