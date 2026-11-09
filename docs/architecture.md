@@ -12,45 +12,54 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 ## Request flow
 
 1. The browser signs in with Entra ID using OIDC (authorisation code flow with PKCE).
-2. The server keeps the user's tokens in a server-side memory session. The browser only holds an http-only cookie with a signed, random session ID. Tokens never reach the browser and nothing is persisted.
+2. The server keeps the user's tokens in an encrypted, http-only session cookie or a server-side memory session. Nothing is persisted.
 3. For each Azure call, the server exchanges the user's token via OBO for a token scoped to:
    - `https://vault.azure.net/.default` for Key Vault data plane
    - `https://management.azure.com/.default` for ARM and Resource Graph
-
-   Each session gets its own MSAL client and in-memory token cache. OBO tokens are cached per resource and refreshed five minutes before they expire. If Entra needs the person to consent or satisfy conditional access, Keyring sends them to a page that explains why, with a button to sign in again.
-
 4. Results go back to the browser. Errors from Azure (403, 404, throttling) are mapped to plain-English messages.
 
 ## Components
 
-| Part         | Job                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------- |
-| Web UI       | Pages for vaults, secrets, certificates, keys, expiry, generator and audit                              |
-| Server / BFF | Session handling, OBO exchange, thin proxies to Azure SDKs                                              |
-| Azure SDKs   | `@azure/keyvault-secrets`, `-certificates`, `-keys`, `@azure/arm-resourcegraph`, `@azure/monitor-query` |
+| Part | Job |
+| --- | --- |
+| Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry, generator and audit |
+| Pages | Askama templates compiled into the binary. Plain hand-written CSS |
+| Browser script | One small hand-written vanilla JS file for copy to clipboard with auto clear and similar extras. Pages work without it |
+| Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
+| Azure calls | `reqwest` with rustls, calling the Key Vault, Resource Graph, ARM and Log Analytics REST APIs. Official `azure_*` crates only where they're stable enough |
+| Sessions | Encrypted, signed cookie or in-memory store. Nothing persisted |
 
-## Stack
+## Stack and why
 
-| Choice                                             | Why                                                                                                                                                       |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js (App Router), TypeScript strict            | Pages render on the server, so tokens never reach the browser. Route handlers and server actions give us a backend for frontend without a second service. |
-| Node.js runtime only                               | The Azure SDKs and MSAL need Node. No edge runtime.                                                                                                       |
-| `@azure/msal-node`                                 | Maintained by Microsoft. Handles the auth code flow with PKCE, token validation and the on-behalf-of exchange. We don't hand-roll any of it.              |
-| In-memory server session, signed session ID cookie | Nothing is persisted. A restart signs everyone out, which is fine for this app.                                                                           |
-| Tailwind CSS                                       | Small, no runtime, easy to keep contrast and focus styles consistent. Components are written in the repo rather than pulled from a large library.         |
-| Vitest and Testing Library                         | Fast unit tests for server helpers and components.                                                                                                        |
-| ESLint (Next config) and Prettier                  | Standard lint and format. `no-console` is on so nothing logs by accident.                                                                                 |
+Keyring is Rust so the dependency tree stays small and auditable. Next.js and the npm ecosystem were ruled out: a typical app pulls in hundreds of packages, many with install scripts, and that's a lot of trust to extend for a tool that handles secrets.
 
-Cache Components is off. Every page depends on who's signed in, so there's nothing useful to prerender, and we don't want any response cached.
+Rules for the codebase:
 
-Folder layout:
+- No npm, no Node toolchain, no bundler, no CDN scripts, no Tailwind.
+- Server-rendered HTML first. JavaScript is an optional extra, hand-written and served from the same origin under a strict CSP.
+- `#![forbid(unsafe_code)]` in the crate.
 
-```
-app/          pages, layouts and route handlers
-components/   shared UI
-lib/auth/     sign-in, session and token handling (server only)
-lib/azure/    thin wrappers over the Azure SDKs (server only)
-```
+## Supply chain
+
+- `Cargo.lock` committed. Builds use `--locked`.
+- Toolchain pinned in `rust-toolchain.toml`.
+- `cargo deny check` covers licences (allow-list), advisories, bans and sources (crates.io only). `cargo audit` runs as well. Both run in CI and fail the build.
+- Adding a crate needs a reason in the PR. Prefer crates that are widely used, maintained and light on dependencies.
+- Dependabot opens weekly, grouped updates for `cargo`, `docker` and `github-actions`.
+- GitHub Actions are pinned by full commit SHA.
+- CI produces an SBOM for the image. Signed build provenance is optional.
+
+## Container
+
+- Multi-stage Dockerfile. Builder and runtime images pinned by digest.
+- Static binary (musl or static glibc) on `gcr.io/distroless/static` (nonroot) or `scratch`.
+- Runs as non-root, with a read-only root filesystem and no extra capabilities. No shell in the runtime image.
+- `/healthz` for probes.
+
+## Local development
+
+- `cargo run` with a `.env` file, or `docker build` and `docker run --env-file .env --read-only`.
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass before a PR merges.
 
 ## Vault discovery
 
@@ -72,5 +81,5 @@ Expiry alerts are optional. Since Keyring stores nothing and has no identity of 
 
 ## Deploy
 
-- Docker image, non-root, read-only filesystem friendly.
+- The Docker image described above.
 - Bicep for Azure App Service or Azure Container Apps, with optional private endpoint and VNet integration so Keyring can reach private vaults.
