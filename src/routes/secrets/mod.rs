@@ -3,6 +3,7 @@
 pub mod edit;
 pub mod form;
 pub mod reveal;
+pub mod versions;
 
 use askama::Template;
 use axum::extract::{Path, Query, State};

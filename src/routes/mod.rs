@@ -43,6 +43,11 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(secrets::edit::edit_form).post(secrets::edit::update),
         )
         .route("/secrets/{name}/enabled", post(secrets::edit::toggle))
+        .route("/secrets/{name}/versions", get(secrets::versions::list))
+        .route(
+            "/secrets/{name}/rollback",
+            get(secrets::versions::confirm).post(secrets::versions::rollback),
+        )
         .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
         .route("/certificates", get(sections::certificates))
         .route("/keys", get(sections::keys))
