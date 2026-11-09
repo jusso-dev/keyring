@@ -54,7 +54,6 @@ async fn every_section_has_a_page_with_an_empty_state() {
         "/certificates",
         "/keys",
         "/expiry",
-        "/generator",
         "/audit",
     ] {
         let res = get(&app, path, Some(&cookie)).await;
@@ -63,6 +62,10 @@ async fn every_section_has_a_page_with_an_empty_state() {
         assert!(html.contains("aria-current=\"page\""), "{path}");
         assert!(html.contains("class=\"empty-state\""), "{path}");
     }
+    // The generator needs no vault and has no empty state.
+    let res = get(&app, "/generator", Some(&cookie)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(text(res).await.contains("aria-current=\"page\""));
 }
 
 #[tokio::test]
