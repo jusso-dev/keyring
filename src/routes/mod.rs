@@ -8,6 +8,7 @@ pub mod flash;
 mod headers;
 mod health;
 mod home;
+mod secrets;
 mod sections;
 pub mod shell;
 mod vaults;
@@ -27,7 +28,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/", get(home::index))
         .route("/vaults", get(vaults::list))
         .route("/vaults/select", post(vaults::select))
-        .route("/secrets", get(sections::secrets))
+        .route("/secrets", get(secrets::list))
+        .route("/secrets/{name}", get(secrets::detail))
         .route("/certificates", get(sections::certificates))
         .route("/keys", get(sections::keys))
         .route("/expiry", get(sections::expiry))
