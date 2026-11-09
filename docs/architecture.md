@@ -98,7 +98,7 @@ All outbound calls use one `reqwest` client on rustls with the `ring` crypto pro
 - Adding a crate needs a reason in the PR. Prefer crates that are widely used, maintained and light on dependencies.
 - Dependabot opens weekly, grouped updates for `cargo`, `docker` and `github-actions`.
 - GitHub Actions are pinned by full commit SHA.
-- CI produces two CycloneDX SBOMs as build artifacts: one from `Cargo.lock` listing every crate in the binary (`cargo cyclonedx`), and one for the image's base packages (Syft). An image scan alone can't see the crates, since they're compiled into one stripped binary. Signed build provenance is left for the deploy milestone, when there's an image to publish.
+- CI produces two CycloneDX SBOMs as build artifacts: one from `Cargo.lock` listing every crate in the binary (`cargo cyclonedx`), and one for the image's base packages (Syft). An image scan alone can't see the crates, since they're compiled into one stripped binary. Signed build provenance isn't set up, because this repository doesn't publish an image. Add it (for example GitHub artifact attestations) wherever you build and push your own.
 
 ### Dependency policy
 
