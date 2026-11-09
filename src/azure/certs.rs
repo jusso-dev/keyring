@@ -66,7 +66,6 @@ pub fn thumbprint_hex(x5t: Option<&str>) -> String {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct KeyProps {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exportable: Option<bool>,
@@ -88,7 +87,6 @@ pub struct SecretProps {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SubjectAltNames {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dns_names: Vec<String>,
@@ -99,7 +97,6 @@ pub struct SubjectAltNames {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct X509Props {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
@@ -119,7 +116,6 @@ pub struct IssuerProps {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LifetimeTrigger {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifetime_percentage: Option<u32>,
@@ -128,7 +124,6 @@ pub struct LifetimeTrigger {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LifetimeActionType {
     /// `AutoRenew` or `EmailContacts`.
     pub action_type: String,
@@ -141,7 +136,8 @@ pub struct LifetimeAction {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Key Vault's certificate policy. Its JSON uses snake_case field names
+/// (`key_props`, `key_size`, `x509_props`), except `secret_props.contentType`.
 pub struct Policy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_props: Option<KeyProps>,
@@ -228,7 +224,6 @@ impl CertBundle {
 
 /// A pending create or renewal.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Operation {
     #[serde(default)]
     pub status: Option<String>,
@@ -494,9 +489,8 @@ mod tests {
     #[test]
     fn policy_summaries() {
         let p: Policy = serde_json::from_value(serde_json::json!({
-            "key_props": null,
-            "keyProps": {"exportable": true, "kty": "RSA", "key_size": 2048},
-            "lifetimeActions": [{"trigger": {"daysBeforeExpiry": 30}, "action": {"actionType": "AutoRenew"}}],
+            "key_props": {"exportable": true, "kty": "RSA", "key_size": 2048},
+            "lifetime_actions": [{"trigger": {"days_before_expiry": 30}, "action": {"action_type": "AutoRenew"}}],
             "issuer": {"name": "Self"}
         }))
         .unwrap();
@@ -509,6 +503,57 @@ mod tests {
         assert_eq!(p.content_type(), "application/x-pkcs12");
         assert_eq!(Policy::default().renewal(), "Nothing happens automatically");
         assert!(!Policy::default().exportable());
+    }
+
+    #[test]
+    fn policy_uses_key_vault_field_names() {
+        let p = Policy {
+            key_props: Some(KeyProps {
+                key_size: Some(2048),
+                reuse_key: Some(false),
+                ..KeyProps::default()
+            }),
+            secret_props: Some(SecretProps {
+                content_type: Some("application/x-pkcs12".into()),
+            }),
+            x509_props: Some(X509Props {
+                validity_months: Some(12),
+                sans: Some(SubjectAltNames {
+                    dns_names: vec!["a.com".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            lifetime_actions: vec![LifetimeAction {
+                trigger: LifetimeTrigger {
+                    days_before_expiry: Some(30),
+                    lifetime_percentage: None,
+                },
+                action: LifetimeActionType {
+                    action_type: "AutoRenew".into(),
+                },
+            }],
+            issuer: None,
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["key_props"]["key_size"], 2048);
+        assert_eq!(j["key_props"]["reuse_key"], false);
+        assert_eq!(j["secret_props"]["contentType"], "application/x-pkcs12");
+        assert_eq!(j["x509_props"]["validity_months"], 12);
+        assert_eq!(j["x509_props"]["sans"]["dns_names"][0], "a.com");
+        assert_eq!(
+            j["lifetime_actions"][0]["trigger"]["days_before_expiry"],
+            30
+        );
+        assert_eq!(
+            j["lifetime_actions"][0]["action"]["action_type"],
+            "AutoRenew"
+        );
+        let op: Operation = serde_json::from_value(serde_json::json!({
+            "status": "inProgress", "status_details": "Pending", "cancellation_requested": false
+        }))
+        .unwrap();
+        assert_eq!(op.status_details.as_deref(), Some("Pending"));
     }
 
     #[test]

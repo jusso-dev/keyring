@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Create a certificate - Keyring{% endblock %}
+{% block content %}
+<p><a href="/certificates">Back to certificates</a></p>
+<h1>Create a certificate <span class="muted">in {{ vault }}</span></h1>
+<p>Key Vault makes the key and the certificate. Self-signed certificates are ready straight away. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
+
+{% if !errors.is_empty() %}
+<div class="notice notice-error" role="alert">
+  <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
+  <ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form method="post" action="/certificates/new" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+
+  <label for="name">Name in Key Vault</label>
+  <p class="field-help">Letters, numbers and hyphens only.</p>
+  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false"{% if error_for("name").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("name") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+  <label for="common_name">Main name (common name)</label>
+  <p class="field-help">The name the certificate is for, usually a website or service address such as app.example.com.</p>
+  <input id="common_name" name="common_name" type="text" value="{{ form.common_name }}" required maxlength="64" autocomplete="off" spellcheck="false"{% if error_for("common_name").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("common_name") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+  <label for="dns_names">Other names <span class="muted">(optional)</span></label>
+  <p class="field-help">More addresses the certificate should cover, one per line. Use *.example.com for every subdomain. The main name is added for you.</p>
+  <textarea id="dns_names" name="dns_names" rows="3" class="mono" autocomplete="off" spellcheck="false">{{ form.dns_names }}</textarea>
+  {% if let Some(m) = error_for("dns_names") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+  <label for="validity_months">Valid for (months)</label>
+  <p class="field-help">Public certificate authorities limit this, often to 12 months or less.</p>
+  <input id="validity_months" name="validity_months" type="number" min="1" max="120" value="{{ form.validity_months }}"{% if error_for("validity_months").is_some() %} aria-invalid="true"{% endif %}>
+  {% if let Some(m) = error_for("validity_months") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+  <label for="issuer">Issuer</label>
+  <p class="field-help">Self for self-signed (fine for testing and internal use). Otherwise the name of an issuer already set up on this vault in the Azure portal.</p>
+  <input id="issuer" name="issuer" type="text" value="{{ form.issuer }}" autocomplete="off" spellcheck="false">
+  {% if let Some(m) = error_for("issuer") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+  <details class="advanced">
+    <summary>Key, format and renewal options</summary>
+
+    <label for="key">Key type</label>
+    <p class="field-help">RSA 2048 works with almost everything. Pick EC only if you know your systems support it.</p>
+    <select id="key" name="key">
+      {% for (value, label) in key_choices() %}<option value="{{ value }}"{% if key_selected(value) %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    {% if let Some(m) = error_for("key") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+    <div class="checkbox">
+      <input id="exportable" name="exportable" type="checkbox"{% if form.exportable.is_some() %} checked{% endif %}>
+      <label for="exportable">Allow the private key to be downloaded</label>
+    </div>
+    <p class="field-help">Needed if the certificate will be installed somewhere outside Azure. Untick to keep the key inside Key Vault for good.</p>
+
+    <fieldset>
+      <legend>Stored as</legend>
+      <div class="checkbox"><input id="format-pfx" name="format" type="radio" value="pfx"{% if form.format != "pem" %} checked{% endif %}><label for="format-pfx">PFX (PKCS #12), the usual choice</label></div>
+      <div class="checkbox"><input id="format-pem" name="format" type="radio" value="pem"{% if form.format == "pem" %} checked{% endif %}><label for="format-pem">PEM, for Linux and many open source tools</label></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Near expiry</legend>
+      <div class="checkbox"><input id="renew-auto" name="renewal" type="radio" value="auto"{% if form.renewal == "auto" || form.renewal.is_empty() %} checked{% endif %}><label for="renew-auto">Renew automatically</label></div>
+      <div class="checkbox"><input id="renew-email" name="renewal" type="radio" value="email"{% if form.renewal == "email" %} checked{% endif %}><label for="renew-email">Email the vault's certificate contacts</label></div>
+      <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
+    </fieldset>
+    <label for="renew_days">Days before expiry</label>
+    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% if error_for("renew_days").is_some() %} aria-invalid="true"{% endif %}>
+    {% if let Some(m) = error_for("renew_days") %}<p class="field-error">{{ m }}</p>{% endif %}
+
+    <label for="tags">Tags <span class="muted">(optional)</span></label>
+    <p class="field-help">One per line, as name=value.</p>
+    <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false">{{ form.tags }}</textarea>
+    {% if let Some(m) = error_for("tags") %}<p class="field-error">{{ m }}</p>{% endif %}
+  </details>
+
+  <div class="actions">
+    <button type="submit">Create certificate</button>
+    <a href="/certificates">Cancel</a>
+  </div>
+</form>
+{% endblock %}

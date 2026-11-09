@@ -74,10 +74,10 @@ async fn pfx_with_password_previews_then_imports() {
         base64::engine::general_purpose::STANDARD.encode(PLAIN)
     );
     assert_eq!(
-        body["policy"]["secretProps"]["contentType"],
+        body["policy"]["secret_props"]["contentType"],
         "application/x-pkcs12"
     );
-    assert_eq!(body["policy"]["keyProps"]["exportable"], true);
+    assert_eq!(body["policy"]["key_props"]["exportable"], true);
     assert_eq!(body["tags"]["env"], "prod");
     // The same upload can't be imported twice.
     let res = w
@@ -130,7 +130,7 @@ async fn pem_with_cert_and_key_imports() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let body = w.kv.state.imports.lock().unwrap()[0].body.clone();
     assert_eq!(
-        body["policy"]["secretProps"]["contentType"],
+        body["policy"]["secret_props"]["contentType"],
         "application/x-pem-file"
     );
     assert_eq!(body["value"], BUNDLE);
