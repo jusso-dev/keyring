@@ -4,6 +4,8 @@ Keyring is a small web app that sits in front of Azure Key Vault. It lets people
 
 It's a thin layer. Keyring stores nothing. Every call to Key Vault is made as the person who's signed in, so Key Vault's own Entra RBAC decides what they can see and change. If you can't do it in the portal, you can't do it in Keyring.
 
+Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
+
 > Status: early development. Work is tracked in [issues](https://github.com/yumaitau/keyring/issues) and [milestones](https://github.com/yumaitau/keyring/milestones), starting with the MVP (sign-in and secrets).
 
 ## What it does
@@ -51,18 +53,45 @@ You'll need one app registration. A full walkthrough lands with the deploy miles
 
 Set these as environment variables. Don't commit them.
 
-| Variable              | What it's for                                     |
-| --------------------- | ------------------------------------------------- |
-| `ENTRA_TENANT_ID`     | Your tenant ID                                    |
-| `ENTRA_CLIENT_ID`     | The app registration's client ID                  |
-| `ENTRA_CLIENT_SECRET` | Client secret (or use a certificate)              |
-| `APP_BASE_URL`        | Public URL of this app, used for redirects        |
-| `SESSION_SECRET`      | Random string used to encrypt the session cookie  |
+| Variable | What it's for |
+| --- | --- |
+| `ENTRA_TENANT_ID` | Your tenant ID |
+| `ENTRA_CLIENT_ID` | The app registration's client ID |
+| `ENTRA_CLIENT_SECRET` | Client secret (or use a certificate) |
+| `APP_BASE_URL` | Public URL of this app, used for redirects |
+| `SESSION_SECRET` | Random string used to encrypt the session cookie |
 | `KEYRING_ALLOW_PURGE` | `true` to allow permanent deletes. Off by default |
+
+## Why Rust
+
+Keyring handles secrets, so the less code we pull in from strangers, the better. A typical JavaScript web app installs hundreds of npm packages, any of which can run code at install time. Keyring keeps that list short and checked:
+
+- **Rust, with few crates.** Axum on Tokio for the web server, Askama for HTML templates compiled into the binary, `openidconnect` for sign-in and `reqwest` with rustls for calls to Azure.
+- **Server-rendered pages.** Pages are plain HTML and CSS. The only JavaScript is one small hand-written file for extras like copy to clipboard. No npm, no bundler, no CDN scripts.
+- **Locked and checked.** `Cargo.lock` is committed, the toolchain is pinned in `rust-toolchain.toml`, and CI runs `cargo deny` (licences, advisories, banned crates, allowed sources) and `cargo audit` on every change.
+- **Small image.** A multi-stage Docker build, base images pinned by digest, a static binary on a distroless or scratch base, running as non-root with a read-only filesystem.
+- **Pinned automation.** GitHub Actions are pinned by commit SHA. Dependabot proposes updates for crates, Docker images and actions.
 
 ## Running it
 
-Docker image and Bicep templates for App Service or Container Apps (with private endpoint support) are on the roadmap. Instructions will be added here as they land.
+You'll need the Entra app registration above and a `.env` file based on `.env.example`.
+
+With Rust installed (the right toolchain is picked up from `rust-toolchain.toml`):
+
+```sh
+cargo run
+```
+
+With Docker:
+
+```sh
+docker build -t keyring .
+docker run --rm -p 3000:3000 --env-file .env --read-only keyring
+```
+
+Then open http://localhost:3000.
+
+Bicep templates for App Service or Container Apps, with private endpoint support, are on the roadmap.
 
 ## Prior art
 
