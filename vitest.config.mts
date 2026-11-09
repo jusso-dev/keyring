@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": fileURLToPath(new URL("./", import.meta.url)),
+      "@/": fileURLToPath(new URL("./", import.meta.url)),
       // `server-only` throws outside a React Server Component build. Tests import server code directly.
       "server-only": fileURLToPath(new URL("./test/server-only-stub.ts", import.meta.url)),
     },
