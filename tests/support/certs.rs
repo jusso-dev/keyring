@@ -51,10 +51,10 @@ pub fn thumb(der: &[u8]) -> String {
 
 pub fn default_policy(exportable: bool, pem: bool) -> Value {
     json!({
-        "keyProps": {"exportable": exportable, "kty": "RSA", "key_size": 2048, "reuse_key": false},
-        "secretProps": {"contentType": if pem { "application/x-pem-file" } else { "application/x-pkcs12" }},
-        "x509Props": {"subject": "CN=keyring.test", "validity_months": 12},
-        "lifetimeActions": [{"trigger": {"lifetimePercentage": 80}, "action": {"actionType": "AutoRenew"}}],
+        "key_props": {"exportable": exportable, "kty": "RSA", "key_size": 2048, "reuse_key": false},
+        "secret_props": {"contentType": if pem { "application/x-pem-file" } else { "application/x-pkcs12" }},
+        "x509_props": {"subject": "CN=keyring.test", "validity_months": 12},
+        "lifetime_actions": [{"trigger": {"lifetime_percentage": 80}, "action": {"action_type": "AutoRenew"}}],
         "issuer": {"name": "Self"}
     })
 }
@@ -291,7 +291,7 @@ async fn import(
         body: body.clone(),
     });
     let value = body["value"].as_str().unwrap_or_default().to_owned();
-    let ct = body["policy"]["secretProps"]["contentType"]
+    let ct = body["policy"]["secret_props"]["contentType"]
         .as_str()
         .unwrap_or("application/x-pkcs12")
         .to_owned();
@@ -303,7 +303,7 @@ async fn import(
             .as_str()
             .and_then(|d| STANDARD.decode(d).ok())
     };
-    let exportable = body["policy"]["keyProps"]["exportable"]
+    let exportable = body["policy"]["key_props"]["exportable"]
         .as_bool()
         .unwrap_or(true);
     let mut policy = default_policy(exportable, ct == "application/x-pem-file");
@@ -365,7 +365,7 @@ async fn create(
             json!({"id": op_id, "status": "completed", "issuer": {"name": "Self"}}),
         )
     } else {
-        let op = json!({"id": op_id, "status": "inProgress", "status_details": "Pending approval", "statusDetails": "Waiting for the CA to approve the request.", "issuer": {"name": issuer}});
+        let op = json!({"id": op_id, "status": "inProgress", "status_details": "Waiting for the CA to approve the request.", "issuer": {"name": issuer}});
         let mut certs = s.certs.lock().unwrap();
         let t = 1;
         certs.insert(

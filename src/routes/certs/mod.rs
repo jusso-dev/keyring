@@ -1,5 +1,7 @@
 //! Certificate pages: list, detail, versions and downloads.
 
+pub mod create;
+pub mod delete;
 pub mod download;
 pub mod upload;
 
