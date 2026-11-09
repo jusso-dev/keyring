@@ -71,13 +71,27 @@ jobs:
       # Prebuilt binaries, checksums verified by the action. Tool versions pinned.
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2,cargo-cyclonedx@0.5.10
 
       - name: cargo deny (licences, advisories, bans, sources)
         run: cargo deny --locked check
 
       - name: cargo audit
         run: cargo audit --deny warnings
+
+      # The image SBOM (docker job) only sees the base image's packages,
+      # because Rust crates are compiled into one stripped binary. This one
+      # lists every crate from Cargo.lock that ships in the binary.
+      - name: SBOM for the Rust crates
+        run: |
+          cargo cyclonedx --format json --target x86_64-unknown-linux-musl --no-build-deps --override-filename keyring-crates.cdx
+          test "$(jq '.components | length' keyring-crates.cdx.json)" -gt 50
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: keyring-crates-sbom
+          path: keyring-crates.cdx.json
+          if-no-files-found: error
 
   bicep:
     name: bicep build
@@ -116,6 +130,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Builder image matches rust-toolchain.toml
+        run: |
+          want=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          grep -q "FROM rust:${want}-" Dockerfile || { echo "Dockerfile builder isn't Rust ${want}" >&2; exit 1; }
+          grep -q "RUSTUP_TOOLCHAIN=${want}" Dockerfile || { echo "RUSTUP_TOOLCHAIN isn't ${want}" >&2; exit 1; }
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -164,6 +184,8 @@ jobs:
           docker logs keyring
           exit 1
 
+      # Base image packages (CA certificates, tzdata). Crates are in the
+      # keyring-crates-sbom artifact from the supply-chain job.
       - name: SBOM for the image
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:

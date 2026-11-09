@@ -88,6 +88,18 @@ impl Config {
         }
         let take = |name: &str| get(name).unwrap_or_default();
 
+        // App Service passes a Key Vault reference through as plain text
+        // when it can't resolve it. Starting with that as a secret would
+        // mean a well-known session key, so refuse to start.
+        for name in ["ENTRA_CLIENT_SECRET", "SESSION_SECRET"] {
+            if take(name).starts_with("@Microsoft.KeyVault(") {
+                return Err(ConfigError::Invalid {
+                    name: if name == "SESSION_SECRET" { "SESSION_SECRET" } else { "ENTRA_CLIENT_SECRET" },
+                    reason: "is still a Key Vault reference, so App Service couldn't read it. Check the secret exists in the config vault and the app's identity can read it".into(),
+                });
+            }
+        }
+
         let tenant_id = take("ENTRA_TENANT_ID");
         if !is_guid(&tenant_id) {
             return Err(ConfigError::Invalid {
@@ -364,6 +376,34 @@ pub(crate) mod tests {
         assert!(is_local_http("http://127.0.0.1"));
         assert!(!is_local_http("http://localhost.evil.com"));
         assert!(!is_local_http("http://127.0.0.1.evil.com"));
+    }
+
+    #[test]
+    fn refuses_unresolved_key_vault_references() {
+        let mut env = sample_env();
+        env.insert(
+            "SESSION_SECRET",
+            "@Microsoft.KeyVault(VaultName=kv-keyring-config;SecretName=session-secret)".into(),
+        );
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "SESSION_SECRET",
+                ..
+            })
+        ));
+        let mut env = sample_env();
+        env.insert(
+            "ENTRA_CLIENT_SECRET",
+            "@Microsoft.KeyVault(SecretUri=https://x/secrets/y)".into(),
+        );
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "ENTRA_CLIENT_SECRET",
+                ..
+            })
+        ));
     }
 
     #[test]

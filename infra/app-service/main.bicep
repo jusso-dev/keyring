@@ -20,8 +20,11 @@ param location string = resourceGroup().location
 @maxLength(18)
 param name string
 
-@description('Container image, pinned by digest, for example ghcr.io/your-org/keyring@sha256:...')
+@description('Container image, pinned by digest, for example myregistry.azurecr.io/keyring@sha256:...')
 param image string
+
+@description('Set to pull the image from a private Azure Container Registry with the app\'s managed identity. Give that identity AcrPull on the registry first (see docs/deploy.md).')
+param useManagedIdentityForRegistry bool = false
 
 @description('Directory (tenant) ID of the Entra app registration.')
 param tenantId string = subscription().tenantId
@@ -59,6 +62,11 @@ param configVaultPrivateEndpointSubnetId string = ''
 param vaultPrivateDnsZoneId string = ''
 
 param tags object = {}
+
+// A private config vault is only reachable from inside the VNet, so the
+// app must be in it and DNS must resolve the private endpoint.
+var privateVaultNeedsVnet = empty(configVaultPrivateEndpointSubnetId) || (!empty(vnetIntegrationSubnetId) && !empty(vaultPrivateDnsZoneId))
+var privateVaultCheck = privateVaultNeedsVnet ? 'ok' : fail('configVaultPrivateEndpointSubnetId needs vnetIntegrationSubnetId and vaultPrivateDnsZoneId too, or the app can\'t reach its own secrets.')
 
 var publicInbound = empty(inboundPrivateEndpointSubnetId)
 var identityName = '${name}-id'
@@ -116,6 +124,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
     virtualNetworkSubnetId: empty(vnetIntegrationSubnetId) ? null : vnetIntegrationSubnetId
     siteConfig: {
       linuxFxVersion: 'DOCKER|${image}'
+      acrUseManagedIdentityCreds: useManagedIdentityForRegistry
+      acrUserManagedIdentityID: useManagedIdentityForRegistry ? config.outputs.identityClientId : null
       alwaysOn: true
       ftpsState: 'Disabled'
       http20Enabled: true
@@ -168,6 +178,7 @@ module inbound '../modules/private-endpoint.bicep' = if (!publicInbound) {
 }
 
 output appName string = site.name
+output checks string = privateVaultCheck
 output defaultHostName string = site.properties.defaultHostName
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
