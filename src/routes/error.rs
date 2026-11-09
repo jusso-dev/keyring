@@ -147,6 +147,15 @@ impl Problem {
             AzureError::Status { status, code, .. } => {
                 Self::from_status(*status, code.as_deref(), need)
             }
+            // A vault call that can't connect is usually a vault that only
+            // accepts private traffic, with Keyring outside that network.
+            AzureError::Network(_) if need.uses_vault_rbac() => Self::new(
+                StatusCode::BAD_GATEWAY,
+                "Can't reach this vault",
+                "Keyring couldn't connect to the vault. It may only accept connections from a private network, and Keyring isn't on that network.",
+            )
+            .with_hint("Ask your admin whether the vault has public access turned off. If so, Keyring needs to run in a network that can reach the vault's private endpoint, with private DNS for privatelink.vaultcore.azure.net. See docs/private-vaults.md.")
+            .with_next(NextStep::Retry("/".into())),
             AzureError::Network(_) => Self::new(
                 StatusCode::BAD_GATEWAY,
                 "Can't reach Azure",
@@ -382,6 +391,13 @@ mod tests {
     #[test]
     fn network_and_token_errors() {
         let p = Problem::from_azure(&AzureError::Network("x".into()), Need::ReadSecrets);
+        assert_eq!(p.heading, "Can't reach this vault");
+        assert!(
+            p.admin_hint
+                .unwrap()
+                .contains("privatelink.vaultcore.azure.net")
+        );
+        let p = Problem::from_azure(&AzureError::Network("x".into()), Need::ListVaults);
         assert_eq!(p.heading, "Can't reach Azure");
         let p = Problem::from_azure(
             &AzureError::Token(TokenError::SignInAgain),
