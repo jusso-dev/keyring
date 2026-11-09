@@ -18,7 +18,7 @@
   {% if let Some(pol) = policy %}{% if pol.exportable %}
   <a class="button button-secondary" href="/certificates/{{ row.name }}/download-key">Download with private key</a>
   {% endif %}{% endif %}
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d">Who used it</a>
+  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
   <a class="button button-danger" href="/certificates/{{ row.name }}/delete">Delete</a>
 </div>
 
@@ -61,7 +61,7 @@
   {% if versions.is_empty() %}
   <p class="muted">No versions listed.</p>
   {% else %}
-  <div class="table-wrap">
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
   <table>
     <caption class="visually-hidden">Versions of {{ row.name }}</caption>
     <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Thumbprint</th><th scope="col"><span class="visually-hidden">Download</span></th></tr></thead>

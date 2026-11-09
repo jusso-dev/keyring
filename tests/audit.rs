@@ -150,7 +150,7 @@ async fn item_history_and_csv_match() {
         ),
     ];
     let (_, detail) = w.page("/secrets/db-password").await;
-    assert!(detail.contains("href=\"/audit?item=db-password&amp;range=30d\""));
+    assert!(detail.contains("href=\"/audit?item=db-password&amp;range=30d&amp;from=secret\""));
     let (_, html) = w.page("/audit?item=db-password&range=30d").await;
     assert!(html.contains("Who used <span class=\"mono\">db-password</span>"));
     let q = w
@@ -199,4 +199,16 @@ async fn needs_a_vault() {
     w.cookie = format!("keyring_session={fresh}");
     let (_, html) = w.page("/audit").await;
     assert!(html.contains("Choose a vault first"));
+}
+
+#[tokio::test]
+async fn item_history_links_back_to_the_item() {
+    let w = support::world().await;
+    setup(&w);
+    let (_, html) = w
+        .page("/audit?item=db-password&range=30d&from=secret")
+        .await;
+    assert!(html.contains("href=\"/secrets/db-password\">Back to db-password</a>"));
+    let (_, html) = w.page("/audit?item=db-password&range=30d&from=bogus").await;
+    assert!(!html.contains("Back to db-password"));
 }

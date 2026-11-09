@@ -175,3 +175,30 @@ async fn partly_readable_vaults_say_what_is_missing() {
         &html[html.find("notice-warn").unwrap_or(0)..][..300]
     );
 }
+
+#[tokio::test]
+async fn open_switches_vault_and_goes_to_the_item() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-other"]);
+    w.kv.state
+        .put_with("db-password", "x", |v| v.exp = Some(now() + DAY));
+    let (_, html) = w.page("/expiry").await;
+    assert!(html.contains("name=\"return_to\" value=\"/secrets/db-password\""));
+    let res = w
+        .post(
+            "/vaults/select",
+            &[("name", "kv-other"), ("return_to", "/secrets/db-password")],
+        )
+        .await;
+    assert_eq!(support::location(&res), "/secrets/db-password");
+    let (_, html) = w.page("/secrets/db-password").await;
+    assert!(html.contains("<strong>kv-other</strong>"));
+    // An outside address is never followed.
+    let res = w
+        .post(
+            "/vaults/select",
+            &[("name", "kv-other"), ("return_to", "https://evil.example")],
+        )
+        .await;
+    assert_eq!(support::location(&res), "/");
+}

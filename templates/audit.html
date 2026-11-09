@@ -3,7 +3,7 @@
 {% block content %}
 {% if !filter.item.is_empty() %}
 <h1>Who used <span class="mono">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p><a href="/audit">See all events for {{ vault }}</a></p>
+<p>{% if let Some(back) = back_url() %}<a href="{{ back }}">Back to {{ filter.item }}</a> | {% endif %}<a href="/audit">See all events for {{ vault }}</a></p>
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
 {% endif %}
@@ -59,7 +59,7 @@
 <div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
 {% elif !rows.is_empty() %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
 <table>
   <caption class="visually-hidden">Audit events for {{ vault }}</caption>
   <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>

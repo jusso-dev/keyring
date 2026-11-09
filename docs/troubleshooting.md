@@ -18,6 +18,7 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | Entra says the redirect URI doesn't match (AADSTS50011) | The redirect URI must be exactly `APP_BASE_URL` + `/auth/callback`. Check `https`, the host, any port, and no trailing slash |
 | Entra says the client secret is wrong (AADSTS7000215) | Use the secret's **Value**, not its Secret ID. Check it hasn't expired |
 | "Your organisation needs to approve Keyring" | An admin needs to select **Grant admin consent** on the app's API permissions page |
+| "Microsoft sign-in didn't finish" | Entra stopped the sign-in. Try again; if it keeps happening, check the app registration and its redirect URI |
 | "Microsoft sign-in said no" with `invalid_scope` (AADSTS65005 or 70011) | The `access_as_user` scope isn't exposed, or `ENTRA_API_SCOPE` doesn't match it |
 | "Please sign in again" while using Keyring | Your organisation wants a fresh sign-in, for example for MFA or a conditional access policy. Sign in again |
 | "Sign-in expired" straight after signing in | Sign-in took over 10 minutes, was started in another tab, or the browser blocked cookies |
@@ -41,6 +42,6 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | --- | --- |
 | "Key Vault couldn't open the file" when uploading | Wrong password or a damaged file. Check the password, or re-export the .pfx |
 | "This PEM file has a certificate but no private key" | Put the private key in the same file, or upload a .pfx |
-| "The private key can't be exported" | The certificate's policy keeps the key in Key Vault. You can still download the public .cer |
+| "The private key can't be downloaded" | The certificate's policy keeps the key in Key Vault. You can still download the public .cer |
 | A new CA certificate stays "Waiting for the issuer" | The CA hasn't signed it yet. Check the issuer set up on the vault, and the CA's own portal |
 | "This vault can't make HSM-protected keys" | The vault is Standard tier. Untick HSM, or use a Premium vault |

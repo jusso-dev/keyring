@@ -127,6 +127,9 @@ pub struct SelectForm {
     csrf: String,
     #[serde(default)]
     name: String,
+    /// Where to go next. Local paths only; anything else goes to `/`.
+    #[serde(default)]
+    return_to: String,
 }
 
 /// Pick a vault. Only remembered in this session.
@@ -150,7 +153,12 @@ pub async fn select(
         return PageError::new(shell, problem).into_response();
     }
     session.0.select_vault(name.to_owned());
-    let mut res = Redirect::to("/secrets").into_response();
+    let next = if form.return_to.is_empty() {
+        "/secrets".to_owned()
+    } else {
+        crate::auth::return_to::sanitise(Some(&form.return_to))
+    };
+    let mut res = Redirect::to(&next).into_response();
     flash::set(
         &state,
         &mut res,

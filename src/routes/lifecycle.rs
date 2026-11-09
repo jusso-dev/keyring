@@ -82,6 +82,7 @@ pub fn delete_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
         button: format!("Delete {}", kind.noun()),
         cancel_url: format!("{}/{name}", kind.base()),
         second_warning: None,
+        error: None,
     }
 }
 
@@ -99,11 +100,12 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             Kind::Key => "Anything encrypted with this key can never be decrypted again. Only do this if you're sure.".into(),
             Kind::Certificate => "Only do this if you're sure nothing needs this certificate any more, or a policy requires it to be destroyed.".into(),
         }),
+        error: None,
     }
 }
 
 /// Check the form token and typed name. On a mismatch, show the confirm
-/// page again with "Nothing was deleted."
+/// page again saying nothing was done.
 pub fn verify(
     session: &CurrentSession,
     form: &ConfirmForm,
@@ -118,7 +120,7 @@ pub fn verify(
         }
         Err(e) => {
             let mut view = view;
-            view.warning = format!("{} {}", e.problem(expected).message, view.warning);
+            view.error = Some(e.problem(expected).message);
             Err(confirm_page(shell, view, StatusCode::UNPROCESSABLE_ENTITY).into())
         }
     }

@@ -127,6 +127,7 @@ fn pfx_view(vault: &str, name: &str, pem: bool) -> ConfirmView {
         second_warning: Some(
             "Only use this if you need the key outside Key Vault. Apps on Azure can usually read the certificate straight from the vault instead.".into(),
         ),
+        error: None,
     }
 }
 
@@ -209,15 +210,9 @@ pub async fn pfx(
         Err(confirm::ConfirmError::StaleForm) => {
             return Err(PageError::new(shell, Problem::stale_form()).into());
         }
-        Err(e) => {
+        Err(confirm::ConfirmError::NameMismatch) => {
             let mut view = pfx_view(&vault, &name, pem);
-            view.warning = format!(
-                "{} {}",
-                e.problem(&name)
-                    .message
-                    .replace("Nothing was deleted.", "Nothing was downloaded."),
-                view.warning
-            );
+            view.error = Some(confirm::ConfirmError::mismatch(&name, "downloaded"));
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 render(&ConfirmPage {
@@ -247,7 +242,7 @@ pub async fn pfx(
             return Err(azure_problem(
                 shell,
                 &err,
-                Need::ReadSecrets,
+                Need::ExportCertificate,
                 &format!("/certificates/{name}"),
             ));
         }

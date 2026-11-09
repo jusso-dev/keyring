@@ -35,7 +35,7 @@
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No certificates match. Try a shorter search or clear the filters.</p></div>
 {% else %}
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
 <table id="cert-table">
   <caption class="visually-hidden">Certificates in {{ vault }}</caption>
   <thead><tr>
@@ -54,11 +54,11 @@
   </tbody>
 </table>
 </div>
-<p class="muted" data-live-filter-empty hidden>No certificates on this page match.</p>
+<p class="muted" data-live-filter-empty role="status" hidden>No certificates on this page match.</p>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
   {% if let Some(url) = prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
-  <span>Page {{ page }} of {{ pages }}</span>
+  <span>Page {{ page }} of {{ pages }}, certificates {{ shown_from + 1 }} to {{ shown_from + rows.len() }}</span>
   {% if let Some(url) = next_url %}<a href="{{ url }}">Next</a>{% endif %}
 </nav>
 {% endif %}
