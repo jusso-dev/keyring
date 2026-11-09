@@ -9,6 +9,7 @@ pub mod flash;
 mod headers;
 mod health;
 mod home;
+pub mod lifecycle;
 mod secrets;
 mod sections;
 pub mod shell;
@@ -76,6 +77,27 @@ pub fn router(state: AppState) -> Router<AppState> {
             ),
         )
         .route("/certificates/upload/confirm", post(certs::upload::confirm))
+        .route(
+            "/certificates/new",
+            get(certs::create::form).post(certs::create::create),
+        )
+        .route("/certificates/deleted", get(certs::delete::list_deleted))
+        .route(
+            "/certificates/deleted/{name}",
+            get(certs::delete::deleted_detail),
+        )
+        .route(
+            "/certificates/deleted/{name}/recover",
+            post(certs::delete::recover),
+        )
+        .route(
+            "/certificates/deleted/{name}/purge",
+            get(certs::delete::purge_form).post(certs::delete::purge),
+        )
+        .route(
+            "/certificates/{name}/delete",
+            get(certs::delete::delete_form).post(certs::delete::delete),
+        )
         .route("/certificates/{name}", get(certs::detail))
         .route("/certificates/{name}/cer", get(certs::download::cer))
         .route(
