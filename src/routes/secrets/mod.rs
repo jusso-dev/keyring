@@ -1,5 +1,7 @@
 //! Secrets pages: list, search and detail.
 
+pub mod reveal;
+
 use askama::Template;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
