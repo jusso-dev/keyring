@@ -42,6 +42,7 @@ impl Harness {
 
     async fn post(&self, path: &str, form: &str) -> Response<Body> {
         let req = Request::post(path)
+            .header("origin", "http://localhost:3000")
             .header("cookie", &self.cookie)
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from(form.to_owned()))

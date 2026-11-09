@@ -614,6 +614,7 @@ impl World {
             .extend_pairs(all)
             .finish();
         let req = axum::http::Request::post(path)
+            .header("origin", "http://localhost:3000")
             .header("cookie", &self.cookie)
             .header("content-type", "application/x-www-form-urlencoded")
             .body(axum::body::Body::from(body))
@@ -664,13 +665,23 @@ impl World {
         path: &str,
         parts: &[Part<'_>],
     ) -> axum::http::Response<axum::body::Body> {
+        self.post_multipart_with_csrf(&self.csrf, path, parts).await
+    }
+
+    /// POST a multipart form with a given form token.
+    pub async fn post_multipart_with_csrf(
+        &self,
+        csrf: &str,
+        path: &str,
+        parts: &[Part<'_>],
+    ) -> axum::http::Response<axum::body::Body> {
         use tower::ServiceExt;
         let boundary = "keyringtestboundary7d1f";
         let mut body: Vec<u8> = Vec::new();
         let push_text = |name: &str, value: &str, body: &mut Vec<u8>| {
             body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
         };
-        push_text("csrf", &self.csrf, &mut body);
+        push_text("csrf", csrf, &mut body);
         for p in parts {
             match p {
                 Part::Text(n, v) => push_text(n, v, &mut body),
@@ -683,6 +694,7 @@ impl World {
         }
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
         let req = axum::http::Request::post(path)
+            .header("origin", "http://localhost:3000")
             .header("cookie", &self.cookie)
             .header(
                 "content-type",

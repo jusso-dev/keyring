@@ -43,7 +43,9 @@ struct SignedOutPage {
 
 #[derive(Deserialize)]
 pub struct SignInQuery {
+    #[serde(default)]
     return_to: Option<String>,
+    #[serde(default)]
     reason: Option<String>,
 }
 
@@ -59,6 +61,7 @@ pub async fn sign_in(Query(q): Query<SignInQuery>) -> Response {
 
 #[derive(Deserialize)]
 pub struct StartQuery {
+    #[serde(default)]
     return_to: Option<String>,
 }
 
@@ -92,8 +95,11 @@ pub async fn start(State(state): State<AppState>, Query(q): Query<StartQuery>) -
 
 #[derive(Deserialize)]
 pub struct CallbackQuery {
+    #[serde(default)]
     code: Option<String>,
+    #[serde(default)]
     state: Option<String>,
+    #[serde(default)]
     error: Option<String>,
 }
 
@@ -146,6 +152,7 @@ pub async fn callback(
 
 #[derive(Deserialize)]
 pub struct SignOutForm {
+    #[serde(default)]
     csrf: String,
 }
 

@@ -4,7 +4,7 @@ use axum::extract::{Request, State};
 use axum::http::HeaderValue;
 use axum::http::header;
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
 
@@ -19,8 +19,23 @@ pub fn csp(authority_host: &str) -> String {
     )
 }
 
+/// Longest any request may take, including Azure calls. The expiry
+/// dashboard is the slowest page; it limits each vault to 20 seconds and
+/// reads them in parallel.
+pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    let mut res = next.run(req).await;
+    let mut res = match tokio::time::timeout(REQUEST_TIMEOUT, next.run(req)).await {
+        Ok(res) => res,
+        Err(_) => {
+            tracing::warn!("request timed out");
+            (
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "That took too long, so Keyring stopped. Try again, or narrow what you asked for.",
+            )
+                .into_response()
+        }
+    };
     let h = res.headers_mut();
     if let Ok(v) = HeaderValue::from_str(&csp(&state.config.authority_host)) {
         h.insert(header::CONTENT_SECURITY_POLICY, v);

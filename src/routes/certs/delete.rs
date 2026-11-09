@@ -115,6 +115,7 @@ pub async fn deleted_detail(
 
 #[derive(serde::Deserialize)]
 pub struct CsrfForm {
+    #[serde(default)]
     csrf: String,
 }
 

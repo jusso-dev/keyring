@@ -19,6 +19,7 @@ pub const MAX_CONTENT_TYPE: usize = 255;
 /// forms send strings and a missing checkbox sends nothing.
 #[derive(Deserialize, Default)]
 pub struct SecretForm {
+    #[serde(default)]
     pub csrf: String,
     #[serde(default)]
     pub name: String,

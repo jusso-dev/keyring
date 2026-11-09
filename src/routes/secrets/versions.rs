@@ -110,6 +110,7 @@ struct RollbackPage {
 
 #[derive(Deserialize)]
 pub struct RollbackQuery {
+    #[serde(default)]
     version: String,
 }
 
@@ -163,7 +164,9 @@ pub async fn confirm(
 
 #[derive(Deserialize)]
 pub struct RollbackForm {
+    #[serde(default)]
     csrf: String,
+    #[serde(default)]
     version: String,
 }
 
