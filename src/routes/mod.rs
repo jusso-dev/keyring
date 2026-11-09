@@ -29,7 +29,20 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/vaults", get(vaults::list))
         .route("/vaults/select", post(vaults::select))
         .route("/secrets", get(secrets::list))
+        .route(
+            "/secrets/new",
+            get(secrets::edit::new_form).post(secrets::edit::create),
+        )
         .route("/secrets/{name}", get(secrets::detail))
+        .route(
+            "/secrets/{name}/value",
+            get(secrets::edit::value_form).post(secrets::edit::set_value),
+        )
+        .route(
+            "/secrets/{name}/edit",
+            get(secrets::edit::edit_form).post(secrets::edit::update),
+        )
+        .route("/secrets/{name}/enabled", post(secrets::edit::toggle))
         .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
         .route("/certificates", get(sections::certificates))
         .route("/keys", get(sections::keys))

@@ -1,5 +1,7 @@
 //! Secrets pages: list, search and detail.
 
+pub mod edit;
+pub mod form;
 pub mod reveal;
 
 use askama::Template;
