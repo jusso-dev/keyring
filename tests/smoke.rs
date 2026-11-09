@@ -1,28 +1,12 @@
+mod support;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use keyring::config::Config;
 use tower::ServiceExt;
 
-fn test_config() -> Config {
-    Config::from_lookup(|k| {
-        Some(
-            match k {
-                "ENTRA_TENANT_ID" => "00000000-0000-0000-0000-000000000000",
-                "ENTRA_CLIENT_ID" => "11111111-1111-1111-1111-111111111111",
-                "ENTRA_CLIENT_SECRET" => "test-secret",
-                "APP_BASE_URL" => "http://localhost:3000",
-                "SESSION_SECRET" => "0123456789abcdef0123456789abcdef0123456789abcdef",
-                _ => return None,
-            }
-            .to_owned(),
-        )
-    })
-    .expect("test config")
-}
-
 async fn get(path: &str) -> (StatusCode, String, Option<String>) {
-    let app = keyring::app(keyring::AppState::new(test_config()));
+    let app = keyring::app(keyring::AppState::new(support::config()));
     let res = app
         .oneshot(Request::get(path).body(Body::empty()).unwrap())
         .await
@@ -37,11 +21,11 @@ async fn get(path: &str) -> (StatusCode, String, Option<String>) {
 }
 
 #[tokio::test]
-async fn home_page_renders_with_shared_css() {
-    let (status, body, _) = get("/").await;
+async fn sign_in_page_renders_with_shared_css() {
+    let (status, body, _) = get("/auth/sign-in").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("<link rel=\"stylesheet\" href=\"/static/style.css\">"));
-    assert!(body.contains("Keyring"));
+    assert!(body.contains("Sign in with Microsoft"));
 }
 
 #[tokio::test]

@@ -10,6 +10,15 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <a class="brand" href="/">Keyring</a>
+    {% if let Some(user) = shell.user %}
+    <div class="account">
+      <span class="account-name">{{ user.name }}</span>
+      <form method="post" action="/auth/sign-out">
+        <input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <button type="submit" class="button-link">Sign out</button>
+      </form>
+    </div>
+    {% endif %}
   </header>
   <main id="main" class="content">
     {% block content %}{% endblock %}

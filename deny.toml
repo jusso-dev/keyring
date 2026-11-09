@@ -9,7 +9,13 @@ all-features = false
 version = 2
 yanked = "deny"
 unmaintained = "all"
-ignore = []
+ignore = [
+    # rsa 0.9 (via openidconnect): Marvin timing attack on RSA private-key
+    # operations. Keyring holds no RSA private key; it only verifies Entra ID
+    # token signatures with public keys. Remove when openidconnect moves to
+    # rsa 0.10. https://github.com/yumaitau/keyring/issues/41
+    { id = "RUSTSEC-2023-0071", reason = "no RSA private-key operations; see issue 41" },
+]
 
 [licenses]
 version = 2

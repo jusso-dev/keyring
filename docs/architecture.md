@@ -27,7 +27,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 | Browser script | One small hand-written vanilla JS file for copy to clipboard with auto clear and similar extras. Pages work without it |
 | Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
 | Azure calls | `reqwest` with rustls, calling the Key Vault, Resource Graph, ARM and Log Analytics REST APIs. Official `azure_*` crates only where they're stable enough |
-| Sessions | Encrypted, signed cookie or in-memory store. Nothing persisted |
+| Sessions | In-memory store keyed by a random cookie. Nothing persisted |
 
 ## Stack and why
 
@@ -58,6 +58,20 @@ Static files are compiled in rather than read from disk, so the container needs 
 Logging uses `tracing`. Only metadata is logged (method, path, status, timing). Request and response bodies, headers and query strings are never logged.
 
 `unsafe_code` is set to `forbid` in `Cargo.toml` lints, which has the same effect as `#![forbid(unsafe_code)]` on every target in the crate.
+
+## Sign-in and sessions
+
+- `/auth/start` builds the Entra authorise URL with the `openidconnect` crate: authorisation code flow, PKCE (S256), random state and nonce. It asks for `openid profile offline_access` and Keyring's own API scope, so the access token can later be exchanged on behalf of the user.
+- State, nonce, PKCE verifier and the return path go in a short-lived (10 minute) cookie, encrypted with AES-256-GCM using a key derived from `SESSION_SECRET` (HKDF-SHA256). The cookie name is bound in as associated data.
+- `/auth/callback` checks the state in constant time, swaps the code for tokens and has the crate verify the ID token: signature against the tenant's published keys, issuer, audience, expiry and nonce. If the signature check fails the cached keys are dropped so a key rollover is picked up on the next try.
+- Sessions live in server memory. The browser only gets a random 256-bit ID in an http-only, `SameSite=Lax` cookie (`Secure` and `__Host-` prefixed over HTTPS). Tokens never leave the server. Sessions end after an hour idle or 12 hours in total. A restart signs everyone out; running several copies needs sticky sessions.
+- Every route except sign-in, callback, signed-out, `/healthz` and `/static` sits behind a middleware that requires a session. Without one, GET requests are sent to sign-in with the path remembered. Return paths must be local (`/` but not `//`, no backslashes or control characters).
+- Sign-out is a form post with a per-session token. It drops the session here, then sends the browser to Entra's end-session endpoint, which returns to `/auth/signed-out`.
+- `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider.
+
+## HTTP client and TLS
+
+All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
 
 ## Supply chain
 

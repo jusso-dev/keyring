@@ -1,0 +1,7 @@
+# Same exceptions as deny.toml. Keep the two in step.
+[advisories]
+ignore = [
+    # rsa 0.9 Marvin attack. No RSA private-key operations in Keyring.
+    # https://github.com/yumaitau/keyring/issues/41
+    "RUSTSEC-2023-0071",
+]
