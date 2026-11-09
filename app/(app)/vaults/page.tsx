@@ -2,20 +2,18 @@ import { Page } from "@/components/page";
 import { Empty, ErrorNotice } from "@/components/ui/states";
 import { VaultTable } from "@/components/vault-table";
 import { getVaults } from "@/lib/azure/vault-context";
-import { toFriendlyError } from "@/lib/errors";
+import { attempt } from "@/lib/azure/safe";
 
 export default async function VaultsPage() {
-  let vaults;
-  try {
-    vaults = await getVaults();
-  } catch (err) {
-    if (err && typeof err === "object" && "digest" in err) throw err;
+  const result = await attempt(() => getVaults(), { area: "vaults" });
+  if (!result.ok) {
     return (
       <Page title="Vaults">
-        <ErrorNotice error={toFriendlyError(err, { area: "vaults" })} />
+        <ErrorNotice error={result.error} />
       </Page>
     );
   }
+  const vaults = result.value;
   return (
     <Page title="Vaults" description="Every Key Vault you can see, across all your subscriptions.">
       {vaults.length === 0 ? (

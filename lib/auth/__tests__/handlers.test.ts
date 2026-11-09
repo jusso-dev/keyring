@@ -14,6 +14,8 @@ const config: Config = {
   sessionSecret: "s".repeat(32),
   apiScope: "api://client-id/access_as_user",
   allowPurge: false,
+  clipboardClearSeconds: 30,
+  revealSeconds: 60,
 };
 
 function fakeMsal() {

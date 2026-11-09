@@ -1,6 +1,5 @@
 import "server-only";
 import { userCredentials } from "@/lib/auth/azure-credential";
-import { withReauth } from "@/lib/auth/reauth";
 import type { Session } from "@/lib/auth/session-store";
 import { listVaults, resourceGraphClient, type Vault } from "./vaults";
 
@@ -17,7 +16,7 @@ export async function getVaults(options: { fresh?: boolean } = {}): Promise<Vaul
   const s = session as WithCache;
   const hit = s[CACHE];
   if (!options.fresh && hit && Date.now() - hit.at < VAULT_LIST_TTL_MS) return hit.vaults;
-  const vaults = await withReauth(() => listVaults(resourceGraphClient(arm)));
+  const vaults = await listVaults(resourceGraphClient(arm));
   s[CACHE] = { at: Date.now(), vaults };
   return vaults;
 }

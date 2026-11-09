@@ -6,6 +6,10 @@ export type Config = {
   sessionSecret: string;
   apiScope: string;
   allowPurge: boolean;
+  /** Seconds before a copied value is cleared from the clipboard. */
+  clipboardClearSeconds: number;
+  /** Seconds before a revealed value is hidden again. */
+  revealSeconds: number;
 };
 
 class ConfigError extends Error {}
@@ -14,6 +18,11 @@ function required(env: Record<string, string | undefined>, name: string): string
   const value = env[name]?.trim();
   if (!value) throw new ConfigError(`Missing required setting ${name}. See .env.example.`);
   return value;
+}
+
+function seconds(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 5 && n <= 600 ? n : fallback;
 }
 
 export function parseConfig(env: Record<string, string | undefined>): Config {
@@ -38,6 +47,8 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     sessionSecret,
     apiScope: env.ENTRA_API_SCOPE?.trim() || `api://${clientId}/access_as_user`,
     allowPurge: env.KEYRING_ALLOW_PURGE?.trim().toLowerCase() === "true",
+    clipboardClearSeconds: seconds(env.KEYRING_CLIPBOARD_CLEAR_SECONDS, 30),
+    revealSeconds: seconds(env.KEYRING_REVEAL_SECONDS, 60),
   };
 }
 
