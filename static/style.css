@@ -297,3 +297,11 @@ td form { margin: 0; }
 .props dd { margin: 0; overflow-wrap: anywhere; }
 
 section { margin-top: 1.5rem; }
+
+.secret-value {
+  width: 100%;
+  max-width: 48rem;
+  resize: vertical;
+  background: var(--panel);
+}
+.reveal { margin-bottom: 1.5rem; }

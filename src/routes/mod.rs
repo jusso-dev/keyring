@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/vaults/select", post(vaults::select))
         .route("/secrets", get(secrets::list))
         .route("/secrets/{name}", get(secrets::detail))
+        .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
         .route("/certificates", get(sections::certificates))
         .route("/keys", get(sections::keys))
         .route("/expiry", get(sections::expiry))
