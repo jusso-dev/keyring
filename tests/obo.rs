@@ -367,3 +367,51 @@ async fn a_401_gets_a_fresh_token_and_retries_once() {
     assert_eq!(seen.len(), 2);
     assert_ne!(seen[0], seen[1], "second try should use a new token");
 }
+
+#[tokio::test]
+async fn conditional_access_challenge_is_passed_to_the_next_sign_in() {
+    let h = harness().await;
+    *h.idp.state.grant_error.lock().unwrap() = Some(("interaction_required", 50076));
+    let err = h
+        .state
+        .azure_broker()
+        .token_for(&h.session, Resource::KeyVault)
+        .await
+        .unwrap_err();
+    assert_eq!(err, TokenError::SignInAgain);
+    let claims = h.session.claims_challenge().expect("challenge kept");
+    assert!(claims.contains("capolids"));
+
+    // The next sign-in from this browser carries it to Entra.
+    let id = h.state.sessions.create(
+        user(),
+        UserTokens {
+            access_token: Secret::new("t"),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            refresh_token: None,
+        },
+    );
+    let s = h.state.sessions.get(&id).unwrap();
+    s.set_claims_challenge(&claims);
+    let app = keyring::app(h.state.clone());
+    let res = tower::ServiceExt::oneshot(
+        app,
+        axum::http::Request::get("/auth/start?return_to=%2F")
+            .header("cookie", format!("keyring_session={id}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    let location = res.headers().get("location").unwrap().to_str().unwrap();
+    let url = url::Url::parse(location).unwrap();
+    let sent = url
+        .query_pairs()
+        .find(|(k, _)| k == "claims")
+        .map(|(_, v)| v.into_owned());
+    assert_eq!(sent.as_deref(), Some(claims.as_str()));
+
+    // Anything that isn't a JSON object is ignored.
+    s.set_claims_challenge("not json");
+    assert_eq!(s.claims_challenge().as_deref(), Some(claims.as_str()));
+}

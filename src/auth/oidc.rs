@@ -150,11 +150,15 @@ impl Oidc {
     }
 
     /// Build the Entra sign-in URL and the state to keep until the callback.
-    pub async fn begin(&self, return_to: String) -> Result<(String, PendingLogin), SignInError> {
+    pub async fn begin(
+        &self,
+        return_to: String,
+        claims: Option<String>,
+    ) -> Result<(String, PendingLogin), SignInError> {
         let metadata = self.metadata().await?;
         let client = self.client(&metadata)?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let (url, state, nonce) = client
+        let mut request = client
             .authorize_url(
                 CoreAuthenticationFlow::AuthorizationCode,
                 CsrfToken::new_random,
@@ -163,8 +167,13 @@ impl Oidc {
             .add_scope(Scope::new("profile".into()))
             .add_scope(Scope::new("offline_access".into()))
             .add_scope(Scope::new(self.api_scope.clone()))
-            .set_pkce_challenge(challenge)
-            .url();
+            .set_pkce_challenge(challenge);
+        // Entra wants more than a plain sign-in (MFA, a compliant device)
+        // for a resource Keyring calls. Pass its challenge so it asks.
+        if let Some(c) = claims {
+            request = request.add_extra_param("claims", c);
+        }
+        let (url, state, nonce) = request.url();
         Ok((
             url.to_string(),
             PendingLogin {

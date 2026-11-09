@@ -78,7 +78,10 @@ fn workspaces_from(settings: SettingsList) -> Vec<Workspace> {
         {
             out.push(Workspace {
                 resource_id: ws,
-                resource_specific: p.log_analytics_destination_type.as_deref() == Some("Dedicated"),
+                resource_specific: p
+                    .log_analytics_destination_type
+                    .as_deref()
+                    .is_some_and(|t| t.eq_ignore_ascii_case("Dedicated")),
             });
         }
     }
@@ -243,21 +246,36 @@ impl AuditQuery {
             q.push_str(&format!(
                 "AZKVAuditLogs\n\
                  | where TimeGenerated > ago({range})\n\
-                 | where Resource =~ vaultName\n\
-                 | extend Item = tostring(split(tostring(parse_url(RequestUri).Path), '/')[2])\n\
-                 | extend Who = coalesce(tostring(Identity.claim.upn), tostring(Identity.claim.appid), tostring(Identity.claim.oid))\n\
-                 | project TimeGenerated, Who, OperationName, Item, ResultSignature, CallerIpAddress\n",
+                 | where _ResourceId endswith strcat('/vaults/', tolower(vaultName))\n\
+                 | extend Item = tostring(split(tostring(parse_url(column_ifexists('RequestUri', '')).Path), '/')[2])\n\
+                 | extend Claims = column_ifexists('Identity', dynamic(null)).claim\n\
+                 | extend Who = coalesce(\n\
+                     tostring(Claims['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn']),\n\
+                     tostring(Claims.upn),\n\
+                     tostring(Claims.appid),\n\
+                     tostring(Claims['http://schemas.microsoft.com/identity/claims/objectidentifier']),\n\
+                     tostring(Claims.oid))\n\
+                 | extend Client = tostring(column_ifexists('CallerIpAddress', ''))\n\
+                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client\n",
                 range = self.range.kql()
             ));
         } else {
+            // AzureDiagnostics only has a column once data with it has
+            // arrived, so every optional column goes through column_ifexists.
             q.push_str(&format!(
                 "AzureDiagnostics\n\
                  | where TimeGenerated > ago({range})\n\
                  | where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'\n\
                  | where Resource =~ vaultName\n\
-                 | extend Item = tostring(split(tostring(parse_url(requestUri_s).Path), '/')[2])\n\
-                 | extend Who = coalesce(identity_claim_upn_s, identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_upn_s, identity_claim_appid_g, identity_claim_oid_g)\n\
-                 | project TimeGenerated, Who, OperationName, Item, ResultSignature, CallerIpAddress\n",
+                 | extend Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2])\n\
+                 | extend Who = coalesce(\n\
+                     tostring(column_ifexists('identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_upn_s', '')),\n\
+                     tostring(column_ifexists('identity_claim_upn_s', '')),\n\
+                     tostring(column_ifexists('identity_claim_appid_g', '')),\n\
+                     tostring(column_ifexists('identity_claim_http_schemas_microsoft_com_identity_claims_objectidentifier_g', '')),\n\
+                     tostring(column_ifexists('identity_claim_oid_g', '')))\n\
+                 | extend Client = tostring(column_ifexists('CallerIPAddress', ''))\n\
+                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client\n",
                 range = self.range.kql()
             ));
         }
@@ -524,7 +542,21 @@ mod tests {
         for v in ["kv-test", "db-password", "SecretGet\"", "alex@example.com"] {
             assert_eq!(k.matches(v).count(), 1, "{v}");
         }
-        assert!(q.kql(false).contains("AzureDiagnostics"));
+        assert!(
+            k.contains("_ResourceId endswith"),
+            "resource-specific tables have _ResourceId, not Resource"
+        );
+        let d = q.kql(false);
+        assert!(d.contains("AzureDiagnostics"));
+        assert!(
+            d.contains("column_ifexists('CallerIPAddress', '')"),
+            "AzureDiagnostics spells it CallerIPAddress"
+        );
+        assert!(d.contains("column_ifexists('identity_claim_upn_s', '')"));
+        assert!(
+            !d.contains("CallerIpAddress)"),
+            "no bare reference to a column that may not exist"
+        );
         let empty = AuditQuery::new("kv-test", Range::Day, "", "", "")
             .unwrap()
             .kql(true);

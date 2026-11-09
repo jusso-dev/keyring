@@ -51,6 +51,8 @@ pub struct KvState {
     pub bearers: Mutex<Vec<String>>,
     /// If set, every request fails with this status and code.
     pub fail: Mutex<Option<(u16, &'static str)>>,
+    /// If set, only requests whose path contains this fail.
+    pub fail_path: Mutex<Option<String>>,
     /// If set, only requests with this method fail.
     pub fail_method: Mutex<Option<Method>>,
     pub certs: Mutex<BTreeMap<String, super::certs::StoredCert>>,
@@ -322,7 +324,12 @@ async fn record(
         .lock()
         .unwrap()
         .as_ref()
-        .is_none_or(|m| m == req.method());
+        .is_none_or(|m| m == req.method())
+        && s.fail_path
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(|p| req.uri().path().contains(p.as_str()));
     if let Some((status, code)) = fail
         && method_ok
     {
@@ -344,7 +351,12 @@ async fn record(
 fn err(status: u16, code: &str) -> Response {
     json_response(
         StatusCode::from_u16(status).unwrap(),
-        json!({"error": {"code": code, "message": "mock Key Vault error with private detail"}}),
+        // Real Key Vault's shape: a broad outer code, the reason inside.
+        if code.starts_with("ForbiddenBy") || code.ends_with("Disabled") {
+            json!({"error": {"code": "Forbidden", "message": "mock Key Vault error with private detail", "innererror": {"code": code}}})
+        } else {
+            json!({"error": {"code": code, "message": "mock Key Vault error with private detail"}})
+        },
     )
 }
 
@@ -468,7 +480,7 @@ async fn get_current(
     let b = base(&headers, &vault);
     match s.secrets.lock().unwrap().get(&name) {
         Some(sec) => match sec.versions.last() {
-            Some(v) if !v.enabled => err(403, "Forbidden"),
+            Some(v) if !v.enabled => err(403, "SecretDisabled"),
             Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed)),
             None => err(404, "SecretNotFound"),
         },
@@ -549,14 +561,22 @@ async fn update(
     let Some(v) = sec.versions.iter_mut().find(|v| v.version == version) else {
         return err(404, "SecretNotFound");
     };
+    // Like real Key Vault: fields left out are kept, `null` clears.
     let a = &body["attributes"];
     if let Some(e) = a["enabled"].as_bool() {
         v.enabled = e;
     }
-    v.exp = a["exp"].as_i64();
-    v.nbf = a["nbf"].as_i64();
+    if let Some(exp) = a.get("exp") {
+        v.exp = exp.as_i64();
+    }
+    if let Some(nbf) = a.get("nbf") {
+        v.nbf = nbf.as_i64();
+    }
     if body.get("contentType").is_some() {
-        v.content_type = body["contentType"].as_str().map(str::to_owned);
+        v.content_type = body["contentType"]
+            .as_str()
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned);
     }
     if body.get("tags").is_some() {
         v.tags = tags_from(&body);

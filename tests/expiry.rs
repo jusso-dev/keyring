@@ -75,7 +75,12 @@ async fn several_vaults_and_skipped_ones() {
         StatusCode::OK,
         "partial failures don't fail the page"
     );
-    assert!(html.contains("3 vaults couldn't be read"));
+    assert!(html.contains("couldn't be read"));
+    assert_eq!(
+        html.matches("You don&#39;t have a Key Vault role on it")
+            .count(),
+        3
+    );
     assert!(html.contains("You don&#39;t have a Key Vault role on it"));
 }
 
@@ -150,4 +155,23 @@ async fn no_vaults() {
     let (status, html) = w.page("/expiry").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Nothing to show"));
+}
+
+#[tokio::test]
+async fn partly_readable_vaults_say_what_is_missing() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-test"]);
+    w.kv.state.put("a-secret", "x");
+    w.kv.state.add_key_with("a-key", "RSA", |_| {});
+    // Keys are forbidden, secrets and certificates work.
+    *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
+    *w.kv.state.fail_path.lock().unwrap() = Some("/keys".into());
+    let (_, html) = w.page("/expiry").await;
+    assert!(html.contains(">a-secret<"), "what could be read is shown");
+    assert!(!html.contains(">a-key<"));
+    assert!(
+        html.contains("Its keys couldn&#39;t be read"),
+        "{}",
+        &html[html.find("notice-warn").unwrap_or(0)..][..300]
+    );
 }

@@ -191,3 +191,15 @@ async fn unreachable_vault_explains_private_networks() {
     assert!(html.contains("Can&#39;t reach this vault"));
     assert!(html.contains("private network"));
 }
+
+#[tokio::test]
+async fn firewall_blocks_use_key_vaults_inner_code() {
+    let w = support::world().await;
+    *w.kv.state.fail.lock().unwrap() = Some((403, "ForbiddenByFirewall"));
+    let (status, html) = w.page("/secrets").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        html.contains("This vault is blocked from here"),
+        "outer code is Forbidden, inner is ForbiddenByFirewall"
+    );
+}
