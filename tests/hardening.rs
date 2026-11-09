@@ -237,7 +237,7 @@ async fn headers_on_every_kind_of_response() {
             "{path}"
         );
         assert_eq!(h.get("x-frame-options").unwrap(), "DENY", "{path}");
-        assert_eq!(h.get("referrer-policy").unwrap(), "no-referrer", "{path}");
+        assert_eq!(h.get("referrer-policy").unwrap(), "same-origin", "{path}");
     }
 }
 
@@ -245,4 +245,56 @@ async fn headers_on_every_kind_of_response() {
 fn no_unsafe_code() {
     let toml = include_str!("../Cargo.toml");
     assert!(toml.contains("unsafe_code = \"forbid\""));
+}
+
+/// What a real browser sends on a same-origin form post under Keyring's
+/// own referrer policy: `Sec-Fetch-Site`, an `Origin`, and (with
+/// `same-origin`) a same-site `Referer`. Older browsers send only the last
+/// two. Both must be accepted.
+#[tokio::test]
+async fn browser_shaped_same_origin_posts_are_accepted() {
+    let w = support::world().await;
+    for headers in [
+        vec![
+            ("sec-fetch-site", "same-origin"),
+            ("origin", "http://localhost:3000"),
+        ],
+        vec![("sec-fetch-site", "same-origin"), ("origin", "null")],
+        vec![
+            ("origin", "http://localhost:3000"),
+            ("referer", "http://localhost:3000/generator"),
+        ],
+        vec![("referer", "http://localhost:3000/generator")],
+    ] {
+        let body = format!("csrf={}&kind=guid", w.csrf);
+        let mut req = Request::post("/generator")
+            .header("cookie", &w.cookie)
+            .header("content-type", "application/x-www-form-urlencoded");
+        for (k, v) in &headers {
+            req = req.header(*k, *v);
+        }
+        let res = w
+            .app
+            .clone()
+            .oneshot(req.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{headers:?}");
+    }
+    // And the referrer policy the pages send keeps Origin and Referer on
+    // same-origin requests.
+    let res = w.get("/generator").await;
+    let policy = res
+        .headers()
+        .get("referrer-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        matches!(
+            policy,
+            "same-origin" | "strict-origin" | "strict-origin-when-cross-origin"
+        ),
+        "{policy}"
+    );
 }

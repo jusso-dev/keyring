@@ -82,7 +82,7 @@ pub async fn start(State(state): State<AppState>, Query(q): Query<StartQuery>) -
             no_store(res)
         }
         Err(err) => {
-            tracing::warn!(error = %err, "could not start sign-in");
+            tracing::warn!(error = ?err.to_string(), "could not start sign-in");
             problem(
                 StatusCode::BAD_GATEWAY,
                 "Can't reach Microsoft sign-in",
@@ -117,7 +117,9 @@ pub async fn callback(
         (None, ..) => Err(SignInError::Invalid(
             "missing or unreadable login cookie".into(),
         )),
-        (Some(_), Some(code), ..) => Err(SignInError::Provider { code }),
+        (Some(_), Some(code), ..) => Err(SignInError::Provider {
+            code: crate::auth::oidc::safe_code(&code),
+        }),
         (Some(p), None, Some(code), Some(returned_state))
             if crypto::constant_time_eq(p.state.as_bytes(), returned_state.as_bytes()) =>
         {
@@ -141,7 +143,7 @@ pub async fn callback(
             res
         }
         Err(err) => {
-            tracing::warn!(error = %err, "sign-in failed");
+            tracing::warn!(error = ?err.to_string(), "sign-in failed");
             let (heading, message) = describe(&err);
             problem(StatusCode::BAD_REQUEST, heading, message, "/")
         }

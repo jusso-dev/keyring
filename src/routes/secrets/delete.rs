@@ -148,6 +148,13 @@ pub async fn delete(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = verify(&session, &form, &name, shell, delete_view(&vault, &name))?;
+    if let Ok(item) = api(&state, &session, &vault).properties(&name).await
+        && item.managed.unwrap_or(false)
+    {
+        return Err(crate::routes::secrets::reveal::managed_problem(
+            shell, &name,
+        ));
+    }
     match api(&state, &session, &vault).delete(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret deleted");

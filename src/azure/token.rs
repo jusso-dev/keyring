@@ -295,7 +295,7 @@ impl TokenBroker {
             Ok(f) => {
                 // Only codes are logged. Descriptions can be long and aren't needed.
                 tracing::warn!(
-                    error = %f.error,
+                    error = ?f.error,
                     codes = ?f.error_codes,
                     suberror = ?f.suberror,
                     "token request refused"

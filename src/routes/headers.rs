@@ -47,7 +47,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     h.insert(
         header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
+        // `same-origin`, not `no-referrer`: with `no-referrer` browsers send
+        // `Origin: null` on same-site form posts, which the origin check
+        // would refuse. Nothing is sent to other sites either way.
+        HeaderValue::from_static("same-origin"),
     );
     h.insert(
         "cross-origin-opener-policy",

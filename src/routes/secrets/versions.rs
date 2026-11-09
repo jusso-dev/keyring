@@ -181,6 +181,11 @@ pub async fn rollback(
     if !session.0.csrf_matches(&f.csrf) {
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
+    if items[0].managed.unwrap_or(false) {
+        return Err(crate::routes::secrets::reveal::managed_problem(
+            shell, &name,
+        ));
+    }
     let (shell, target) = pick(&items, &f.version, shell, &name)?;
     let back = format!("/secrets/{name}/versions");
     let secrets = api(&state, &session, &vault);
