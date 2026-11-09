@@ -116,6 +116,20 @@ impl KvState {
             .unwrap_or(0)
     }
 
+    /// Move a secret to the deleted list, as `DELETE` would.
+    pub fn soft_delete(&self, name: &str) {
+        let sec = self.secrets.lock().unwrap().remove(name).unwrap();
+        let t = self.tick();
+        self.deleted.lock().unwrap().insert(
+            name.into(),
+            Deleted {
+                secret: sec,
+                deleted: t,
+                purge: t + 90 * 86_400,
+            },
+        );
+    }
+
     /// Requests that would return a secret value.
     pub fn value_reads(&self) -> Vec<String> {
         self.log
