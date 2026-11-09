@@ -235,7 +235,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed |
 | CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
 | Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault |
-| Large or slow requests | 64 KB body limit on forms (256 KB for certificate uploads). 90 second limit per request. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
+| Large or slow requests | Request headers must arrive within 10 seconds (slow-header clients are cut off). 64 KB body limit on forms (256 KB for certificate uploads). 90 second limit per request. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
 | Supply chain | Few crates, all from crates.io, licence allow-list, `cargo deny` and `cargo audit` on every change and weekly, `Cargo.lock` and toolchain pinned, actions pinned by SHA, images pinned by digest, SBOM per build. No npm |
 | Memory safety | `unsafe` code is forbidden in the crate |
 | Container escape or tampering | Distroless static image, no shell, non-root, read-only root filesystem, no capabilities |
@@ -243,6 +243,5 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 ### Known limits
 
 - **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
-- **Slow request headers.** `axum::serve` doesn't set a header read timeout, so a client sending headers very slowly holds a connection open. App Service and Container Apps front ends limit this; if you run the binary directly on the internet, put a reverse proxy in front. Tracked in #62.
 - **The session secret** only protects short-lived cookies (sign-in state, flash messages, pending uploads). Rotating it signs no one out but cancels sign-ins in progress.
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
