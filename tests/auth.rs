@@ -348,3 +348,25 @@ async fn sign_out_needs_csrf_clears_session_and_calls_entra() {
     let res = h.get("/", &[session]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
+
+#[tokio::test]
+async fn crafted_error_codes_cannot_forge_log_lines() {
+    let h = Harness::new().await;
+    let (_, login) = h.start("%2F").await;
+    let res = h
+        .get(
+            "/auth/callback?error=x%0A2026-11-09T00:00:00Z%20WARN%20secret%20purged&state=x",
+            &[login],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        keyring::auth::oidc::safe_code("access_denied"),
+        "access_denied"
+    );
+    assert_eq!(
+        keyring::auth::oidc::safe_code("x\nWARN fake"),
+        "unrecognised"
+    );
+    assert_eq!(keyring::auth::oidc::safe_code(""), "unrecognised");
+}
