@@ -13,12 +13,13 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
-use crate::azure::secrets::{self, ExpiryState, SecretItem, SecretsApi, now_ts};
-use crate::azure::vaults::is_valid_vault_name;
+use crate::azure::secrets::{ExpiryState, SecretItem, SecretsApi, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
-use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
+use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::shell::{Section, Shell};
+use crate::routes::vault_ctx;
+pub use crate::routes::vault_ctx::{azure_problem, checked_name};
 
 /// Secrets shown per page of the list.
 pub const PER_PAGE: usize = 100;
@@ -160,27 +161,9 @@ struct ListPage {
     next_url: Option<String>,
 }
 
-#[derive(Template)]
-#[template(path = "secrets/no_vault.html")]
-struct NoVaultPage {
-    shell: Shell,
-}
-
 /// The chosen vault, or the page to show when there isn't one.
 pub fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shell), Halt> {
-    match session.0.selected_vault() {
-        Some(v) if is_valid_vault_name(&v) => Ok((v, shell.at(Section::Secrets))),
-        _ => Err(render(&NoVaultPage {
-            shell: shell.at(Section::Secrets),
-        })
-        .into_response()
-        .into()),
-    }
-}
-
-/// Turn a failed Azure call into an error page that offers to retry `path`.
-pub fn azure_problem(shell: Shell, err: &crate::azure::AzureError, need: Need, path: &str) -> Halt {
-    PageError::new(shell, Problem::from_azure(err, need).returning_to(path)).into()
+    vault_ctx::current_vault(session, shell, Section::Secrets)
 }
 
 pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) -> SecretsApi<'a> {
@@ -263,16 +246,6 @@ struct DetailPage {
     updated: String,
     not_before: String,
     recovery_level: String,
-}
-
-/// Validate a secret name from the URL. Shows "not found" for anything that
-/// couldn't be a Key Vault secret name, so nothing odd reaches a URL.
-pub fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
-    if secrets::is_valid_secret_name(name) {
-        Ok((name.to_owned(), shell))
-    } else {
-        Err(PageError::new(shell, Problem::not_found()).into())
-    }
 }
 
 pub async fn detail(

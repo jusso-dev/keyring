@@ -10,6 +10,7 @@ pub mod http;
 pub mod routes;
 pub mod secret;
 pub mod telemetry;
+pub mod x509;
 
 use std::sync::Arc;
 

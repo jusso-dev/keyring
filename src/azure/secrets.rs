@@ -196,7 +196,7 @@ struct Page<T> {
 
 /// Key Vault secret names: 1 to 127 letters, digits and hyphens.
 pub fn is_valid_secret_name(name: &str) -> bool {
-    (1..=127).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    crate::routes::vault_ctx::is_valid_object_name(name)
 }
 
 /// Versions are 32 hex characters.

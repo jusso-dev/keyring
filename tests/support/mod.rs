@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod certs;
 pub mod keyvault;
 
 use std::net::SocketAddr;
@@ -550,4 +551,14 @@ pub fn location(res: &axum::http::Response<axum::body::Body>) -> String {
         .get("location")
         .map(|v| v.to_str().unwrap().to_owned())
         .unwrap_or_default()
+}
+
+/// The test certificate (public part only), shared with the unit tests.
+pub const TEST_CERT_PEM: &str = include_str!("../fixtures/test-cert.pem");
+
+/// First CERTIFICATE block in a PEM string, decoded.
+pub fn pem_first_cert(pem: &str) -> Option<Vec<u8>> {
+    keyring::x509::pem_blocks(pem, "CERTIFICATE")
+        .into_iter()
+        .next()
 }
