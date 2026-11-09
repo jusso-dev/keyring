@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Certificates in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>Certificates <span class="muted">in {{ vault }}</span></h1>
+
+{% if total == 0 %}
+<div class="empty-state">
+  <p><strong>This vault has no certificates yet.</strong></p>
+  <p>Certificates added to this vault will appear here.</p>
+</div>
+{% else %}
+<p class="muted">
+  {{ total }} certificate{% if total != 1 %}s{% endif %}.
+  {% if expired > 0 %}<a href="/certificates?show=expired">{{ expired }} expired</a>.{% endif %}
+  {% if within30 > 0 %}<a href="/certificates?show=30">{{ within30 }} expiring within 30 days</a>.{% endif %}
+  {% if within90 > 0 %}<a href="/certificates?show=90">{{ within90 }} more within 90 days</a>.{% endif %}
+</p>
+<form class="filters" method="get" action="/certificates" role="search" data-live-filter="cert-table">
+  <div>
+    <label for="q">Search by name, tag or thumbprint</label>
+    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+  </div>
+  <div>
+    <label for="show">Show</label>
+    <select id="show" name="show">
+      {% for o in show_options %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+    {% if !filter.is_empty() %}<a href="/certificates">Clear</a>{% endif %}
+  </div>
+</form>
+{% if rows.is_empty() %}
+<div class="empty-state"><p>No certificates match. Try a shorter search or clear the filters.</p></div>
+{% else %}
+<div class="table-wrap">
+<table id="cert-table">
+  <caption class="visually-hidden">Certificates in {{ vault }}</caption>
+  <thead><tr>
+    <th scope="col">Name</th><th scope="col">Status</th><th scope="col">Expires</th><th scope="col">Thumbprint</th><th scope="col">Tags</th>
+  </tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
+      <th scope="row"><a class="mono" href="/certificates/{{ row.name }}">{{ row.name }}</a></th>
+      <td>{% include "certs/_status.html" %}{% if row.enabled && row.expiry == crate::routes::certs::CertExpiry::Ok %}<span class="muted">Active</span>{% endif %}</td>
+      <td>{% if row.expires.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.expires }} <span class="muted">({{ row.expires_note }})</span>{% endif %}</td>
+      <td class="mono small">{{ row.thumbprint }}</td>
+      <td>{% for (k, v) in row.tags %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted" data-live-filter-empty hidden>No certificates on this page match.</p>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if let Some(url) = prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if let Some(url) = next_url %}<a href="{{ url }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

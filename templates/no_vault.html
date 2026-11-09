@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Secrets - Keyring{% endblock %}
+{% block title %}{{ title }} - Keyring{% endblock %}
 {% block content %}
-<h1>Secrets</h1>
+<h1>{{ title }}</h1>
 <div class="empty-state">
   <p><strong>Choose a vault first.</strong></p>
-  <p>Secrets live in a vault. Pick one from your list of vaults and Keyring will show its secrets here.</p>
+  <p>{{ noun }} live in a vault. Pick one from your list of vaults and Keyring will show them here.</p>
   <p><a class="button" href="/vaults">Choose a vault</a></p>
 </div>
 {% endblock %}

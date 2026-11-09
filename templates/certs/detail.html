@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ row.name }} - Keyring{% endblock %}
+{% block content %}
+<p><a href="/certificates">Back to certificates in {{ vault }}</a></p>
+<h1 class="mono">{{ row.name }}</h1>
+<p>{% include "certs/_status.html" %}</p>
+
+{% if let Some(p) = pending %}
+<div class="notice {% if p.failed %}notice-error{% else %}notice-warn{% endif %}" role="status">
+  <p><strong>Certificate request: {{ p.status }}.</strong> {{ p.details }}</p>
+  {% if !p.failed %}<p>The certificate appears here once the issuer signs it. Refresh this page to check.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="actions">
+  <a class="button" href="/certificates/{{ row.name }}/cer">Download .cer</a>
+  <a class="button button-secondary" href="/certificates/{{ row.name }}/cer?format=pem">Download PEM (public)</a>
+  {% if let Some(pol) = policy %}{% if pol.exportable %}
+  <a class="button button-secondary" href="/certificates/{{ row.name }}/download-key">Download with private key</a>
+  {% endif %}{% endif %}
+</div>
+
+<section aria-labelledby="cert-heading">
+  <h2 id="cert-heading">Current version</h2>
+  {% if let Some(c) = cert %}
+  <dl class="props">
+    <dt>Subject</dt><dd class="mono">{{ c.subject }}</dd>
+    <dt>Other names</dt><dd>{% if c.sans.is_empty() %}<span class="muted">None</span>{% else %}{% for s in c.sans %}<span class="tag">{{ s }}</span> {% endfor %}{% endif %}</dd>
+    <dt>Issued by</dt><dd class="mono">{{ c.issuer }}{% if c.self_signed %} <span class="muted">(self-signed)</span>{% endif %}</dd>
+    <dt>Valid from</dt><dd>{{ c.valid_from }}</dd>
+    <dt>Valid until</dt><dd>{{ c.valid_to }}{% if !row.expires_note.is_empty() %} ({{ row.expires_note }}){% endif %}</dd>
+    <dt>Thumbprint</dt><dd class="mono">{{ row.thumbprint }}</dd>
+    <dt>Serial number</dt><dd class="mono">{{ c.serial }}</dd>
+    <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
+    <dt>Tags</dt><dd>{% if row.tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+  </dl>
+  {% else %}
+  <p class="muted">There's no issued certificate in this version yet.</p>
+  {% endif %}
+</section>
+
+{% if let Some(pol) = policy %}
+<section aria-labelledby="policy-heading">
+  <h2 id="policy-heading">Policy</h2>
+  <p class="muted">The rules Key Vault follows when it creates or renews this certificate.</p>
+  <dl class="props">
+    <dt>Issuer</dt><dd>{{ pol.issuer }}</dd>
+    <dt>Key</dt><dd>{{ pol.key }}</dd>
+    <dt>Private key can be exported</dt><dd>{% if pol.exportable %}Yes{% else %}No, it stays in Key Vault{% endif %}</dd>
+    <dt>Stored as</dt><dd>{{ pol.content_type }}</dd>
+    {% if !pol.validity.is_empty() %}<dt>Valid for</dt><dd>{{ pol.validity }}</dd>{% endif %}
+    <dt>Near expiry</dt><dd>{{ pol.renewal }}</dd>
+  </dl>
+</section>
+{% endif %}
+
+<section aria-labelledby="versions-heading">
+  <h2 id="versions-heading">Versions</h2>
+  {% if versions.is_empty() %}
+  <p class="muted">No versions listed.</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <caption class="visually-hidden">Versions of {{ row.name }}</caption>
+    <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Thumbprint</th><th scope="col"><span class="visually-hidden">Download</span></th></tr></thead>
+    <tbody>
+      {% for v in versions %}
+      <tr>
+        <th scope="row" class="mono" title="{{ v.version }}">{{ v.short_version() }}{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
+        <td>{{ v.created }}</td>
+        <td>{{ v.expires }}</td>
+        <td class="mono small">{{ v.thumbprint }}</td>
+        <td><a href="/certificates/{{ row.name }}/cer?version={{ v.version }}">.cer<span class="visually-hidden"> for version {{ v.short_version() }}</span></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
