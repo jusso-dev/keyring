@@ -13,6 +13,11 @@ pub const MIN_SESSION_SECRET_LEN: usize = 32;
 pub struct Config {
     pub tenant_id: String,
     pub client_id: String,
+    /// Sign-in host, `https://login.microsoftonline.com` unless overridden.
+    pub authority_host: String,
+    /// Scope for Keyring's own API, requested at sign-in so the access token
+    /// can be exchanged on behalf of the user.
+    pub api_scope: String,
     pub client_secret: Secret,
     /// Public base URL with no trailing slash, for example `https://keyring.example.com`.
     pub base_url: String,
@@ -77,22 +82,29 @@ impl Config {
         let take = |name: &str| get(name).unwrap_or_default();
 
         let tenant_id = take("ENTRA_TENANT_ID");
-        if !is_tenant_id(&tenant_id) {
+        if !is_guid(&tenant_id) {
             return Err(ConfigError::Invalid {
                 name: "ENTRA_TENANT_ID",
-                reason: "expected a GUID or a domain such as contoso.onmicrosoft.com".into(),
+                reason:
+                    "expected the tenant's ID, a GUID like 00000000-0000-0000-0000-000000000000"
+                        .into(),
+            });
+        }
+        let client_id = take("ENTRA_CLIENT_ID");
+        if !is_guid(&client_id) {
+            return Err(ConfigError::Invalid {
+                name: "ENTRA_CLIENT_ID",
+                reason: "expected the app registration's client ID, a GUID".into(),
             });
         }
 
-        let base_url = take("APP_BASE_URL").trim_end_matches('/').to_owned();
-        let local =
-            base_url.starts_with("http://localhost") || base_url.starts_with("http://127.0.0.1");
-        if !(base_url.starts_with("https://") || local) {
-            return Err(ConfigError::Invalid {
-                name: "APP_BASE_URL",
-                reason: "must start with https:// (http:// is only allowed for localhost)".into(),
-            });
-        }
+        let base_url = checked_url("APP_BASE_URL", &take("APP_BASE_URL"))?;
+        let authority_host = checked_url(
+            "ENTRA_AUTHORITY_HOST",
+            &get("ENTRA_AUTHORITY_HOST").unwrap_or_else(|| DEFAULT_AUTHORITY_HOST.into()),
+        )?;
+        let api_scope =
+            get("ENTRA_API_SCOPE").unwrap_or_else(|| format!("api://{client_id}/access_as_user"));
 
         let session_secret = take("SESSION_SECRET");
         if session_secret.len() < MIN_SESSION_SECRET_LEN {
@@ -120,7 +132,9 @@ impl Config {
 
         Ok(Self {
             tenant_id,
-            client_id: take("ENTRA_CLIENT_ID"),
+            client_id,
+            authority_host,
+            api_scope,
             client_secret: Secret::new(take("ENTRA_CLIENT_SECRET")),
             base_url,
             session_secret: Secret::new(session_secret),
@@ -134,6 +148,52 @@ impl Config {
     pub fn is_https(&self) -> bool {
         self.base_url.starts_with("https://")
     }
+
+    /// The Entra ID issuer for this tenant.
+    pub fn issuer(&self) -> String {
+        format!("{}/{}/v2.0", self.authority_host, self.tenant_id)
+    }
+
+    /// Where Entra sends the browser back to after sign-in.
+    pub fn redirect_url(&self) -> String {
+        format!("{}/auth/callback", self.base_url)
+    }
+
+    /// Where Entra sends the browser after sign-out.
+    pub fn signed_out_url(&self) -> String {
+        format!("{}/auth/signed-out", self.base_url)
+    }
+}
+
+/// Default Entra ID sign-in host.
+pub const DEFAULT_AUTHORITY_HOST: &str = "https://login.microsoftonline.com";
+
+/// True for `http://localhost` and `http://127.0.0.1`, with or without a port.
+pub fn is_local_http(url: &str) -> bool {
+    ["http://localhost", "http://127.0.0.1"]
+        .iter()
+        .any(|prefix| {
+            url.strip_prefix(prefix).is_some_and(|rest| {
+                rest.is_empty() || rest.starts_with(':') || rest.starts_with('/')
+            })
+        })
+}
+
+/// Trim a trailing slash and require `https://`, allowing plain `http://`
+/// only for localhost.
+fn checked_url(name: &'static str, raw: &str) -> Result<String, ConfigError> {
+    let url = raw.trim_end_matches('/').to_owned();
+    let has_host = url
+        .split_once("://")
+        .is_some_and(|(_, rest)| !rest.is_empty() && !rest.contains(char::is_whitespace));
+    if has_host && (url.starts_with("https://") || is_local_http(&url)) {
+        Ok(url)
+    } else {
+        Err(ConfigError::Invalid {
+            name,
+            reason: "must start with https:// (http:// is only allowed for localhost)".into(),
+        })
+    }
 }
 
 fn parse_bool(v: &str) -> Option<bool> {
@@ -144,11 +204,13 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-fn is_tenant_id(v: &str) -> bool {
-    !v.is_empty()
-        && v.len() <= 253
-        && v.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+fn is_guid(v: &str) -> bool {
+    let groups: Vec<&str> = v.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(g, len)| g.len() == len && g.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 #[cfg(test)]
@@ -217,6 +279,41 @@ pub(crate) mod tests {
         assert!(load(&env).is_err());
         env.insert("APP_BASE_URL", "https://keyring.example.com".into());
         assert!(load(&env).unwrap().is_https());
+    }
+
+    #[test]
+    fn rejects_non_guid_ids() {
+        let mut env = sample_env();
+        env.insert("ENTRA_TENANT_ID", "contoso.onmicrosoft.com".into());
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "ENTRA_TENANT_ID",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn derives_entra_urls() {
+        let config = load(&sample_env()).unwrap();
+        assert_eq!(
+            config.issuer(),
+            "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0"
+        );
+        assert_eq!(config.redirect_url(), "http://localhost:3000/auth/callback");
+        assert_eq!(
+            config.api_scope,
+            "api://11111111-1111-1111-1111-111111111111/access_as_user"
+        );
+    }
+
+    #[test]
+    fn local_http_check_is_strict() {
+        assert!(is_local_http("http://localhost:3000"));
+        assert!(is_local_http("http://127.0.0.1"));
+        assert!(!is_local_http("http://localhost.evil.com"));
+        assert!(!is_local_http("http://127.0.0.1.evil.com"));
     }
 
     #[test]

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Sign in to Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Sign in to Keyring</h1>
+  {% if expired %}
+  <p class="notice notice-warn" role="status">You were signed out after a while without activity. Sign in again to carry on.</p>
+  {% endif %}
+  <p>Use your work account. Keyring acts as you, so you'll see the vaults and secrets you already have access to.</p>
+  <p><a class="button" href="{{ start_url }}">Sign in with Microsoft</a></p>
+</div>
+{% endblock %}

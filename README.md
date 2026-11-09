@@ -59,8 +59,10 @@ Set these as environment variables. Don't commit them.
 | `ENTRA_CLIENT_ID` | The app registration's client ID |
 | `ENTRA_CLIENT_SECRET` | Client secret (or use a certificate) |
 | `APP_BASE_URL` | Public URL of this app, used for redirects |
-| `SESSION_SECRET` | Random string used to encrypt the session cookie |
+| `SESSION_SECRET` | At least 32 random characters, used to encrypt the short-lived sign-in cookie |
+| `ENTRA_API_SCOPE` | Optional. Scope for Keyring's own API. Defaults to `api://<client ID>/access_as_user` |
 | `KEYRING_ALLOW_PURGE` | `true` to allow permanent deletes. Off by default |
+| `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
 
 ## Why Rust
 
