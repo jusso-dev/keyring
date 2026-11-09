@@ -6,6 +6,7 @@ pub mod auth;
 pub mod azure;
 pub mod config;
 pub mod dates;
+pub mod expiry;
 pub mod generator;
 pub mod http;
 pub mod pkcs12;

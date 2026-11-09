@@ -5,6 +5,7 @@ mod auth;
 mod certs;
 pub mod confirm;
 pub mod error;
+mod expiry;
 pub mod flash;
 mod generator;
 mod headers;
@@ -131,7 +132,8 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/keys/{name}/delete",
             get(keys::delete::delete_form).post(keys::delete::delete),
         )
-        .route("/expiry", get(sections::expiry))
+        .route("/expiry", get(expiry::page))
+        .route("/expiry.csv", get(expiry::csv))
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/audit", get(sections::audit))
         .route_layer(middleware::from_fn_with_state(

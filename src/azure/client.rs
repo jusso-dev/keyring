@@ -118,7 +118,10 @@ impl AzureClient {
     }
 
     /// Make a call as the user and return the raw body of a 2xx reply. If
-    /// Azure says the token is no good (401), get a fresh one and try once more.
+    /// Azure says the token is no good (401), get a fresh one and try once
+    /// more. If Azure is throttling (429), wait as asked (up to
+    /// [`MAX_RETRY_WAIT`]) and try again, at most [`MAX_THROTTLE_RETRIES`]
+    /// times.
     pub async fn send(
         &self,
         session: &Session,
@@ -128,6 +131,7 @@ impl AzureClient {
         body: Option<Vec<u8>>,
     ) -> Result<Vec<u8>, AzureError> {
         let mut retried = false;
+        let mut throttled = 0;
         loop {
             let token = self.broker.token_for(session, resource).await?;
             let mut req = self
@@ -145,6 +149,14 @@ impl AzureClient {
                 retried = true;
                 continue;
             }
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && throttled < MAX_THROTTLE_RETRIES
+            {
+                throttled += 1;
+                let wait = retry_after(res.headers().get(reqwest::header::RETRY_AFTER), throttled);
+                tracing::info!(resource = ?resource, wait_ms = wait.as_millis() as u64, "Azure throttled, waiting");
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             let bytes = res.bytes().await.map_err(HttpError::from)?.to_vec();
             if status.is_success() {
                 return Ok(bytes);
@@ -160,5 +172,43 @@ impl AzureClient {
                 message,
             });
         }
+    }
+}
+
+/// Throttled calls are tried again at most this many times.
+pub const MAX_THROTTLE_RETRIES: u32 = 2;
+/// Longest Keyring will wait before trying a throttled call again.
+pub const MAX_RETRY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long to wait after a 429: Azure's `Retry-After` seconds if given,
+/// otherwise a short backoff, capped at [`MAX_RETRY_WAIT`].
+pub fn retry_after(
+    header: Option<&reqwest::header::HeaderValue>,
+    attempt: u32,
+) -> std::time::Duration {
+    let asked = header
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs);
+    let fallback = std::time::Duration::from_millis(500 * u64::from(attempt));
+    asked.unwrap_or(fallback).min(MAX_RETRY_WAIT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_rules() {
+        let h = reqwest::header::HeaderValue::from_static("2");
+        assert_eq!(retry_after(Some(&h), 1), std::time::Duration::from_secs(2));
+        let big = reqwest::header::HeaderValue::from_static("120");
+        assert_eq!(retry_after(Some(&big), 1), MAX_RETRY_WAIT);
+        assert_eq!(retry_after(None, 2), std::time::Duration::from_millis(1000));
+        let date = reqwest::header::HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT");
+        assert_eq!(
+            retry_after(Some(&date), 1),
+            std::time::Duration::from_millis(500)
+        );
     }
 }
