@@ -426,8 +426,10 @@ async fn update_current(
 
 #[derive(Deserialize)]
 pub struct ToggleForm {
+    #[serde(default)]
     csrf: String,
     /// `on` or `off`.
+    #[serde(default)]
     state: String,
 }
 

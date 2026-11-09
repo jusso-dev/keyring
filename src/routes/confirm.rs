@@ -10,6 +10,7 @@ use crate::routes::error::Problem;
 /// Fields every confirm form posts.
 #[derive(Debug, Deserialize)]
 pub struct ConfirmForm {
+    #[serde(default)]
     pub csrf: String,
     #[serde(default)]
     pub confirm_name: String,

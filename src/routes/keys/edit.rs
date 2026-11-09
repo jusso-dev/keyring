@@ -321,6 +321,7 @@ struct RotatePage {
 
 #[derive(Deserialize)]
 pub struct CsrfForm {
+    #[serde(default)]
     csrf: String,
 }
 

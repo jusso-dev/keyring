@@ -28,6 +28,7 @@ pub const CLEAR_AFTER_SECS: u32 = 30;
 
 #[derive(Deserialize)]
 pub struct RevealForm {
+    #[serde(default)]
     csrf: String,
     /// A specific version, or empty for the current one.
     #[serde(default)]
