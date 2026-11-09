@@ -179,7 +179,7 @@ fn op_label(op: &str) -> &'static str {
         "wrapKey" => "Wrap other keys",
         "unwrapKey" => "Unwrap other keys",
         "import" => "Import",
-        "export" => "Export (release to a trusted environment)",
+        "export" => "Release to a trusted environment",
         _ => "Other",
     }
 }

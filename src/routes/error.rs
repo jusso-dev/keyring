@@ -154,7 +154,7 @@ impl Problem {
                 "Can't reach this vault",
                 "Keyring couldn't connect to the vault. It may only accept connections from a private network, and Keyring isn't on that network.",
             )
-            .with_hint("Ask your admin whether the vault has public access turned off. If so, Keyring needs to run in a network that can reach the vault's private endpoint, with private DNS for privatelink.vaultcore.azure.net. See docs/private-vaults.md.")
+            .with_hint("Ask your admin whether the vault has public access turned off. If so, Keyring needs to run in a network that can reach the vault's private endpoint, with private DNS for privatelink.vaultcore.azure.net. Keyring's private vault guide explains the setup.")
             .with_next(NextStep::Retry("/".into())),
             AzureError::Network(_) => Self::new(
                 StatusCode::BAD_GATEWAY,

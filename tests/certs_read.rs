@@ -135,7 +135,7 @@ async fn pfx_only_when_exportable() {
     w.kv.state.add_cert("locked", false, "c2VjcmV0");
     let (status, html) = w.page("/certificates/locked/download-key").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(html.contains("can&#39;t be exported"));
+    assert!(html.contains("can&#39;t be downloaded"));
     let res = w
         .post(
             "/certificates/locked/download-key",
