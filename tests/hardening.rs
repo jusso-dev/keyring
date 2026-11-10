@@ -194,7 +194,7 @@ async fn mutating_routes_list_is_complete() {
 #[tokio::test]
 async fn oversized_bodies_are_refused() {
     let w = support::world().await;
-    let big = "a".repeat(100 * 1024);
+    let big = "a".repeat(200 * 1024);
     let res = w
         .post("/secrets/new", &[("name", "x"), ("value", &big)])
         .await;
