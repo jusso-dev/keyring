@@ -206,6 +206,10 @@ async fn delete_recover_and_purge_flag() {
     assert!(html.contains(">app-key<"));
     let (_, html) = w.page("/keys/-/deleted/app-key").await;
     assert!(!html.contains("/purge\""), "no purge link");
+    assert!(
+        html.contains("Deleted keys in this vault can be recovered for 90 days."),
+        "retention from the deleted key"
+    );
     let res = w
         .post(
             "/keys/-/deleted/app-key/purge",

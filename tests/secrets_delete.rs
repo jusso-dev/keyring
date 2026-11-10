@@ -294,3 +294,24 @@ async fn deleted_list_pages() {
     assert_eq!(html.matches("<th scope=\"row\"").count(), 1);
     assert!(html.contains(">old-100<"));
 }
+
+#[tokio::test]
+async fn deleted_secret_page_keeps_its_content_type_and_retention() {
+    let w = support::world().await;
+    *w.kv.state.retention.lock().unwrap() = Some(("CustomizedRecoverable+Purgeable", 7));
+    w.kv.state.put_with("db-password", "x", |v| {
+        v.content_type = Some("text/plain".into());
+    });
+    w.kv.state.soft_delete("db-password");
+    let (status, html) = w.page("/secrets/-/deleted/db-password").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("<dt>Content type</dt><dd>text/plain</dd>"),
+        "{html}"
+    );
+    assert!(html.contains("with every version and its value"));
+    assert!(html.contains("Deleted secrets in this vault can be recovered for 7 days."));
+    let (_, html) = w.page("/secrets/-/deleted").await;
+    assert!(html.contains("Deleted secrets <span class=\"muted\">in"));
+    assert!(html.contains("action=\"/secrets/-/deleted/db-password/recover\""));
+}

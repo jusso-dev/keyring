@@ -215,6 +215,9 @@ pub struct DeletedKeyItem {
     pub deleted_date: Option<Timestamp>,
     #[serde(default)]
     pub scheduled_purge_date: Option<Timestamp>,
+    /// Carries `recoveryLevel` and `recoverableDays`.
+    #[serde(default)]
+    pub attributes: Attributes,
 }
 
 impl DeletedKeyItem {

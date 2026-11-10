@@ -19,7 +19,10 @@ A code review on 10-11-2026 filed issues #73 to #173 (index #174). These are the
 - **Keys** (#180): the rotation policy form keeps what it can't show and Key Vault's own durations, checks Key Vault's limits, and reads the default policy as none. Managed keys are refused on the server, and keys can be enabled and disabled. #115, #121, #122, #126, #129.
 - **Azure's message** (#180): a 400 on a write shows Key Vault's own reason under the form, cut to 500 characters and never logged. #124.
 - **Deployment, CI and docs** (#176): internal Container Apps ingress with private DNS, App Service logs to a workspace, the alerts topic in the vault's region, image labels, a CI check that docs only name `src/` files that exist, and many doc corrections. #151, #153, #154, #155, #157, #158, #159, #160, #161, #163, #164, #165, #166, #167, #168.
-- **Docs and tests** (this change): the architecture, deploy and troubleshooting pages describe the fixes above, the README says which certificate issuers Keyring supports, `docs/real-vault-checklist.md` lists what the first real-tenant run must confirm, and a test checks the numbers in the docs against the code. #119, #124, #169, #170, #171.
+- **Docs and tests** (#182): the architecture, deploy and troubleshooting pages describe the fixes above, the README says which certificate issuers Keyring supports, `docs/real-vault-checklist.md` lists what the first real-tenant run must confirm, and a test checks the numbers in the docs against the code. #119, #124, #169, #170, #171.
+- **Shared code** (#183): one form token check, field errors and name check for every form; delete, recover and purge written once for secrets, certificates and keys; fixed pages moved under `/-/` (old addresses redirect); the deleted lists are paged; dead code and stale comments removed. #99, #133, #172, #173.
+- **Templates and accessibility** (#184): shared partials for fields, tables and confirm pages, row actions kept inside table cells, wide tables reachable by keyboard, focus moved to the error summary or message, and disable asks first. #137, #138, #139, #142, #143, #144, #145, #146, #147, #148, #149, #150.
+- **Deleted pages** (this change): secrets use the shared deleted list and deleted page too, which keep a secret's content type and now give every kind the vault's real retention period. #150, #172.
 
 ### Security
 

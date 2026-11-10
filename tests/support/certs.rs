@@ -566,6 +566,7 @@ async fn delete(
 fn deleted_item(b: &str, name: &str, d: &DeletedCert) -> Value {
     let v = d.cert.versions.last().unwrap();
     let mut out = item(b, name, v, false);
+    out["attributes"]["recoverableDays"] = json!(90);
     out["recoveryId"] = json!(format!("{b}/deletedcertificates/{name}"));
     out["deletedDate"] = json!(d.deleted);
     out["scheduledPurgeDate"] = json!(d.purge);

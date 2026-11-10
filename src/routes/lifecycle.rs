@@ -378,8 +378,10 @@ pub struct DeletedRow {
     pub deleted: String,
     pub purge: String,
     pub purge_note: String,
-    /// The vault has purge protection, so purge isn't offered.
-    pub purge_protected: bool,
+    /// Empty when the item has none, or its kind doesn't carry one.
+    pub content_type: String,
+    /// What the vault allows, from the deleted item's own attributes.
+    pub recovery: Recovery,
 }
 
 impl DeletedRow {
@@ -391,13 +393,23 @@ impl DeletedRow {
             purge_note: purge
                 .map(|p| dates::relative_days(p, now))
                 .unwrap_or_default(),
-            purge_protected: false,
+            content_type: String::new(),
+            recovery: Recovery::default(),
         }
     }
 
-    /// Take purge protection from the deleted item's `recoveryLevel`.
-    pub fn with_recovery_level(mut self, level: Option<&str>) -> Self {
-        self.purge_protected = Recovery::new(level, None).purge_protected;
+    /// Take the retention and purge protection from the deleted item's
+    /// attributes.
+    pub fn with_recovery(mut self, attributes: &crate::azure::secrets::Attributes) -> Self {
+        self.recovery = Recovery::new(
+            attributes.recovery_level.as_deref(),
+            attributes.recoverable_days,
+        );
+        self
+    }
+
+    pub fn with_content_type(mut self, content_type: Option<&str>) -> Self {
+        self.content_type = content_type.unwrap_or_default().to_owned();
         self
     }
 }
@@ -450,6 +462,20 @@ struct DeletedDetail<'a> {
     kind: Kind,
     row: &'a DeletedRow,
     allow_purge: bool,
+}
+
+impl DeletedDetail<'_> {
+    /// What a recover brings back. A secret's value comes back too.
+    fn restores(&self) -> &'static str {
+        match self.kind {
+            Kind::Secret => "with every version and its value",
+            Kind::Certificate | Kind::Key => "with every version",
+        }
+    }
+
+    fn recovery_sentence(&self) -> String {
+        self.row.recovery.sentence(self.kind)
+    }
 }
 
 pub fn deleted_detail(

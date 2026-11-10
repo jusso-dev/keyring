@@ -147,6 +147,11 @@ async fn purge_off_by_default() {
     .await;
     let (_, html) = w.page("/certificates/-/deleted/web-tls").await;
     assert!(!html.contains("/purge\""), "no purge link");
+    assert!(html.contains("Deleted certificates in this vault can be recovered for 90 days."));
+    assert!(
+        !html.contains("its value"),
+        "only secrets bring back a value"
+    );
     let (status, _) = w.page("/certificates/-/deleted/web-tls/purge").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let res = w
