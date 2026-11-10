@@ -4,21 +4,30 @@
 //! off unless `KEYRING_ALLOW_PURGE=true`; with it off the purge routes
 //! refuse every request, whatever the browser sends. On a vault with purge
 //! protection purge isn't offered, and is refused before Azure is asked.
+//!
+//! Delete, recover and purge use the shared handlers in
+//! [`crate::routes::lifecycle::handlers`]. Secrets differ from the other
+//! kinds in three ways, all kept here: a certificate's backing secret is
+//! refused on the form and on submit, the delete message gives the vault's
+//! real retention, and purge reads the deleted secret first so purge
+//! protection is refused before Azure is asked. The deleted list and
+//! deleted page have their own templates, because they show the content
+//! type and the vault's retention.
 
 use askama::Template;
-use axum::Form;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
+use crate::azure::AzureError;
 use crate::azure::secrets::{DeletedSecretItem, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
-use crate::routes::confirm::{ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, Need, PageResult};
+use crate::routes::lifecycle::handlers::{Lifecycle, Stage};
 use crate::routes::lifecycle::{self, Kind, Recovery};
+use crate::routes::paging::{PageQuery, Pager};
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
 
@@ -66,6 +75,7 @@ struct DeletedList {
     shell: Shell,
     vault: String,
     rows: Vec<DeletedRow>,
+    pager: Pager,
 }
 
 #[derive(Template)]
@@ -103,72 +113,11 @@ async fn current(
     }
 }
 
-fn delete_view(vault: &str, name: &str, recovery: Recovery) -> ConfirmView {
-    lifecycle::delete_view_for(KIND, vault, name, recovery)
-}
-
-pub async fn delete_form(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    // Read the secret first, so a missing or certificate-owned secret gets
-    // its own page, and the warning can give the vault's real retention.
-    let (shell, recovery) = current(&state, &session, shell, &vault, &name).await?;
-    Ok(lifecycle::confirm_page(
-        shell,
-        delete_view(&vault, &name, recovery),
-        StatusCode::OK,
-    ))
-}
-
-pub async fn delete(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<ConfirmForm>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = lifecycle::verify(
-        &session,
-        &vault,
-        &form,
-        &name,
-        shell,
-        delete_view(&vault, &name, Recovery::default()),
-    )?;
-    // Refuse a certificate's backing secret, and refuse if we can't tell.
-    let (shell, recovery) = current(&state, &session, shell, &vault, &name).await?;
-    match api(&state, &session, &vault).delete(&name).await {
-        Ok(()) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret deleted");
-            Ok(lifecycle::redirect_with(
-                &state,
-                "/secrets",
-                format!(
-                    "Deleted {name}. You can recover it from deleted secrets {}.",
-                    recovery.period()
-                ),
-            ))
-        }
-        Err(err) => Err(azure_problem(
-            shell,
-            &err,
-            Need::ManageSecrets,
-            &format!("/secrets/{name}"),
-        )),
-    }
-}
-
 pub async fn list_deleted(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Query(query): Query<PageQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let items = match api(&state, &session, &vault).list_deleted().await {
@@ -178,16 +127,19 @@ pub async fn list_deleted(
                 shell,
                 &err,
                 Need::ManageSecrets,
-                "/secrets/deleted",
+                "/secrets/-/deleted",
             ));
         }
     };
     let now = now_ts();
+    let rows = items
+        .iter()
+        .map(|d| DeletedRow::from_item(d, now))
+        .collect();
+    let (rows, pager) = lifecycle::deleted_page(KIND, rows, query.page);
     Ok(render(&DeletedList {
-        rows: items
-            .iter()
-            .map(|d| DeletedRow::from_item(d, now))
-            .collect(),
+        rows,
+        pager,
         shell,
         vault,
     })
@@ -207,7 +159,7 @@ async fn load_deleted(
             shell,
             &err,
             Need::ManageSecrets,
-            "/secrets/deleted",
+            "/secrets/-/deleted",
         )),
     }
 }
@@ -230,89 +182,75 @@ pub async fn deleted_detail(
     .into_response())
 }
 
-#[derive(serde::Deserialize)]
-pub struct CsrfForm {
-    #[serde(default)]
-    csrf: String,
-}
+/// Secrets, for the shared lifecycle handlers.
+pub struct Secrets;
 
-pub async fn recover(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<CsrfForm>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
-    match api(&state, &session, &vault).recover(&name).await {
-        Ok(()) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret recovered");
-            Ok(lifecycle::recovered(&state, KIND, &name))
-        }
-        Err(err) => Err(azure_problem(
-            shell,
-            &err,
-            Need::ManageSecrets,
-            &format!("/secrets/deleted/{name}"),
-        )),
+impl Lifecycle for Secrets {
+    const KIND: Kind = KIND;
+    const MANAGE: Need = Need::ManageSecrets;
+
+    async fn delete(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).delete(name).await
     }
-}
 
-pub async fn purge_form(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let shell = lifecycle::purge_allowed(&state, shell, KIND)?;
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let (shell, item) = load_deleted(&state, &session, shell, &vault, &name).await?;
-    let shell = lifecycle::purge_not_protected(shell, KIND, &name, recovery_of(&item.attributes))?;
-    Ok(lifecycle::confirm_page(
-        shell,
-        lifecycle::purge_view(KIND, &vault, &name),
-        StatusCode::OK,
-    ))
-}
+    async fn recover(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).recover(name).await
+    }
 
-pub async fn purge(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<ConfirmForm>,
-) -> PageResult {
-    let shell = lifecycle::purge_allowed(&state, shell, KIND)?;
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = lifecycle::verify(
-        &session,
-        &vault,
-        &form,
-        &name,
-        shell,
-        lifecycle::purge_view(KIND, &vault, &name),
-    )?;
-    let (shell, item) = load_deleted(&state, &session, shell, &vault, &name).await?;
-    let shell = lifecycle::purge_not_protected(shell, KIND, &name, recovery_of(&item.attributes))?;
-    match api(&state, &session, &vault).purge(&name).await {
-        Ok(()) => {
-            tracing::warn!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret purged");
-            Ok(lifecycle::redirect_with(
-                &state,
-                "/secrets/deleted",
-                format!("Permanently deleted {name}."),
-            ))
-        }
-        Err(err) => Err(lifecycle::purge_problem(
-            shell,
-            &err,
-            KIND,
-            &name,
-            Need::ManageSecrets,
-        )),
+    async fn purge(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).purge(name).await
+    }
+
+    /// Read the secret first, on the form and on submit, so a missing or
+    /// certificate-owned secret gets its own page and the warning can give
+    /// the vault's real retention. Refuse if we can't tell.
+    async fn check_delete(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+        shell: Shell,
+        _stage: Stage,
+    ) -> Result<(Shell, Recovery), Halt> {
+        current(state, session, shell, vault, name).await
+    }
+
+    /// Refuse early when the deleted secret says the vault has purge
+    /// protection.
+    async fn check_purge(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+        shell: Shell,
+    ) -> Result<Shell, Halt> {
+        let (shell, item) = load_deleted(state, session, shell, vault, name).await?;
+        lifecycle::purge_not_protected(shell, KIND, name, recovery_of(&item.attributes))
+    }
+
+    fn deleted_message(name: &str, recovery: Recovery) -> String {
+        format!(
+            "Deleted {name}. You can recover it from deleted secrets {}.",
+            recovery.period()
+        )
+    }
+
+    fn purge_error(shell: Shell, err: &AzureError, name: &str) -> Halt {
+        lifecycle::purge_problem(shell, err, KIND, name, Need::ManageSecrets)
     }
 }

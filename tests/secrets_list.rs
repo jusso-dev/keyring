@@ -235,17 +235,16 @@ async fn a_bad_query_string_gets_the_error_page() {
 }
 
 #[tokio::test]
-async fn keyrings_own_pages_win_over_secrets_with_their_names() {
-    // A secret called "new" or "deleted" can be made outside Keyring. The
-    // fixed pages still answer at those addresses, and create refuses the
-    // names (see secrets_edit), so Keyring never makes one itself.
+async fn fixed_pages_answer_beside_a_secret_called_new() {
+    // A secret called "new" opens at `/secrets/new`. The fixed pages sit
+    // under `/-/`, so they still answer and don't read the secret's value.
     let w = support::world().await;
     w.kv.state.put("new", "x");
-    let (status, html) = w.page("/secrets/new").await;
+    let (status, html) = w.page("/secrets/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Add a secret"));
     assert!(w.kv.state.value_reads().is_empty());
-    let (status, html) = w.page("/secrets/deleted").await;
+    let (status, html) = w.page("/secrets/-/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Deleted secrets"));
 }

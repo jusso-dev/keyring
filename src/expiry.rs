@@ -107,9 +107,6 @@ pub struct Item {
     pub enabled: bool,
     pub expires: Option<i64>,
     pub tags: Vec<(String, String)>,
-    /// Certificates and keys that belong to a certificate show up once,
-    /// as the certificate.
-    pub managed: bool,
 }
 
 impl Item {
@@ -225,7 +222,6 @@ mod tests {
             enabled: true,
             expires: exp,
             tags: vec![("env".into(), "prod".into())],
-            managed: false,
         }
     }
 

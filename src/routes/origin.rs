@@ -3,9 +3,9 @@
 //! Every form also carries a per-session token checked by its handler.
 //! This middleware adds a check that doesn't depend on each handler: any
 //! request that can change something (anything but GET, HEAD and OPTIONS)
-//! must come from this site, judged by `Origin`, or `Referer` when a
-//! browser leaves `Origin` out. Requests with neither are refused, since
-//! every browser sends at least one on a form post.
+//! must come from this site, judged by `Sec-Fetch-Site` when the browser
+//! sends it, then `Origin`, then `Referer`. Requests with none of them are
+//! refused, since every browser sends at least one on a form post.
 
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header};

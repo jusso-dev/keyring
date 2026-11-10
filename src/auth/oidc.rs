@@ -25,7 +25,7 @@ use crate::auth::entra::{self, EntraAdvice};
 use crate::auth::session::{User, UserId, UserTokens};
 use crate::azure::token::expiry_from;
 use crate::config::Config;
-use crate::http::{HttpError, OidcHttp, error_chain};
+use crate::http::{OidcHttp, error_chain};
 use crate::secret::Secret;
 
 /// Re-fetch the tenant's discovery document and signing keys this often.
@@ -200,11 +200,6 @@ impl Oidc {
         self.ttl = ttl;
         self.retry_after = retry_after;
         self
-    }
-
-    /// The outbound HTTP client, shared with the token exchange.
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http.0
     }
 
     /// The cached document if it's fresh enough, or if a fetch failed a
@@ -438,12 +433,6 @@ fn is_key_miss(e: &ClaimsVerificationError) -> bool {
 /// dropped, so a strange value can't reach the logs.
 fn guid_claim(v: &str) -> Option<String> {
     crate::config::is_guid(v).then(|| v.to_ascii_lowercase())
-}
-
-impl From<HttpError> for SignInError {
-    fn from(e: HttpError) -> Self {
-        Self::Unreachable(e.to_string())
-    }
 }
 
 #[cfg(test)]

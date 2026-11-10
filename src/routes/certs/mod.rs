@@ -18,37 +18,19 @@ use crate::azure::secrets::now_ts;
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
+use crate::routes::forms::ToggleForm;
 use crate::routes::keys::section_note;
-use crate::routes::lifecycle::redirect_with;
+use crate::routes::lifecycle::{Kind, redirect_with};
+use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 use crate::x509;
 
-/// Names Keyring uses for its own pages under `/certificates`, so a
-/// certificate called one of these couldn't be opened from the list.
-pub const RESERVED_NAMES: [&str; 3] = ["new", "deleted", "upload"];
-
-/// Explain why a new certificate can't have this name, or `None` if it can.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses {name} for one of its own pages, so a certificate called that couldn't be opened here. Pick another name."
-            )
-        })
-}
-
-/// Name checks for a new certificate: Key Vault's rules, then Keyring's
-/// reserved names.
+/// Name checks for a new certificate.
 pub fn new_name_problem(name: &str) -> Option<String> {
-    crate::routes::secrets::form::name_problem(name)
-        .map(|m| m.replace("the secret", "the certificate"))
-        .or_else(|| reserved_name_problem(name))
+    crate::routes::forms::name_problem(Kind::Certificate, name)
 }
 
-pub const PER_PAGE: usize = 100;
 const DAY: i64 = 86_400;
 
 /// How close a certificate is to expiring.
@@ -232,14 +214,9 @@ pub async fn list(
     let within30 = all.iter().filter(|r| r.within30()).count();
     let within90 = all.iter().filter(|r| r.within90()).count();
     let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
-    let pages = matching.len().div_ceil(PER_PAGE).max(1);
-    let page = filter.page.unwrap_or(1).clamp(1, pages);
-    let shown_from = (page - 1) * PER_PAGE;
-    let rows = matching
-        .into_iter()
-        .skip(shown_from)
-        .take(PER_PAGE)
-        .collect();
+    let (rows, pager) = paginate(matching, filter.page, "certificates", |p| {
+        filter.page_url(p)
+    });
     let show_options = [
         ("", "All certificates"),
         ("expired", "Expired"),
@@ -255,8 +232,11 @@ pub async fn list(
     })
     .collect();
     Ok(render(&ListPage {
-        prev_url: (page > 1).then(|| filter.page_url(page - 1)),
-        next_url: (page < pages).then(|| filter.page_url(page + 1)),
+        page: pager.page,
+        pages: pager.pages,
+        shown_from: pager.shown_from,
+        prev_url: pager.prev_url,
+        next_url: pager.next_url,
         shell,
         vault,
         rows,
@@ -266,9 +246,6 @@ pub async fn list(
         within90,
         filter,
         show_options,
-        page,
-        pages,
-        shown_from,
     })
     .into_response())
 }
@@ -409,6 +386,7 @@ pub async fn detail(
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
+    uri: axum::http::Uri,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
@@ -421,7 +399,14 @@ pub async fn detail(
     );
     let bundle = match bundle {
         Ok(b) => b,
-        Err(err) => return Err(azure_problem(shell, &err, Need::ReadCertificates, &path)),
+        Err(err) => {
+            if let Some(res) =
+                crate::routes::moved::missing_item(Kind::Certificate, &name, &err, &uri)
+            {
+                return Ok(res);
+            }
+            return Err(azure_problem(shell, &err, Need::ReadCertificates, &path));
+        }
     };
     let now = now_ts();
     // Each section says why it's empty rather than pretending there's
@@ -467,15 +452,6 @@ pub async fn detail(
     .into_response())
 }
 
-#[derive(Deserialize)]
-pub struct ToggleForm {
-    #[serde(default)]
-    csrf: String,
-    /// `on` or `off`.
-    #[serde(default)]
-    state: String,
-}
-
 /// Enable or disable the current version, like the secrets page does.
 pub async fn toggle(
     State(state): State<AppState>,
@@ -487,10 +463,8 @@ pub async fn toggle(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let enable = match f.state.as_str() {
-        "on" => true,
-        "off" => false,
-        _ => return Err(PageError::new(shell, Problem::not_found()).into()),
+    let Some(enable) = f.enable() else {
+        return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let certs = api(&state, &session, &vault);
     let path = format!("/certificates/{name}");
@@ -520,16 +494,6 @@ mod tests {
         assert_eq!(cert_expiry(Some(now + 10 * DAY), now), CertExpiry::Within30);
         assert_eq!(cert_expiry(Some(now + 60 * DAY), now), CertExpiry::Within90);
         assert_eq!(cert_expiry(Some(now + 200 * DAY), now), CertExpiry::Ok);
-    }
-
-    #[test]
-    fn reserved_names_are_refused() {
-        for n in ["new", "deleted", "upload", "Upload"] {
-            assert!(new_name_problem(n).is_some(), "{n}");
-        }
-        assert!(new_name_problem("web-tls").is_none());
-        assert!(new_name_problem("web tls").is_some());
-        assert!(new_name_problem("").unwrap().contains("certificate"));
     }
 
     #[test]

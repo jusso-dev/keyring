@@ -179,8 +179,10 @@ pub fn pick_leaf(certs: &[Summary]) -> (usize, bool) {
     }
 }
 
-/// Re-encode a parsed certificate, to check DER round-trips.
-pub fn is_certificate(der: &[u8]) -> bool {
+/// Re-encode a parsed certificate, to check DER round-trips. Only the
+/// tests use it, to check their fixtures.
+#[cfg(test)]
+fn is_certificate(der: &[u8]) -> bool {
     Certificate::from_der(der)
         .and_then(|c| c.to_der())
         .is_ok_and(|again| again == der)

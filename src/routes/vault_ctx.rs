@@ -50,9 +50,17 @@ pub fn azure_problem(shell: Shell, err: &AzureError, need: Need, path: &str) -> 
 }
 
 /// Key Vault object names (secrets, certificates, keys): 1 to 127 letters,
-/// digits and hyphens.
+/// digits and hyphens, not starting with a hyphen.
+///
+/// Microsoft's docs say names start with a letter. The REST reference's
+/// pattern (`^[0-9a-zA-Z-]+$`) allows a digit first, so a digit is let
+/// through, and an item made elsewhere with one can still be opened. A
+/// leading hyphen is refused, so `-` is never a name and the fixed pages
+/// under `/secrets/-/` can't collide with an item.
 pub fn is_valid_object_name(name: &str) -> bool {
-    (1..=127).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    (1..=127).contains(&name.len())
+        && !name.starts_with('-')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 /// Validate a name from the URL. Anything that couldn't be a Key Vault
@@ -86,5 +94,29 @@ pub fn stale_form_for(session: &crate::auth::session::Session, presented: &str) 
     match session.csrf_other_vault(presented) {
         Some(vault) => Problem::vault_changed(&vault),
         None => Problem::stale_form(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_names() {
+        for ok in ["a", "db-password", "1st-key", "ends-", &"a".repeat(127)] {
+            assert!(is_valid_object_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-",
+            "-new",
+            "a_b",
+            "a b",
+            "a/b",
+            "\u{e9}",
+            &"a".repeat(128),
+        ] {
+            assert!(!is_valid_object_name(bad), "{bad}");
+        }
     }
 }
