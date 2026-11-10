@@ -29,7 +29,8 @@ use crate::pkcs12;
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem, rejection_message};
 use crate::routes::flash::{self, Flash};
-use crate::routes::secrets::form::{FieldError, parse_tags};
+use crate::routes::forms::FieldErrors;
+use crate::routes::secrets::form::parse_tags;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf};
@@ -73,7 +74,7 @@ struct UploadPage {
     shell: Shell,
     vault: String,
     form: UploadView,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     max_kb: usize,
     /// Key Vault's own reason, after it refused the import.
     azure_message: Option<String>,
@@ -81,10 +82,7 @@ struct UploadPage {
 
 impl UploadPage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
 }
 
@@ -150,7 +148,7 @@ fn upload_page(
     shell: Shell,
     vault: String,
     form: UploadView,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     azure_message: Option<String>,
 ) -> axum::response::Response {
     let status = if errors.is_empty() && azure_message.is_none() {
@@ -196,7 +194,7 @@ pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
         shell,
         vault,
         UploadView::default(),
-        Vec::new(),
+        FieldErrors::new(),
         None,
     ))
 }
@@ -420,10 +418,7 @@ pub async fn preview(
     // goes to Key Vault and nothing is kept. Every other path checks the
     // token before anything else.
     if matches!(read, Err(ReadError::TooBig)) && p.csrf.is_empty() {
-        let errors = vec![FieldError {
-            field: "file",
-            message: too_big_message(),
-        }];
+        let errors = FieldErrors::one("file", too_big_message());
         return Ok(upload_page(
             shell,
             vault,
@@ -449,56 +444,35 @@ pub async fn preview(
                 tags: p.tags,
                 ..UploadView::default()
             };
-            let errors = vec![FieldError {
-                field: "file",
-                message: too_big_message(),
-            }];
+            let errors = FieldErrors::one("file", too_big_message());
             return Ok(upload_page(shell, vault, view, errors, None));
         }
         Err(ReadError::Broken) => {
-            let errors = vec![FieldError {
-                field: "file",
-                message: "The upload didn't come through. Try again.".into(),
-            }];
+            let errors = FieldErrors::one("file", "The upload didn't come through. Try again.");
             return Ok(upload_page(shell, vault, view, errors, None));
         }
     }
-    let mut errors = Vec::new();
+    let mut errors = FieldErrors::new();
     if let Some(m) = new_name_problem(&p.name) {
-        errors.push(FieldError {
-            field: "name",
-            message: m,
-        });
+        errors.push("name", m);
     }
     let tags = parse_tags(&p.tags).unwrap_or_else(|m| {
-        errors.push(FieldError {
-            field: "tags",
-            message: m,
-        });
+        errors.push("tags", m);
         BTreeMap::new()
     });
     let parsed = if p.too_big {
-        errors.push(FieldError {
-            field: "file",
-            message: too_big_message(),
-        });
+        errors.push("file", too_big_message());
         None
     } else {
         match &p.file {
             None => {
-                errors.push(FieldError {
-                    field: "file",
-                    message: "Choose a file to upload.".into(),
-                });
+                errors.push("file", "Choose a file to upload.");
                 None
             }
             Some(bytes) => match parse_file(bytes, &p.file_name) {
                 Ok(parsed) => Some(parsed),
                 Err(m) => {
-                    errors.push(FieldError {
-                        field: "file",
-                        message: m,
-                    });
+                    errors.push("file", m);
                     None
                 }
             },
@@ -689,10 +663,7 @@ pub async fn confirm(
             } else {
                 "Key Vault couldn't read this PEM file. It needs the certificate and an unencrypted PKCS #8 private key that belongs to it. Nothing was uploaded."
             };
-            let errors = vec![FieldError {
-                field: "file",
-                message: message.into(),
-            }];
+            let errors = FieldErrors::one("file", message);
             Ok(upload_page(shell, vault, view, errors, rejection_message(&e)))
         }
         // An existing live certificate never gives 409 on import. Only a

@@ -9,6 +9,7 @@ use crate::auth::CurrentSession;
 use crate::azure::secrets::now_ts;
 use crate::routes::confirm::ConfirmForm;
 use crate::routes::error::{Need, PageResult};
+use crate::routes::forms::CsrfForm;
 use crate::routes::lifecycle::{self, DeletedRow, Kind};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
@@ -105,12 +106,6 @@ pub async fn deleted_detail(
     };
     let row = DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now_ts());
     Ok(lifecycle::deleted_detail(&state, shell, vault, KIND, &row))
-}
-
-#[derive(serde::Deserialize)]
-pub struct CsrfForm {
-    #[serde(default)]
-    csrf: String,
 }
 
 pub async fn recover(

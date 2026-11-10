@@ -18,6 +18,7 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::confirm::{ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, Need, PageResult};
+use crate::routes::forms::CsrfForm;
 use crate::routes::lifecycle::{self, Kind, Recovery};
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
@@ -228,12 +229,6 @@ pub async fn deleted_detail(
         vault,
     })
     .into_response())
-}
-
-#[derive(serde::Deserialize)]
-pub struct CsrfForm {
-    #[serde(default)]
-    csrf: String,
 }
 
 pub async fn recover(

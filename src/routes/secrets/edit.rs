@@ -5,7 +5,6 @@ use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
-use serde::Deserialize;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
@@ -15,7 +14,8 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::flash::{self, Flash};
-use crate::routes::secrets::form::{self, FieldError, SecretForm};
+use crate::routes::forms::{FieldErrors, ToggleForm};
+use crate::routes::secrets::form::{self, SecretForm};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
@@ -107,17 +107,14 @@ struct FormPage {
     vault: String,
     mode: Mode,
     form: FormView,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     /// Set when a create clashed with a soft-deleted secret of the same name.
     deleted_clash: Option<String>,
 }
 
 impl FormPage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
 
     fn is_create(&self) -> bool {
@@ -157,7 +154,7 @@ fn form_page(
     vault: String,
     mode: Mode,
     form: FormView,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     deleted_clash: Option<String>,
 ) -> Response {
     let status = if errors.is_empty() && deleted_clash.is_none() {
@@ -199,7 +196,7 @@ pub async fn new_form(session: CurrentSession, shell: Shell) -> PageResult {
         vault,
         Mode::Create,
         view,
-        Vec::new(),
+        FieldErrors::new(),
         None,
     ))
 }
@@ -239,12 +236,12 @@ pub async fn create(
     match api.versions(&name).await {
         Ok(v) if v.is_empty() => {}
         Ok(_) => {
-            let errors = vec![FieldError {
-                field: "name",
-                message: format!(
+            let errors = FieldErrors::one(
+                "name",
+                format!(
                     "There's already a secret called {name}. Pick another name, or open it and set a new value."
                 ),
-            }];
+            );
             return Ok(form_page(
                 shell,
                 vault,
@@ -280,7 +277,7 @@ pub async fn create(
                 vault,
                 Mode::Create,
                 FormView::from_form(&f),
-                Vec::new(),
+                FieldErrors::new(),
                 Some(name),
             ))
         }
@@ -342,7 +339,7 @@ pub async fn value_form(
         vault,
         Mode::NewValue,
         FormView::from_item(&item),
-        Vec::new(),
+        FieldErrors::new(),
         None,
     ))
 }
@@ -414,7 +411,7 @@ pub async fn edit_form(
         vault,
         Mode::Properties,
         FormView::from_item(&item),
-        Vec::new(),
+        FieldErrors::new(),
         None,
     ))
 }
@@ -450,16 +447,14 @@ pub async fn update(
             ));
         }
     };
-    update_current(
+    update_current(&state, &session, shell, &vault, &item, &body).await?;
+    let name = item.name();
+    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret properties changed");
+    Ok(saved(
         &state,
-        &session,
-        shell,
-        &vault,
-        &item,
-        &body,
-        "Saved changes",
-    )
-    .await
+        &format!("/secrets/{name}"),
+        format!("Saved changes to {name}."),
+    ))
 }
 
 /// The page for an edit form that is out of date.
@@ -478,6 +473,7 @@ fn changed_problem(shell: Shell, name: &str) -> Halt {
     .into()
 }
 
+/// Save `body` onto the current version. The caller logs and redirects.
 async fn update_current(
     state: &AppState,
     session: &CurrentSession,
@@ -485,37 +481,20 @@ async fn update_current(
     vault: &str,
     item: &SecretItem,
     body: &UpdateSecret,
-    done: &str,
-) -> PageResult {
+) -> Result<(), Halt> {
     let name = item.name();
-    match api(state, session, vault)
+    api(state, session, vault)
         .update(name, item.version(), body)
         .await
-    {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret properties changed");
-            Ok(saved(
-                state,
+        .map(|_| ())
+        .map_err(|err| {
+            azure_problem(
+                shell,
+                &err,
+                Need::ManageSecrets,
                 &format!("/secrets/{name}"),
-                format!("{done} to {name}."),
-            ))
-        }
-        Err(err) => Err(azure_problem(
-            shell,
-            &err,
-            Need::ManageSecrets,
-            &format!("/secrets/{name}"),
-        )),
-    }
-}
-
-#[derive(Deserialize)]
-pub struct ToggleForm {
-    #[serde(default)]
-    csrf: String,
-    /// `on` or `off`.
-    #[serde(default)]
-    state: String,
+            )
+        })
 }
 
 pub async fn toggle(
@@ -528,10 +507,8 @@ pub async fn toggle(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let enable = match f.state.as_str() {
-        "on" => true,
-        "off" => false,
-        _ => return Err(PageError::new(shell, Problem::not_found()).into()),
+    let Some(enable) = f.enable() else {
+        return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
     // Only `enabled` is sent. Key Vault keeps everything else.
@@ -543,25 +520,13 @@ pub async fn toggle(
         },
         tags: None,
     };
+    update_current(&state, &session, shell, &vault, &item, &body).await?;
+    let name = item.name();
+    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, enabled = enable, "secret enabled changed");
     let done = if enable { "Enabled" } else { "Disabled" };
-    let name = item.name().to_owned();
-    match api(&state, &session, &vault)
-        .update(&name, item.version(), &body)
-        .await
-    {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, enabled = enable, "secret enabled changed");
-            Ok(saved(
-                &state,
-                &format!("/secrets/{name}"),
-                format!("{done} {name}."),
-            ))
-        }
-        Err(err) => Err(azure_problem(
-            shell,
-            &err,
-            Need::ManageSecrets,
-            &format!("/secrets/{name}"),
-        )),
-    }
+    Ok(saved(
+        &state,
+        &format!("/secrets/{name}"),
+        format!("{done} {name}."),
+    ))
 }

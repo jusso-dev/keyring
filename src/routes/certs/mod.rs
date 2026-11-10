@@ -18,6 +18,7 @@ use crate::azure::secrets::now_ts;
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
+use crate::routes::forms::ToggleForm;
 use crate::routes::keys::section_note;
 use crate::routes::lifecycle::redirect_with;
 use crate::routes::shell::{Section, Shell};
@@ -43,8 +44,7 @@ pub fn reserved_name_problem(name: &str) -> Option<String> {
 /// Name checks for a new certificate: Key Vault's rules, then Keyring's
 /// reserved names.
 pub fn new_name_problem(name: &str) -> Option<String> {
-    crate::routes::secrets::form::name_problem(name)
-        .map(|m| m.replace("the secret", "the certificate"))
+    crate::routes::forms::name_problem(crate::routes::lifecycle::Kind::Certificate, name)
         .or_else(|| reserved_name_problem(name))
 }
 
@@ -467,15 +467,6 @@ pub async fn detail(
     .into_response())
 }
 
-#[derive(Deserialize)]
-pub struct ToggleForm {
-    #[serde(default)]
-    csrf: String,
-    /// `on` or `off`.
-    #[serde(default)]
-    state: String,
-}
-
 /// Enable or disable the current version, like the secrets page does.
 pub async fn toggle(
     State(state): State<AppState>,
@@ -487,10 +478,8 @@ pub async fn toggle(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let enable = match f.state.as_str() {
-        "on" => true,
-        "off" => false,
-        _ => return Err(PageError::new(shell, Problem::not_found()).into()),
+    let Some(enable) = f.enable() else {
+        return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let certs = api(&state, &session, &vault);
     let path = format!("/certificates/{name}");

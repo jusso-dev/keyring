@@ -8,6 +8,7 @@ pub mod confirm;
 pub mod error;
 mod expiry;
 pub mod flash;
+pub mod forms;
 mod generator;
 mod headers;
 mod health;

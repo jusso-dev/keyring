@@ -11,11 +11,11 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::session::Session;
+use crate::azure::paging::{MAX_RESULTS, id_part};
 use crate::azure::secrets::{Attributes, Timestamp};
 use crate::azure::{AzureClient, AzureError, Resource};
 
 pub const API_VERSION: &str = "7.5";
-const MAX_RESULTS: u32 = 25;
 
 /// Public key in JWK form. Private fields (`d`, `p`, `q`, `dp`, `dq`,
 /// `qi`, `k`) are deliberately not here, so even if Key Vault sent them
@@ -170,19 +170,12 @@ pub struct KeyItem {
     pub managed: Option<bool>,
 }
 
-fn id_part(id: &str, idx: usize) -> &str {
-    id.split_once("/keys/")
-        .map(|(_, rest)| rest)
-        .and_then(|rest| rest.split('/').nth(idx))
-        .unwrap_or_default()
-}
-
 impl KeyItem {
     pub fn name(&self) -> &str {
-        id_part(&self.kid, 0)
+        id_part(&self.kid, "keys", 0)
     }
     pub fn version(&self) -> &str {
-        id_part(&self.kid, 1)
+        id_part(&self.kid, "keys", 1)
     }
     pub fn tags(&self) -> &BTreeMap<String, String> {
         static EMPTY: BTreeMap<String, String> = BTreeMap::new();
@@ -207,10 +200,10 @@ impl KeyBundle {
         self.key.kid.as_deref().unwrap_or_default()
     }
     pub fn name(&self) -> &str {
-        id_part(self.kid(), 0)
+        id_part(self.kid(), "keys", 0)
     }
     pub fn version(&self) -> &str {
-        id_part(self.kid(), 1)
+        id_part(self.kid(), "keys", 1)
     }
 }
 
@@ -226,7 +219,7 @@ pub struct DeletedKeyItem {
 
 impl DeletedKeyItem {
     pub fn name(&self) -> &str {
-        id_part(&self.kid, 0)
+        id_part(&self.kid, "keys", 0)
     }
 }
 

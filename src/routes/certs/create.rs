@@ -19,8 +19,9 @@ use crate::azure::secrets::Attributes;
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::flash::{self, Flash};
+use crate::routes::forms::{CsrfForm, FieldErrors};
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::{FieldError, parse_tags};
+use crate::routes::secrets::form::parse_tags;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
@@ -136,37 +137,30 @@ fn is_dns_name(s: &str) -> bool {
         })
 }
 
-fn err(field: &'static str, message: impl Into<String>) -> FieldError {
-    FieldError {
-        field,
-        message: message.into(),
-    }
-}
-
 /// Check the form and build the create request. `issuers` are the names
 /// set up on the vault; `Self` is always allowed.
-pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert), Vec<FieldError>> {
-    let mut errors = Vec::new();
+pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert), FieldErrors> {
+    let mut errors = FieldErrors::new();
     let name = f.name.trim().to_owned();
     if let Some(m) = new_name_problem(&name) {
-        errors.push(err("name", m));
+        errors.push("name", m);
     }
     let cn = f.common_name.trim();
     if cn.is_empty() {
-        errors.push(err(
+        errors.push(
             "common_name",
             "Enter the main name, such as app.example.com.",
-        ));
+        );
     } else if cn.len() > 64 {
-        errors.push(err(
+        errors.push(
             "common_name",
             "The main name can be up to 64 characters. Put longer names under other names.",
-        ));
+        );
     } else if cn.contains(['=', ',', '+', '"', '\\', '<', '>', ';']) {
-        errors.push(err(
+        errors.push(
             "common_name",
             "Use just the name, such as app.example.com, without CN= or commas.",
-        ));
+        );
     }
     let mut dns: Vec<String> = Vec::new();
     for line in f.dns_names.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -175,7 +169,7 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
                 dns.push(line.to_ascii_lowercase());
             }
         } else {
-            errors.push(err("dns_names", format!("{line} isn't a valid DNS name. Use letters, numbers, hyphens and dots, like www.example.com.")));
+            errors.push("dns_names", format!("{line} isn't a valid DNS name. Use letters, numbers, hyphens and dots, like www.example.com."));
             break;
         }
     }
@@ -186,10 +180,7 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
     let months: u32 = match f.validity_months.trim().parse() {
         Ok(m) if (1..=120).contains(&m) => m,
         _ => {
-            errors.push(err(
-                "validity_months",
-                "Enter a number of months from 1 to 120.",
-            ));
+            errors.push("validity_months", "Enter a number of months from 1 to 120.");
             12
         }
     };
@@ -220,7 +211,7 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
             ..KeyProps::default()
         },
         _ => {
-            errors.push(err("key", "Pick a key type from the list."));
+            errors.push("key", "Pick a key type from the list.");
             KeyProps::default()
         }
     };
@@ -230,10 +221,10 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
         "" | "Self" => "Self".to_owned(),
         other if issuers.iter().any(|i| i == other) => other.to_owned(),
         _ => {
-            errors.push(err(
+            errors.push(
                 "issuer",
                 "Pick an issuer from the list. Self is for self-signed.",
-            ));
+            );
             "Self".into()
         }
     };
@@ -249,12 +240,9 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
             d => match d.parse::<u32>() {
                 Ok(n) if (1..=max_days).contains(&n) => Some(n),
                 _ => {
-                    errors.push(err(
-                        "renew_days",
-                        format!(
+                    errors.push("renew_days", format!(
                             "Pick a number of days from 1 to {max_days}. Key Vault allows up to 27 days for each month the certificate is valid."
-                        ),
-                    ));
+                        ));
                     None
                 }
             },
@@ -277,7 +265,7 @@ pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert),
         }],
     };
     let tags = parse_tags(&f.tags).unwrap_or_else(|m| {
-        errors.push(err("tags", m));
+        errors.push("tags", m);
         Default::default()
     });
     if !errors.is_empty() {
@@ -322,7 +310,7 @@ struct CreatePage {
     shell: Shell,
     vault: String,
     form: CreateForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     issuers: Issuers,
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
@@ -330,10 +318,7 @@ struct CreatePage {
 
 impl CreatePage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
     fn key_choices(&self) -> &'static [(&'static str, &'static str)] {
         &KEY_CHOICES
@@ -350,7 +335,7 @@ fn page(
     shell: Shell,
     vault: String,
     form: CreateForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     issuers: Issuers,
     azure_message: Option<String>,
 ) -> axum::response::Response {
@@ -389,7 +374,14 @@ pub async fn form(
         format: "pfx".into(),
         ..CreateForm::default()
     };
-    Ok(page(shell, vault, defaults, Vec::new(), issuers, None))
+    Ok(page(
+        shell,
+        vault,
+        defaults,
+        FieldErrors::new(),
+        issuers,
+        None,
+    ))
 }
 
 pub async fn create(
@@ -410,10 +402,10 @@ pub async fn create(
     // Key Vault may answer an unknown name with 404 or with an empty list.
     match certs.versions(&name).await {
         Ok(v) if !v.is_empty() => {
-            let errors = vec![err(
+            let errors = FieldErrors::one(
                 "name",
                 format!("There's already a certificate called {name}. Pick another name."),
-            )];
+            );
             return Ok(page(shell, vault, f, errors, issuers, None));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
@@ -450,16 +442,16 @@ pub async fn create(
             Ok(res)
         }
         Err(AzureError::Status { status: 409, .. }) => {
-            let errors = vec![err(
+            let errors = FieldErrors::one(
                 "name",
                 format!(
                     "A deleted certificate called {name} is still being kept. Recover it from deleted certificates, or pick another name."
                 ),
-            )];
+            );
             Ok(page(shell, vault, f, errors, issuers, None))
         }
         Err(e) => match rejection_message(&e) {
-            Some(m) => Ok(page(shell, vault, f, Vec::new(), issuers, Some(m))),
+            Some(m) => Ok(page(shell, vault, f, FieldErrors::new(), issuers, Some(m))),
             None => Err(azure_problem(
                 shell,
                 &e,
@@ -468,12 +460,6 @@ pub async fn create(
             )),
         },
     }
-}
-
-#[derive(Deserialize)]
-pub struct CsrfForm {
-    #[serde(default)]
-    csrf: String,
 }
 
 /// Stop a pending create or renewal: ask Key Vault to cancel it, then

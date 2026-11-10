@@ -19,6 +19,7 @@ use crate::azure::secrets::{ExpiryState, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
+use crate::routes::forms::ToggleForm;
 use crate::routes::lifecycle::redirect_with;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
@@ -370,15 +371,6 @@ pub async fn detail(
     .into_response())
 }
 
-#[derive(Deserialize)]
-pub struct ToggleForm {
-    #[serde(default)]
-    csrf: String,
-    /// `on` or `off`.
-    #[serde(default)]
-    state: String,
-}
-
 /// Enable or disable the current version, like the secrets page does.
 pub async fn toggle(
     State(state): State<AppState>,
@@ -390,10 +382,8 @@ pub async fn toggle(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let enable = match f.state.as_str() {
-        "on" => true,
-        "off" => false,
-        _ => return Err(PageError::new(shell, Problem::not_found()).into()),
+    let Some(enable) = f.enable() else {
+        return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let (bundle, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let path = format!("/keys/{name}");

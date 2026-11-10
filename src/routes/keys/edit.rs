@@ -17,8 +17,10 @@ use crate::azure::secrets::{Attributes, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageResult, rejection_message};
+use crate::routes::forms::{CsrfForm, FieldErrors, name_problem};
+use crate::routes::lifecycle::Kind;
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::{FieldError, name_problem, parse_tags};
+use crate::routes::secrets::form::parse_tags;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
@@ -94,13 +96,6 @@ impl CreateForm {
     }
 }
 
-fn err(field: &'static str, message: impl Into<String>) -> FieldError {
-    FieldError {
-        field,
-        message: message.into(),
-    }
-}
-
 /// Default operations for a key type: RSA can encrypt, sign and wrap; EC
 /// can only sign.
 pub fn default_ops(kty: &str) -> Vec<String> {
@@ -111,13 +106,10 @@ pub fn default_ops(kty: &str) -> Vec<String> {
     }
 }
 
-pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Vec<FieldError>> {
-    let mut errors = Vec::new();
-    if let Some(m) = name_problem(&f.name)
-        .map(|m| m.replace("the secret", "the key"))
-        .or_else(|| reserved_name_problem(&f.name))
-    {
-        errors.push(err("name", m));
+pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), FieldErrors> {
+    let mut errors = FieldErrors::new();
+    if let Some(m) = name_problem(Kind::Key, &f.name).or_else(|| reserved_name_problem(&f.name)) {
+        errors.push("name", m);
     }
     let (mut kty, key_size, crv): (String, Option<u32>, Option<String>) = match f.key_type.as_str()
     {
@@ -129,7 +121,7 @@ pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Vec<FieldE
         "EC-P-521" => ("EC".into(), None, Some("P-521".into())),
         "EC-P-256K" => ("EC".into(), None, Some("P-256K".into())),
         _ => {
-            errors.push(err("key_type", "Pick a key type from the list."));
+            errors.push("key_type", "Pick a key type from the list.");
             ("RSA".into(), Some(3072), None)
         }
     };
@@ -142,36 +134,36 @@ pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Vec<FieldE
         f.ops.clone()
     };
     if ops.iter().any(|o| !OPERATIONS.iter().any(|(k, _)| k == o)) {
-        errors.push(err("ops", "Pick operations from the list."));
+        errors.push("ops", "Pick operations from the list.");
     }
     if kty.starts_with("EC") && ops.iter().any(|o| !matches!(o.as_str(), "sign" | "verify")) {
-        errors.push(err(
+        errors.push(
             "ops",
             "EC keys can only sign and verify. Pick an RSA key to encrypt or wrap keys.",
-        ));
+        );
     }
     let expires = match f.expires.trim() {
         "" => None,
         s => match dates::parse_iso_date(s) {
             Some(d) if d + 86_399 > now => Some(d + 86_399),
             Some(_) => {
-                errors.push(err(
+                errors.push(
                     "expires",
                     "The expiry date has already passed. Pick a later date, or leave it blank.",
-                ));
+                );
                 None
             }
             None => {
-                errors.push(err(
+                errors.push(
                     "expires",
                     "Expiry date isn't a real date. Use the date picker or type YYYY-MM-DD.",
-                ));
+                );
                 None
             }
         },
     };
     let tags: BTreeMap<String, String> = parse_tags(&f.tags).unwrap_or_else(|m| {
-        errors.push(err("tags", m));
+        errors.push("tags", m);
         BTreeMap::new()
     });
     if !errors.is_empty() {
@@ -200,17 +192,14 @@ struct CreatePage {
     shell: Shell,
     vault: String,
     form: CreateForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
 }
 
 impl CreatePage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
     fn key_types(&self) -> &'static [(&'static str, &'static str)] {
         &KEY_TYPES
@@ -227,7 +216,7 @@ fn create_page(
     shell: Shell,
     vault: String,
     form: CreateForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
 ) -> axum::response::Response {
     create_page_with(shell, vault, form, errors, None)
 }
@@ -236,7 +225,7 @@ fn create_page_with(
     shell: Shell,
     vault: String,
     form: CreateForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     azure_message: Option<String>,
 ) -> axum::response::Response {
     let status = if errors.is_empty() && azure_message.is_none() {
@@ -284,7 +273,7 @@ pub async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
         shell,
         vault,
         CreateForm::defaults(),
-        Vec::new(),
+        FieldErrors::new(),
     ))
 }
 
@@ -306,12 +295,12 @@ pub async fn create(
     // may answer an unknown name with 404 or with an empty list.
     match keys.versions(&name).await {
         Ok(v) if !v.is_empty() => {
-            let errors = vec![err(
+            let errors = FieldErrors::one(
                 "name",
                 format!(
                     "There's already a key called {name}. Pick another name, or open it and rotate it."
                 ),
-            )];
+            );
             return Ok(create_page(shell, vault, f, errors));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
@@ -327,23 +316,29 @@ pub async fn create(
             ))
         }
         Err(AzureError::Status { status: 409, .. }) => {
-            let errors = vec![err(
+            let errors = FieldErrors::one(
                 "name",
                 format!(
                     "A deleted key called {name} is still being kept. Recover it from deleted keys, or pick another name."
                 ),
-            )];
+            );
             Ok(create_page(shell, vault, f, errors))
         }
         Err(e) if f.hsm && is_hsm_refusal(&e) => {
-            let errors = vec![err(
+            let errors = FieldErrors::one(
                 "key_type",
                 "This vault can't make HSM-protected keys. It needs the Premium tier. Untick HSM, or use a Premium vault.",
-            )];
+            );
             Ok(create_page(shell, vault, f, errors))
         }
         Err(e) => match rejection_message(&e) {
-            Some(m) => Ok(create_page_with(shell, vault, f, Vec::new(), Some(m))),
+            Some(m) => Ok(create_page_with(
+                shell,
+                vault,
+                f,
+                FieldErrors::new(),
+                Some(m),
+            )),
             None => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
         },
     }
@@ -355,12 +350,6 @@ struct RotatePage {
     shell: Shell,
     vault: String,
     name: String,
-}
-
-#[derive(Deserialize)]
-pub struct CsrfForm {
-    #[serde(default)]
-    csrf: String,
 }
 
 pub async fn rotate_form(
@@ -414,7 +403,7 @@ struct RotationPage {
     vault: String,
     name: String,
     form: RotationForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     /// Parts of the current policy the form can't show.
     unsupported: Vec<String>,
     /// Key Vault's own reason, after it refused the policy.
@@ -423,10 +412,7 @@ struct RotationPage {
 
 impl RotationPage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
     fn rotate_before_expiry(&self) -> bool {
         self.form.rotate_when == "expiry"
@@ -483,17 +469,17 @@ fn days_field(
     v: &str,
     label: &str,
     min: u32,
-    errors: &mut Vec<FieldError>,
+    errors: &mut FieldErrors,
 ) -> Option<u32> {
     match v.trim() {
         "" => None,
         s => match s.parse::<u32>() {
             Ok(d) if (min..=36_500).contains(&d) => Some(d),
             _ => {
-                errors.push(err(
+                errors.push(
                     field,
                     format!("{label} needs a whole number of days, at least {min}."),
-                ));
+                );
                 None
             }
         },
@@ -525,13 +511,13 @@ pub const MIN_GAP_DAYS: u32 = 7;
 pub fn build_rotation(
     f: &RotationForm,
     current: &RotationPolicy,
-) -> Result<RotationPolicy, Vec<FieldError>> {
-    let mut errors = Vec::new();
+) -> Result<RotationPolicy, FieldErrors> {
+    let mut errors = FieldErrors::new();
     let before_expiry = match f.rotate_when.as_str() {
         "" | "create" => false,
         "expiry" => true,
         _ => {
-            errors.push(err("rotate_days", "Pick when to rotate from the list."));
+            errors.push("rotate_days", "Pick when to rotate from the list.");
             false
         }
     };
@@ -551,42 +537,30 @@ pub fn build_rotation(
     );
     let expiry = days_field("expiry", &f.expiry, "Expiry", MIN_EXPIRY_DAYS, &mut errors);
     match (rotate, expiry, before_expiry) {
-        (Some(_), None, true) => errors.push(err(
-            "rotate_days",
-            "Rotating before expiry counts back from expiry, so set an expiry too.",
-        )),
-        (Some(r), Some(e), false) if r + MIN_GAP_DAYS > e => errors.push(err(
-            "rotate_days",
-            format!(
+        (Some(_), None, true) => errors.push("rotate_days", "Rotating before expiry counts back from expiry, so set an expiry too."),
+        (Some(r), Some(e), false) if r + MIN_GAP_DAYS > e => errors.push("rotate_days", format!(
                 "Rotate the key at least {MIN_GAP_DAYS} days before it expires: pick {} days or fewer, or a longer expiry.",
                 e.saturating_sub(MIN_GAP_DAYS)
-            ),
-        )),
-        (Some(r), Some(e), true) if r + MIN_GAP_DAYS > e => errors.push(err(
-            "rotate_days",
-            format!(
+            )),
+        (Some(r), Some(e), true) if r + MIN_GAP_DAYS > e => errors.push("rotate_days", format!(
                 "Key Vault needs each version to last at least {MIN_GAP_DAYS} days before it rotates: pick {} days or fewer, or a longer expiry.",
                 e.saturating_sub(MIN_GAP_DAYS)
-            ),
-        )),
+            )),
         _ => {}
     }
     if notify.is_some() && expiry.is_none() {
-        errors.push(err(
+        errors.push(
             "notify_before",
             "Notifications count back from expiry, so set an expiry too.",
-        ));
+        );
     }
     if let (Some(n), Some(e)) = (notify, expiry)
         && n >= e
     {
-        errors.push(err("notify_before", "Pick fewer days than the expiry."));
+        errors.push("notify_before", "Pick fewer days than the expiry.");
     }
     if !current.unsupported().is_empty() && f.replace.is_none() {
-        errors.push(err(
-            "replace",
-            "This key's policy has parts the form can't show. Tick the box to replace the whole policy with what's on this page.",
-        ));
+        errors.push("replace", "This key's policy has parts the form can't show. Tick the box to replace the whole policy with what's on this page.");
     }
     if !errors.is_empty() {
         return Err(errors);
@@ -617,7 +591,7 @@ fn rotation_page(
     vault: String,
     name: String,
     form: RotationForm,
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     unsupported: Vec<String>,
     azure_message: Option<String>,
 ) -> axum::response::Response {
@@ -667,7 +641,7 @@ pub async fn rotation_form(
         vault,
         name,
         form,
-        Vec::new(),
+        FieldErrors::new(),
         p.unsupported(),
         None,
     ))
@@ -722,7 +696,7 @@ pub async fn save_rotation(
                 vault,
                 name,
                 f,
-                Vec::new(),
+                FieldErrors::new(),
                 unsupported,
                 Some(m),
             )),

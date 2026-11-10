@@ -12,11 +12,11 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::session::Session;
+use crate::azure::paging::{MAX_RESULTS, id_part};
 use crate::azure::secrets::{Attributes, Timestamp};
 use crate::azure::{AzureClient, AzureError, Resource};
 
 pub const API_VERSION: &str = "7.5";
-const MAX_RESULTS: u32 = 25;
 
 /// Certificate properties from the list call.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -31,20 +31,13 @@ pub struct CertItem {
     pub x5t: Option<String>,
 }
 
-fn id_part(id: &str, idx: usize) -> &str {
-    id.split_once("/certificates/")
-        .map(|(_, rest)| rest)
-        .and_then(|rest| rest.split('/').nth(idx))
-        .unwrap_or_default()
-}
-
 impl CertItem {
     pub fn name(&self) -> &str {
-        id_part(&self.id, 0)
+        id_part(&self.id, "certificates", 0)
     }
 
     pub fn version(&self) -> &str {
-        id_part(&self.id, 1)
+        id_part(&self.id, "certificates", 1)
     }
 
     pub fn tags(&self) -> &BTreeMap<String, String> {
@@ -217,7 +210,7 @@ impl CertBundle {
     }
 
     pub fn version(&self) -> &str {
-        id_part(&self.id, 1)
+        id_part(&self.id, "certificates", 1)
     }
 }
 
@@ -278,7 +271,7 @@ pub struct DeletedCertItem {
 
 impl DeletedCertItem {
     pub fn name(&self) -> &str {
-        id_part(&self.id, 0)
+        id_part(&self.id, "certificates", 0)
     }
 }
 
