@@ -15,9 +15,9 @@ You'll need:
 
 Decide:
 
-- **App Service or Container Apps.** App Service is simplest. Container Apps suits teams already using it, and supports internal-only ingress.
+- **App Service or Container Apps.** App Service is simplest. Container Apps suits teams already using it, and supports an internal-only environment.
 - **Public or private.** If any vaults people need are private, Keyring must run inside a network that can reach them. Read [private-vaults.md](private-vaults.md) first.
-- **The address people will use**, for example `https://keyring.example.com`. You need it for the app registration.
+- **The address people will use**, for example `https://keyring.example.com`. You need it for the app registration. Keyring must be at the root of that host; it can't run under a path such as `/keyring`.
 
 ## 1. Build and push the image
 
@@ -40,20 +40,23 @@ az role assignment create --role AcrPull \
 
 ## 2. Register the app in Entra ID
 
-Follow [Entra app registration in the README](../README.md#entra-app-registration). For a deployment, the redirect URI is `https://<your-host>/auth/callback`.
+Follow [Entra app registration in the README](../README.md#entra-app-registration). For a deployment, register two **Web** redirect URIs:
+
+- `https://<your-host>/auth/callback`, for sign-in
+- `https://<your-host>/auth/signed-out`, so Entra sends people back to Keyring after they sign out
 
 Note the tenant ID, client ID and client secret value.
 
 ## 3. Deploy
 
-Copy the example parameters and fill them in. They hold no secrets. If you don't have a custom domain yet, set `appBaseUrl` to the address the app will get (`https://<name>.azurewebsites.net` for App Service), or deploy once, read the `defaultHostName` or `fqdn` output, then set it and deploy again.
+Copy the example parameters next to the template and fill them in. The copy must stay in the template's folder, because its `using './main.bicep'` line is relative to the file. `.gitignore` keeps `*.bicepparam` files (other than the examples) out of git, since yours will hold your tenant's IDs and names. They hold no secrets. If you don't have a custom domain yet, set `appBaseUrl` to the address the app will get (`https://<name>.azurewebsites.net` for App Service), or deploy once, read the `defaultHostName` or `fqdn` output, then set it and deploy again.
 
 App Service:
 
 ```sh
-cp infra/app-service/main.example.bicepparam keyring.bicepparam
-# Edit: name, image, clientId, appBaseUrl, configVaultName
-az deployment group create -g <rg> -f infra/app-service/main.bicep -p keyring.bicepparam
+cp infra/app-service/main.example.bicepparam infra/app-service/main.bicepparam
+# Edit: name, image, clientId, appBaseUrl, configVaultName, and logAnalyticsWorkspaceId (see Logs below)
+az deployment group create -g <rg> -f infra/app-service/main.bicep -p infra/app-service/main.bicepparam
 ```
 
 App Service starts the app straight away. Until step 4 sets the secrets, Keyring refuses to start (it won't run with an unresolved Key Vault reference), so expect it to show as unhealthy until then.
@@ -61,14 +64,14 @@ App Service starts the app straight away. Until step 4 sets the secrets, Keyring
 Container Apps reads the secrets when it creates the app, so deploy in two runs:
 
 ```sh
-cp infra/container-apps/main.example.bicepparam keyring.bicepparam
+cp infra/container-apps/main.example.bicepparam infra/container-apps/main.bicepparam
 # Edit: name, image, clientId, appBaseUrl, configVaultName, ingress
 
 # First run: only the config vault and identity.
-az deployment group create -g <rg> -f infra/container-apps/main.bicep -p keyring.bicepparam -p configOnly=true
+az deployment group create -g <rg> -f infra/container-apps/main.bicep -p infra/container-apps/main.bicepparam -p configOnly=true
 # Now do step 4 (set the secrets), and AcrPull if you use a private registry.
 # Second run: the app.
-az deployment group create -g <rg> -f infra/container-apps/main.bicep -p keyring.bicepparam
+az deployment group create -g <rg> -f infra/container-apps/main.bicep -p infra/container-apps/main.bicepparam
 ```
 
 This creates:
@@ -81,6 +84,23 @@ This creates:
 | Optional private endpoints, VNet integration | See [private-vaults.md](private-vaults.md) |
 
 Until the secrets are set in step 4, the app has nothing to start with.
+
+### Internal Container Apps
+
+With `ingress = 'internal'` the environment only gets a private address in your VNet. The app still accepts traffic from outside the environment, so browsers in that VNet (or networks peered with it, or connected over VPN) can reach it; the internet can't.
+
+The environment's default domain, for example `<random>.<region>.azurecontainerapps.io`, has no public DNS record. People's machines need a private DNS zone of that name with a wildcard record pointing at the environment's address. Either:
+
+- set `privateDnsVnetId` to the VNet people's DNS is resolved in (often a hub VNet), and the template creates and links the zone, or
+- do it yourself from the `defaultDomain` and `staticIp` outputs:
+
+  ```sh
+  az network private-dns zone create -g <rg> -n <defaultDomain>
+  az network private-dns record-set a add-record -g <rg> -z <defaultDomain> -n '*' -a <staticIp>
+  az network private-dns link vnet create -g <rg> -z <defaultDomain> -n keyring-vnet -v <VNet ID> -e false
+  ```
+
+With a custom domain, point its DNS name at `staticIp` instead, in whatever DNS serves that name inside your network.
 
 ### Parameters
 
@@ -96,8 +116,11 @@ App Service (`infra/app-service/main.bicep`):
 | `configVaultName` | Globally unique vault name | Required |
 | `tenantId` | Entra tenant | The subscription's tenant |
 | `location` | Region | The resource group's |
-| `skuName` | Plan size | `P0v3` |
+| `skuName` | Plan size. Basic (`B1`) and above support VNet integration and private endpoints | `P0v3` |
 | `allowPurge` | Allow permanent deletes | `false` |
+| `apiScope` | Sets `ENTRA_API_SCOPE`, if your app registration's scope isn't `api://<clientId>/access_as_user` | None |
+| `logLevel` | Sets `KEYRING_LOG_LEVEL` | None (`info`) |
+| `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
 | `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only | None (public) |
 | `configVaultPrivateEndpointSubnetId`, `vaultPrivateDnsZoneId` | Make the config vault private. Needs `vnetIntegrationSubnetId` too (the deployment stops if not) | None |
@@ -107,11 +130,16 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 
 | Parameter | What it's for | Default |
 | --- | --- | --- |
-| `ingress` | `external` (internet) or `internal` (VNet only) | `external` |
+| `ingress` | `external` (public address) or `internal` (private address in the VNet only) | `external` |
+| `privateDnsVnetId` | With `internal`: create the private DNS zone for the environment's default domain, linked to this VNet | None |
 | `registryServer` | Private ACR login server, pulled with the app's identity | None (public image) |
 | `configOnly` | Deploy only the config vault and identity (first of two runs) | `false` |
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
+
+Container Apps takes `apiScope` and `logLevel` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+
+Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
 ## 4. Set the secrets
 
@@ -141,7 +169,9 @@ Container Apps: go on to the second deployment run in step 3.
 
 ## 5. Point your address at it
 
-Add a custom domain and certificate for `appBaseUrl` (**Custom domains** in either service), or use the default host name the deployment printed. If you change `appBaseUrl`, run step 3 again and add `https://<that host>/auth/callback` as a redirect URI in the app registration. It must match exactly.
+Add a custom domain and certificate for `appBaseUrl` (**Custom domains** in either service), or use the default host name the deployment printed. If you change `appBaseUrl`, run step 3 again and add `https://<that host>/auth/callback` and `https://<that host>/auth/signed-out` as redirect URIs in the app registration. They must match exactly.
+
+If a reverse proxy or gateway sits in front, `appBaseUrl` must be the address the browser uses, not the one the proxy calls. Keyring ignores `X-Forwarded-*` headers (see the README, "Behind a proxy").
 
 ## 6. Check it
 
@@ -151,9 +181,71 @@ Add a custom domain and certificate for `appBaseUrl` (**Custom domains** in eith
 
 If something's wrong, see [troubleshooting.md](troubleshooting.md).
 
+## Logs
+
+Keyring writes plain text lines to standard output:
+
+- one line per request: method, path (never the query string), status and duration
+- an action line each time someone reveals, downloads, creates, changes, deletes, recovers or purges something, naming who (their Entra ID) and what (vault and item name)
+
+Secret values, tokens, passwords, headers and query strings are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`); `info`, the default, includes the action lines.
+
+Where they go:
+
+| Host | Where | Table |
+| --- | --- | --- |
+| Container Apps | The Log Analytics workspace the template creates (`<name>-logs`) | `ContainerAppConsoleLogs_CL` (or `ContainerAppConsoleLogs` if the environment uses diagnostic settings) |
+| App Service, with `logAnalyticsWorkspaceId` | That workspace, through a diagnostic setting | `AppServiceConsoleLogs`, and `AppServiceHTTPLogs` for the front end's own request log |
+| App Service, without it | The app's own file system, kept 7 days. See them with `az webapp log tail` or download with `az webapp log download` | None |
+
+Without a workspace, App Service's file log is the only record of who revealed what, and it's short. Use a workspace for anything you'd want to look back on.
+
+Example query, who revealed secret values in the last week:
+
+```kusto
+// Container Apps: ContainerAppConsoleLogs_CL and Log_s.
+// App Service: AppServiceConsoleLogs and ResultDescription.
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| where Log_s contains "secret value revealed"
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc
+```
+
+Key Vault's own diagnostic logs (what the audit view reads) are separate and record every call, whether it came through Keyring or not.
+
+## Rotating secrets
+
+### The Entra client secret
+
+Entra client secrets expire. When one does, nobody can sign in (AADSTS7000222). Replace it before then:
+
+1. In the app registration, **Certificates & secrets > New client secret**. The old one keeps working meanwhile.
+2. Put the new value in the config vault, with its expiry date:
+
+   ```sh
+   az keyvault secret set --vault-name <configVaultName> --name entra-client-secret \
+     --value '<new value>' --expires '<expiry, for example 2027-05-01T00:00:00Z>'
+   ```
+
+3. Restart so the app reads it: `az webapp restart -g <rg> -n <name>` (App Service) or `az containerapp revision restart -g <rg> -n <name> --revision <active revision>` (Container Apps). Everyone is signed out.
+4. Check you can sign in, then delete the old secret in the app registration.
+
+Giving the config vault's `entra-client-secret` an expiry date means it shows on Keyring's own expiry dashboard, and in [expiry alerts](alerts.md) if you set them up for the config vault.
+
+### SESSION_SECRET
+
+`SESSION_SECRET` only protects short-lived cookies (sign-in in progress and one-off messages). Sessions themselves are in memory. To change it, set a new value and restart:
+
+```sh
+az keyvault secret set --vault-name <configVaultName> --name session-secret --value "$(openssl rand -base64 48)"
+```
+
+The restart signs everyone out, and anyone partway through signing in has to start again. Nothing else is lost.
+
 ## Updating
 
-Build and push a new image, change `image` to its digest, and run the same `az deployment group create`. Sessions are in memory, so people are signed out on each restart.
+Build and push a new image, change `image` to its digest, and run the same `az deployment group create`. Sessions are in memory, so people are signed out on each restart. To check what's running, read the image's `org.opencontainers.image.revision` label (see the README, "Which version am I running?").
 
 ## Removing
 

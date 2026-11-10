@@ -47,6 +47,16 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      # Docs that name a file under src/ must name one that exists.
+      - name: Docs point at real source files
+        run: |
+          status=0
+          tick='`'
+          for path in $(grep -rhoE "${tick}src/[A-Za-z0-9_./-]+${tick}" README.md SECURITY.md docs | tr -d "$tick" | sort -u); do
+            test -e "$path" || { echo "::error::docs name $path, which doesn't exist"; status=1; }
+          done
+          exit $status
+
       - name: Format
         run: cargo fmt --all --check
 
