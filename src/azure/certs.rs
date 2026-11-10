@@ -222,8 +222,6 @@ pub struct Operation {
     #[serde(default)]
     pub status_details: Option<String>,
     #[serde(default)]
-    pub cancellation_requested: Option<bool>,
-    #[serde(default)]
     pub error: Option<OperationError>,
     #[serde(default)]
     pub issuer: Option<IssuerProps>,
@@ -356,10 +354,6 @@ impl CertsApi<'_> {
             Some(v) => self.get(&format!("/certificates/{name}/{v}")).await,
             None => self.get(&format!("/certificates/{name}")).await,
         }
-    }
-
-    pub async fn policy(&self, name: &str) -> Result<Policy, AzureError> {
-        self.get(&format!("/certificates/{name}/policy")).await
     }
 
     /// The pending operation, or `None` if there isn't one.

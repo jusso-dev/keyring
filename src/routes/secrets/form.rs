@@ -288,7 +288,7 @@ pub fn for_update(
     let mut errors = FieldErrors::new();
     let editable = tags_editable(item.tags());
     // An expiry that's already passed but wasn't touched isn't an error.
-    let mut props = properties(form, now, Some(current), &mut errors);
+    let props = properties(form, now, Some(current), &mut errors);
     if !editable {
         errors.retain(|e| e.field != "tags");
     }
@@ -298,7 +298,6 @@ pub fn for_update(
         errors.retain(|e| e.field != "expires" || !e.message.contains("already passed"));
     }
     if errors.is_empty() {
-        props.attributes.enabled.get_or_insert(true);
         Ok(UpdateSecret {
             // Send an empty string to clear a content type that was removed.
             content_type: Some(props.content_type.unwrap_or_default()),

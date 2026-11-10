@@ -229,7 +229,8 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
 }
 
 /// Check the form token and typed name. On a mismatch, show the confirm
-/// page again saying nothing was done.
+/// page again saying nothing was deleted. Delete and purge both delete, so
+/// the one verb fits both.
 pub fn verify(
     session: &CurrentSession,
     vault: &str,
@@ -247,7 +248,7 @@ pub fn verify(
         .into()),
         Err(e) => {
             let mut view = view;
-            view.error = Some(e.problem(expected).message);
+            view.error = Some(e.problem(expected, "deleted").message);
             Err(confirm_page(shell, view, StatusCode::UNPROCESSABLE_ENTITY).into())
         }
     }

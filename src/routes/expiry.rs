@@ -182,7 +182,6 @@ async fn read_vault(
                     enabled: x.attributes.is_enabled(),
                     expires: x.attributes.expires,
                     tags: tag_vec(x.tags()),
-                    managed: false,
                 }),
         ),
         Err(e) => failed.push(("secrets", e)),
@@ -195,7 +194,6 @@ async fn read_vault(
             enabled: x.attributes.is_enabled(),
             expires: x.attributes.expires,
             tags: tag_vec(x.tags()),
-            managed: false,
         })),
         Err(e) => failed.push(("certificates", e)),
     }
@@ -210,7 +208,6 @@ async fn read_vault(
                     enabled: x.attributes.is_enabled(),
                     expires: x.attributes.expires,
                     tags: tag_vec(x.tags()),
-                    managed: false,
                 }),
         ),
         Err(e) => failed.push(("keys", e)),
@@ -514,7 +511,6 @@ mod tests {
             enabled: true,
             expires: None,
             tags: Vec::new(),
-            managed: false,
         };
         (vec![item], None)
     }
