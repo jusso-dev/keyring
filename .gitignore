@@ -3,3 +3,7 @@
 .env.*
 !.env.example
 .DS_Store
+
+# Filled-in Bicep parameters hold tenant IDs, names and addresses.
+*.bicepparam
+!*.example.bicepparam

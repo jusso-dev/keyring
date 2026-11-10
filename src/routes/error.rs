@@ -21,7 +21,7 @@ pub enum Need {
     ManageSecrets,
     ReadCertificates,
     /// Download a certificate with its private key: needs certificate read
-    /// and read access to its backing secret.
+    /// and read access to its backing secret (a secret value).
     ExportCertificate,
     ManageCertificates,
     ReadKeys,
@@ -36,10 +36,13 @@ impl Need {
             Self::ListVaults => "Reader",
             Self::ReadSecrets => "Key Vault Secrets User",
             Self::ManageSecrets => "Key Vault Secrets Officer",
-            Self::ReadCertificates => "Key Vault Certificate User",
-            Self::ExportCertificate => {
-                "Key Vault Secrets User (as well as Key Vault Certificate User)"
-            }
+            // Smallest role first: Key Vault Reader can list and view
+            // certificates but can't read any secret value.
+            Self::ReadCertificates => "Key Vault Reader",
+            // Certificate User has certificates/read and secrets/getSecret,
+            // so it covers the backing secret on its own. It can also read
+            // every other secret value at the scope it's given.
+            Self::ExportCertificate => "Key Vault Certificate User",
             Self::ManageCertificates => "Key Vault Certificates Officer",
             Self::ReadKeys => "Key Vault Reader",
             Self::ManageKeys => "Key Vault Crypto Officer",
@@ -150,6 +153,13 @@ impl Problem {
     /// 403 can name the missing role.
     pub fn from_azure(err: &AzureError, need: Need) -> Self {
         match err {
+            // The audit view is the only page that needs Log Analytics, so a
+            // consent failure there is most likely that one permission.
+            AzureError::Token(TokenError::ConsentNeeded) if need == Need::ReadAuditLogs => {
+                Self::from_token(&TokenError::ConsentNeeded).with_hint(
+                    "Ask your admin to add the delegated permission Log Analytics API, Data.Read, to the Keyring app registration and grant admin consent.",
+                )
+            }
             AzureError::Token(t) => Self::from_token(t),
             AzureError::Status { status, code, .. } => {
                 Self::from_status(*status, code.as_deref(), need)
@@ -371,6 +381,32 @@ mod tests {
         let hint = p.admin_hint.unwrap();
         assert!(hint.contains("Reader role on the subscription or resource group"));
         assert!(!hint.contains("access policies"));
+    }
+
+    #[test]
+    fn certificate_hints_name_the_smallest_role() {
+        let p = Problem::from_azure(&status(403, "Forbidden"), Need::ReadCertificates);
+        let hint = p.admin_hint.unwrap();
+        assert!(hint.contains("Key Vault Reader role on this vault"));
+        assert!(!hint.contains("Certificate User"));
+        let p = Problem::from_azure(&status(403, "Forbidden"), Need::ExportCertificate);
+        let hint = p.admin_hint.unwrap();
+        assert!(hint.contains("Key Vault Certificate User role on this vault"));
+        assert!(!hint.contains("Secrets User"));
+    }
+
+    #[test]
+    fn audit_consent_names_the_log_analytics_permission() {
+        let consent = AzureError::Token(TokenError::ConsentNeeded);
+        let p = Problem::from_azure(&consent, Need::ReadAuditLogs);
+        assert_eq!(p.heading, "Your organisation needs to approve Keyring");
+        assert!(
+            p.admin_hint
+                .unwrap()
+                .contains("Log Analytics API, Data.Read")
+        );
+        let p = Problem::from_azure(&consent, Need::ReadSecrets);
+        assert!(!p.admin_hint.unwrap().contains("Log Analytics"));
     }
 
     #[test]
