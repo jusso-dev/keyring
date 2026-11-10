@@ -19,6 +19,7 @@ use crate::routes::assets::render;
 use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, PageError, Problem};
 use crate::routes::flash::{self, Flash};
+use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::azure_problem;
 
@@ -356,21 +357,42 @@ impl DeletedRow {
 
 #[derive(Template)]
 #[template(path = "lifecycle/deleted.html")]
-struct DeletedList<'a> {
+struct DeletedList {
     shell: Shell,
     vault: String,
     kind: Kind,
-    rows: &'a [DeletedRow],
+    rows: Vec<DeletedRow>,
+    pager: Pager,
 }
 
-pub fn deleted_list(shell: Shell, vault: String, kind: Kind, rows: &[DeletedRow]) -> Response {
+/// The deleted list, one page of it.
+pub fn deleted_list(
+    shell: Shell,
+    vault: String,
+    kind: Kind,
+    rows: Vec<DeletedRow>,
+    page: Option<usize>,
+) -> Response {
+    let (rows, pager) = deleted_page(kind, rows, page);
     render(&DeletedList {
         shell,
         vault,
         kind,
         rows,
+        pager,
     })
     .into_response()
+}
+
+/// One page of a deleted list, with links to the others.
+pub fn deleted_page<T>(kind: Kind, rows: Vec<T>, page: Option<usize>) -> (Vec<T>, Pager) {
+    let base = kind.deleted_list_url();
+    let noun = match kind {
+        Kind::Secret => "deleted secrets",
+        Kind::Certificate => "deleted certificates",
+        Kind::Key => "deleted keys",
+    };
+    paginate(rows, page, noun, |p| format!("{base}?page={p}"))
 }
 
 #[derive(Template)]

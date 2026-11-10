@@ -15,7 +15,7 @@
 //! type and the vault's retention.
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 
 use crate::AppState;
@@ -27,6 +27,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::lifecycle::handlers::{Lifecycle, Stage};
 use crate::routes::lifecycle::{self, Kind, Recovery};
+use crate::routes::paging::{PageQuery, Pager};
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
 
@@ -74,6 +75,7 @@ struct DeletedList {
     shell: Shell,
     vault: String,
     rows: Vec<DeletedRow>,
+    pager: Pager,
 }
 
 #[derive(Template)]
@@ -115,6 +117,7 @@ pub async fn list_deleted(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Query(query): Query<PageQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let items = match api(&state, &session, &vault).list_deleted().await {
@@ -129,11 +132,14 @@ pub async fn list_deleted(
         }
     };
     let now = now_ts();
+    let rows = items
+        .iter()
+        .map(|d| DeletedRow::from_item(d, now))
+        .collect();
+    let (rows, pager) = lifecycle::deleted_page(KIND, rows, query.page);
     Ok(render(&DeletedList {
-        rows: items
-            .iter()
-            .map(|d| DeletedRow::from_item(d, now))
-            .collect(),
+        rows,
+        pager,
         shell,
         vault,
     })

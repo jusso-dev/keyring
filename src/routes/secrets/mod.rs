@@ -17,12 +17,10 @@ use crate::azure::secrets::{ExpiryState, SecretItem, SecretsApi, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageResult};
+use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
 pub use crate::routes::vault_ctx::{azure_problem, checked_name};
-
-/// Secrets shown per page of the list.
-pub const PER_PAGE: usize = 100;
 
 /// One row in the list, ready to show.
 pub struct SecretRow {
@@ -196,14 +194,7 @@ pub async fn list(
     let disabled_count = all.iter().filter(|r| !r.enabled).count();
 
     let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
-    let pages = matching.len().div_ceil(PER_PAGE).max(1);
-    let page = filter.page.unwrap_or(1).clamp(1, pages);
-    let shown_from = (page - 1) * PER_PAGE;
-    let rows: Vec<SecretRow> = matching
-        .into_iter()
-        .skip(shown_from)
-        .take(PER_PAGE)
-        .collect();
+    let (rows, pager) = paginate(matching, filter.page, "secrets", |p| filter.page_url(p));
 
     let show_options = [
         ("", "All secrets"),
@@ -220,8 +211,11 @@ pub async fn list(
     .collect();
 
     Ok(render(&ListPage {
-        prev_url: (page > 1).then(|| filter.page_url(page - 1)),
-        next_url: (page < pages).then(|| filter.page_url(page + 1)),
+        page: pager.page,
+        pages: pager.pages,
+        shown_from: pager.shown_from,
+        prev_url: pager.prev_url,
+        next_url: pager.next_url,
         shell,
         vault,
         rows,
@@ -231,9 +225,6 @@ pub async fn list(
         disabled_count,
         filter,
         show_options,
-        page,
-        pages,
-        shown_from,
     })
     .into_response())
 }

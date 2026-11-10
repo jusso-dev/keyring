@@ -16,6 +16,7 @@ mod home;
 mod keys;
 pub mod lifecycle;
 mod origin;
+pub mod paging;
 mod rejection;
 mod secrets;
 pub mod shell;

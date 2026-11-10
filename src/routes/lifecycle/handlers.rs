@@ -5,7 +5,7 @@
 use std::future::Future;
 
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use crate::AppState;
@@ -15,6 +15,7 @@ use crate::azure::secrets::now_ts;
 use crate::routes::confirm::ConfirmForm;
 use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::forms::CsrfForm;
+use crate::routes::paging::PageQuery;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 
@@ -198,10 +199,11 @@ pub async fn list_deleted<L: DeletedPages>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Query(query): Query<PageQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault::<L>(&session, shell)?;
     match L::list_deleted(&state, &session, &vault, now_ts()).await {
-        Ok(rows) => Ok(super::deleted_list(shell, vault, L::KIND, &rows)),
+        Ok(rows) => Ok(super::deleted_list(shell, vault, L::KIND, rows, query.page)),
         Err(e) => Err(azure_problem(
             shell,
             &e,

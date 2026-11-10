@@ -278,3 +278,19 @@ async fn delete_without_rights_explains() {
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     assert!(body_text(res).await.contains("Key Vault Secrets Officer"));
 }
+
+#[tokio::test]
+async fn deleted_list_pages() {
+    let w = support::world().await;
+    for i in 0..101 {
+        let name = format!("old-{i:03}");
+        w.kv.state.put(&name, "x");
+        w.kv.state.soft_delete(&name);
+    }
+    let (_, html) = w.page("/secrets/deleted").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 100);
+    assert!(html.contains("Page 1 of 2, deleted secrets 1 to 100"));
+    let (_, html) = w.page("/secrets/deleted?page=2").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 1);
+    assert!(html.contains(">old-100<"));
+}

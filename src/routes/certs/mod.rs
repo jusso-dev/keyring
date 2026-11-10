@@ -21,6 +21,7 @@ use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
 use crate::routes::keys::section_note;
 use crate::routes::lifecycle::redirect_with;
+use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 use crate::x509;
@@ -48,7 +49,6 @@ pub fn new_name_problem(name: &str) -> Option<String> {
         .or_else(|| reserved_name_problem(name))
 }
 
-pub const PER_PAGE: usize = 100;
 const DAY: i64 = 86_400;
 
 /// How close a certificate is to expiring.
@@ -232,14 +232,9 @@ pub async fn list(
     let within30 = all.iter().filter(|r| r.within30()).count();
     let within90 = all.iter().filter(|r| r.within90()).count();
     let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
-    let pages = matching.len().div_ceil(PER_PAGE).max(1);
-    let page = filter.page.unwrap_or(1).clamp(1, pages);
-    let shown_from = (page - 1) * PER_PAGE;
-    let rows = matching
-        .into_iter()
-        .skip(shown_from)
-        .take(PER_PAGE)
-        .collect();
+    let (rows, pager) = paginate(matching, filter.page, "certificates", |p| {
+        filter.page_url(p)
+    });
     let show_options = [
         ("", "All certificates"),
         ("expired", "Expired"),
@@ -255,8 +250,11 @@ pub async fn list(
     })
     .collect();
     Ok(render(&ListPage {
-        prev_url: (page > 1).then(|| filter.page_url(page - 1)),
-        next_url: (page < pages).then(|| filter.page_url(page + 1)),
+        page: pager.page,
+        pages: pager.pages,
+        shown_from: pager.shown_from,
+        prev_url: pager.prev_url,
+        next_url: pager.next_url,
         shell,
         vault,
         rows,
@@ -266,9 +264,6 @@ pub async fn list(
         within90,
         filter,
         show_options,
-        page,
-        pages,
-        shown_from,
     })
     .into_response())
 }

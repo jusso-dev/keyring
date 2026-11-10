@@ -529,3 +529,31 @@ async fn list_pages_like_secrets() {
     assert_eq!(html.matches("<th scope=\"row\">").count(), 5);
     assert!(html.contains(">key-104<"));
 }
+
+#[tokio::test]
+async fn deleted_list_pages_too() {
+    let w = support::world().await;
+    for i in 0..105 {
+        let name = format!("gone-{i:03}");
+        w.kv.state.add_key_with(&name, "RSA", |_| {});
+        let key = w.kv.state.keys.lock().unwrap().remove(&name).unwrap();
+        w.kv.state.deleted_keys.lock().unwrap().insert(
+            name,
+            support::keys::DeletedKey {
+                key,
+                deleted: 1_790_000_000,
+                purge: 1_790_000_000 + 90 * 86_400,
+            },
+        );
+    }
+    let (_, html) = w.page("/keys/deleted").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 100);
+    assert!(
+        html.contains("Page 1 of 2, deleted keys 1 to 100"),
+        "{html}"
+    );
+    assert!(html.contains("href=\"/keys/deleted?page=2\""), "{html}");
+    let (_, html) = w.page("/keys/deleted?page=2").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 5);
+    assert!(html.contains(">gone-104<"));
+}

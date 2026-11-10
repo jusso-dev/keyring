@@ -1,0 +1,7 @@
+{%- if pager.is_needed() %}
+<nav class="pager" aria-label="Pages">
+  {% if let Some(url) = pager.prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
+  <span>Page {{ pager.page }} of {{ pager.pages }}, {{ pager.noun }} {{ pager.shown_from + 1 }} to {{ pager.shown_to() }}</span>
+  {% if let Some(url) = pager.next_url %}<a href="{{ url }}">Next</a>{% endif %}
+</nav>
+{%- endif %}

@@ -21,11 +21,9 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
 use crate::routes::lifecycle::redirect_with;
+use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
-
-/// Rows per page on the keys list, the same as secrets and certificates.
-pub const PER_PAGE: usize = 100;
 
 /// Names Keyring uses for its own pages under `/keys`, so a key called one
 /// of these couldn't be opened from the list.
@@ -203,25 +201,18 @@ pub async fn list(
         .into_iter()
         .filter(|r| q.is_empty() || r.filter_text.contains(&q))
         .collect();
-    let pages = matching.len().div_ceil(PER_PAGE).max(1);
-    let page = filter.page.unwrap_or(1).clamp(1, pages);
-    let shown_from = (page - 1) * PER_PAGE;
-    let rows = matching
-        .into_iter()
-        .skip(shown_from)
-        .take(PER_PAGE)
-        .collect();
+    let (rows, pager) = paginate(matching, filter.page, "keys", |p| filter.page_url(p));
     Ok(render(&ListPage {
-        prev_url: (page > 1).then(|| filter.page_url(page - 1)),
-        next_url: (page < pages).then(|| filter.page_url(page + 1)),
+        page: pager.page,
+        pages: pager.pages,
+        shown_from: pager.shown_from,
+        prev_url: pager.prev_url,
+        next_url: pager.next_url,
         shell,
         vault,
         rows,
         total,
         filter,
-        page,
-        pages,
-        shown_from,
     })
     .into_response())
 }
