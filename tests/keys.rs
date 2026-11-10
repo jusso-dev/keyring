@@ -76,12 +76,12 @@ async fn detail_shows_public_key_as_pem_and_jwk() {
 #[tokio::test]
 async fn create_with_defaults_in_one_step() {
     let w = support::world().await;
-    let (_, html) = w.page("/keys/new").await;
+    let (_, html) = w.page("/keys/-/new").await;
     assert!(
         html.contains("<details class=\"advanced\">"),
         "advanced options tucked away"
     );
-    let res = w.post("/keys/new", &[("name", "app-key")]).await;
+    let res = w.post("/keys/-/new", &[("name", "app-key")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert_eq!(location(&res), "/keys/app-key");
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
@@ -94,7 +94,7 @@ async fn create_with_defaults_in_one_step() {
 async fn create_options_and_errors() {
     let w = support::world().await;
     let res = w
-        .post("/keys/new", &[("name", "sig"), ("key_type", "EC-P-384")])
+        .post("/keys/-/new", &[("name", "sig"), ("key_type", "EC-P-384")])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
@@ -103,7 +103,7 @@ async fn create_options_and_errors() {
 
     let res = w
         .post(
-            "/keys/new",
+            "/keys/-/new",
             &[
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
@@ -116,13 +116,13 @@ async fn create_options_and_errors() {
     assert!(html.contains("spaces") && html.contains("EC keys can only sign"));
 
     let res = w
-        .post("/keys/new", &[("name", "hsm-key"), ("hsm", "on")])
+        .post("/keys/-/new", &[("name", "hsm-key"), ("hsm", "on")])
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("needs the Premium tier"));
 
     w.kv.state.add_key_with("taken", "RSA", |_| {});
-    let res = w.post("/keys/new", &[("name", "taken")]).await;
+    let res = w.post("/keys/-/new", &[("name", "taken")]).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("already a key called taken"));
 }
@@ -202,20 +202,20 @@ async fn delete_recover_and_purge_flag() {
         .post("/keys/app-key/delete", &[("confirm_name", "app-key")])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let (_, html) = w.page("/keys/deleted").await;
+    let (_, html) = w.page("/keys/-/deleted").await;
     assert!(html.contains(">app-key<"));
-    let (_, html) = w.page("/keys/deleted/app-key").await;
+    let (_, html) = w.page("/keys/-/deleted/app-key").await;
     assert!(!html.contains("Permanently delete"));
     let res = w
         .post(
-            "/keys/deleted/app-key/purge",
+            "/keys/-/deleted/app-key/purge",
             &[("confirm_name", "app-key")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    let res = w.post("/keys/deleted/app-key/recover", &[]).await;
+    let res = w.post("/keys/-/deleted/app-key/recover", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(support::location(&res), "/keys/deleted");
+    assert_eq!(support::location(&res), "/keys/-/deleted");
     assert_eq!(w.kv.state.key_versions("app-key"), 1);
 }
 
@@ -225,11 +225,11 @@ async fn purge_when_enabled() {
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     w.post("/keys/app-key/delete", &[("confirm_name", "app-key")])
         .await;
-    let (_, html) = w.page("/keys/deleted/app-key/purge").await;
+    let (_, html) = w.page("/keys/-/deleted/app-key/purge").await;
     assert!(html.contains("can never be decrypted again"));
     let res = w
         .post(
-            "/keys/deleted/app-key/purge",
+            "/keys/-/deleted/app-key/purge",
             &[("confirm_name", "app-key")],
         )
         .await;
@@ -243,7 +243,7 @@ async fn forged_tokens_refused() {
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     w.csrf = "forged".into();
     for (path, fields) in [
-        ("/keys/new", vec![("name", "x")]),
+        ("/keys/-/new", vec![("name", "x")]),
         ("/keys/app-key/rotate", vec![]),
         ("/keys/app-key/rotation", vec![("rotate_days", "90")]),
         ("/keys/app-key/enabled", vec![("state", "off")]),
@@ -456,7 +456,7 @@ async fn create_400s_are_not_all_blamed_on_hsm() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/create".into());
     *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
     let res = w
-        .post("/keys/new", &[("name", "hsm-key"), ("hsm", "on")])
+        .post("/keys/-/new", &[("name", "hsm-key"), ("hsm", "on")])
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
@@ -469,11 +469,13 @@ async fn create_400s_are_not_all_blamed_on_hsm() {
 async fn existing_key_check_reads_an_empty_list_as_free() {
     // Key Vault answers versions of an unknown name with an empty list.
     let w = support::world().await;
-    let res = w.post("/keys/new", &[("name", "fresh")]).await;
+    let res = w.post("/keys/-/new", &[("name", "fresh")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let res = w.post("/keys/new", &[("name", "new")]).await;
-    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(body_text(res).await.contains("own pages"));
+    let res = w.post("/keys/-/new", &[("name", "new")]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(support::location(&res), "/keys/new");
+    let (status, _) = w.page("/keys/new").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -528,4 +530,32 @@ async fn list_pages_like_secrets() {
     let (_, html) = w.page("/keys?page=2").await;
     assert_eq!(html.matches("<th scope=\"row\">").count(), 5);
     assert!(html.contains(">key-104<"));
+}
+
+#[tokio::test]
+async fn deleted_list_pages_too() {
+    let w = support::world().await;
+    for i in 0..105 {
+        let name = format!("gone-{i:03}");
+        w.kv.state.add_key_with(&name, "RSA", |_| {});
+        let key = w.kv.state.keys.lock().unwrap().remove(&name).unwrap();
+        w.kv.state.deleted_keys.lock().unwrap().insert(
+            name,
+            support::keys::DeletedKey {
+                key,
+                deleted: 1_790_000_000,
+                purge: 1_790_000_000 + 90 * 86_400,
+            },
+        );
+    }
+    let (_, html) = w.page("/keys/-/deleted").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 100);
+    assert!(
+        html.contains("Page 1 of 2, deleted keys 1 to 100"),
+        "{html}"
+    );
+    assert!(html.contains("href=\"/keys/-/deleted?page=2\""), "{html}");
+    let (_, html) = w.page("/keys/-/deleted?page=2").await;
+    assert_eq!(html.matches("<th scope=\"row\"").count(), 5);
+    assert!(html.contains(">gone-104<"));
 }

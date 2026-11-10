@@ -29,7 +29,7 @@ async fn preview(
             Part::File(a, b, c) => Part::File(a, b, c),
         });
     }
-    let res = w.post_multipart("/certificates/upload", &parts).await;
+    let res = w.post_multipart("/certificates/-/upload", &parts).await;
     let status = res.status();
     (status, body_text(res).await)
 }
@@ -61,7 +61,7 @@ async fn pfx_with_password_previews_then_imports() {
 
     let id = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert_eq!(location(&res), "/certificates/web-tls");
@@ -81,7 +81,7 @@ async fn pfx_with_password_previews_then_imports() {
     assert_eq!(body["tags"]["env"], "prod");
     // The same upload can't be imported twice.
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::GONE);
 }
@@ -100,7 +100,7 @@ async fn pfx_without_readable_certs_still_imports() {
     assert!(html.contains("protected by its password"));
     let id = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
@@ -110,7 +110,7 @@ async fn pfx_without_password_omits_it() {
     let w = support::world().await;
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[]).await;
     let id = hidden_value(&html, "upload_id").unwrap();
-    w.post("/certificates/upload/confirm", &[("upload_id", &id)])
+    w.post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     let body = w.kv.state.imports.lock().unwrap()[0].body.clone();
     assert!(body.get("pwd").is_none());
@@ -125,7 +125,7 @@ async fn pem_with_cert_and_key_imports() {
     assert!(!html.contains("PRIVATE KEY"));
     let id = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let body = w.kv.state.imports.lock().unwrap()[0].body.clone();
@@ -172,7 +172,7 @@ async fn bad_name_keeps_other_fields_not_the_password() {
     let w = support::world().await;
     let res = w
         .post_multipart(
-            "/certificates/upload",
+            "/certificates/-/upload",
             &[
                 Part::File("file", "web.pfx", PLAIN),
                 Part::Text("name", "web tls"),
@@ -202,7 +202,7 @@ async fn wrong_password_is_explained() {
     let id = hidden_value(&html, "upload_id").unwrap();
     // The mock answers a wrong PFX password with Key Vault's 400.
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
@@ -225,7 +225,7 @@ async fn upload_needs_the_form_token() {
     let (status, _) = preview(&w, PLAIN, "web.pfx", &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", "x")])
+        .post("/certificates/-/upload/confirm", &[("upload_id", "x")])
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
@@ -236,7 +236,10 @@ async fn unknown_upload_id_is_refused() {
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[]).await;
     let _real = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", "guessed")])
+        .post(
+            "/certificates/-/upload/confirm",
+            &[("upload_id", "guessed")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::GONE);
     assert!(w.kv.state.imports.lock().unwrap().is_empty());
@@ -303,7 +306,7 @@ async fn uploading_onto_an_existing_name_says_so() {
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[Part::Text("name", "other-tls")]).await;
     assert!(!html.contains("already a certificate"));
     let id = hidden_value(&html, "upload_id").unwrap();
-    w.post("/certificates/upload/confirm", &[("upload_id", &id)])
+    w.post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
 }
 
@@ -331,7 +334,7 @@ async fn pem_refused_by_key_vault_gets_pem_advice() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/import".into());
     *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
@@ -369,21 +372,21 @@ async fn opening_the_form_or_starting_again_forgets_the_file() {
     let w = support::world().await;
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[]).await;
     let id = hidden_value(&html, "upload_id").unwrap();
-    assert!(html.contains("action=\"/certificates/upload/cancel\""));
-    let (status, _) = w.page("/certificates/upload").await;
+    assert!(html.contains("action=\"/certificates/-/upload/cancel\""));
+    let (status, _) = w.page("/certificates/-/upload").await;
     assert_eq!(status, StatusCode::OK);
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::GONE, "GET dropped the file");
 
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[]).await;
     let id = hidden_value(&html, "upload_id").unwrap();
-    let res = w.post("/certificates/upload/cancel", &[]).await;
+    let res = w.post("/certificates/-/upload/cancel", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/certificates/upload");
+    assert_eq!(location(&res), "/certificates/-/upload");
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(
         res.status(),
@@ -400,26 +403,26 @@ async fn a_forged_confirm_leaves_the_file_waiting() {
     let id = hidden_value(&html, "upload_id").unwrap();
     let real = std::mem::replace(&mut w.csrf, "forged".into());
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    let res = w.post("/certificates/upload/cancel", &[]).await;
+    let res = w.post("/certificates/-/upload/cancel", &[]).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     w.csrf = real;
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
-async fn reserved_names_are_refused() {
+async fn names_that_were_fixed_pages_can_be_uploaded() {
     let w = support::world().await;
     for name in ["upload", "new", "deleted"] {
         let (status, html) = preview(&w, PLAIN, "web.pfx", &[Part::Text("name", name)]).await;
         // The helper sends `web-tls` first; the later field wins.
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
-        assert!(html.contains("own pages"), "{name}");
+        assert_eq!(status, StatusCode::OK, "{name}");
+        assert!(!html.contains("own pages"), "{name}");
     }
 }
 
@@ -461,7 +464,7 @@ async fn ber_encoded_pfx_can_still_be_uploaded() {
     );
     let id = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
@@ -478,7 +481,7 @@ async fn import_409_names_the_deleted_certificate() {
     let (_, html) = preview(&w, PLAIN, "web.pfx", &[]).await;
     let id = hidden_value(&html, "upload_id").unwrap();
     let res = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
     let html = body_text(res).await;

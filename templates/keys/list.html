@@ -2,7 +2,7 @@
 {% block title %}Keys in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <h1>Keys <span class="muted">in {{ vault }}</span></h1>
-<p class="actions"><a class="button" href="/keys/new">Create a key</a> <a href="/keys/deleted">Deleted keys</a></p>
+<p class="actions"><a class="button" href="/keys/-/new">Create a key</a> <a href="/keys/-/deleted">Deleted keys</a></p>
 <p class="muted">Keys never leave Key Vault. Keyring only shows their public parts.</p>
 {% if total == 0 %}
 <div class="empty-state">

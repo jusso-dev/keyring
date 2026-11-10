@@ -5,6 +5,8 @@
 //! Purge is refused on the server unless `KEYRING_ALLOW_PURGE=true`, and on
 //! vaults with purge protection.
 
+pub mod handlers;
+
 use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -17,6 +19,7 @@ use crate::routes::assets::render;
 use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, PageError, Problem};
 use crate::routes::flash::{self, Flash};
+use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::azure_problem;
 
@@ -52,6 +55,38 @@ impl Kind {
             Self::Certificate => "/certificates",
             Self::Key => "/keys",
         }
+    }
+
+    /// The nav section the item's pages sit under.
+    pub fn section(self) -> crate::routes::shell::Section {
+        use crate::routes::shell::Section;
+        match self {
+            Self::Secret => Section::Secrets,
+            Self::Certificate => Section::Certificates,
+            Self::Key => Section::Keys,
+        }
+    }
+
+    /// The item's own page.
+    pub fn item_url(self, name: &str) -> String {
+        format!("{}/{name}", self.base())
+    }
+
+    /// A fixed page of this kind, such as `/secrets/-/new`. Fixed pages sit
+    /// under `/-/`, which can't be an item: Key Vault names start with a
+    /// letter.
+    pub fn page_url(self, page: &str) -> String {
+        format!("{}/-/{page}", self.base())
+    }
+
+    /// The deleted list.
+    pub fn deleted_list_url(self) -> String {
+        self.page_url("deleted")
+    }
+
+    /// One deleted item's page.
+    pub fn deleted_url(self, name: &str) -> String {
+        format!("{}/{name}", self.deleted_list_url())
     }
 
     /// The role that allows delete, recover and purge.
@@ -166,9 +201,9 @@ pub fn delete_view_for(kind: Kind, vault: &str, name: &str, recovery: Recovery) 
             recovery.period()
         ),
         expected: name.to_owned(),
-        action: format!("{}/{name}/delete", kind.base()),
+        action: format!("{}/delete", kind.item_url(name)),
         button: format!("Delete {}", kind.noun()),
-        cancel_url: format!("{}/{name}", kind.base()),
+        cancel_url: kind.item_url(name),
         second_warning: None,
         error: None,
     }
@@ -181,9 +216,9 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             "This removes {name} and every version of it from {vault} for good. It can't be recovered by you, Keyring or Microsoft."
         ),
         expected: name.to_owned(),
-        action: format!("{}/deleted/{name}/purge", kind.base()),
+        action: format!("{}/purge", kind.deleted_url(name)),
         button: "Permanently delete".into(),
-        cancel_url: format!("{}/deleted/{name}", kind.base()),
+        cancel_url: kind.deleted_url(name),
         second_warning: Some(match kind {
             Kind::Secret => "Only do this if you're sure nothing needs this secret any more, or a policy requires it to be destroyed.".into(),
             Kind::Key => "Anything encrypted with this key can never be decrypted again. Only do this if you're sure.".into(),
@@ -194,7 +229,8 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
 }
 
 /// Check the form token and typed name. On a mismatch, show the confirm
-/// page again saying nothing was done.
+/// page again saying nothing was deleted. Delete and purge both delete, so
+/// the one verb fits both.
 pub fn verify(
     session: &CurrentSession,
     vault: &str,
@@ -212,7 +248,7 @@ pub fn verify(
         .into()),
         Err(e) => {
             let mut view = view;
-            view.error = Some(e.problem(expected).message);
+            view.error = Some(e.problem(expected, "deleted").message);
             Err(confirm_page(shell, view, StatusCode::UNPROCESSABLE_ENTITY).into())
         }
     }
@@ -251,7 +287,7 @@ pub fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
             kind.plural()
         ),
     )
-    .returning_to(&format!("{}/deleted/{name}", kind.base()))
+    .returning_to(&kind.deleted_url(name))
 }
 
 /// Refuse a purge early when the deleted item says the vault has purge
@@ -293,7 +329,7 @@ pub fn purge_problem(
     if is_purge_protection_error(err) {
         PageError::new(shell, purge_protected_problem(kind, name)).into()
     } else {
-        azure_problem(shell, err, need, &format!("{}/deleted/{name}", kind.base()))
+        azure_problem(shell, err, need, &kind.deleted_url(name))
     }
 }
 
@@ -329,21 +365,42 @@ impl DeletedRow {
 
 #[derive(Template)]
 #[template(path = "lifecycle/deleted.html")]
-struct DeletedList<'a> {
+struct DeletedList {
     shell: Shell,
     vault: String,
     kind: Kind,
-    rows: &'a [DeletedRow],
+    rows: Vec<DeletedRow>,
+    pager: Pager,
 }
 
-pub fn deleted_list(shell: Shell, vault: String, kind: Kind, rows: &[DeletedRow]) -> Response {
+/// The deleted list, one page of it.
+pub fn deleted_list(
+    shell: Shell,
+    vault: String,
+    kind: Kind,
+    rows: Vec<DeletedRow>,
+    page: Option<usize>,
+) -> Response {
+    let (rows, pager) = deleted_page(kind, rows, page);
     render(&DeletedList {
         shell,
         vault,
         kind,
         rows,
+        pager,
     })
     .into_response()
+}
+
+/// One page of a deleted list, with links to the others.
+pub fn deleted_page<T>(kind: Kind, rows: Vec<T>, page: Option<usize>) -> (Vec<T>, Pager) {
+    let base = kind.deleted_list_url();
+    let noun = match kind {
+        Kind::Secret => "deleted secrets",
+        Kind::Certificate => "deleted certificates",
+        Kind::Key => "deleted keys",
+    };
+    paginate(rows, page, noun, |p| format!("{base}?page={p}"))
 }
 
 #[derive(Template)]
@@ -390,7 +447,7 @@ pub fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
     };
     redirect_with(
         state,
-        &format!("{}/deleted", kind.base()),
+        &kind.deleted_list_url(),
         format!(
             "Recovering {name}{extra}. It can take a few seconds to show in {}. Refresh that list if it isn't there yet.",
             kind.plural()

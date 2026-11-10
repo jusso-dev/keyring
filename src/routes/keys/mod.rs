@@ -19,28 +19,11 @@ use crate::azure::secrets::{ExpiryState, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
-use crate::routes::lifecycle::redirect_with;
+use crate::routes::forms::ToggleForm;
+use crate::routes::lifecycle::{Kind, redirect_with};
+use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
-
-/// Rows per page on the keys list, the same as secrets and certificates.
-pub const PER_PAGE: usize = 100;
-
-/// Names Keyring uses for its own pages under `/keys`, so a key called one
-/// of these couldn't be opened from the list.
-pub const RESERVED_NAMES: [&str; 2] = ["new", "deleted"];
-
-/// Explain why a new key can't have this name, or `None` if it can.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses {name} for one of its own pages, so a key called that couldn't be opened here. Pick another name."
-            )
-        })
-}
 
 /// The page for a key that belongs to a certificate. Key Vault makes and
 /// changes these keys itself, so Keyring won't change them directly.
@@ -202,25 +185,18 @@ pub async fn list(
         .into_iter()
         .filter(|r| q.is_empty() || r.filter_text.contains(&q))
         .collect();
-    let pages = matching.len().div_ceil(PER_PAGE).max(1);
-    let page = filter.page.unwrap_or(1).clamp(1, pages);
-    let shown_from = (page - 1) * PER_PAGE;
-    let rows = matching
-        .into_iter()
-        .skip(shown_from)
-        .take(PER_PAGE)
-        .collect();
+    let (rows, pager) = paginate(matching, filter.page, "keys", |p| filter.page_url(p));
     Ok(render(&ListPage {
-        prev_url: (page > 1).then(|| filter.page_url(page - 1)),
-        next_url: (page < pages).then(|| filter.page_url(page + 1)),
+        page: pager.page,
+        pages: pager.pages,
+        shown_from: pager.shown_from,
+        prev_url: pager.prev_url,
+        next_url: pager.next_url,
         shell,
         vault,
         rows,
         total,
         filter,
-        page,
-        pages,
-        shown_from,
     })
     .into_response())
 }
@@ -301,6 +277,7 @@ pub async fn detail(
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
+    uri: axum::http::Uri,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
@@ -313,6 +290,9 @@ pub async fn detail(
     let bundle = match bundle {
         Ok(b) => b,
         Err(e) => {
+            if let Some(res) = crate::routes::moved::missing_item(Kind::Key, &name, &e, &uri) {
+                return Ok(res);
+            }
             return Err(azure_problem(
                 shell,
                 &e,
@@ -370,15 +350,6 @@ pub async fn detail(
     .into_response())
 }
 
-#[derive(Deserialize)]
-pub struct ToggleForm {
-    #[serde(default)]
-    csrf: String,
-    /// `on` or `off`.
-    #[serde(default)]
-    state: String,
-}
-
 /// Enable or disable the current version, like the secrets page does.
 pub async fn toggle(
     State(state): State<AppState>,
@@ -390,10 +361,8 @@ pub async fn toggle(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let enable = match f.state.as_str() {
-        "on" => true,
-        "off" => false,
-        _ => return Err(PageError::new(shell, Problem::not_found()).into()),
+    let Some(enable) = f.enable() else {
+        return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let (bundle, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let path = format!("/keys/{name}");
@@ -407,20 +376,5 @@ pub async fn toggle(
             Ok(redirect_with(&state, &path, format!("{done} {name}.")))
         }
         Err(e) => Err(azure_problem(shell, &e, Need::ManageKeys, &path)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reserved_names_are_refused() {
-        for n in ["new", "deleted", "New"] {
-            assert!(reserved_name_problem(n).is_some(), "{n}");
-        }
-        for n in ["news", "app-key", "upload"] {
-            assert!(reserved_name_problem(n).is_none(), "{n}");
-        }
     }
 }

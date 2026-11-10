@@ -9,32 +9,32 @@ use tower::ServiceExt;
 /// Every POST route, with a name that exists in the seeded mock.
 const MUTATING: &[&str] = &[
     "/vaults/select",
-    "/secrets/new",
+    "/secrets/-/new",
     "/secrets/db-password/value",
     "/secrets/db-password/edit",
     "/secrets/db-password/enabled",
     "/secrets/db-password/rollback",
     "/secrets/db-password/reveal",
     "/secrets/db-password/delete",
-    "/secrets/deleted/old-secret/recover",
-    "/secrets/deleted/old-secret/purge",
-    "/certificates/upload",
-    "/certificates/upload/confirm",
-    "/certificates/upload/cancel",
-    "/certificates/new",
+    "/secrets/-/deleted/old-secret/recover",
+    "/secrets/-/deleted/old-secret/purge",
+    "/certificates/-/upload",
+    "/certificates/-/upload/confirm",
+    "/certificates/-/upload/cancel",
+    "/certificates/-/new",
     "/certificates/web-tls/enabled",
     "/certificates/web-tls/pending/cancel",
     "/certificates/web-tls/delete",
     "/certificates/web-tls/download-key",
-    "/certificates/deleted/old-cert/recover",
-    "/certificates/deleted/old-cert/purge",
-    "/keys/new",
+    "/certificates/-/deleted/old-cert/recover",
+    "/certificates/-/deleted/old-cert/purge",
+    "/keys/-/new",
     "/keys/app-key/rotate",
     "/keys/app-key/rotation",
     "/keys/app-key/enabled",
     "/keys/app-key/delete",
-    "/keys/deleted/old-key/recover",
-    "/keys/deleted/old-key/purge",
+    "/keys/-/deleted/old-key/recover",
+    "/keys/-/deleted/old-key/purge",
     "/generator",
     "/auth/sign-out",
 ];
@@ -68,8 +68,9 @@ fn fields_for(path: &str) -> Vec<(&'static str, String)> {
         .filter(|p| !p.is_empty())
         .nth(1)
         .unwrap_or_default();
-    let name = if name == "deleted" {
-        path.split('/').nth(3).unwrap_or_default()
+    // `/secrets/-/deleted/{name}/...`
+    let name = if name == "-" {
+        path.split('/').nth(4).unwrap_or_default()
     } else {
         name
     };
@@ -138,7 +139,7 @@ async fn every_mutating_route_refuses_a_forged_token() {
     let before = kv_snapshot(&w);
     let reads_before = w.kv.state.value_reads().len();
     for path in MUTATING {
-        let status = if *path == "/certificates/upload" {
+        let status = if *path == "/certificates/-/upload" {
             // Multipart, with a real file, so only the token is wrong.
             let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
             w.post_multipart_with_csrf(
@@ -187,7 +188,11 @@ async fn every_mutating_route_refuses_cross_site_posts() {
 async fn mutating_routes_list_is_complete() {
     // Any new POST route must be added to MUTATING above.
     let src = include_str!("../src/routes/mod.rs");
-    let posts = src.matches("post(").count();
+    // The posts on item pages only redirect old form addresses (#99) and
+    // change nothing; `tests/moved_pages.rs` covers them.
+    let redirects = src.matches("post(moved::post_item)").count();
+    assert_eq!(redirects, 3);
+    let posts = src.matches("post(").count() - redirects;
     assert_eq!(
         posts,
         MUTATING.len(),
@@ -200,7 +205,7 @@ async fn oversized_bodies_are_refused() {
     let w = support::world().await;
     let big = "a".repeat(300 * 1024);
     let res = w
-        .post("/secrets/new", &[("name", "x"), ("value", &big)])
+        .post("/secrets/-/new", &[("name", "x"), ("value", &big)])
         .await;
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
@@ -304,23 +309,17 @@ async fn browser_shaped_same_origin_posts_are_accepted() {
 }
 
 #[test]
-fn fixed_certificate_and_key_pages_are_reserved_names() {
-    // Every fixed page beside `/certificates/{name}` and `/keys/{name}`
-    // must be a name Keyring refuses on create and upload, or an object
-    // with that name couldn't be opened.
+fn fixed_pages_cant_collide_with_item_names() {
+    // Every fixed page beside `/secrets/{name}`, `/certificates/{name}` and
+    // `/keys/{name}` must sit under `/-/`, which Key Vault can't use as a
+    // name, or an item with that name couldn't be opened.
     let src = include_str!("../src/routes/mod.rs");
-    for (prefix, reserved) in [
-        ("\"/certificates/", &["new", "deleted", "upload"][..]),
-        ("\"/keys/", &["new", "deleted"][..]),
-    ] {
+    for prefix in ["\"/secrets/", "\"/certificates/", "\"/keys/"] {
         for chunk in src.split(prefix).skip(1) {
             let first = chunk.split(['/', '"']).next().unwrap_or_default();
-            if first.starts_with('{') {
-                continue;
-            }
             assert!(
-                reserved.contains(&first),
-                "{prefix}{first} is a fixed page but not a reserved name"
+                first == "{name}" || first == "-",
+                "{prefix}{first} is a fixed page that could be an item name"
             );
         }
     }

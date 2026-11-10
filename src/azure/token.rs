@@ -323,7 +323,7 @@ impl TokenBroker {
             ("refresh_token", refresh.expose()),
             ("scope", scope.as_str()),
         ];
-        let ok = self.post(Some(session), &form).await?;
+        let ok = self.post(session, &form).await?;
         let refreshed = UserTokens {
             access_token: Secret::new(ok.access_token),
             expires_at: expiry_from(ok.expires_in.map(Duration::from_secs), SystemTime::now()),
@@ -349,7 +349,7 @@ impl TokenBroker {
             ("scope", resource.scope()),
             ("requested_token_use", "on_behalf_of"),
         ];
-        let ok = self.post(Some(session), &form).await?;
+        let ok = self.post(session, &form).await?;
         tracing::debug!(resource = ?resource, "exchanged token on behalf of user");
         Ok(AccessToken::new(
             ok.access_token,
@@ -359,7 +359,7 @@ impl TokenBroker {
 
     async fn post(
         &self,
-        session: Option<&Session>,
+        session: &Session,
         form: &[(&str, &str)],
     ) -> Result<TokenSuccess, TokenError> {
         let unreachable = |e: reqwest::Error| {
@@ -384,7 +384,7 @@ impl TokenBroker {
         }
         match serde_json::from_slice::<TokenFailure>(&body) {
             Ok(f) => {
-                if let (Some(c), Some(session)) = (f.claims.as_deref(), session) {
+                if let Some(c) = f.claims.as_deref() {
                     session.set_claims_challenge(c);
                 }
                 // Only codes are logged. Descriptions can be long and aren't needed.

@@ -71,8 +71,8 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         );
     }
-    // Pages can show item names and, later, secret values. Don't cache any
-    // HTML; static files set their own cache header.
+    // Pages can show item names and secret values. Don't cache any HTML;
+    // static files and downloads set their own cache header.
     if !h.contains_key(header::CACHE_CONTROL) {
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }

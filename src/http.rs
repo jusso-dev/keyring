@@ -54,7 +54,10 @@ impl From<reqwest::Error> for HttpError {
 
 /// Flatten an error and its sources into one line for logs, such as
 /// `error sending request: client error (Connect): dns error: ...`.
-/// Errors from the HTTP layer never include bodies, so this holds no tokens.
+///
+/// This is only as safe as the error types in the chain. Pass it transport
+/// and parse errors, which describe the connection and not what was sent;
+/// never an error that carries a request or response body.
 pub fn error_chain(err: &dyn std::error::Error) -> String {
     let mut out = err.to_string();
     let mut src = err.source();

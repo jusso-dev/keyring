@@ -18,14 +18,14 @@ async fn edit_stamp(w: &support::World, name: &str) -> (String, String) {
 #[tokio::test]
 async fn create_adds_a_secret_with_its_properties() {
     let w = support::world().await;
-    let (status, html) = w.page("/secrets/new").await;
+    let (status, html) = w.page("/secrets/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Letters, numbers and hyphens only"));
     assert!(html.contains("Generate a value"), "generator hook is there");
 
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[
                 ("name", "db-password"),
                 ("value", "  hunter2 "),
@@ -54,7 +54,7 @@ async fn create_explains_bad_names_and_keeps_other_fields() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[
                 ("name", "db_password"),
                 ("value", "x"),
@@ -87,7 +87,7 @@ async fn create_does_not_overwrite_an_existing_secret() {
     w.kv.state.put("db-password", "original");
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "db-password"), ("value", "new"), ("enabled", "on")],
         )
         .await;
@@ -127,14 +127,14 @@ async fn create_offers_recovery_when_name_is_soft_deleted() {
     }
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "old-key"), ("value", "x"), ("enabled", "on")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("A deleted secret called old-key is still being kept"));
-    assert!(html.contains("href=\"/secrets/deleted/old-key\""));
+    assert!(html.contains("href=\"/secrets/-/deleted/old-key\""));
 }
 
 #[tokio::test]
@@ -229,7 +229,7 @@ async fn forms_need_the_token() {
     w.kv.state.put("db-password", "x");
     w.csrf = "forged".into();
     for (path, fields) in [
-        ("/secrets/new", vec![("name", "a"), ("value", "b")]),
+        ("/secrets/-/new", vec![("name", "a"), ("value", "b")]),
         ("/secrets/db-password/value", vec![("value", "b")]),
         ("/secrets/db-password/edit", vec![]),
         ("/secrets/db-password/enabled", vec![("state", "off")]),
@@ -336,7 +336,7 @@ async fn create_checks_for_a_name_that_is_taken_by_its_versions() {
     // Key Vault answers an unknown name with 200 and an empty list.
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "fresh"), ("value", "x"), ("enabled", "on")],
         )
         .await;
@@ -354,7 +354,7 @@ async fn create_checks_for_a_name_that_is_taken_by_its_versions() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/other/versions".into());
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "other"), ("value", "x"), ("enabled", "on")],
         )
         .await;
@@ -363,30 +363,32 @@ async fn create_checks_for_a_name_that_is_taken_by_its_versions() {
 }
 
 #[tokio::test]
-async fn create_refuses_keyrings_own_page_names() {
+async fn names_that_were_fixed_pages_can_be_created_and_opened() {
     let w = support::world().await;
     for name in ["new", "deleted"] {
         let res = w
             .post(
-                "/secrets/new",
+                "/secrets/-/new",
                 &[("name", name), ("value", "x"), ("enabled", "on")],
             )
             .await;
-        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+        assert_eq!(res.status(), StatusCode::SEE_OTHER, "{name}");
+        assert_eq!(support::location(&res), format!("/secrets/{name}"));
+        let (status, html) = w.page(&format!("/secrets/{name}")).await;
+        assert_eq!(status, StatusCode::OK, "{name}");
         assert!(
-            body_text(res)
-                .await
-                .contains(&format!("Keyring uses /secrets/{name} for its own page"))
+            html.contains(&format!("<h1 class=\"mono\">{name}</h1>")),
+            "{name}"
         );
     }
-    assert!(
-        w.kv.state
-            .log
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|l| !l.starts_with("PUT"))
-    );
+    let res = w
+        .post(
+            "/secrets/-/new",
+            &[("name", "-"), ("value", "x"), ("enabled", "on")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body_text(res).await.contains("start with a hyphen"));
 }
 
 #[tokio::test]
@@ -394,7 +396,7 @@ async fn line_breaks_are_saved_as_lf_and_shown_as_saved() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "pem"), ("value", "\r\na\r\nb"), ("enabled", "on")],
         )
         .await;
@@ -429,7 +431,7 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     assert!(value.len() <= 25 * 1024);
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "euro"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -439,7 +441,7 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     let value = "\u{20ac}".repeat(9 * 1024);
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "euro-2"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -455,7 +457,7 @@ async fn a_full_size_value_of_line_breaks_gets_the_form_not_a_413() {
     let value = "\r\n".repeat(25 * 1024);
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[("name", "breaks"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -471,7 +473,7 @@ async fn an_oversized_body_gets_the_error_page() {
     let w = support::world().await;
     let big = "\u{20ac}".repeat(64 * 1024);
     let res = w
-        .post("/secrets/new", &[("name", "x"), ("value", &big)])
+        .post("/secrets/-/new", &[("name", "x"), ("value", &big)])
         .await;
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let html = body_text(res).await;
@@ -574,7 +576,7 @@ async fn repeated_tag_names_are_reported() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/new",
+            "/secrets/-/new",
             &[
                 ("name", "dup"),
                 ("value", "x"),

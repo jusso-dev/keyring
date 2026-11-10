@@ -10,6 +10,21 @@ use crate::azure::{AzureClient, AzureError, Resource};
 /// Follow at most this many pages (25,000 items).
 pub const MAX_PAGES: usize = 1000;
 
+/// Page size for list calls. 25 is Key Vault's maximum.
+pub const MAX_RESULTS: u32 = 25;
+
+/// Part `idx` of an object ID after `/<collection>/`: 0 is the name, 1 the
+/// version. Empty when the ID doesn't have that part.
+///
+/// `https://kv.vault.azure.net/secrets/db/abc` gives `db` for 0 and `abc`
+/// for 1, with `collection` set to `secrets`.
+pub fn id_part<'a>(id: &'a str, collection: &str, idx: usize) -> &'a str {
+    id.split_once(&format!("/{collection}/"))
+        .map(|(_, rest)| rest)
+        .and_then(|rest| rest.split('/').nth(idx))
+        .unwrap_or_default()
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Page<T> {

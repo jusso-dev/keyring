@@ -126,7 +126,7 @@ async fn needs_form_token() {
 #[tokio::test]
 async fn secret_form_links_to_generator_with_use_this_value() {
     let w = support::world().await;
-    let (_, html) = w.page("/secrets/new").await;
+    let (_, html) = w.page("/secrets/-/new").await;
     assert!(html.contains("href=\"/generator?for_secret=1\""));
     let (_, html) = w.page("/generator?for_secret=1").await;
     assert!(html.contains("name=\"for_secret\" value=\"1\""));
