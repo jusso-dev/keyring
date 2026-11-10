@@ -38,7 +38,7 @@ fn kind_for(base: &str) -> Option<Kind> {
 
 /// Where an old fixed-page path lives now, or `None` if it isn't one.
 /// The query string is kept.
-pub fn new_location(path_and_query: &str) -> Option<String> {
+pub(super) fn new_location(path_and_query: &str) -> Option<String> {
     let rest = path_and_query.strip_prefix('/')?;
     let (base, rest) = rest.split_once('/')?;
     let kind = kind_for(&format!("/{base}"))?;
@@ -57,7 +57,7 @@ fn redirect(to: &str) -> Response {
 }
 
 /// For the router's fallback: the redirect when the path is an old one.
-pub fn from_fallback(req: &Request) -> Option<Response> {
+pub(super) fn from_fallback(req: &Request) -> Option<Response> {
     let pq = req.uri().path_and_query()?.as_str();
     new_location(pq).map(|to| redirect(&to))
 }
@@ -65,7 +65,7 @@ pub fn from_fallback(req: &Request) -> Option<Response> {
 /// For an item page that Key Vault said doesn't exist: if its name was a
 /// fixed page, send the old bookmark on.
 /// The query string is kept.
-pub fn missing_item(
+pub(super) fn missing_item(
     kind: Kind,
     name: &str,
     err: &AzureError,
@@ -84,7 +84,7 @@ pub fn missing_item(
 
 /// A post to an item page. Only the old add and upload forms posted there,
 /// so send those on; anything else is the 405 it always was.
-pub async fn post_item(Path(name): Path<String>, req: Request) -> Response {
+pub(super) async fn post_item(Path(name): Path<String>, req: Request) -> Response {
     let pq = req
         .uri()
         .path_and_query()

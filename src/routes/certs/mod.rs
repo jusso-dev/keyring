@@ -1,9 +1,9 @@
 //! Certificate pages: list, detail, versions and downloads.
 
-pub mod create;
-pub mod delete;
-pub mod download;
-pub mod upload;
+pub(super) mod create;
+pub(super) mod delete;
+pub(super) mod download;
+pub(super) mod upload;
 
 use askama::Template;
 use axum::Form;
@@ -27,7 +27,7 @@ use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 use crate::x509;
 
 /// Name checks for a new certificate.
-pub fn new_name_problem(name: &str) -> Option<String> {
+pub(super) fn new_name_problem(name: &str) -> Option<String> {
     crate::routes::forms::name_problem(Kind::Certificate, name)
 }
 
@@ -35,7 +35,7 @@ const DAY: i64 = 86_400;
 
 /// How close a certificate is to expiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CertExpiry {
+pub(super) enum CertExpiry {
     None,
     Ok,
     /// Under 90 days.
@@ -45,7 +45,7 @@ pub enum CertExpiry {
     Expired,
 }
 
-pub fn cert_expiry(expires: Option<i64>, now: i64) -> CertExpiry {
+pub(super) fn cert_expiry(expires: Option<i64>, now: i64) -> CertExpiry {
     match expires {
         None => CertExpiry::None,
         Some(e) if e <= now => CertExpiry::Expired,
@@ -55,7 +55,7 @@ pub fn cert_expiry(expires: Option<i64>, now: i64) -> CertExpiry {
     }
 }
 
-pub struct CertRow {
+pub(super) struct CertRow {
     pub name: String,
     pub version: String,
     pub enabled: bool,
@@ -69,7 +69,7 @@ pub struct CertRow {
 }
 
 impl CertRow {
-    pub fn from_item(item: &CertItem, now: i64) -> Self {
+    pub(super) fn from_item(item: &CertItem, now: i64) -> Self {
         let a = &item.attributes;
         let tags: Vec<(String, String)> = item
             .tags()
@@ -97,25 +97,32 @@ impl CertRow {
         }
     }
 
-    pub fn is_expired(&self) -> bool {
+    pub(super) fn is_expired(&self) -> bool {
         self.expiry == CertExpiry::Expired
     }
-    pub fn within30(&self) -> bool {
+    pub(super) fn within30(&self) -> bool {
         self.expiry == CertExpiry::Within30
     }
-    pub fn within90(&self) -> bool {
+    pub(super) fn within90(&self) -> bool {
         self.expiry == CertExpiry::Within90
     }
-    pub fn short_version(&self) -> String {
+    pub(super) fn short_version(&self) -> String {
         self.version.chars().take(8).collect()
     }
 }
 
-pub fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shell), Halt> {
+pub(super) fn current_vault(
+    session: &CurrentSession,
+    shell: Shell,
+) -> Result<(String, Shell), Halt> {
     vault_ctx::current_vault(session, shell, Section::Certificates)
 }
 
-pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) -> CertsApi<'a> {
+pub(super) fn api<'a>(
+    state: &'a AppState,
+    session: &'a CurrentSession,
+    vault: &str,
+) -> CertsApi<'a> {
     CertsApi {
         azure: &state.azure,
         session: &session.0,
@@ -124,7 +131,7 @@ pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) ->
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct CertFilter {
+pub(super) struct CertFilter {
     #[serde(default)]
     pub q: String,
     /// `expired`, `30`, `90` or `disabled`.
@@ -135,11 +142,11 @@ pub struct CertFilter {
 }
 
 impl CertFilter {
-    pub fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.q.trim().is_empty() && self.show.is_empty()
     }
 
-    pub fn matches(&self, r: &CertRow) -> bool {
+    pub(super) fn matches(&self, r: &CertRow) -> bool {
         let q = self.q.trim().to_lowercase();
         if !q.is_empty() && !r.filter_text.contains(&q) && !r.thumbprint.to_lowercase().contains(&q)
         {
@@ -164,7 +171,7 @@ impl CertFilter {
     }
 }
 
-pub struct ShowOption {
+pub(super) struct ShowOption {
     pub value: &'static str,
     pub label: &'static str,
     pub selected: bool,
@@ -185,7 +192,7 @@ struct ListPage {
     pager: Pager,
 }
 
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -243,7 +250,7 @@ pub async fn list(
 }
 
 /// What the detail page shows about a certificate version.
-pub struct CertView {
+pub(super) struct CertView {
     pub subject: String,
     pub issuer: String,
     pub serial: String,
@@ -254,7 +261,7 @@ pub struct CertView {
 }
 
 impl CertView {
-    pub fn from_bundle(b: &CertBundle) -> Option<Self> {
+    pub(super) fn from_bundle(b: &CertBundle) -> Option<Self> {
         let s = x509::summarise(&b.der()?)?;
         Some(Self {
             valid_from: dates::format_datetime(s.not_before),
@@ -268,7 +275,7 @@ impl CertView {
     }
 }
 
-pub struct PolicyView {
+pub(super) struct PolicyView {
     pub issuer: String,
     pub key: String,
     pub exportable: bool,
@@ -278,7 +285,7 @@ pub struct PolicyView {
 }
 
 impl PolicyView {
-    pub fn from_policy(p: &Policy) -> Self {
+    pub(super) fn from_policy(p: &Policy) -> Self {
         let key = p
             .key_props
             .as_ref()
@@ -315,7 +322,7 @@ impl PolicyView {
     }
 }
 
-pub struct PendingView {
+pub(super) struct PendingView {
     pub status: String,
     pub details: String,
     pub failed: bool,
@@ -324,7 +331,7 @@ pub struct PendingView {
 }
 
 impl PendingView {
-    pub fn from_op(op: &Operation) -> Option<Self> {
+    pub(super) fn from_op(op: &Operation) -> Option<Self> {
         let status = op.status.clone().unwrap_or_default();
         if status.eq_ignore_ascii_case("completed") {
             return None;
@@ -373,7 +380,7 @@ struct DetailPage {
     versions_note: Option<String>,
 }
 
-pub async fn detail(
+pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -447,7 +454,7 @@ pub async fn detail(
 /// Enable or disable the current version, like the secrets page does.
 /// Ask before disabling. Reads the certificate first, so a missing one
 /// gets the not-found page rather than a confirmation.
-pub async fn disable_form(
+pub(super) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -467,7 +474,7 @@ pub async fn disable_form(
     ))
 }
 
-pub async fn toggle(
+pub(super) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

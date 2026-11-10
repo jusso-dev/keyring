@@ -5,18 +5,18 @@ use serde::Deserialize;
 
 /// Rows per page on the secrets, certificates and keys lists and their
 /// deleted lists.
-pub const PER_PAGE: usize = 100;
+pub(crate) const PER_PAGE: usize = 100;
 
 /// The `page` query parameter on its own, for lists with no other filter.
 #[derive(Debug, Default, Deserialize)]
-pub struct PageQuery {
+pub(crate) struct PageQuery {
     #[serde(default)]
     pub page: Option<usize>,
 }
 
 /// What the pager shows under a list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pager {
+pub(crate) struct Pager {
     /// 1-based, always within `1..=pages`.
     pub page: usize,
     /// At least 1, even for an empty list.
@@ -33,19 +33,19 @@ pub struct Pager {
 
 impl Pager {
     /// Whether there is more than one page, so the pager is worth showing.
-    pub fn is_needed(&self) -> bool {
+    pub(crate) fn is_needed(&self) -> bool {
         self.pages > 1
     }
 
     /// The 1-based number of the last row on this page.
-    pub fn shown_to(&self) -> usize {
+    pub(crate) fn shown_to(&self) -> usize {
         self.shown_from + self.shown
     }
 }
 
 /// Cut `rows` to the requested page. A missing, zero or too-large page
 /// number gives the nearest real page. `url` builds the link for a page.
-pub fn paginate<T>(
+pub(crate) fn paginate<T>(
     rows: Vec<T>,
     requested: Option<usize>,
     noun: &'static str,

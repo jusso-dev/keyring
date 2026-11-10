@@ -1,8 +1,8 @@
 //! Key pages. Public parts only: nothing here can request or return
 //! private key material.
 
-pub mod delete;
-pub mod edit;
+pub(super) mod delete;
+pub(super) mod edit;
 
 use askama::Template;
 use axum::Form;
@@ -27,7 +27,7 @@ use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 
 /// The page for a key that belongs to a certificate. Key Vault makes and
 /// changes these keys itself, so Keyring won't change them directly.
-pub fn managed_problem(shell: Shell, name: &str) -> Halt {
+pub(super) fn managed_problem(shell: Shell, name: &str) -> Halt {
     PageError::new(
         shell,
         Problem::new(
@@ -42,7 +42,7 @@ pub fn managed_problem(shell: Shell, name: &str) -> Halt {
 
 /// Read the key and refuse if it belongs to a certificate. A missing key
 /// gets the normal not-found page.
-pub async fn unmanaged_key(
+pub(super) async fn unmanaged_key(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
@@ -62,7 +62,7 @@ pub async fn unmanaged_key(
 }
 
 /// A part of a page that loads separately: what to say when it couldn't.
-pub fn section_note(err: &AzureError, what: &str, role: &str) -> String {
+pub(super) fn section_note(err: &AzureError, what: &str, role: &str) -> String {
     match err {
         AzureError::Status { status: 403, .. } => {
             format!("You can't see {what}. That needs the {role} role.")
@@ -71,11 +71,18 @@ pub fn section_note(err: &AzureError, what: &str, role: &str) -> String {
     }
 }
 
-pub fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shell), Halt> {
+pub(super) fn current_vault(
+    session: &CurrentSession,
+    shell: Shell,
+) -> Result<(String, Shell), Halt> {
     vault_ctx::current_vault(session, shell, Section::Keys)
 }
 
-pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) -> KeysApi<'a> {
+pub(super) fn api<'a>(
+    state: &'a AppState,
+    session: &'a CurrentSession,
+    vault: &str,
+) -> KeysApi<'a> {
     KeysApi {
         azure: &state.azure,
         session: &session.0,
@@ -83,7 +90,7 @@ pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) ->
     }
 }
 
-pub struct KeyRow {
+pub(super) struct KeyRow {
     pub name: String,
     pub version: String,
     pub enabled: bool,
@@ -97,7 +104,7 @@ pub struct KeyRow {
 }
 
 impl KeyRow {
-    pub fn from_item(k: &KeyItem, now: i64) -> Self {
+    pub(super) fn from_item(k: &KeyItem, now: i64) -> Self {
         let a = &k.attributes;
         let tags: Vec<(String, String)> = k
             .tags()
@@ -125,16 +132,16 @@ impl KeyRow {
         }
     }
 
-    pub fn is_expired(&self) -> bool {
+    pub(super) fn is_expired(&self) -> bool {
         self.expiry == ExpiryState::Expired
     }
-    pub fn is_expiring(&self) -> bool {
+    pub(super) fn is_expiring(&self) -> bool {
         self.expiry == ExpiryState::Soon
     }
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct KeyFilter {
+pub(super) struct KeyFilter {
     #[serde(default)]
     pub q: String,
     #[serde(default)]
@@ -159,7 +166,7 @@ struct ListPage {
     pager: Pager,
 }
 
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -190,7 +197,7 @@ pub async fn list(
     .into_response())
 }
 
-pub struct RotationView {
+pub(super) struct RotationView {
     pub rotate_after: String,
     pub notify_before: String,
     pub expiry: String,
@@ -261,7 +268,7 @@ fn bundle_row(b: &KeyBundle, now: i64) -> KeyRow {
     )
 }
 
-pub async fn detail(
+pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -341,7 +348,7 @@ pub async fn detail(
 
 /// Ask before disabling. A key that belongs to a certificate is refused
 /// here too.
-pub async fn disable_form(
+pub(super) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -359,7 +366,7 @@ pub async fn disable_form(
 }
 
 /// Enable or disable the current version, like the secrets page does.
-pub async fn toggle(
+pub(super) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

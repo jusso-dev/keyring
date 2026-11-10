@@ -5,7 +5,7 @@
 //! Purge is refused on the server unless `KEYRING_ALLOW_PURGE=true`, and on
 //! vaults with purge protection.
 
-pub mod handlers;
+pub(crate) mod handlers;
 
 use askama::Template;
 use axum::http::StatusCode;
@@ -25,14 +25,14 @@ use crate::routes::vault_ctx::azure_problem;
 
 /// What kind of item, for wording and URLs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Secret,
     Certificate,
     Key,
 }
 
 impl Kind {
-    pub fn noun(self) -> &'static str {
+    pub(crate) fn noun(self) -> &'static str {
         match self {
             Self::Secret => "secret",
             Self::Certificate => "certificate",
@@ -40,7 +40,7 @@ impl Kind {
         }
     }
 
-    pub fn plural(self) -> &'static str {
+    pub(crate) fn plural(self) -> &'static str {
         match self {
             Self::Secret => "secrets",
             Self::Certificate => "certificates",
@@ -49,7 +49,7 @@ impl Kind {
     }
 
     /// URL prefix, `/secrets`, `/certificates` or `/keys`.
-    pub fn base(self) -> &'static str {
+    pub(crate) fn base(self) -> &'static str {
         match self {
             Self::Secret => "/secrets",
             Self::Certificate => "/certificates",
@@ -58,7 +58,7 @@ impl Kind {
     }
 
     /// The nav section the item's pages sit under.
-    pub fn section(self) -> crate::routes::shell::Section {
+    pub(crate) fn section(self) -> crate::routes::shell::Section {
         use crate::routes::shell::Section;
         match self {
             Self::Secret => Section::Secrets,
@@ -68,24 +68,24 @@ impl Kind {
     }
 
     /// The item's own page.
-    pub fn item_url(self, name: &str) -> String {
+    pub(crate) fn item_url(self, name: &str) -> String {
         format!("{}/{name}", self.base())
     }
 
     /// A fixed page of this kind, such as `/secrets/-/new`. Fixed pages sit
     /// under `/-/`, which can't be an item: Key Vault names start with a
     /// letter.
-    pub fn page_url(self, page: &str) -> String {
+    pub(crate) fn page_url(self, page: &str) -> String {
         format!("{}/-/{page}", self.base())
     }
 
     /// The deleted list.
-    pub fn deleted_list_url(self) -> String {
+    pub(crate) fn deleted_list_url(self) -> String {
         self.page_url("deleted")
     }
 
     /// One deleted item's page.
-    pub fn deleted_url(self, name: &str) -> String {
+    pub(crate) fn deleted_url(self, name: &str) -> String {
         format!("{}/{name}", self.deleted_list_url())
     }
 
@@ -133,7 +133,7 @@ struct ConfirmPage {
     confirm: ConfirmView,
 }
 
-pub fn confirm_page(shell: Shell, confirm: ConfirmView, status: StatusCode) -> Response {
+pub(crate) fn confirm_page(shell: Shell, confirm: ConfirmView, status: StatusCode) -> Response {
     (status, render(&ConfirmPage { shell, confirm })).into_response()
 }
 
@@ -150,7 +150,7 @@ struct DisablePage<'a> {
 /// The confirmation before a disable. Disabling can break apps as fast as
 /// a delete, so it is never one click. The form posts to the existing
 /// `enabled` route.
-pub fn disable_page(shell: Shell, vault: &str, kind: Kind, name: &str) -> Response {
+pub(crate) fn disable_page(shell: Shell, vault: &str, kind: Kind, name: &str) -> Response {
     render(&DisablePage {
         shell,
         vault,
@@ -165,7 +165,7 @@ pub fn disable_page(shell: Shell, vault: &str, kind: Kind, name: &str) -> Respon
 /// purged early. Read from the item's own attributes, so it needs no extra
 /// call to Azure.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Recovery {
+pub(crate) struct Recovery {
     /// The vault's retention period, when Key Vault sent it.
     pub days: Option<u32>,
     /// True when the vault has purge protection.
@@ -181,7 +181,7 @@ impl Recovery {
     /// <https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret/get-secret#deletionrecoverylevel>.
     /// An unknown level is treated as purgeable, and Key Vault has the final
     /// say.
-    pub fn new(level: Option<&str>, days: Option<u32>) -> Self {
+    pub(crate) fn new(level: Option<&str>, days: Option<u32>) -> Self {
         Self {
             // 0 means soft delete is off, which Key Vault no longer allows.
             // Don't promise a figure we can't trust.
@@ -191,7 +191,7 @@ impl Recovery {
     }
 
     /// Finishes "You can recover it ...".
-    pub fn period(&self) -> String {
+    pub(crate) fn period(&self) -> String {
         match self.days {
             Some(1) => "for 1 day after it's deleted".into(),
             Some(d) => format!("for {d} days after it's deleted"),
@@ -200,7 +200,7 @@ impl Recovery {
     }
 
     /// One sentence for a detail page about what happens on delete.
-    pub fn sentence(&self, kind: Kind) -> String {
+    pub(crate) fn sentence(&self, kind: Kind) -> String {
         let mut s = match self.days {
             Some(1) => format!(
                 "Deleted {} in this vault can be recovered for 1 day.",
@@ -224,13 +224,18 @@ impl Recovery {
     }
 }
 
-pub fn delete_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
+pub(crate) fn delete_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
     delete_view_for(kind, vault, name, Recovery::default())
 }
 
 /// The delete confirmation, with the vault's real retention period when
 /// the caller has read it from the item.
-pub fn delete_view_for(kind: Kind, vault: &str, name: &str, recovery: Recovery) -> ConfirmView {
+pub(crate) fn delete_view_for(
+    kind: Kind,
+    vault: &str,
+    name: &str,
+    recovery: Recovery,
+) -> ConfirmView {
     ConfirmView {
         heading: format!("Delete {name}?"),
         warning: format!(
@@ -248,7 +253,7 @@ pub fn delete_view_for(kind: Kind, vault: &str, name: &str, recovery: Recovery) 
     }
 }
 
-pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
+pub(crate) fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
     ConfirmView {
         heading: format!("Permanently delete {name}?"),
         warning: format!(
@@ -270,7 +275,7 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
 /// Check the form token and typed name. On a mismatch, show the confirm
 /// page again saying nothing was deleted. Delete and purge both delete, so
 /// the one verb fits both.
-pub fn verify(
+pub(crate) fn verify(
     session: &CurrentSession,
     vault: &str,
     form: &ConfirmForm,
@@ -294,7 +299,7 @@ pub fn verify(
 }
 
 /// With purge turned off, purge routes refuse everything.
-pub fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Result<Shell, Halt> {
+pub(crate) fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Result<Shell, Halt> {
     if state.config.allow_purge {
         return Ok(shell);
     }
@@ -317,7 +322,7 @@ pub fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Result<Shell
 }
 
 /// The page for a purge the vault won't allow.
-pub fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
+pub(crate) fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
     Problem::new(
         StatusCode::FORBIDDEN,
         "This vault has purge protection",
@@ -331,7 +336,7 @@ pub fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
 
 /// Refuse a purge early when the deleted item says the vault has purge
 /// protection.
-pub fn purge_not_protected(
+pub(crate) fn purge_not_protected(
     shell: Shell,
     kind: Kind,
     name: &str,
@@ -358,7 +363,7 @@ fn is_purge_protection_error(err: &AzureError) -> bool {
 
 /// Turn a failed purge into a page, naming purge protection when that's
 /// the reason.
-pub fn purge_problem(
+pub(crate) fn purge_problem(
     shell: Shell,
     err: &AzureError,
     kind: Kind,
@@ -373,7 +378,7 @@ pub fn purge_problem(
 }
 
 /// A deleted item, ready to show.
-pub struct DeletedRow {
+pub(crate) struct DeletedRow {
     pub name: String,
     pub deleted: String,
     pub purge: String,
@@ -385,7 +390,7 @@ pub struct DeletedRow {
 }
 
 impl DeletedRow {
-    pub fn new(name: &str, deleted: Option<i64>, purge: Option<i64>, now: i64) -> Self {
+    pub(crate) fn new(name: &str, deleted: Option<i64>, purge: Option<i64>, now: i64) -> Self {
         Self {
             name: name.to_owned(),
             deleted: deleted.map(dates::format_datetime).unwrap_or_default(),
@@ -400,7 +405,7 @@ impl DeletedRow {
 
     /// Take the retention and purge protection from the deleted item's
     /// attributes.
-    pub fn with_recovery(mut self, attributes: &crate::azure::secrets::Attributes) -> Self {
+    pub(crate) fn with_recovery(mut self, attributes: &crate::azure::secrets::Attributes) -> Self {
         self.recovery = Recovery::new(
             attributes.recovery_level.as_deref(),
             attributes.recoverable_days,
@@ -408,7 +413,7 @@ impl DeletedRow {
         self
     }
 
-    pub fn with_content_type(mut self, content_type: Option<&str>) -> Self {
+    pub(crate) fn with_content_type(mut self, content_type: Option<&str>) -> Self {
         self.content_type = content_type.unwrap_or_default().to_owned();
         self
     }
@@ -425,7 +430,7 @@ struct DeletedList {
 }
 
 /// The deleted list, one page of it.
-pub fn deleted_list(
+pub(crate) fn deleted_list(
     shell: Shell,
     vault: String,
     kind: Kind,
@@ -444,7 +449,7 @@ pub fn deleted_list(
 }
 
 /// One page of a deleted list, with links to the others.
-pub fn deleted_page<T>(kind: Kind, rows: Vec<T>, page: Option<usize>) -> (Vec<T>, Pager) {
+pub(crate) fn deleted_page<T>(kind: Kind, rows: Vec<T>, page: Option<usize>) -> (Vec<T>, Pager) {
     let base = kind.deleted_list_url();
     let noun = match kind {
         Kind::Secret => "deleted secrets",
@@ -478,7 +483,7 @@ impl DeletedDetail<'_> {
     }
 }
 
-pub fn deleted_detail(
+pub(crate) fn deleted_detail(
     state: &AppState,
     shell: Shell,
     vault: String,
@@ -495,7 +500,7 @@ pub fn deleted_detail(
     .into_response()
 }
 
-pub fn redirect_with(state: &AppState, to: &str, message: String) -> Response {
+pub(crate) fn redirect_with(state: &AppState, to: &str, message: String) -> Response {
     let mut res = Redirect::to(to).into_response();
     flash::set(state, &mut res, &Flash::success(message));
     res
@@ -505,7 +510,7 @@ pub fn redirect_with(state: &AppState, to: &str, message: String) -> Response {
 /// take a few seconds to be readable, so go to the deleted list rather
 /// than a detail page that may still say "not found". Keyring doesn't
 /// poll; the message says to wait.
-pub fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
+pub(crate) fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
     let extra = match kind {
         Kind::Secret => ", with its value and versions",
         Kind::Certificate | Kind::Key => ", with every version",

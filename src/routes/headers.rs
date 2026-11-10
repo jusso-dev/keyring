@@ -11,7 +11,7 @@ use crate::AppState;
 /// Build the Content-Security-Policy. Scripts and styles only from this
 /// site, no inline code, no framing. Forms may post here, and sign-out may
 /// redirect on to Entra ID (browsers apply `form-action` to redirects).
-pub fn csp(authority_host: &str) -> String {
+pub(super) fn csp(authority_host: &str) -> String {
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
          connect-src 'self'; form-action 'self' {authority_host}; frame-ancestors 'none'; \
@@ -23,9 +23,9 @@ pub fn csp(authority_host: &str) -> String {
 /// dashboard is the slowest page; it gives each vault its own limit and
 /// stops the whole read well before this one (see `routes::expiry`), so it
 /// can still show what it found.
-pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+pub(super) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
-pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub(super) async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let (method, path) = (req.method().clone(), req.uri().path().to_owned());
     let mut res = match tokio::time::timeout(REQUEST_TIMEOUT, next.run(req)).await {
         Ok(res) => res,

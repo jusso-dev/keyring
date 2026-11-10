@@ -22,7 +22,8 @@ A code review on 10-11-2026 filed issues #73 to #173 (index #174). These are the
 - **Docs and tests** (#182): the architecture, deploy and troubleshooting pages describe the fixes above, the README says which certificate issuers Keyring supports, `docs/real-vault-checklist.md` lists what the first real-tenant run must confirm, and a test checks the numbers in the docs against the code. #119, #124, #169, #170, #171.
 - **Shared code** (#183): one form token check, field errors and name check for every form; delete, recover and purge written once for secrets, certificates and keys; fixed pages moved under `/-/` (old addresses redirect); the deleted lists are paged; dead code and stale comments removed. #99, #133, #172, #173.
 - **Templates and accessibility** (#184): shared partials for fields, tables and confirm pages, row actions kept inside table cells, wide tables reachable by keyboard, focus moved to the error summary or message, and disable asks first. #137, #138, #139, #142, #143, #144, #145, #146, #147, #148, #149, #150.
-- **Deleted pages** (this change): secrets use the shared deleted list and deleted page too, which keep a secret's content type and now give every kind the vault's real retention period. #150, #172.
+- **Deleted pages** (#185): secrets use the shared deleted list and deleted page too, which keep a secret's content type and now give every kind the vault's real retention period. #150, #172.
+- **Visibility** (this change): `unreachable_pub` is on, so items only the crate uses are `pub(crate)` or `pub(super)` and the compiler reports them when they fall out of use. That found and removed a few more unused items: two never-read Azure fields, an unused key name helper, and two checks used only by their own tests. #173.
 
 ### Security
 

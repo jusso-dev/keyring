@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use super::json_response;
 
 #[derive(Clone, Debug)]
-pub struct Version {
+pub(crate) struct Version {
     pub version: String,
     pub value: String,
     pub enabled: bool,
@@ -28,21 +28,21 @@ pub struct Version {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct StoredSecret {
+pub(crate) struct StoredSecret {
     /// Oldest first.
     pub versions: Vec<Version>,
     pub managed: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct Deleted {
+pub(crate) struct Deleted {
     pub secret: StoredSecret,
     pub deleted: i64,
     pub purge: i64,
 }
 
 #[derive(Default)]
-pub struct KvState {
+pub(crate) struct KvState {
     pub secrets: Mutex<BTreeMap<String, StoredSecret>>,
     pub deleted: Mutex<BTreeMap<String, Deleted>>,
     /// Every request as "METHOD /path".
@@ -80,7 +80,7 @@ pub struct KvState {
     seq: Mutex<i64>,
 }
 
-pub const BASE_TIME: i64 = 1_790_000_000;
+pub(crate) const BASE_TIME: i64 = 1_790_000_000;
 
 impl KvState {
     fn retention(&self) -> (&'static str, u32) {
@@ -126,11 +126,16 @@ impl KvState {
     }
 
     /// Add a secret version directly.
-    pub fn put(&self, name: &str, value: &str) -> String {
+    pub(crate) fn put(&self, name: &str, value: &str) -> String {
         self.put_with(name, value, |_| {})
     }
 
-    pub fn put_with(&self, name: &str, value: &str, edit: impl FnOnce(&mut Version)) -> String {
+    pub(crate) fn put_with(
+        &self,
+        name: &str,
+        value: &str,
+        edit: impl FnOnce(&mut Version),
+    ) -> String {
         let version = self.new_version();
         let t = self.tick();
         let mut v = Version {
@@ -155,7 +160,7 @@ impl KvState {
         version
     }
 
-    pub fn current(&self, name: &str) -> Option<Version> {
+    pub(crate) fn current(&self, name: &str) -> Option<Version> {
         self.secrets
             .lock()
             .unwrap()
@@ -163,7 +168,7 @@ impl KvState {
             .and_then(|s| s.versions.last().cloned())
     }
 
-    pub fn version_count(&self, name: &str) -> usize {
+    pub(crate) fn version_count(&self, name: &str) -> usize {
         self.secrets
             .lock()
             .unwrap()
@@ -173,7 +178,7 @@ impl KvState {
     }
 
     /// Add a key version. Returns the version ID.
-    pub fn add_key_with(
+    pub(crate) fn add_key_with(
         &self,
         name: &str,
         kty: &str,
@@ -207,7 +212,7 @@ impl KvState {
         version
     }
 
-    pub fn key_versions(&self, name: &str) -> usize {
+    pub(crate) fn key_versions(&self, name: &str) -> usize {
         self.keys
             .lock()
             .unwrap()
@@ -217,7 +222,7 @@ impl KvState {
     }
 
     /// Add a certificate version. Returns the version ID.
-    pub fn add_cert_version(
+    pub(crate) fn add_cert_version(
         &self,
         name: &str,
         der: Option<Vec<u8>>,
@@ -254,7 +259,7 @@ impl KvState {
 
     /// Add a certificate with the test cert and a backing secret holding
     /// `secret_value` (what a .pfx download returns).
-    pub fn add_cert(&self, name: &str, exportable: bool, secret_value: &str) -> String {
+    pub(crate) fn add_cert(&self, name: &str, exportable: bool, secret_value: &str) -> String {
         let der = super::pem_first_cert(super::TEST_CERT_PEM);
         let v = self.add_cert_version(
             name,
@@ -270,7 +275,7 @@ impl KvState {
     }
 
     /// Move a secret to the deleted list, as `DELETE` would.
-    pub fn soft_delete(&self, name: &str) {
+    pub(crate) fn soft_delete(&self, name: &str) {
         let sec = self.secrets.lock().unwrap().remove(name).unwrap();
         let t = self.tick();
         let days = i64::from(self.retention().1);
@@ -285,7 +290,7 @@ impl KvState {
     }
 
     /// Requests that would return a secret value.
-    pub fn value_reads(&self) -> Vec<String> {
+    pub(crate) fn value_reads(&self) -> Vec<String> {
         self.log
             .lock()
             .unwrap()
@@ -301,18 +306,18 @@ impl KvState {
     }
 }
 
-pub struct MockKeyVault {
+pub(crate) struct MockKeyVault {
     pub addr: SocketAddr,
     pub state: Arc<KvState>,
 }
 
 impl MockKeyVault {
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 }
 
-pub async fn start() -> MockKeyVault {
+pub(crate) async fn start() -> MockKeyVault {
     let state = Arc::new(KvState::default());
     let app = Router::new()
         .route("/{vault}/secrets", get(list))

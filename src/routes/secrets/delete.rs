@@ -75,7 +75,7 @@ async fn load_deleted(
 }
 
 /// Secrets, for the shared lifecycle handlers.
-pub struct Secrets;
+pub(crate) struct Secrets;
 
 impl Lifecycle for Secrets {
     const KIND: Kind = KIND;

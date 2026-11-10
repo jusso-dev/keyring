@@ -30,7 +30,7 @@ fn origin_of(url: &str) -> Option<String> {
 
 /// True when the request came from `expected`, judged by the browser's
 /// `Sec-Fetch-Site`, then `Origin`, then `Referer`.
-pub fn same_origin(headers: &axum::http::HeaderMap, expected: &str) -> bool {
+pub(super) fn same_origin(headers: &axum::http::HeaderMap, expected: &str) -> bool {
     let expected = origin_of(expected);
     let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     // Modern browsers say outright. `same-origin` is trusted; anything
@@ -46,7 +46,7 @@ pub fn same_origin(headers: &axum::http::HeaderMap, expected: &str) -> bool {
     }
 }
 
-pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
+pub(super) async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
     if safe || same_origin(req.headers(), &state.config.base_url) {
         return next.run(req).await;

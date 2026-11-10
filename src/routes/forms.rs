@@ -8,14 +8,14 @@ use crate::routes::vault_ctx::is_valid_object_name;
 
 /// A form that posts only its token, such as recover, rotate or cancel.
 #[derive(Deserialize)]
-pub struct CsrfForm {
+pub(crate) struct CsrfForm {
     #[serde(default)]
     pub csrf: String,
 }
 
 /// The enable and disable buttons.
 #[derive(Deserialize)]
-pub struct ToggleForm {
+pub(crate) struct ToggleForm {
     #[serde(default)]
     pub csrf: String,
     /// `on` or `off`.
@@ -26,7 +26,7 @@ pub struct ToggleForm {
 impl ToggleForm {
     /// `Some(true)` for `on`, `Some(false)` for `off`, `None` for anything
     /// else.
-    pub fn enable(&self) -> Option<bool> {
+    pub(crate) fn enable(&self) -> Option<bool> {
         match self.state.as_str() {
             "on" => Some(true),
             "off" => Some(false),
@@ -96,7 +96,7 @@ impl<'a> IntoIterator for &'a FieldErrors {
 }
 
 /// Explain what's wrong with a new item's name, or `None` if it's fine.
-pub fn name_problem(kind: Kind, name: &str) -> Option<String> {
+pub(crate) fn name_problem(kind: Kind, name: &str) -> Option<String> {
     if name.is_empty() {
         return Some(format!("Give the {} a name.", kind.noun()));
     }

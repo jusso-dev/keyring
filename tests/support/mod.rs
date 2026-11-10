@@ -2,9 +2,9 @@
 
 #![allow(dead_code)]
 
-pub mod certs;
-pub mod keys;
-pub mod keyvault;
+pub(crate) mod certs;
+pub(crate) mod keys;
+pub(crate) mod keyvault;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -30,15 +30,15 @@ use rsa::pkcs1::EncodeRsaPrivateKey;
 use serde_json::json;
 
 /// JSON response without needing axum's `json` feature in the app.
-pub fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
+pub(crate) fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
     (status, [(CONTENT_TYPE, "application/json")], v.to_string()).into_response()
 }
 
-pub const TENANT: &str = "00000000-0000-0000-0000-000000000000";
-pub const CLIENT_ID: &str = "11111111-1111-1111-1111-111111111111";
-pub const CLIENT_SECRET: &str = "test-client-secret";
+pub(crate) const TENANT: &str = "00000000-0000-0000-0000-000000000000";
+pub(crate) const CLIENT_ID: &str = "11111111-1111-1111-1111-111111111111";
+pub(crate) const CLIENT_SECRET: &str = "test-client-secret";
 
-pub fn config_with(authority: &str, base_url: &str) -> Config {
+pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
     let authority = authority.to_owned();
     let base_url = base_url.to_owned();
     Config::from_lookup(move |k| {
@@ -55,13 +55,13 @@ pub fn config_with(authority: &str, base_url: &str) -> Config {
     .expect("test config")
 }
 
-pub fn config() -> Config {
+pub(crate) fn config() -> Config {
     config_with("http://127.0.0.1:9", "http://localhost:3000")
 }
 
 /// What the mock should do on the next token request.
 #[derive(Clone, Debug)]
-pub enum TokenBehaviour {
+pub(crate) enum TokenBehaviour {
     /// Return a valid ID token carrying this nonce.
     Ok,
     /// Return an ID token with the wrong nonce.
@@ -74,12 +74,12 @@ pub enum TokenBehaviour {
     Error(&'static str),
 }
 
-pub struct MockIdp {
+pub(crate) struct MockIdp {
     pub addr: SocketAddr,
     pub state: Arc<IdpState>,
 }
 
-pub struct IdpState {
+pub(crate) struct IdpState {
     issuer: String,
     key: CoreRsaPrivateSigningKey,
     other_key: CoreRsaPrivateSigningKey,
@@ -107,7 +107,7 @@ pub struct IdpState {
 
 impl IdpState {
     /// Token requests with this `grant_type`.
-    pub fn requests_of(&self, grant_type: &str) -> Vec<Vec<(String, String)>> {
+    pub(crate) fn requests_of(&self, grant_type: &str) -> Vec<Vec<(String, String)>> {
         self.token_requests
             .lock()
             .unwrap()
@@ -118,14 +118,14 @@ impl IdpState {
     }
 }
 
-pub fn field<'a>(form: &'a [(String, String)], key: &str) -> Option<&'a str> {
+pub(crate) fn field<'a>(form: &'a [(String, String)], key: &str) -> Option<&'a str> {
     form.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-pub const OBO_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+pub(crate) const OBO_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
 /// The object ID the mock puts in every ID token, as Entra does with `oid`.
-pub const USER_OID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
+pub(crate) const USER_OID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
 
 /// An ID token with Entra's `oid` and `tid` claims.
 type EntraIdToken = openidconnect::IdToken<
@@ -136,7 +136,7 @@ type EntraIdToken = openidconnect::IdToken<
 >;
 
 impl MockIdp {
-    pub fn authority(&self) -> String {
+    pub(crate) fn authority(&self) -> String {
         format!("http://{}", self.addr)
     }
 }
@@ -161,7 +161,7 @@ fn keys() -> (CoreRsaPrivateSigningKey, CoreRsaPrivateSigningKey) {
     )
 }
 
-pub async fn start_idp() -> MockIdp {
+pub(crate) async fn start_idp() -> MockIdp {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (key, other_key) = keys();
@@ -352,7 +352,7 @@ fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response
 }
 
 /// An app plus a cookie for a session that's already signed in.
-pub fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String) {
+pub(crate) fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String) {
     use keyring::auth::session::{User, UserTokens};
     use keyring::secret::Secret;
     let state = keyring::AppState::new(config);
@@ -377,12 +377,12 @@ pub fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String
 }
 
 /// A mock Azure Resource Manager that answers Resource Graph queries.
-pub struct MockArm {
+pub(crate) struct MockArm {
     pub addr: SocketAddr,
     pub state: Arc<ArmState>,
 }
 
-pub struct ArmState {
+pub(crate) struct ArmState {
     /// Vault rows returned, split into pages of `page_size`.
     pub vaults: Mutex<Vec<serde_json::Value>>,
     pub subscriptions: Mutex<Vec<serde_json::Value>>,
@@ -408,12 +408,12 @@ pub struct ArmState {
 }
 
 impl MockArm {
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 }
 
-pub fn vault_row(name: &str, sub: &str, rbac: bool) -> serde_json::Value {
+pub(crate) fn vault_row(name: &str, sub: &str, rbac: bool) -> serde_json::Value {
     json!({
         "id": format!("/subscriptions/{sub}/resourceGroups/rg-{name}/providers/Microsoft.KeyVault/vaults/{name}"),
         "name": name,
@@ -427,7 +427,7 @@ pub fn vault_row(name: &str, sub: &str, rbac: bool) -> serde_json::Value {
     })
 }
 
-pub async fn start_arm() -> MockArm {
+pub(crate) async fn start_arm() -> MockArm {
     let state = Arc::new(ArmState {
         vaults: Mutex::new(Vec::new()),
         subscriptions: Mutex::new(Vec::new()),
@@ -580,7 +580,7 @@ async fn arm_fallback(
     )
 }
 
-pub fn audit_settings(dedicated: bool) -> serde_json::Value {
+pub(crate) fn audit_settings(dedicated: bool) -> serde_json::Value {
     json!({"value": [{"properties": {
         "workspaceId": "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/logs",
         "logAnalyticsDestinationType": if dedicated { json!("Dedicated") } else { json!(null) },
@@ -589,7 +589,7 @@ pub fn audit_settings(dedicated: bool) -> serde_json::Value {
 }
 
 /// Config pointing sign-in at `idp` and ARM at `arm`.
-pub fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
+pub(crate) fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
     let authority = idp.authority();
     let arm_url = arm.url();
     Config::from_lookup(move |k| {
@@ -609,7 +609,7 @@ pub fn config_with_arm(idp: &MockIdp, arm: &MockArm) -> Config {
 
 /// Everything a page test needs: mock IdP, ARM and Key Vault, and a
 /// signed-in session.
-pub struct World {
+pub(crate) struct World {
     pub app: axum::Router,
     pub state: keyring::AppState,
     pub cookie: String,
@@ -619,7 +619,7 @@ pub struct World {
     pub idp: MockIdp,
 }
 
-pub async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
+pub(crate) async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
     let idp = start_idp().await;
     let arm = start_arm().await;
     let kv = keyvault::start().await;
@@ -658,12 +658,12 @@ pub async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
     }
 }
 
-pub async fn world() -> World {
+pub(crate) async fn world() -> World {
     world_with(&[]).await
 }
 
 impl World {
-    pub async fn get(&self, path: &str) -> axum::http::Response<axum::body::Body> {
+    pub(crate) async fn get(&self, path: &str) -> axum::http::Response<axum::body::Body> {
         use tower::ServiceExt;
         let req = axum::http::Request::get(path)
             .header("cookie", &self.cookie)
@@ -673,7 +673,7 @@ impl World {
     }
 
     /// POST a form. `csrf` is added automatically.
-    pub async fn post(
+    pub(crate) async fn post(
         &self,
         path: &str,
         fields: &[(&str, &str)],
@@ -694,19 +694,19 @@ impl World {
     }
 
     /// GET and return status and body text.
-    pub async fn page(&self, path: &str) -> (StatusCode, String) {
+    pub(crate) async fn page(&self, path: &str) -> (StatusCode, String) {
         let res = self.get(path).await;
         let status = res.status();
         (status, body_text(res).await)
     }
 }
 
-pub async fn body_text(res: axum::http::Response<axum::body::Body>) -> String {
+pub(crate) async fn body_text(res: axum::http::Response<axum::body::Body>) -> String {
     use http_body_util::BodyExt;
     String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap()
 }
 
-pub fn location(res: &axum::http::Response<axum::body::Body>) -> String {
+pub(crate) fn location(res: &axum::http::Response<axum::body::Body>) -> String {
     res.headers()
         .get("location")
         .map(|v| v.to_str().unwrap().to_owned())
@@ -714,24 +714,24 @@ pub fn location(res: &axum::http::Response<axum::body::Body>) -> String {
 }
 
 /// The test certificate (public part only), shared with the unit tests.
-pub const TEST_CERT_PEM: &str = include_str!("../fixtures/test-cert.pem");
+pub(crate) const TEST_CERT_PEM: &str = include_str!("../fixtures/test-cert.pem");
 
 /// First CERTIFICATE block in a PEM string, decoded.
-pub fn pem_first_cert(pem: &str) -> Option<Vec<u8>> {
+pub(crate) fn pem_first_cert(pem: &str) -> Option<Vec<u8>> {
     keyring::x509::pem_blocks(pem, "CERTIFICATE")
         .into_iter()
         .next()
 }
 
 /// One part of a multipart form.
-pub enum Part<'a> {
+pub(crate) enum Part<'a> {
     Text(&'a str, &'a str),
     File(&'a str, &'a str, &'a [u8]),
 }
 
 impl World {
     /// POST a multipart form. `csrf` is added automatically.
-    pub async fn post_multipart(
+    pub(crate) async fn post_multipart(
         &self,
         path: &str,
         parts: &[Part<'_>],
@@ -740,7 +740,7 @@ impl World {
     }
 
     /// POST a multipart form with a given form token.
-    pub async fn post_multipart_with_csrf(
+    pub(crate) async fn post_multipart_with_csrf(
         &self,
         csrf: &str,
         path: &str,
@@ -778,7 +778,7 @@ impl World {
 }
 
 /// Pull `name="field" value="..."` out of a page.
-pub fn hidden_value(html: &str, field: &str) -> Option<String> {
+pub(crate) fn hidden_value(html: &str, field: &str) -> Option<String> {
     let marker = format!("name=\"{field}\" value=\"");
     let start = html.find(&marker)? + marker.len();
     let end = html[start..].find('"')? + start;

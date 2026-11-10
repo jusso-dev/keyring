@@ -22,7 +22,7 @@ use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
 
 #[derive(Debug, Default, Deserialize, Clone)]
-pub struct AuditFilter {
+pub(super) struct AuditFilter {
     #[serde(default)]
     pub range: String,
     #[serde(default)]
@@ -49,7 +49,7 @@ impl AuditFilter {
     }
 }
 
-pub struct EventRow {
+pub(super) struct EventRow {
     pub time: String,
     pub who: String,
     pub what: String,
@@ -91,7 +91,7 @@ impl EventRow {
 }
 
 /// What's missing, so there's nothing to show.
-pub enum Unavailable {
+pub(super) enum Unavailable {
     Logging,
     WorkspaceAccess,
     SettingsAccess,
@@ -109,7 +109,7 @@ impl Unavailable {
 
 /// Events from the workspaces that answered, and a count of those that
 /// didn't.
-pub struct Loaded {
+pub(super) struct Loaded {
     pub events: Vec<Event>,
     /// Workspaces the vault logs to.
     pub workspaces: usize,
@@ -215,7 +215,7 @@ async fn vault_id(
 /// Load events for the current vault and filter. A workspace that can't be
 /// read doesn't hide the others: the result says how many were left out.
 /// Only when none could be read is it an error or [`Unavailable`].
-pub async fn load(
+pub(super) async fn load(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
@@ -321,7 +321,7 @@ fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
     }
 }
 
-pub async fn page(
+pub(super) async fn page(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -355,7 +355,7 @@ pub async fn page(
 }
 
 /// CSV of the same rows the page shows for these filters.
-pub fn to_csv(events: &[Event]) -> String {
+pub(super) fn to_csv(events: &[Event]) -> String {
     let mut out = String::from("Time (UTC),Who,Action,Operation,Item,Result,Client IP\r\n");
     for e in events {
         let r = EventRow::from(e);
@@ -374,7 +374,7 @@ pub fn to_csv(events: &[Event]) -> String {
     out
 }
 
-pub async fn csv(
+pub(super) async fn csv(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

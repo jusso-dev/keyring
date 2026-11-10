@@ -23,13 +23,13 @@ use super::{DeletedRow, Kind, Recovery};
 
 /// Where a delete check runs: showing the confirm form, or acting on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
+pub(crate) enum Stage {
     Form,
     Submit,
 }
 
 /// One kind of item's part in delete, recover and purge.
-pub trait Lifecycle: Send + Sync + 'static {
+pub(crate) trait Lifecycle: Send + Sync + 'static {
     const KIND: Kind;
     /// What delete, recover and purge need.
     const MANAGE: Need;
@@ -94,7 +94,7 @@ pub trait Lifecycle: Send + Sync + 'static {
 
 /// The deleted list and deleted item page, for kinds that use the shared
 /// templates.
-pub trait DeletedPages: Lifecycle {
+pub(crate) trait DeletedPages: Lifecycle {
     fn list_deleted(
         state: &AppState,
         session: &CurrentSession,
@@ -139,7 +139,7 @@ fn current_vault<L: Lifecycle>(
     vault_ctx::current_vault(session, shell, L::KIND.section())
 }
 
-pub async fn delete_form<L: Lifecycle>(
+pub(crate) async fn delete_form<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -158,7 +158,7 @@ pub async fn delete_form<L: Lifecycle>(
     ))
 }
 
-pub async fn delete<L: Lifecycle>(
+pub(crate) async fn delete<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -195,7 +195,7 @@ pub async fn delete<L: Lifecycle>(
     }
 }
 
-pub async fn list_deleted<L: DeletedPages>(
+pub(crate) async fn list_deleted<L: DeletedPages>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -213,7 +213,7 @@ pub async fn list_deleted<L: DeletedPages>(
     }
 }
 
-pub async fn deleted_detail<L: DeletedPages>(
+pub(crate) async fn deleted_detail<L: DeletedPages>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -232,7 +232,7 @@ pub async fn deleted_detail<L: DeletedPages>(
     }
 }
 
-pub async fn recover<L: Lifecycle>(
+pub(crate) async fn recover<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -256,7 +256,7 @@ pub async fn recover<L: Lifecycle>(
     }
 }
 
-pub async fn purge_form<L: Lifecycle>(
+pub(crate) async fn purge_form<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -273,7 +273,7 @@ pub async fn purge_form<L: Lifecycle>(
     ))
 }
 
-pub async fn purge<L: Lifecycle>(
+pub(crate) async fn purge<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
