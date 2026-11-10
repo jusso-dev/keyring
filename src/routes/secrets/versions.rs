@@ -212,9 +212,7 @@ pub async fn rollback(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    if !session.0.csrf_matches(&f.csrf) {
-        return Err(PageError::new(shell, Problem::stale_form()).into());
-    }
+    let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &f.csrf, shell)?;
     let (shell, items) = fetch_versions(&state, &session, shell, &vault, &name).await?;
     if items[0].managed.unwrap_or(false) {
         return Err(crate::routes::secrets::reveal::managed_problem(

@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{{ crate::routes::assets::url("style.css") }}">
   <script src="{{ crate::routes::assets::url("app.js") }}" defer></script>
 </head>
-<body>
+<body data-idle-seconds="{{ shell.idle_seconds() }}">
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <a class="brand" href="/">Keyring</a>

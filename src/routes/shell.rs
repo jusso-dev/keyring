@@ -5,6 +5,7 @@ use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 
 use crate::auth::CurrentSession;
+use crate::auth::session::IDLE_TIMEOUT;
 use crate::routes::flash::Flash;
 
 /// The sections in the side navigation.
@@ -60,6 +61,7 @@ impl Section {
 
 pub struct ShellUser {
     pub name: String,
+    /// Form token, bound to the vault chosen when the page was rendered.
     pub csrf: String,
 }
 
@@ -85,7 +87,7 @@ impl Shell {
         Self {
             user: Some(ShellUser {
                 name: session.0.user.name.clone(),
-                csrf: session.0.csrf.clone(),
+                csrf: session.0.csrf_token(),
             }),
             vault: session.0.selected_vault().map(|name| ShellVault { name }),
             ..Self::default()
@@ -102,11 +104,24 @@ impl Shell {
         self.section == Some(*s)
     }
 
+    /// The form token every form posts back. It is bound to the vault
+    /// chosen when this page was rendered, so a form left open in one tab
+    /// is refused after a vault switch in another.
     pub fn csrf(&self) -> &str {
         self.user
             .as_ref()
             .map(|u| u.csrf.as_str())
             .unwrap_or_default()
+    }
+
+    /// Seconds without a request before sign-out, for the idle warning
+    /// script. Empty when signed out.
+    pub fn idle_seconds(&self) -> String {
+        if self.user.is_some() {
+            IDLE_TIMEOUT.as_secs().to_string()
+        } else {
+            String::new()
+        }
     }
 }
 

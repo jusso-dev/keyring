@@ -13,17 +13,37 @@ async fn main() -> ExitCode {
     };
 
     keyring::telemetry::init(&config.log_level);
+    keyring::telemetry::quiet_panics();
 
-    let listener = match tokio::net::TcpListener::bind(config.listen).await {
-        Ok(listener) => listener,
+    for name in config.test_overrides() {
+        tracing::warn!(
+            variable = name,
+            "a test-only override is set; user tokens go to the host it names, not to Microsoft. Unset it outside the test suite"
+        );
+    }
+
+    // Build everything that can fail before binding, so "keyring listening"
+    // means Keyring really is ready.
+    let listen = config.listen;
+    let state = match keyring::AppState::try_new(config) {
+        Ok(state) => state,
         Err(err) => {
-            tracing::error!(addr = %config.listen, error = %err, "could not bind listen address");
+            tracing::error!(error = %err, "could not set up the outbound HTTPS client; check SSL_CERT_FILE and the system trust store");
             return ExitCode::FAILURE;
         }
     };
-    tracing::info!(addr = %config.listen, "keyring listening");
+    keyring::auth::session::spawn_sweeper(state.sessions.clone());
 
-    let app = keyring::app(keyring::AppState::new(config));
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            tracing::error!(addr = %listen, error = %err, "could not bind listen address");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(addr = %listen, "keyring listening");
+
+    let app = keyring::app(state);
     if let Err(err) = keyring::serve::serve(listener, app, shutdown_signal()).await {
         tracing::error!(error = %err, "server error");
         return ExitCode::FAILURE;
@@ -31,16 +51,25 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Resolves on Ctrl-C or SIGTERM. If a handler can't be registered, that
+/// one never resolves, so a failed registration can't shut the server down.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %err, "could not listen for Ctrl-C");
+            std::future::pending::<()>().await;
+        }
     };
     #[cfg(unix)]
     let terminate = async {
-        if let Ok(mut sig) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            sig.recv().await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "could not listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
         }
     };
     #[cfg(not(unix))]

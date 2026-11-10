@@ -83,6 +83,14 @@ async fn values_never_reach_the_logs() {
     let html = support::body_text(res).await;
     assert!(html.contains("GENLEAK_"));
 
+    // Query strings never reach the log, but the request line does.
+    let res = w
+        .get("/secrets?q=QUERYLEAK-hunter2&filter=QUERYLEAK2")
+        .await;
+    let _ = support::body_text(res).await;
+    let res = w.get("/auth/sign-in?return_to=%2FQUERYLEAK3").await;
+    let _ = support::body_text(res).await;
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -98,6 +106,27 @@ async fn values_never_reach_the_logs() {
         !logs.contains("Sup3r-S3cret"),
         "value leaked into logs:\n{logs}"
     );
+    assert!(!logs.contains("QUERYLEAK"), "query string leaked:\n{logs}");
+    assert!(
+        logs.lines().any(|l| l.contains("request")
+            && l.contains("method=GET")
+            && l.contains("path=/secrets ")
+            && l.contains("status=200")
+            && l.contains("ms=")),
+        "request line missing:\n{logs}"
+    );
+    assert!(
+        logs.contains("path=/secrets/db-password/reveal") && logs.contains("method=POST"),
+        "{logs}"
+    );
+    // Actions name the person by Entra object and tenant ID.
+    assert!(
+        logs.contains("subject=oid:aaaaaaaa-0000-0000-0000-000000000001,tid:"),
+        "{logs}"
+    );
+    // Headers are never logged: no cookies, no session ID.
+    assert!(!logs.contains(&w.cookie), "session cookie leaked");
+    assert!(!logs.contains(&w.csrf), "form token leaked");
     assert!(!logs.contains("user-api-token"), "token leaked into logs");
     assert!(!logs.contains("obo:"), "token leaked into logs");
     assert!(

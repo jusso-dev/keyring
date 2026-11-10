@@ -2,6 +2,7 @@
 
 pub mod cookies;
 pub mod crypto;
+pub mod entra;
 pub mod oidc;
 pub mod return_to;
 pub mod session;
@@ -55,17 +56,22 @@ pub async fn require_session(
         return next.run(req).await;
     }
 
-    // Only remember GET destinations; replaying a form post after sign-in
-    // would be surprising.
-    let return_to = if req.method() == Method::GET {
+    // A GET goes back where it was going. A form post is never replayed:
+    // it goes back to the form's own page (from a same-origin `Referer`),
+    // and the sign-in page says nothing was saved.
+    let is_get = req.method() == Method::GET;
+    let return_to = if is_get {
         req.uri().path_and_query().map(|pq| pq.as_str().to_owned())
     } else {
-        None
+        referer_path(req.headers(), &state.config.base_url)
     };
     let return_to = return_to::sanitise(return_to.as_deref());
     let mut target = format!("/auth/sign-in?return_to={}", return_to::encode(&return_to));
-    if id.is_some() {
-        target.push_str("&reason=expired");
+    match (is_get, id.is_some()) {
+        (false, true) => target.push_str("&reason=unsaved"),
+        (true, true) => target.push_str("&reason=expired"),
+        // No session cookie at all: nobody was signed out.
+        (_, false) => {}
     }
     let mut res = Redirect::to(&target).into_response();
     if id.is_some()
@@ -74,4 +80,41 @@ pub async fn require_session(
         res.headers_mut().append(axum::http::header::SET_COOKIE, v);
     }
     res
+}
+
+/// The local path and query of a same-origin `Referer`, if there is one.
+fn referer_path(headers: &axum::http::HeaderMap, base_url: &str) -> Option<String> {
+    let referer = headers.get(axum::http::header::REFERER)?.to_str().ok()?;
+    let rest = referer.strip_prefix(base_url)?;
+    // `https://keyring.example.com.evil` must not count as this site.
+    rest.starts_with('/')
+        .then(|| rest.split('#').next().unwrap_or(rest).to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header::REFERER};
+
+    use super::*;
+
+    fn with(referer: &'static str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(REFERER, HeaderValue::from_static(referer));
+        h
+    }
+
+    #[test]
+    fn referer_must_be_this_site() {
+        let base = "https://keyring.example.com";
+        assert_eq!(
+            referer_path(&with("https://keyring.example.com/secrets/new?x=1#f"), base).as_deref(),
+            Some("/secrets/new?x=1")
+        );
+        assert_eq!(
+            referer_path(&with("https://keyring.example.com.evil/secrets"), base),
+            None
+        );
+        assert_eq!(referer_path(&with("https://evil.example/"), base), None);
+        assert_eq!(referer_path(&HeaderMap::new(), base), None);
+    }
 }

@@ -486,7 +486,7 @@ pub async fn toggle(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let enable = match f.state.as_str() {
         "on" => true,
         "off" => false,

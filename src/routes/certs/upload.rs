@@ -214,7 +214,10 @@ pub async fn cancel(
     shell: Shell,
     Form(f): Form<CancelForm>,
 ) -> PageResult {
-    let _ = check_csrf(&session, &f.csrf, shell)?;
+    // Dropping the waiting file is safe whichever vault the form was for.
+    if !session.0.csrf_matches_any(&f.csrf) {
+        return Err(PageError::new(shell, Problem::stale_form()).into());
+    }
     forget_pending_upload(&session);
     let mut res = Redirect::to("/certificates/upload").into_response();
     flash::set(
@@ -429,7 +432,7 @@ pub async fn preview(
             None,
         ));
     }
-    let shell = check_csrf(&session, &p.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &p.csrf, shell)?;
     let view = UploadView {
         name: p.name.clone(),
         tags: p.tags.clone(),
@@ -621,7 +624,7 @@ pub async fn confirm(
     let (vault, shell) = current_vault(&session, shell)?;
     // The token is checked before the upload is taken, so a forged post
     // can't throw away someone's waiting file.
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let Some(up) = session
         .0
         .take_pending_upload(&f.upload_id)

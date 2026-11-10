@@ -189,12 +189,25 @@ impl Problem {
         )
     }
 
-    /// The form's hidden token didn't match the session.
+    /// The form's hidden token didn't match the session, or was rendered
+    /// for another vault.
     pub fn stale_form() -> Self {
         Self::new(
             StatusCode::FORBIDDEN,
             "That didn't go through",
-            "The page was out of date, so nothing was changed. Go back, refresh the page and try again.",
+            "The page was out of date, so nothing was changed. This happens if you switched vaults in another tab. Go back, refresh the page and try again.",
+        )
+    }
+
+    /// The form was rendered for another vault, and the person has since
+    /// switched vaults (usually in another tab).
+    pub fn vault_changed(form_vault: &str) -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "You switched vaults",
+            format!(
+                "This page was for {form_vault}, but you've since picked another vault, probably in another tab. Nothing was changed. Go back, refresh the page and try again."
+            ),
         )
     }
 
@@ -652,6 +665,7 @@ mod tests {
         let all = [
             Problem::not_found(),
             Problem::stale_form(),
+            Problem::vault_changed("kv-prod"),
             Problem::from_token(&TokenError::SignInAgain),
             Problem::from_token(&TokenError::ConsentNeeded),
             Problem::from_token(&TokenError::Refused { code: "x".into() }),

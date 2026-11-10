@@ -39,11 +39,19 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Build the state, panicking if the HTTP client can't be built. For
+    /// tests; `main` uses [`AppState::try_new`] so start-up can report it.
     pub fn new(config: Config) -> Self {
-        let http = http::client(config.outbound_https_only());
+        Self::try_new(config).expect("HTTP client settings are valid")
+    }
+
+    /// Build the state. Fails if the outbound HTTP client can't be built,
+    /// for example because the TLS trust store can't be read.
+    pub fn try_new(config: Config) -> Result<Self, http::HttpError> {
+        let http = http::client(config.outbound_https_only())?;
         let oidc = Oidc::new(&config, http.clone());
         let broker = Arc::new(TokenBroker::new(&config, http.clone()));
-        Self {
+        Ok(Self {
             sessions: Arc::new(SessionStore::default()),
             oidc: Arc::new(oidc),
             azure: AzureClient::new(http, broker),
@@ -52,7 +60,7 @@ impl AppState {
                 secure: config.is_https(),
             },
             config: Arc::new(config),
-        }
+        })
     }
 }
 

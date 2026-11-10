@@ -2,10 +2,15 @@
 
 use std::fmt;
 
+use zeroize::Zeroize;
+
 /// Holds a sensitive value such as a client secret or token.
 ///
 /// `Debug` and `Display` print `[redacted]`, so the value can't end up in
 /// logs or error messages by accident. Read it with [`Secret::expose`].
+///
+/// The memory is overwritten with zeros when the value is dropped, so a
+/// token or uploaded private key doesn't linger in freed memory.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 
@@ -18,6 +23,12 @@ impl Secret {
     /// the place that needs it.
     pub fn expose(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 

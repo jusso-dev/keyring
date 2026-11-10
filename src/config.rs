@@ -94,13 +94,14 @@ impl Config {
         for name in ["ENTRA_CLIENT_SECRET", "SESSION_SECRET"] {
             if take(name).starts_with("@Microsoft.KeyVault(") {
                 return Err(ConfigError::Invalid {
-                    name: if name == "SESSION_SECRET" { "SESSION_SECRET" } else { "ENTRA_CLIENT_SECRET" },
+                    name,
                     reason: "is still a Key Vault reference, so App Service couldn't read it. Check the secret exists in the config vault and the app's identity can read it".into(),
                 });
             }
         }
 
-        let tenant_id = take("ENTRA_TENANT_ID");
+        // Entra writes GUIDs in lower case, including in the issuer.
+        let tenant_id = take("ENTRA_TENANT_ID").to_ascii_lowercase();
         if !is_guid(&tenant_id) {
             return Err(ConfigError::Invalid {
                 name: "ENTRA_TENANT_ID",
@@ -109,7 +110,7 @@ impl Config {
                         .into(),
             });
         }
-        let client_id = take("ENTRA_CLIENT_ID");
+        let client_id = take("ENTRA_CLIENT_ID").to_ascii_lowercase();
         if !is_guid(&client_id) {
             return Err(ConfigError::Invalid {
                 name: "ENTRA_CLIENT_ID",
@@ -117,8 +118,8 @@ impl Config {
             });
         }
 
-        let base_url = checked_url("APP_BASE_URL", &take("APP_BASE_URL"))?;
-        let authority_host = checked_url(
+        let base_url = checked_origin("APP_BASE_URL", &take("APP_BASE_URL"))?;
+        let authority_host = checked_origin(
             "ENTRA_AUTHORITY_HOST",
             &get("ENTRA_AUTHORITY_HOST").unwrap_or_else(|| DEFAULT_AUTHORITY_HOST.into()),
         )?;
@@ -126,10 +127,19 @@ impl Config {
             get("ENTRA_API_SCOPE").unwrap_or_else(|| format!("api://{client_id}/access_as_user"));
 
         let session_secret = take("SESSION_SECRET");
+        // The placeholder in .env.example is published, so it is no secret.
+        if session_secret.starts_with("replace-me") {
+            return Err(ConfigError::Invalid {
+                name: "SESSION_SECRET",
+                reason: "is still the placeholder from .env.example. Make a new one with: openssl rand -base64 48".into(),
+            });
+        }
         if session_secret.len() < MIN_SESSION_SECRET_LEN {
             return Err(ConfigError::Invalid {
                 name: "SESSION_SECRET",
-                reason: format!("must be at least {MIN_SESSION_SECRET_LEN} characters"),
+                reason: format!(
+                    "must be at least {MIN_SESSION_SECRET_LEN} characters. Make one with: openssl rand -base64 48"
+                ),
             });
         }
 
@@ -149,18 +159,32 @@ impl Config {
                 reason: "expected an address and port such as 127.0.0.1:3000".into(),
             })?;
 
-        let management_url = checked_url(
+        let management_url = checked_origin(
             "KEYRING_TEST_MANAGEMENT_URL",
             &get("KEYRING_TEST_MANAGEMENT_URL").unwrap_or_else(|| DEFAULT_MANAGEMENT_URL.into()),
         )?;
-        let loganalytics_url = checked_url(
+        let loganalytics_url = checked_origin(
             "KEYRING_TEST_LOGANALYTICS_URL",
             &get("KEYRING_TEST_LOGANALYTICS_URL")
                 .unwrap_or_else(|| DEFAULT_LOGANALYTICS_URL.into()),
         )?;
         let keyvault_test_base = get("KEYRING_TEST_KEYVAULT_URL")
-            .map(|v| checked_url("KEYRING_TEST_KEYVAULT_URL", &v))
+            .map(|v| checked_origin("KEYRING_TEST_KEYVAULT_URL", &v))
             .transpose()?;
+
+        let log_level = match get("KEYRING_LOG_LEVEL") {
+            None => "info".to_owned(),
+            Some(v) => {
+                let v = v.to_ascii_lowercase();
+                if !LOG_LEVELS.contains(&v.as_str()) {
+                    return Err(ConfigError::Invalid {
+                        name: "KEYRING_LOG_LEVEL",
+                        reason: "use error, warn, info, debug or trace".into(),
+                    });
+                }
+                v
+            }
+        };
 
         Ok(Self {
             loganalytics_url,
@@ -175,8 +199,28 @@ impl Config {
             session_secret: Secret::new(session_secret),
             allow_purge,
             listen,
-            log_level: get("KEYRING_LOG_LEVEL").unwrap_or_else(|| "info".into()),
+            log_level,
         })
+    }
+
+    /// Names of the test-only overrides that are set. Each one sends user
+    /// tokens (and for the authority host, the client secret) somewhere
+    /// other than Microsoft, so start-up warns about them.
+    pub fn test_overrides(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.authority_host != DEFAULT_AUTHORITY_HOST {
+            out.push("ENTRA_AUTHORITY_HOST");
+        }
+        if self.management_url != DEFAULT_MANAGEMENT_URL {
+            out.push("KEYRING_TEST_MANAGEMENT_URL");
+        }
+        if self.loganalytics_url != DEFAULT_LOGANALYTICS_URL {
+            out.push("KEYRING_TEST_LOGANALYTICS_URL");
+        }
+        if self.keyvault_test_base.is_some() {
+            out.push("KEYRING_TEST_KEYVAULT_URL");
+        }
+        out
     }
 
     /// True when the app is served over HTTPS, so cookies get `Secure`.
@@ -221,6 +265,10 @@ impl Config {
     }
 }
 
+/// Values `KEYRING_LOG_LEVEL` accepts. `off` is left out on purpose: it
+/// would also drop the lines that record reveals and downloads.
+pub const LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
 /// Default Log Analytics query endpoint.
 pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
 
@@ -230,32 +278,32 @@ pub const DEFAULT_MANAGEMENT_URL: &str = "https://management.azure.com";
 /// Default Entra ID sign-in host.
 pub const DEFAULT_AUTHORITY_HOST: &str = "https://login.microsoftonline.com";
 
-/// True for `http://localhost` and `http://127.0.0.1`, with or without a port.
-pub fn is_local_http(url: &str) -> bool {
-    ["http://localhost", "http://127.0.0.1"]
-        .iter()
-        .any(|prefix| {
-            url.strip_prefix(prefix).is_some_and(|rest| {
-                rest.is_empty() || rest.starts_with(':') || rest.starts_with('/')
-            })
-        })
-}
-
-/// Trim a trailing slash and require `https://`, allowing plain `http://`
-/// only for localhost.
-fn checked_url(name: &'static str, raw: &str) -> Result<String, ConfigError> {
-    let url = raw.trim_end_matches('/').to_owned();
-    let has_host = url
-        .split_once("://")
-        .is_some_and(|(_, rest)| !rest.is_empty() && !rest.contains(char::is_whitespace));
-    if has_host && (url.starts_with("https://") || is_local_http(&url)) {
-        Ok(url)
-    } else {
-        Err(ConfigError::Invalid {
-            name,
-            reason: "must start with https:// (http:// is only allowed for localhost)".into(),
-        })
+/// Check a base URL is a bare origin, `scheme://host[:port]`, and return it
+/// in normal form. `https://` is required, except plain `http://` for
+/// localhost. A path, query, fragment or user name is refused: cookies and
+/// links are all rooted at `/`, so Keyring can't be hosted under a sub-path.
+fn checked_origin(name: &'static str, raw: &str) -> Result<String, ConfigError> {
+    let invalid = |reason: &str| ConfigError::Invalid {
+        name,
+        reason: reason.to_owned(),
+    };
+    let scheme_rule = "must start with https:// (http:// is only allowed for localhost)";
+    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| invalid(scheme_rule))?;
+    let host = url.host_str().unwrap_or_default();
+    match url.scheme() {
+        "https" if !host.is_empty() => {}
+        "http" if host == "localhost" || host == "127.0.0.1" => {}
+        _ => return Err(invalid(scheme_rule)),
     }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid("must not include a user name or password"));
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err(invalid(
+            "must be just the scheme and host, such as https://keyring.example.com. Hosting under a path isn't supported",
+        ));
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
 fn parse_bool(v: &str) -> Option<bool> {
@@ -266,7 +314,7 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-fn is_guid(v: &str) -> bool {
+pub(crate) fn is_guid(v: &str) -> bool {
     let groups: Vec<&str> = v.split('-').collect();
     groups.len() == 5
         && groups
@@ -371,14 +419,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn local_http_check_is_strict() {
-        assert!(is_local_http("http://localhost:3000"));
-        assert!(is_local_http("http://127.0.0.1"));
-        assert!(!is_local_http("http://localhost.evil.com"));
-        assert!(!is_local_http("http://127.0.0.1.evil.com"));
-    }
-
-    #[test]
     fn refuses_unresolved_key_vault_references() {
         let mut env = sample_env();
         env.insert(
@@ -404,6 +444,134 @@ pub(crate) mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn refuses_the_example_session_secret() {
+        let mut env = sample_env();
+        env.insert(
+            "SESSION_SECRET",
+            "replace-me-with-at-least-32-random-characters".into(),
+        );
+        let err = load(&env).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                name: "SESSION_SECRET",
+                ..
+            }
+        ));
+        assert!(err.to_string().contains("openssl rand -base64 48"));
+    }
+
+    #[test]
+    fn example_env_file_leaves_session_secret_empty() {
+        let example = include_str!("../.env.example");
+        let line = example
+            .lines()
+            .find(|l| l.starts_with("SESSION_SECRET="))
+            .expect("SESSION_SECRET line");
+        assert_eq!(line, "SESSION_SECRET=");
+        // So copying the file as-is reports it as missing.
+        let mut env = sample_env();
+        env.insert("SESSION_SECRET", String::new());
+        assert_eq!(
+            load(&env).unwrap_err(),
+            ConfigError::Missing(vec!["SESSION_SECRET"])
+        );
+    }
+
+    #[test]
+    fn base_url_must_be_a_bare_origin() {
+        for bad in [
+            "https://tools.example.com/keyring",
+            "https://user@keyring.example.com",
+            "https://user:pw@keyring.example.com",
+            "https://keyring.example.com/?x=1",
+            "https://keyring.example.com/#top",
+            "https://",
+            "keyring.example.com",
+            "ftp://keyring.example.com",
+            "http://localhost.evil.com",
+        ] {
+            let mut env = sample_env();
+            env.insert("APP_BASE_URL", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "APP_BASE_URL",
+                        ..
+                    })
+                ),
+                "{bad} should be refused"
+            );
+        }
+        let mut env = sample_env();
+        env.insert("APP_BASE_URL", "HTTPS://Keyring.Example.com:443/".into());
+        assert_eq!(load(&env).unwrap().base_url, "https://keyring.example.com");
+        env.insert("APP_BASE_URL", "https://keyring.example.com:8443".into());
+        assert_eq!(
+            load(&env).unwrap().base_url,
+            "https://keyring.example.com:8443"
+        );
+    }
+
+    #[test]
+    fn guids_are_lower_cased() {
+        let mut env = sample_env();
+        env.insert(
+            "ENTRA_TENANT_ID",
+            "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE".into(),
+        );
+        env.insert(
+            "ENTRA_CLIENT_ID",
+            "FFFFFFFF-1111-2222-3333-444444444444".into(),
+        );
+        let config = load(&env).unwrap();
+        assert_eq!(config.tenant_id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        assert_eq!(config.client_id, "ffffffff-1111-2222-3333-444444444444");
+        assert!(config.issuer().contains("aaaaaaaa-bbbb"));
+    }
+
+    #[test]
+    fn log_level_is_checked() {
+        let mut env = sample_env();
+        assert_eq!(load(&env).unwrap().log_level, "info");
+        env.insert("KEYRING_LOG_LEVEL", "DEBUG".into());
+        assert_eq!(load(&env).unwrap().log_level, "debug");
+        for bad in ["verbose", "off", "info,keyring=trace"] {
+            env.insert("KEYRING_LOG_LEVEL", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_LOG_LEVEL",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn lists_test_overrides_in_use() {
+        assert!(load(&sample_env()).unwrap().test_overrides().is_empty());
+        let mut env = sample_env();
+        env.insert("ENTRA_AUTHORITY_HOST", "http://127.0.0.1:9".into());
+        env.insert("KEYRING_TEST_KEYVAULT_URL", "http://127.0.0.1:10".into());
+        env.insert("KEYRING_TEST_LOGANALYTICS_URL", "https://la.example".into());
+        env.insert("KEYRING_TEST_MANAGEMENT_URL", "https://arm.example".into());
+        assert_eq!(
+            load(&env).unwrap().test_overrides(),
+            [
+                "ENTRA_AUTHORITY_HOST",
+                "KEYRING_TEST_MANAGEMENT_URL",
+                "KEYRING_TEST_LOGANALYTICS_URL",
+                "KEYRING_TEST_KEYVAULT_URL"
+            ]
+        );
     }
 
     #[test]
