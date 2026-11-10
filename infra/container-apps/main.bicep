@@ -257,7 +257,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
 
 // An internal environment's default domain only resolves with a private
 // DNS zone for it, holding a wildcard record for the environment's address.
-module dns '../modules/container-apps-dns.bicep' = if (!configOnly && !empty(privateDnsVnetId)) {
+module dns '../modules/container-apps-dns.bicep' = if (!configOnly && !empty(privateDnsVnetId) && dnsCheck == 'ok') {
   name: '${name}-env-dns'
   params: {
     zoneName: env!.properties.defaultDomain

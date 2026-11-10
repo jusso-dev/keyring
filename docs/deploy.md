@@ -24,7 +24,9 @@ Decide:
 Azure runs `linux/amd64` images. Build for that platform even on an Apple Silicon Mac, or the container won't start ("exec format error"):
 
 ```sh
-docker buildx build --platform linux/amd64 -t <registry>/keyring:<version> --push .
+docker buildx build --platform linux/amd64 \
+  --build-arg VERSION=<version> --build-arg VCS_REF=$(git rev-parse HEAD) \
+  -t <registry>/keyring:<version> --push .
 docker buildx imagetools inspect <registry>/keyring:<version>   # note the sha256 digest
 ```
 

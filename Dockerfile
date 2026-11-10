@@ -21,11 +21,11 @@
 #   docker build --build-arg VERSION=0.1.0 --build-arg VCS_REF=$(git rev-parse HEAD) .
 
 FROM rust:1.99.1-alpine3.22@sha256:9a744dc47d1ac2a7d17fc3cedfc8b4928b1696dfcba3274ab25bfb40988a9ff0 AS build
-# Use the toolchain already in the pinned image. rust-toolchain.toml isn't
-# copied: it lists rustfmt and clippy, which would make rustup download
-# them, and the release build needs neither. CI checks the image's Rust
-# version matches rust-toolchain.toml.
-ENV RUSTUP_TOOLCHAIN=1.99.1
+# Use the toolchain already in the pinned image (its rustup default).
+# rust-toolchain.toml isn't copied: it lists rustfmt and clippy, which would
+# make rustup download them, and the release build needs neither. CI checks
+# the image's Rust version matches rust-toolchain.toml, so the version is
+# written in two places only, and Dependabot moves both together.
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src

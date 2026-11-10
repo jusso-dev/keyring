@@ -11,11 +11,11 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request replaces the older run. Runs on main are
-# never cancelled, so every merged commit gets a result, and the weekly run
-# has its own group so a merge and the advisory check don't cancel each other.
+# A newer push to a pull request replaces the older run. Each push to main
+# gets its own group (by commit), so no merged commit loses its run to a
+# later one, and the weekly run has its own group too.
 concurrency:
-  group: ci-${{ github.event_name == 'schedule' && 'schedule' || github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'schedule' || github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -166,7 +166,6 @@ jobs:
         run: |
           want=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
           grep -q "FROM rust:${want}-" Dockerfile || { echo "Dockerfile builder isn't Rust ${want}" >&2; exit 1; }
-          grep -q "RUSTUP_TOOLCHAIN=${want}" Dockerfile || { echo "RUSTUP_TOOLCHAIN isn't ${want}" >&2; exit 1; }
 
       - name: Image version
         id: version
