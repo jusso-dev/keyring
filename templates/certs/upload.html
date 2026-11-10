@@ -3,7 +3,7 @@
 {% block content %}
 <p><a href="/certificates">Back to certificates</a></p>
 <h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1>
-<p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, for up to 10 minutes, then forgets it.</p>
+<p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, until you upload it, start again, or 10 minutes pass.</p>
 
 {% if !errors.is_empty() %}
 <div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
@@ -12,12 +12,18 @@
   <p>For safety, choose the file and type the password again.</p>
 </div>
 {% endif %}
+{% if let Some(m) = azure_message %}
+<div class="notice notice-error" role="status">
+  <p>Key Vault said:</p>
+  <p class="mono">{{ m }}</p>
+</div>
+{% endif %}
 
 <form method="post" action="/certificates/upload" enctype="multipart/form-data" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
 
   <label for="file">Certificate file</label>
-  <p class="field-help" id="file-help">.pfx, .p12 or .pem, up to {{ max_kb }} KB.</p>
+  <p class="field-help" id="file-help">.pfx, .p12 or .pem, up to {{ max_kb }} KB. A .pem needs the certificate and an unencrypted PKCS #8 key (BEGIN PRIVATE KEY).</p>
   <input id="file" name="file" type="file" required accept=".pfx,.p12,.pem,application/x-pkcs12,application/x-pem-file" aria-describedby="file-help{% if error_for("file").is_some() %} file-error{% endif %}"{% if error_for("file").is_some() %} aria-invalid="true"{% endif %}>
   {% if let Some(m) = error_for("file") %}<p class="field-error" id="file-error">{{ m }}</p>{% endif %}
 

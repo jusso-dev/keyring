@@ -75,6 +75,8 @@ pub struct KvState {
     pub recovering: Mutex<BTreeMap<String, (StoredSecret, u32)>>,
     /// How many reads a recovered secret stays hidden for.
     pub recover_lag: Mutex<Option<u32>>,
+    /// Certificate issuers and self-signed timing (see `certs.rs`).
+    pub cert_extra: super::certs::Extra,
     seq: Mutex<i64>,
 }
 
@@ -199,10 +201,7 @@ impl KvState {
             .lock()
             .unwrap()
             .entry(name.into())
-            .or_insert_with(|| super::keys::StoredKey {
-                versions: Vec::new(),
-                rotation: serde_json::json!({"lifetimeActions": []}),
-            })
+            .or_default()
             .versions
             .push(v);
         version
@@ -248,6 +247,8 @@ impl KvState {
         c.policy = policy;
         c.pending = None;
         c.versions.push(v);
+        drop(certs);
+        self.add_managed_key(name, &version);
         version
     }
 

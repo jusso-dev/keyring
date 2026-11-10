@@ -12,17 +12,17 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::azure::AzureError;
-use crate::azure::keys::{CreateKey, RotationPolicy};
+use crate::azure::keys::{CreateKey, RotateAt, RotationPolicy, iso_days};
 use crate::azure::secrets::{Attributes, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
-use crate::routes::error::{Need, PageResult};
+use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::lifecycle::redirect_with;
 use crate::routes::secrets::form::{FieldError, name_problem, parse_tags};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
-use super::{api, current_vault};
+use super::{api, current_vault, reserved_name_problem, unmanaged_key};
 
 pub const KEY_TYPES: [(&str, &str); 7] = [
     ("RSA-3072", "RSA 3072 (recommended)"),
@@ -113,8 +113,11 @@ pub fn default_ops(kty: &str) -> Vec<String> {
 
 pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Vec<FieldError>> {
     let mut errors = Vec::new();
-    if let Some(m) = name_problem(&f.name) {
-        errors.push(err("name", m.replace("the secret", "the key")));
+    if let Some(m) = name_problem(&f.name)
+        .map(|m| m.replace("the secret", "the key"))
+        .or_else(|| reserved_name_problem(&f.name))
+    {
+        errors.push(err("name", m));
     }
     let (mut kty, key_size, crv): (String, Option<u32>, Option<String>) = match f.key_type.as_str()
     {
@@ -198,6 +201,8 @@ struct CreatePage {
     vault: String,
     form: CreateForm,
     errors: Vec<FieldError>,
+    /// Key Vault's own reason, after it refused the request.
+    azure_message: Option<String>,
 }
 
 impl CreatePage {
@@ -224,7 +229,17 @@ fn create_page(
     form: CreateForm,
     errors: Vec<FieldError>,
 ) -> axum::response::Response {
-    let status = if errors.is_empty() {
+    create_page_with(shell, vault, form, errors, None)
+}
+
+fn create_page_with(
+    shell: Shell,
+    vault: String,
+    form: CreateForm,
+    errors: Vec<FieldError>,
+    azure_message: Option<String>,
+) -> axum::response::Response {
+    let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -236,9 +251,31 @@ fn create_page(
             vault,
             form,
             errors,
+            azure_message,
         }),
     )
         .into_response()
+}
+
+/// Key Vault's refusal of an HSM key on a Standard vault. The reviewer's
+/// reading of the REST reference is `400 BadParameter` with a message that
+/// names the vault's SKU, so match that narrowly rather than blaming every
+/// 400 on HSM. Needs confirming on a real vault.
+fn is_hsm_refusal(err: &AzureError) -> bool {
+    match err {
+        AzureError::Status {
+            status: 400,
+            code,
+            message,
+        } => {
+            let code = code.as_deref().unwrap_or_default();
+            let msg = message.as_deref().unwrap_or_default().to_ascii_lowercase();
+            code.to_ascii_lowercase().contains("hsm")
+                || msg.contains("sku")
+                || msg.contains("premium")
+        }
+        _ => false,
+    }
 }
 
 pub async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
@@ -265,8 +302,10 @@ pub async fn create(
         Err(errors) => return Ok(create_page(shell, vault, f, errors)),
     };
     let keys = api(&state, &session, &vault);
+    // Creating over an existing name adds a version, so refuse. Key Vault
+    // may answer an unknown name with 404 or with an empty list.
     match keys.versions(&name).await {
-        Ok(_) => {
+        Ok(v) if !v.is_empty() => {
             let errors = vec![err(
                 "name",
                 format!(
@@ -275,7 +314,7 @@ pub async fn create(
             )];
             return Ok(create_page(shell, vault, f, errors));
         }
-        Err(AzureError::Status { status: 404, .. }) => {}
+        Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
         Err(e) => return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
     }
     match keys.create(&name, &body).await {
@@ -296,18 +335,17 @@ pub async fn create(
             )];
             Ok(create_page(shell, vault, f, errors))
         }
-        Err(AzureError::Status {
-            status: 400,
-            code: Some(c),
-            ..
-        }) if c.contains("HSM") || f.hsm => {
+        Err(e) if f.hsm && is_hsm_refusal(&e) => {
             let errors = vec![err(
                 "key_type",
                 "This vault can't make HSM-protected keys. It needs the Premium tier. Untick HSM, or use a Premium vault.",
             )];
             Ok(create_page(shell, vault, f, errors))
         }
-        Err(e) => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
+        Err(e) => match rejection_message(&e) {
+            Some(m) => Ok(create_page_with(shell, vault, f, Vec::new(), Some(m))),
+            None => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
+        },
     }
 }
 
@@ -326,12 +364,14 @@ pub struct CsrfForm {
 }
 
 pub async fn rotate_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     Ok(render(&RotatePage { shell, vault, name }).into_response())
 }
 
@@ -345,6 +385,7 @@ pub async fn rotate(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     match api(&state, &session, &vault).rotate(&name).await {
         Ok(b) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key rotated");
@@ -374,6 +415,10 @@ struct RotationPage {
     name: String,
     form: RotationForm,
     errors: Vec<FieldError>,
+    /// Parts of the current policy the form can't show.
+    unsupported: Vec<String>,
+    /// Key Vault's own reason, after it refused the policy.
+    azure_message: Option<String>,
 }
 
 impl RotationPage {
@@ -383,18 +428,54 @@ impl RotationPage {
             .find(|e| e.field == field)
             .map(|e| e.message.as_str())
     }
+    fn rotate_before_expiry(&self) -> bool {
+        self.form.rotate_when == "expiry"
+    }
 }
 
 #[derive(Deserialize, Default)]
 pub struct RotationForm {
     #[serde(default)]
     pub csrf: String,
+    /// `create` (count from when each version is made) or `expiry` (count
+    /// back from when it expires).
     #[serde(default)]
-    pub rotate_after: String,
+    pub rotate_when: String,
+    #[serde(default)]
+    pub rotate_days: String,
     #[serde(default)]
     pub notify_before: String,
     #[serde(default)]
     pub expiry: String,
+    /// Ticked to replace a policy that has parts the form can't show.
+    #[serde(default)]
+    pub replace: Option<String>,
+}
+
+impl RotationForm {
+    /// The form as it would be filled in from `p`.
+    pub fn from_policy(p: &RotationPolicy) -> Self {
+        let show = |d: Option<u32>| d.map(|d| d.to_string()).unwrap_or_default();
+        if p.is_key_vault_default() {
+            return Self {
+                rotate_when: "create".into(),
+                ..Self::default()
+            };
+        }
+        let (rotate_when, rotate_days) = match p.rotate_at() {
+            Some(RotateAt::BeforeExpiry(d)) => ("expiry", show(iso_days(&d))),
+            Some(RotateAt::AfterCreate(d)) => ("create", show(iso_days(&d))),
+            None => ("create", String::new()),
+        };
+        Self {
+            csrf: String::new(),
+            rotate_when: rotate_when.into(),
+            rotate_days,
+            notify_before: show(p.notify_before_days()),
+            expiry: show(p.expiry_days()),
+            replace: None,
+        }
+    }
 }
 
 fn days_field(
@@ -419,31 +500,76 @@ fn days_field(
     }
 }
 
-/// Check the rotation form against Key Vault's rules.
-pub fn build_rotation(f: &RotationForm) -> Result<RotationPolicy, Vec<FieldError>> {
+/// The duration to send for a field: Key Vault's original string if the
+/// person left the number as it was shown, so `P18M` stays `P18M`, else
+/// whole days.
+fn keep_or_days(original: Option<&str>, typed: Option<u32>) -> Option<String> {
+    let typed = typed?;
+    match original {
+        Some(o) if iso_days(o) == Some(typed) => Some(o.to_owned()),
+        _ => Some(format!("P{typed}D")),
+    }
+}
+
+/// Key Vault's rotation policy limits, from "Configure cryptographic key
+/// auto-rotation in Azure Key Vault": expiry at least 28 days, triggers at
+/// least 7 days, and a rotate trigger at least 7 days before expiry.
+pub const MIN_EXPIRY_DAYS: u32 = 28;
+pub const MIN_TRIGGER_DAYS: u32 = 7;
+pub const MIN_GAP_DAYS: u32 = 7;
+
+/// Check the rotation form against Key Vault's rules and build the policy
+/// to save. `current` is the policy as Key Vault has it now: fields left
+/// as they were keep its original durations, and a policy with parts the
+/// form can't show is only replaced when the person ticks the box.
+pub fn build_rotation(
+    f: &RotationForm,
+    current: &RotationPolicy,
+) -> Result<RotationPolicy, Vec<FieldError>> {
     let mut errors = Vec::new();
+    let before_expiry = match f.rotate_when.as_str() {
+        "" | "create" => false,
+        "expiry" => true,
+        _ => {
+            errors.push(err("rotate_days", "Pick when to rotate from the list."));
+            false
+        }
+    };
     let rotate = days_field(
-        "rotate_after",
-        &f.rotate_after,
-        "Rotate after",
-        7,
+        "rotate_days",
+        &f.rotate_days,
+        "Rotate",
+        MIN_TRIGGER_DAYS,
         &mut errors,
     );
     let notify = days_field(
         "notify_before",
         &f.notify_before,
         "Notify before",
-        7,
+        MIN_TRIGGER_DAYS,
         &mut errors,
     );
-    let expiry = days_field("expiry", &f.expiry, "Expiry", 28, &mut errors);
-    if let (Some(r), Some(e)) = (rotate, expiry)
-        && r >= e
-    {
-        errors.push(err(
-            "rotate_after",
-            "Rotate the key before it expires: pick fewer days than the expiry.",
-        ));
+    let expiry = days_field("expiry", &f.expiry, "Expiry", MIN_EXPIRY_DAYS, &mut errors);
+    match (rotate, expiry, before_expiry) {
+        (Some(_), None, true) => errors.push(err(
+            "rotate_days",
+            "Rotating before expiry counts back from expiry, so set an expiry too.",
+        )),
+        (Some(r), Some(e), false) if r + MIN_GAP_DAYS > e => errors.push(err(
+            "rotate_days",
+            format!(
+                "Rotate the key at least {MIN_GAP_DAYS} days before it expires: pick {} days or fewer, or a longer expiry.",
+                e.saturating_sub(MIN_GAP_DAYS)
+            ),
+        )),
+        (Some(r), Some(e), true) if r + MIN_GAP_DAYS > e => errors.push(err(
+            "rotate_days",
+            format!(
+                "Key Vault needs each version to last at least {MIN_GAP_DAYS} days before it rotates: pick {} days or fewer, or a longer expiry.",
+                e.saturating_sub(MIN_GAP_DAYS)
+            ),
+        )),
+        _ => {}
     }
     if notify.is_some() && expiry.is_none() {
         errors.push(err(
@@ -456,11 +582,63 @@ pub fn build_rotation(f: &RotationForm) -> Result<RotationPolicy, Vec<FieldError
     {
         errors.push(err("notify_before", "Pick fewer days than the expiry."));
     }
-    if errors.is_empty() {
-        Ok(RotationPolicy::from_days(rotate, notify, expiry))
-    } else {
-        Err(errors)
+    if !current.unsupported().is_empty() && f.replace.is_none() {
+        errors.push(err(
+            "replace",
+            "This key's policy has parts the form can't show. Tick the box to replace the whole policy with what's on this page.",
+        ));
     }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let original_rotate = current.rotate_at().and_then(|r| match (r, before_expiry) {
+        (RotateAt::AfterCreate(d), false) | (RotateAt::BeforeExpiry(d), true) => Some(d),
+        _ => None,
+    });
+    let rotate = keep_or_days(original_rotate.as_deref(), rotate).map(|d| {
+        if before_expiry {
+            RotateAt::BeforeExpiry(d)
+        } else {
+            RotateAt::AfterCreate(d)
+        }
+    });
+    let original_notify = (!current.is_key_vault_default())
+        .then(|| current.notify_before())
+        .flatten();
+    Ok(RotationPolicy::from_parts(
+        rotate,
+        keep_or_days(original_notify, notify),
+        keep_or_days(current.expiry(), expiry),
+    ))
+}
+
+fn rotation_page(
+    shell: Shell,
+    vault: String,
+    name: String,
+    form: RotationForm,
+    errors: Vec<FieldError>,
+    unsupported: Vec<String>,
+    azure_message: Option<String>,
+) -> axum::response::Response {
+    let status = if errors.is_empty() && azure_message.is_none() {
+        StatusCode::OK
+    } else {
+        StatusCode::UNPROCESSABLE_ENTITY
+    };
+    (
+        status,
+        render(&RotationPage {
+            shell,
+            vault,
+            name,
+            form,
+            errors,
+            unsupported,
+            azure_message,
+        }),
+    )
+        .into_response()
 }
 
 pub async fn rotation_form(
@@ -471,6 +649,7 @@ pub async fn rotation_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let p = match api(&state, &session, &vault).rotation_policy(&name).await {
         Ok(p) => p,
         Err(e) => {
@@ -482,21 +661,16 @@ pub async fn rotation_form(
             ));
         }
     };
-    let show = |d: Option<u32>| d.map(|d| d.to_string()).unwrap_or_default();
-    let form = RotationForm {
-        csrf: String::new(),
-        rotate_after: show(p.rotate_after_days()),
-        notify_before: show(p.notify_before_days()),
-        expiry: show(p.expiry_days()),
-    };
-    Ok(render(&RotationPage {
+    let form = RotationForm::from_policy(&p);
+    Ok(rotation_page(
         shell,
         vault,
         name,
         form,
-        errors: Vec::new(),
-    })
-    .into_response())
+        Vec::new(),
+        p.unsupported(),
+        None,
+    ))
 }
 
 pub async fn save_rotation(
@@ -509,26 +683,31 @@ pub async fn save_rotation(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
-    let policy = match build_rotation(&f) {
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
+    let keys = api(&state, &session, &vault);
+    let path = format!("/keys/{name}/rotation");
+    // Read the policy as it is now, so unchanged fields keep Key Vault's
+    // own durations.
+    let current = match keys.rotation_policy(&name).await {
+        Ok(p) => p,
+        Err(e) => return Err(azure_problem(shell, &e, Need::ManageKeys, &path)),
+    };
+    let unsupported = current.unsupported();
+    let policy = match build_rotation(&f, &current) {
         Ok(p) => p,
         Err(errors) => {
-            return Ok((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                render(&RotationPage {
-                    shell,
-                    vault,
-                    name,
-                    form: f,
-                    errors,
-                }),
-            )
-                .into_response());
+            return Ok(rotation_page(
+                shell,
+                vault,
+                name,
+                f,
+                errors,
+                unsupported,
+                None,
+            ));
         }
     };
-    match api(&state, &session, &vault)
-        .set_rotation_policy(&name, &policy)
-        .await
-    {
+    match keys.set_rotation_policy(&name, &policy).await {
         Ok(_) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key rotation policy changed");
             Ok(redirect_with(
@@ -537,12 +716,18 @@ pub async fn save_rotation(
                 format!("Saved the rotation policy for {name}."),
             ))
         }
-        Err(e) => Err(azure_problem(
-            shell,
-            &e,
-            Need::ManageKeys,
-            &format!("/keys/{name}/rotation"),
-        )),
+        Err(e) => match rejection_message(&e) {
+            Some(m) => Ok(rotation_page(
+                shell,
+                vault,
+                name,
+                f,
+                Vec::new(),
+                unsupported,
+                Some(m),
+            )),
+            None => Err(azure_problem(shell, &e, Need::ManageKeys, &path)),
+        },
     }
 }
 
@@ -601,36 +786,161 @@ mod tests {
         assert_eq!(fields, vec!["name", "key_type", "expires"]);
     }
 
-    #[test]
-    fn rotation_rules() {
-        let f = |r: &str, n: &str, e: &str| RotationForm {
+    fn rf(when: &str, r: &str, n: &str, e: &str) -> RotationForm {
+        RotationForm {
             csrf: String::new(),
-            rotate_after: r.into(),
+            rotate_when: when.into(),
+            rotate_days: r.into(),
             notify_before: n.into(),
             expiry: e.into(),
-        };
-        assert!(build_rotation(&f("90", "30", "365")).is_ok());
+            replace: None,
+        }
+    }
+
+    fn policy(v: serde_json::Value) -> RotationPolicy {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn rotation_rules() {
+        let none = RotationPolicy::default();
+        let f = |r: &str, n: &str, e: &str| rf("create", r, n, e);
+        assert!(build_rotation(&f("90", "30", "365"), &none).is_ok());
         assert!(
-            build_rotation(&f("", "", ""))
+            build_rotation(&f("", "", ""), &none)
                 .unwrap()
                 .lifetime_actions
                 .is_empty()
         );
         assert_eq!(
-            build_rotation(&f("400", "", "365")).err().unwrap()[0].field,
-            "rotate_after"
+            build_rotation(&f("400", "", "365"), &none).err().unwrap()[0].field,
+            "rotate_days"
         );
         assert_eq!(
-            build_rotation(&f("", "30", "")).err().unwrap()[0].field,
+            build_rotation(&f("", "30", ""), &none).err().unwrap()[0].field,
             "notify_before"
         );
         assert_eq!(
-            build_rotation(&f("3", "", "")).err().unwrap()[0].field,
-            "rotate_after"
+            build_rotation(&f("3", "", ""), &none).err().unwrap()[0].field,
+            "rotate_days"
         );
         assert_eq!(
-            build_rotation(&f("", "", "10")).err().unwrap()[0].field,
+            build_rotation(&f("", "", "10"), &none).err().unwrap()[0].field,
             "expiry"
         );
+    }
+
+    #[test]
+    fn rotate_needs_a_seven_day_gap_before_expiry() {
+        let none = RotationPolicy::default();
+        let e = build_rotation(&rf("create", "85", "", "90"), &none)
+            .err()
+            .unwrap();
+        assert_eq!(e[0].field, "rotate_days");
+        assert!(
+            e[0].message.contains("83 days or fewer"),
+            "{}",
+            e[0].message
+        );
+        assert!(build_rotation(&rf("create", "83", "", "90"), &none).is_ok());
+        assert!(build_rotation(&rf("expiry", "85", "", "90"), &none).is_err());
+        assert!(build_rotation(&rf("expiry", "30", "", "90"), &none).is_ok());
+        assert!(
+            build_rotation(&rf("expiry", "30", "", ""), &none).is_err(),
+            "before expiry needs an expiry"
+        );
+    }
+
+    #[test]
+    fn before_expiry_policies_round_trip() {
+        let p = policy(serde_json::json!({
+            "lifetimeActions": [
+                {"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Rotate"}},
+                {"trigger": {"timeBeforeExpiry": "P10D"}, "action": {"type": "Notify"}}
+            ],
+            "attributes": {"expiryTime": "P90D"}
+        }));
+        let f = RotationForm::from_policy(&p);
+        assert_eq!(f.rotate_when, "expiry");
+        assert_eq!(f.rotate_days, "30");
+        // Changing only the notify period keeps the rotate trigger.
+        let mut f = f;
+        f.notify_before = "14".into();
+        let saved = build_rotation(&f, &p).unwrap();
+        assert_eq!(
+            saved.rotate_at(),
+            Some(RotateAt::BeforeExpiry("P30D".into()))
+        );
+        assert_eq!(saved.notify_before(), Some("P14D"));
+    }
+
+    #[test]
+    fn unchanged_fields_keep_key_vault_durations() {
+        let p = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeAfterCreate": "P1Y"}, "action": {"type": "Rotate"}}],
+            "attributes": {"expiryTime": "P2Y"}
+        }));
+        let f = RotationForm::from_policy(&p);
+        assert_eq!((f.rotate_days.as_str(), f.expiry.as_str()), ("365", "730"));
+        let saved = build_rotation(&f, &p).unwrap();
+        assert_eq!(saved, p, "open and save changes nothing");
+        let mut changed = RotationForm::from_policy(&p);
+        changed.expiry = "800".into();
+        let saved = build_rotation(&changed, &p).unwrap();
+        assert_eq!(saved.expiry(), Some("P800D"));
+        assert_eq!(saved.rotate_at(), Some(RotateAt::AfterCreate("P1Y".into())));
+    }
+
+    #[test]
+    fn policies_the_form_cant_show_need_replace() {
+        let p = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeAfterCreate": "PT48H"}, "action": {"type": "Rotate"}}]
+        }));
+        let f = RotationForm::from_policy(&p);
+        assert_eq!(f.rotate_days, "");
+        let e = build_rotation(&f, &p).err().unwrap();
+        assert_eq!(e[0].field, "replace");
+        let mut f = f;
+        f.replace = Some("on".into());
+        assert!(build_rotation(&f, &p).is_ok());
+    }
+
+    #[test]
+    fn key_vault_default_policy_saves_untouched() {
+        let p = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Notify"}}],
+            "attributes": {}
+        }));
+        let f = RotationForm::from_policy(&p);
+        assert_eq!(f.notify_before, "", "default shown as no policy");
+        assert!(
+            build_rotation(&f, &p).is_ok(),
+            "Save on an untouched form works"
+        );
+    }
+
+    #[test]
+    fn hsm_refusal_is_matched_narrowly() {
+        let e = |code: &str, msg: &str| AzureError::Status {
+            status: 400,
+            code: Some(code.into()),
+            message: Some(msg.into()),
+        };
+        assert!(is_hsm_refusal(&e(
+            "BadParameter",
+            "The vault SKU does not support HSM keys."
+        )));
+        assert!(!is_hsm_refusal(&e("BadParameter", "Invalid curve name.")));
+        assert!(!is_hsm_refusal(&e(
+            "BadParameter",
+            "Key size not supported for RSA-HSM."
+        )));
+    }
+
+    #[test]
+    fn reserved_names_refused_on_create() {
+        let e = build(&pairs(&[("name", "new")]), 0).err().unwrap();
+        assert_eq!(e[0].field, "name");
+        assert!(e[0].message.contains("own pages"));
     }
 }

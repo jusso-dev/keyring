@@ -18,12 +18,22 @@ use super::{api, current_vault};
 const KIND: Kind = Kind::Certificate;
 
 pub async fn delete_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    // Make sure there's something to delete before asking for the name.
+    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+        return Err(azure_problem(
+            shell,
+            &e,
+            Need::ReadCertificates,
+            &format!("/certificates/{name}"),
+        ));
+    }
     Ok(lifecycle::confirm_page(
         shell,
         lifecycle::delete_view(KIND, &vault, &name),

@@ -2,7 +2,7 @@
 //! because Key Vault backs every certificate with a secret of the same name.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::{Path, Query, State};
@@ -31,6 +31,20 @@ pub struct StoredCert {
     pub versions: Vec<CertVersion>,
     pub policy: Value,
     pub pending: Option<Value>,
+}
+
+/// Certificate state the mock keeps beside the shared stores.
+#[derive(Default)]
+pub struct Extra {
+    /// Issuer names `GET /certificates/issuers` lists.
+    pub issuers: Mutex<Vec<String>>,
+    /// Keep a self-signed create `inProgress` until a test clears this.
+    pub hold_self_signed: Mutex<bool>,
+    /// Answer "list versions" for an unknown name with 404 instead of an
+    /// empty list, to test both replies.
+    pub versions_404: Mutex<bool>,
+    /// When set, a PFX import with any other password gets Key Vault's 400.
+    pub pfx_password: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,9 +89,12 @@ pub fn router(state: Arc<KvState>) -> Router<Arc<KvState>> {
             "/{vault}/certificates/{name}/policy",
             axum::routing::get(policy),
         )
+        .route("/{vault}/certificates/issuers", axum::routing::get(issuers))
         .route(
             "/{vault}/certificates/{name}/pending",
-            axum::routing::get(pending),
+            axum::routing::get(pending)
+                .patch(cancel_pending)
+                .delete(delete_pending),
         )
         .route(
             "/{vault}/certificates/{name}/import",
@@ -89,7 +106,7 @@ pub fn router(state: Arc<KvState>) -> Router<Arc<KvState>> {
         )
         .route(
             "/{vault}/certificates/{name}/{version}",
-            axum::routing::get(get_version),
+            axum::routing::get(get_version).patch(update_version),
         )
         .route(
             "/{vault}/deletedcertificates",
@@ -110,6 +127,48 @@ fn err(status: u16, code: &str) -> Response {
         StatusCode::from_u16(status).unwrap(),
         json!({"error": {"code": code, "message": "mock Key Vault error with private detail"}}),
     )
+}
+
+/// A 400 with Key Vault's own message, which Keyring now shows.
+fn bad_request(message: &str) -> Response {
+    json_response(
+        StatusCode::BAD_REQUEST,
+        json!({"error": {"code": "BadParameter", "message": message}}),
+    )
+}
+
+/// A self-signed create finishes a few seconds after Key Vault answers.
+/// The mock finishes it on the next read of that certificate, unless the
+/// test holds it.
+fn settle(s: &KvState, name: &str) {
+    if *s.cert_extra.hold_self_signed.lock().unwrap() {
+        return;
+    }
+    let policy = {
+        let mut certs = s.certs.lock().unwrap();
+        let Some(c) = certs.get_mut(name) else { return };
+        let waiting = c
+            .pending
+            .as_ref()
+            .is_some_and(|p| p["status"] == "inProgress" && p["issuer"]["name"] == "Self");
+        if !waiting {
+            return;
+        }
+        c.versions.clear();
+        c.policy.clone()
+    };
+    let der = super::pem_first_cert(super::TEST_CERT_PEM);
+    s.add_cert_version(name, der, policy, |_| {});
+    if let Some(c) = s.certs.lock().unwrap().get_mut(name) {
+        c.pending = Some(json!({"status": "completed", "issuer": {"name": "Self"}}));
+    }
+}
+
+fn settle_all(s: &KvState) {
+    let names: Vec<String> = s.certs.lock().unwrap().keys().cloned().collect();
+    for n in names {
+        settle(s, &n);
+    }
 }
 
 fn base(headers: &HeaderMap, vault: &str) -> String {
@@ -180,6 +239,7 @@ async fn list(
     uri: Uri,
 ) -> Response {
     let b = base(&headers, &vault);
+    settle_all(&s);
     let items = s
         .certs
         .lock()
@@ -198,8 +258,15 @@ async fn versions(
     uri: Uri,
 ) -> Response {
     let b = base(&headers, &vault);
+    settle(&s, &name);
+    // Key Vault's "Get Certificate Versions" answers 200 with an empty
+    // list for a name it doesn't have (REST reference, Certificates, Get
+    // Certificate Versions). Keyring has to treat that as "free".
     let Some(c) = s.certs.lock().unwrap().get(&name).cloned() else {
-        return err(404, "CertificateNotFound");
+        if *s.cert_extra.versions_404.lock().unwrap() {
+            return err(404, "CertificateNotFound");
+        }
+        return page(Vec::new(), &q, &uri, &b);
     };
     page(
         c.versions
@@ -218,6 +285,7 @@ async fn get_current(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    settle(&s, &name);
     match s.certs.lock().unwrap().get(&name) {
         Some(c) => json_response(
             StatusCode::OK,
@@ -233,6 +301,7 @@ async fn get_version(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    settle(&s, &name);
     let certs = s.certs.lock().unwrap();
     let Some(c) = certs.get(&name) else {
         return err(404, "CertificateNotFound");
@@ -243,10 +312,81 @@ async fn get_version(
     }
 }
 
+/// "Update Certificate": only `attributes.enabled` is used here.
+async fn update_version(
+    State(s): State<Arc<KvState>>,
+    Path((vault, name, version)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let body: Value = serde_json::from_str(&body).unwrap();
+    let b = base(&headers, &vault);
+    let mut certs = s.certs.lock().unwrap();
+    let Some(c) = certs.get_mut(&name) else {
+        return err(404, "CertificateNotFound");
+    };
+    let Some(v) = c.versions.iter_mut().find(|v| v.version == version) else {
+        return err(404, "CertificateNotFound");
+    };
+    if let Some(e) = body["attributes"]["enabled"].as_bool() {
+        v.enabled = e;
+    }
+    let v = v.clone();
+    json_response(StatusCode::OK, bundle(&b, &name, c, &v))
+}
+
+/// "Get Certificate Issuers".
+async fn issuers(
+    State(s): State<Arc<KvState>>,
+    Path(vault): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let b = base(&headers, &vault);
+    let items: Vec<Value> = s
+        .cert_extra
+        .issuers
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|n| json!({"id": format!("{b}/certificates/issuers/{n}"), "provider": "Test"}))
+        .collect();
+    json_response(StatusCode::OK, json!({"value": items, "nextLink": null}))
+}
+
+/// "Update Certificate Operation": records `cancellation_requested`.
+async fn cancel_pending(
+    State(s): State<Arc<KvState>>,
+    Path((_vault, name)): Path<(String, String)>,
+    body: String,
+) -> Response {
+    let body: Value = serde_json::from_str(&body).unwrap();
+    let mut certs = s.certs.lock().unwrap();
+    match certs.get_mut(&name).and_then(|c| c.pending.as_mut()) {
+        Some(p) => {
+            p["cancellation_requested"] = body["cancellation_requested"].clone();
+            json_response(StatusCode::OK, p.clone())
+        }
+        None => err(404, "PendingCertificateNotFound"),
+    }
+}
+
+/// "Delete Certificate Operation".
+async fn delete_pending(
+    State(s): State<Arc<KvState>>,
+    Path((_vault, name)): Path<(String, String)>,
+) -> Response {
+    let mut certs = s.certs.lock().unwrap();
+    match certs.get_mut(&name).and_then(|c| c.pending.take()) {
+        Some(p) => json_response(StatusCode::OK, p),
+        None => err(404, "PendingCertificateNotFound"),
+    }
+}
+
 async fn policy(
     State(s): State<Arc<KvState>>,
     Path((_vault, name)): Path<(String, String)>,
 ) -> Response {
+    settle(&s, &name);
     match s.certs.lock().unwrap().get(&name) {
         Some(c) => json_response(StatusCode::OK, c.policy.clone()),
         None => err(404, "CertificateNotFound"),
@@ -257,6 +397,7 @@ async fn pending(
     State(s): State<Arc<KvState>>,
     Path((_vault, name)): Path<(String, String)>,
 ) -> Response {
+    settle(&s, &name);
     match s
         .certs
         .lock()
@@ -285,6 +426,24 @@ async fn import(
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
         return err(409, "Conflict");
+    }
+    let value = body["value"].as_str().unwrap_or_default();
+    let is_pem = body["policy"]["secret_props"]["contentType"] == "application/x-pem-file";
+    // "Import Certificate" answers 400 when it can't read the file: a PEM
+    // key that isn't unencrypted PKCS #8, or a PFX password that doesn't
+    // open it (REST reference, Certificates, Import Certificate). The mock
+    // only checks the password when a test sets `pfx_password`.
+    if is_pem && (value.contains("BEGIN RSA PRIVATE KEY") || value.contains("BEGIN EC PRIVATE KEY"))
+    {
+        return bad_request(
+            "The specified PEM X.509 certificate content is in an unexpected format. Please check if certificate is in valid PEM format.",
+        );
+    }
+    let want = s.cert_extra.pfx_password.lock().unwrap().clone();
+    if !is_pem && want.is_some_and(|w| body["pwd"].as_str() != Some(w.as_str())) {
+        return bad_request(
+            "Specified PKCS#12 X.509 certificate content can not be read. Please check if certificate is in valid PKCS#12 format.",
+        );
     }
     s.imports.lock().unwrap().push(ImportRecord {
         name: name.clone(),
@@ -356,36 +515,34 @@ async fn create(
         .to_owned();
     let b = base(&headers, &vault);
     let op_id = format!("{b}/certificates/{name}/pending");
-    if issuer == "Self" {
-        // Self-signed completes straight away with the test certificate.
-        let der = super::pem_first_cert(super::TEST_CERT_PEM);
-        s.add_cert_version(&name, der, body["policy"].clone(), |_| {});
-        json_response(
-            StatusCode::ACCEPTED,
-            json!({"id": op_id, "status": "completed", "issuer": {"name": "Self"}}),
-        )
+    // "Create Certificate" answers 202 with `status: inProgress` for every
+    // issuer, Self included (REST reference, Certificates, Create
+    // Certificate). A self-signed one completes a few seconds later; the
+    // mock completes it on the next read (see `settle`).
+    let details = if issuer == "Self" {
+        "Pending certificate created. Certificate request is in progress. This may take some time based on the issuer provider."
     } else {
-        let op = json!({"id": op_id, "status": "inProgress", "status_details": "Waiting for the CA to approve the request.", "issuer": {"name": issuer}});
-        let mut certs = s.certs.lock().unwrap();
-        let t = 1;
-        certs.insert(
-            name.clone(),
-            StoredCert {
-                versions: vec![CertVersion {
-                    version: "f".repeat(32),
-                    der: None,
-                    enabled: false,
-                    created: t,
-                    exp: None,
-                    nbf: None,
-                    tags: BTreeMap::new(),
-                }],
-                policy: body["policy"].clone(),
-                pending: Some(op.clone()),
-            },
-        );
-        json_response(StatusCode::ACCEPTED, op)
-    }
+        "Waiting for the CA to approve the request."
+    };
+    let op = json!({"id": op_id, "status": "inProgress", "status_details": details, "cancellation_requested": false, "issuer": {"name": issuer}});
+    let mut certs = s.certs.lock().unwrap();
+    certs.insert(
+        name.clone(),
+        StoredCert {
+            versions: vec![CertVersion {
+                version: "f".repeat(32),
+                der: None,
+                enabled: false,
+                created: 1,
+                exp: None,
+                nbf: None,
+                tags: BTreeMap::new(),
+            }],
+            policy: body["policy"].clone(),
+            pending: Some(op.clone()),
+        },
+    );
+    json_response(StatusCode::ACCEPTED, op)
 }
 
 async fn delete(

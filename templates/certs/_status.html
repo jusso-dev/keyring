@@ -1,2 +1,2 @@
 {%- if !row.enabled %}<span class="badge badge-muted">Disabled</span> {% endif -%}
-{%- if row.is_expired() %}<span class="badge badge-error">Expired</span>{% elif row.within30() %}<span class="badge badge-error">Expires within 30 days</span>{% elif row.within90() %}<span class="badge badge-warn">Expires within 90 days</span>{% endif -%}
+{%- if row.is_expired() %}<span class="badge badge-error">Expired</span>{% elif row.within30() %}<span class="badge badge-error">Expires within 30 days</span>{% elif row.within90() %}<span class="badge badge-warn">Expires within 90 days</span>{% elif row.enabled %}<span class="muted">Active</span>{% endif -%}

@@ -24,7 +24,7 @@ use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, checked_name};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 use crate::x509;
 
 use super::{api, current_vault};
@@ -184,6 +184,35 @@ pub async fn pfx_form(
     .into_response())
 }
 
+/// True when `sid` is `{vault}/secrets/{name}/{version}` on this vault:
+/// same origin (host in any case), the exact name, and a hex version.
+pub fn is_backing_secret(vault_url: &str, name: &str, sid: &str) -> bool {
+    if !crate::azure::paging::same_vault(vault_url, sid) {
+        return false;
+    }
+    let Some((_, after)) = sid.split_once("://") else {
+        return false;
+    };
+    let path = after.find('/').map(|i| &after[i..]).unwrap_or_default();
+    if path.contains(['?', '#']) {
+        return false;
+    }
+    let base = vault_url
+        .split_once("://")
+        .and_then(|(_, a)| a.find('/').map(|i| a[i..].trim_end_matches('/')))
+        .unwrap_or_default();
+    let Some(rest) = path.strip_prefix(base) else {
+        return false;
+    };
+    match rest
+        .strip_prefix("/secrets/")
+        .map(|r| r.split('/').collect::<Vec<_>>())
+    {
+        Some(parts) => matches!(parts.as_slice(), [n, v] if *n == name && is_valid_version(v)),
+        None => false,
+    }
+}
+
 #[derive(Deserialize)]
 struct SecretValue {
     value: String,
@@ -200,6 +229,8 @@ pub async fn pfx(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    // The form token first, so a forged post reaches nothing in Key Vault.
+    let shell = check_csrf(&session, &form.csrf, shell)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
         .policy
@@ -224,11 +255,11 @@ pub async fn pfx(
                 .into());
         }
     }
-    // The backing secret URL comes from Key Vault; only use it if it's on
-    // this vault.
+    // The backing secret URL comes from Key Vault; only use it if it's
+    // exactly this certificate's secret on this vault.
     let sid = bundle.sid.unwrap_or_default();
     let vault_url = state.config.vault_url(&vault);
-    if !sid.starts_with(&format!("{vault_url}/secrets/{name}")) {
+    if !is_backing_secret(&vault_url, &name, &sid) {
         return Err(PageError::new(shell, Problem::not_found()).into());
     }
     let url = format!("{sid}?api-version={}", crate::azure::secrets::API_VERSION);
@@ -268,5 +299,52 @@ pub async fn pfx(
             )
             .into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const V: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn backing_secret_url_must_be_exact() {
+        let vault = "https://kv-prod.vault.azure.net";
+        assert!(is_backing_secret(
+            vault,
+            "api",
+            &format!("https://kv-prod.vault.azure.net/secrets/api/{V}")
+        ));
+        // Key Vault may write the host in another case, or with :443.
+        assert!(is_backing_secret(
+            vault,
+            "api",
+            &format!("https://KV-Prod.vault.azure.net:443/secrets/api/{V}")
+        ));
+        for bad in [
+            format!("https://kv-prod.vault.azure.net/secrets/api-internal/{V}"),
+            format!("https://kv-prod.vault.azure.net/secrets/api/{V}/extra"),
+            "https://kv-prod.vault.azure.net/secrets/api/not-hex".to_owned(),
+            "https://kv-prod.vault.azure.net/secrets/api".to_owned(),
+            format!("https://kv-other.vault.azure.net/secrets/api/{V}"),
+            format!("https://kv-prod.vault.azure.net/secrets/api/{V}?x=1"),
+            format!("https://kv-prod.vault.azure.net/keys/api/{V}"),
+            String::new(),
+        ] {
+            assert!(!is_backing_secret(vault, "api", &bad), "{bad}");
+        }
+        // The test mock serves vaults under a path.
+        let local = "http://127.0.0.1:5000/kv-test";
+        assert!(is_backing_secret(
+            local,
+            "api",
+            &format!("http://127.0.0.1:5000/kv-test/secrets/api/{V}")
+        ));
+        assert!(!is_backing_secret(
+            local,
+            "api",
+            &format!("http://127.0.0.1:5000/kv-other/secrets/api/{V}")
+        ));
     }
 }

@@ -3,7 +3,7 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect};
 use serde::Deserialize;
@@ -17,13 +17,64 @@ use crate::azure::certs::{
 };
 use crate::azure::secrets::Attributes;
 use crate::routes::assets::render;
-use crate::routes::error::{Need, PageResult};
+use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::flash::{self, Flash};
-use crate::routes::secrets::form::{FieldError, name_problem, parse_tags};
+use crate::routes::lifecycle::redirect_with;
+use crate::routes::secrets::form::{FieldError, parse_tags};
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
-use super::{api, current_vault};
+use super::{api, current_vault, new_name_problem};
+
+/// Key Vault's limit on `days_before_expiry`: from 1 to 27 times the
+/// validity in months. From the REST reference for "Create Certificate",
+/// `LifetimeAction.trigger.days_before_expiry`: "Value should be between 1
+/// and validity_in_months multiplied by 27."
+pub const DAYS_PER_MONTH_LIMIT: u32 = 27;
+
+/// The default renewal point: 30 days before expiry, or less for a short
+/// certificate.
+pub fn default_renew_days(months: u32) -> u32 {
+    30.min(months * DAYS_PER_MONTH_LIMIT)
+}
+
+/// The issuer choices for the form: always `Self`, then the vault's own.
+pub struct Issuers {
+    pub names: Vec<String>,
+    /// Why only `Self` is offered, when the vault's list couldn't be read.
+    pub note: Option<String>,
+}
+
+impl Issuers {
+    pub fn self_only(note: Option<String>) -> Self {
+        Self {
+            names: Vec::new(),
+            note,
+        }
+    }
+}
+
+async fn load_issuers(certs: &crate::azure::certs::CertsApi<'_>) -> Issuers {
+    match certs.issuers().await {
+        Ok(list) => Issuers {
+            names: list
+                .iter()
+                .map(|i| i.name().to_owned())
+                .filter(|n| !n.eq_ignore_ascii_case("Self") && !n.eq_ignore_ascii_case("Unknown"))
+                .collect(),
+            note: None,
+        },
+        Err(AzureError::Status { status: 403, .. }) => Issuers::self_only(Some(
+            "You can't see this vault's issuers, so only self-signed is offered. Listing issuers needs the Key Vault Certificates Officer role.".into(),
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "couldn't list certificate issuers");
+            Issuers::self_only(Some(
+                "Keyring couldn't load this vault's issuers just now, so only self-signed is offered. Refresh the page to try again.".into(),
+            ))
+        }
+    }
+}
 
 /// Key choices offered. The first is the default.
 pub const KEY_CHOICES: [(&str, &str); 5] = [
@@ -92,12 +143,13 @@ fn err(field: &'static str, message: impl Into<String>) -> FieldError {
     }
 }
 
-/// Check the form and build the create request.
-pub fn build(f: &CreateForm) -> Result<(String, CreateCert), Vec<FieldError>> {
+/// Check the form and build the create request. `issuers` are the names
+/// set up on the vault; `Self` is always allowed.
+pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert), Vec<FieldError>> {
     let mut errors = Vec::new();
     let name = f.name.trim().to_owned();
-    if let Some(m) = name_problem(&name) {
-        errors.push(err("name", m.replace("the secret", "the certificate")));
+    if let Some(m) = new_name_problem(&name) {
+        errors.push(err("name", m));
     }
     let cn = f.common_name.trim();
     if cn.is_empty() {
@@ -172,13 +224,15 @@ pub fn build(f: &CreateForm) -> Result<(String, CreateCert), Vec<FieldError>> {
             KeyProps::default()
         }
     };
+    // `Unknown` means "I'll get it signed elsewhere", which Keyring can't
+    // finish, so only Self and the vault's own issuers are allowed.
     let issuer = match f.issuer.trim() {
         "" | "Self" => "Self".to_owned(),
-        other if crate::routes::vault_ctx::is_valid_object_name(other) => other.to_owned(),
+        other if issuers.iter().any(|i| i == other) => other.to_owned(),
         _ => {
             errors.push(err(
                 "issuer",
-                "Issuer names use letters, numbers and hyphens. Use Self for self-signed.",
+                "Pick an issuer from the list. Self is for self-signed.",
             ));
             "Self".into()
         }
@@ -187,16 +241,19 @@ pub fn build(f: &CreateForm) -> Result<(String, CreateCert), Vec<FieldError>> {
         "pem" => "application/x-pem-file",
         _ => "application/x-pkcs12",
     };
+    let max_days = months * DAYS_PER_MONTH_LIMIT;
     let renew_days: Option<u32> = match f.renewal.as_str() {
         "none" => None,
         _ => match f.renew_days.trim() {
-            "" => Some(30),
+            "" => Some(default_renew_days(months)),
             d => match d.parse::<u32>() {
-                Ok(n) if n >= 1 && n < months * 28 => Some(n),
+                Ok(n) if (1..=max_days).contains(&n) => Some(n),
                 _ => {
                     errors.push(err(
                         "renew_days",
-                        "Pick a number of days shorter than the certificate's life.",
+                        format!(
+                            "Pick a number of days from 1 to {max_days}. Key Vault allows up to 27 days for each month the certificate is valid."
+                        ),
                     ));
                     None
                 }
@@ -266,6 +323,9 @@ struct CreatePage {
     vault: String,
     form: CreateForm,
     errors: Vec<FieldError>,
+    issuers: Issuers,
+    /// Key Vault's own reason, after it refused the request.
+    azure_message: Option<String>,
 }
 
 impl CreatePage {
@@ -281,6 +341,9 @@ impl CreatePage {
     fn key_selected(&self, v: &str) -> bool {
         self.form.key == v || (self.form.key.is_empty() && v == KEY_CHOICES[0].0)
     }
+    fn issuer_selected(&self, v: &str) -> bool {
+        self.form.issuer == v
+    }
 }
 
 fn page(
@@ -288,8 +351,10 @@ fn page(
     vault: String,
     form: CreateForm,
     errors: Vec<FieldError>,
+    issuers: Issuers,
+    azure_message: Option<String>,
 ) -> axum::response::Response {
-    let status = if errors.is_empty() {
+    let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -301,13 +366,20 @@ fn page(
             vault,
             form,
             errors,
+            issuers,
+            azure_message,
         }),
     )
         .into_response()
 }
 
-pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
+pub async fn form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
+    let issuers = load_issuers(&api(&state, &session, &vault)).await;
     let defaults = CreateForm {
         validity_months: "12".into(),
         exportable: Some("on".into()),
@@ -317,7 +389,7 @@ pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
         format: "pfx".into(),
         ..CreateForm::default()
     };
-    Ok(page(shell, vault, defaults, Vec::new()))
+    Ok(page(shell, vault, defaults, Vec::new(), issuers, None))
 }
 
 pub async fn create(
@@ -328,21 +400,23 @@ pub async fn create(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
-    let (name, body) = match build(&f) {
-        Ok(ok) => ok,
-        Err(errors) => return Ok(page(shell, vault, f, errors)),
-    };
     let certs = api(&state, &session, &vault);
+    let issuers = load_issuers(&certs).await;
+    let (name, body) = match build(&f, &issuers.names) {
+        Ok(ok) => ok,
+        Err(errors) => return Ok(page(shell, vault, f, errors, issuers, None)),
+    };
     // Creating over an existing name adds a version. Refuse, like secrets.
+    // Key Vault may answer an unknown name with 404 or with an empty list.
     match certs.versions(&name).await {
-        Ok(_) => {
+        Ok(v) if !v.is_empty() => {
             let errors = vec![err(
                 "name",
                 format!("There's already a certificate called {name}. Pick another name."),
             )];
-            return Ok(page(shell, vault, f, errors));
+            return Ok(page(shell, vault, f, errors, issuers, None));
         }
-        Err(AzureError::Status { status: 404, .. }) => {}
+        Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
         Err(e) => {
             return Err(azure_problem(
                 shell,
@@ -352,6 +426,7 @@ pub async fn create(
             ));
         }
     }
+    let self_signed = body.policy.issuer_name() == "Self";
     match certs.create(&name, &body).await {
         Ok(op) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate created");
@@ -359,8 +434,12 @@ pub async fn create(
                 .status
                 .as_deref()
                 .is_some_and(|s| s.eq_ignore_ascii_case("completed"));
+            // Key Vault answers 202 `inProgress` for every issuer, Self
+            // included. A self-signed one is ready a few seconds later.
             let message = if done {
                 format!("Created {name}.")
+            } else if self_signed {
+                format!("Creating {name}. This usually takes a few seconds.")
             } else {
                 format!(
                     "Requested {name}. It appears once the issuer signs it. Its page shows progress."
@@ -377,14 +456,49 @@ pub async fn create(
                     "A deleted certificate called {name} is still being kept. Recover it from deleted certificates, or pick another name."
                 ),
             )];
-            Ok(page(shell, vault, f, errors))
+            Ok(page(shell, vault, f, errors, issuers, None))
         }
-        Err(e) => Err(azure_problem(
-            shell,
-            &e,
-            Need::ManageCertificates,
-            "/certificates/new",
-        )),
+        Err(e) => match rejection_message(&e) {
+            Some(m) => Ok(page(shell, vault, f, Vec::new(), issuers, Some(m))),
+            None => Err(azure_problem(
+                shell,
+                &e,
+                Need::ManageCertificates,
+                "/certificates/new",
+            )),
+        },
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CsrfForm {
+    #[serde(default)]
+    csrf: String,
+}
+
+/// Stop a pending create or renewal: ask Key Vault to cancel it, then
+/// delete the request.
+pub async fn cancel_pending(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+    Form(f): Form<CsrfForm>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let path = format!("/certificates/{name}");
+    match api(&state, &session, &vault).cancel_pending(&name).await {
+        Ok(()) => {
+            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate request cancelled");
+            Ok(redirect_with(
+                &state,
+                &path,
+                format!("Cancelled the request for {name}."),
+            ))
+        }
+        Err(e) => Err(azure_problem(shell, &e, Need::ManageCertificates, &path)),
     }
 }
 
@@ -406,7 +520,7 @@ mod tests {
 
     #[test]
     fn defaults_make_a_sensible_self_signed_policy() {
-        let (name, body) = build(&form()).unwrap();
+        let (name, body) = build(&form(), &[]).unwrap();
         assert_eq!(name, "web-tls");
         let p = serde_json::to_value(&body.policy).unwrap();
         assert_eq!(p["issuer"]["name"], "Self");
@@ -440,7 +554,7 @@ mod tests {
         f.issuer = "DigiCert-OV".into();
         f.format = "pem".into();
         f.dns_names = "www.example.com\n*.api.example.com\nWWW.example.com".into();
-        let (_, body) = build(&f).unwrap();
+        let (_, body) = build(&f, &["DigiCert-OV".into()]).unwrap();
         let p = serde_json::to_value(&body.policy).unwrap();
         assert_eq!(p["key_props"]["crv"], "P-256");
         assert_eq!(p["key_props"]["exportable"], false);
@@ -453,7 +567,7 @@ mod tests {
         let sans = p["x509_props"]["sans"]["dns_names"].as_array().unwrap();
         assert_eq!(sans.len(), 3, "duplicates removed, CN added: {sans:?}");
         f.renewal = "none".into();
-        let (_, body) = build(&f).unwrap();
+        let (_, body) = build(&f, &["DigiCert-OV".into()]).unwrap();
         assert!(body.policy.lifetime_actions.is_empty());
     }
 
@@ -465,14 +579,68 @@ mod tests {
         f.dns_names = "bad name.com".into();
         f.validity_months = "0".into();
         f.key = "DSA".into();
-        let fields: Vec<_> = build(&f).err().unwrap().iter().map(|e| e.field).collect();
+        let fields: Vec<_> = build(&f, &[])
+            .err()
+            .unwrap()
+            .iter()
+            .map(|e| e.field)
+            .collect();
         assert_eq!(
             fields,
             vec!["name", "common_name", "dns_names", "validity_months", "key"]
         );
         let mut f = form();
         f.renew_days = "500".into();
-        assert_eq!(build(&f).err().unwrap()[0].field, "renew_days");
+        assert_eq!(build(&f, &[]).err().unwrap()[0].field, "renew_days");
+    }
+
+    #[test]
+    fn issuer_must_be_self_or_on_the_vault() {
+        let mut f = form();
+        for bad in ["Unknown", "DigiCert-OV", "bad name"] {
+            f.issuer = bad.into();
+            assert_eq!(
+                build(&f, &["Other-CA".into()]).err().unwrap()[0].field,
+                "issuer",
+                "{bad}"
+            );
+        }
+        f.issuer = "Other-CA".into();
+        assert!(build(&f, &["Other-CA".into()]).is_ok());
+    }
+
+    #[test]
+    fn renewal_days_follow_key_vaults_bound() {
+        let days = |months: &str, renew: &str| {
+            let mut f = form();
+            f.validity_months = months.into();
+            f.renew_days = renew.into();
+            build(&f, &[]).map(|(_, b)| {
+                b.policy.lifetime_actions[0]
+                    .trigger
+                    .days_before_expiry
+                    .unwrap()
+            })
+        };
+        // Blank uses 30, or less for a short certificate.
+        assert_eq!(days("1", "").unwrap(), 27);
+        assert_eq!(days("2", "").unwrap(), 30);
+        assert_eq!(days("12", "").unwrap(), 30);
+        // The bound is 27 days for each month.
+        assert_eq!(days("1", "27").unwrap(), 27);
+        assert!(days("1", "28").is_err());
+        assert_eq!(days("2", "54").unwrap(), 54);
+        assert!(days("2", "55").is_err());
+        assert_eq!(days("12", "324").unwrap(), 324);
+        assert!(days("12", "325").is_err());
+        assert!(days("12", "0").is_err());
+    }
+
+    #[test]
+    fn reserved_names_refused() {
+        let mut f = form();
+        f.name = "upload".into();
+        assert_eq!(build(&f, &[]).err().unwrap()[0].field, "name");
     }
 
     #[test]
