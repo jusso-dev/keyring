@@ -53,6 +53,11 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      # static/app.js against hand-written browser stubs. The runner's own
+      # Node, no packages.
+      - name: Browser script tests
+        run: node --test tests/js/*.test.mjs
+
       - name: Release build
         run: cargo build --release --locked
 
