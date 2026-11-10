@@ -8,13 +8,13 @@
 //! preview, so we read the outer structure by hand instead.
 
 /// DER tag and value, borrowed from the input.
-struct Tlv<'a> {
-    tag: u8,
-    value: &'a [u8],
+pub(crate) struct Tlv<'a> {
+    pub(crate) tag: u8,
+    pub(crate) value: &'a [u8],
 }
 
 /// Read one TLV from the front of `input`, returning it and the rest.
-fn read_tlv(input: &[u8]) -> Option<(Tlv<'_>, &[u8])> {
+pub(crate) fn read_tlv(input: &[u8]) -> Option<(Tlv<'_>, &[u8])> {
     let (&tag, rest) = input.split_first()?;
     let (&first, rest) = rest.split_first()?;
     let (len, rest) = if first < 0x80 {
@@ -42,7 +42,7 @@ fn read_tlv(input: &[u8]) -> Option<(Tlv<'_>, &[u8])> {
 }
 
 /// Every TLV inside a constructed value.
-fn children(mut input: &[u8]) -> Option<Vec<Tlv<'_>>> {
+pub(crate) fn children(mut input: &[u8]) -> Option<Vec<Tlv<'_>>> {
     let mut out = Vec::new();
     while !input.is_empty() {
         let (tlv, rest) = read_tlv(input)?;
@@ -79,6 +79,31 @@ pub struct PfxInfo {
     pub has_encrypted_part: bool,
     /// DER certificates stored without encryption.
     pub certs: Vec<Vec<u8>>,
+}
+
+/// True when `der` starts the way every PKCS #12 file does: an outer
+/// SEQUENCE (definite or indefinite length) holding INTEGER 3. Some tools
+/// write PFX files in BER, with indefinite lengths, which [`inspect`]
+/// can't walk. Those are still worth sending to Key Vault.
+pub fn looks_like_pfx(der: &[u8]) -> bool {
+    let Some((&SEQUENCE, rest)) = der.split_first() else {
+        return false;
+    };
+    let Some((&len, rest)) = rest.split_first() else {
+        return false;
+    };
+    let rest = match len {
+        0x80 => rest,
+        l if l < 0x80 => rest,
+        l => {
+            let n = (l & 0x7f) as usize;
+            if n > 4 || rest.len() < n {
+                return false;
+            }
+            &rest[n..]
+        }
+    };
+    rest.starts_with(&[INTEGER, 0x01, 0x03])
 }
 
 /// Inspect a PFX. `None` if it isn't one.
@@ -160,7 +185,7 @@ fn cert_from_bag(value: &Tlv<'_>) -> Option<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const PFX_PLAIN: &[u8] = include_bytes!("../tests/fixtures/test-plain.pfx");
@@ -180,6 +205,28 @@ mod tests {
         let info = inspect(PFX_ENCRYPTED).unwrap();
         assert!(info.has_encrypted_part);
         assert!(info.certs.is_empty());
+    }
+
+    /// The plain test PFX re-written with an indefinite outer length, the
+    /// way some older Windows and Java tools write it.
+    pub(crate) fn ber_pfx() -> Vec<u8> {
+        let (outer, _) = read_tlv(PFX_PLAIN).unwrap();
+        let mut ber = vec![SEQUENCE, 0x80];
+        ber.extend_from_slice(outer.value);
+        ber.extend_from_slice(&[0x00, 0x00]);
+        ber
+    }
+
+    #[test]
+    fn ber_files_are_recognised_but_not_walked() {
+        let ber = ber_pfx();
+        assert!(inspect(&ber).is_none());
+        assert!(looks_like_pfx(&ber));
+        assert!(looks_like_pfx(PFX_PLAIN));
+        assert!(!looks_like_pfx(b"hello"));
+        assert!(!looks_like_pfx(&[0x30, 0x03, 0x02, 0x01, 0x01]));
+        let pem_cert = crate::x509::pem_blocks(crate::x509::tests::TEST_CERT_PEM, "CERTIFICATE");
+        assert!(!looks_like_pfx(&pem_cert[0]), "a certificate isn't a PFX");
     }
 
     #[test]

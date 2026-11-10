@@ -344,6 +344,34 @@ impl Problem {
     }
 }
 
+/// Longest piece of Key Vault's own message shown on a page.
+pub const MAX_AZURE_MESSAGE: usize = 500;
+
+/// Key Vault's own reason for refusing a write, to show under the form it
+/// came from. Only for a 400, where the message names the field and the
+/// rule. Cut to [`MAX_AZURE_MESSAGE`] characters. Templates escape it as
+/// text. Never log it.
+pub fn rejection_message(err: &AzureError) -> Option<String> {
+    match err {
+        AzureError::Status {
+            status: 400,
+            message: Some(m),
+            ..
+        } => {
+            let m = m.trim();
+            if m.is_empty() {
+                return None;
+            }
+            let mut out: String = m.chars().take(MAX_AZURE_MESSAGE).collect();
+            if m.chars().count() > MAX_AZURE_MESSAGE {
+                out.push_str("...");
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 /// Key Vault answers a write to the name of a soft-deleted item with 409.
 /// The outer code is `Conflict`; the inner one, where sent, is
 /// `ObjectIsDeletedButRecoverable`, and the message says the item "is
@@ -592,6 +620,31 @@ mod tests {
         assert_eq!(p.next, NextStep::SignIn("/secrets?q=a".into()));
         let p = Problem::not_found().returning_to("https://evil.example");
         assert_eq!(p.next, NextStep::Retry("/".into()));
+    }
+
+    #[test]
+    fn rejection_message_only_for_400_and_capped() {
+        assert_eq!(
+            rejection_message(&status(400, "BadParameter")).as_deref(),
+            Some("raw Azure text")
+        );
+        for code in [401, 403, 404, 409, 500] {
+            assert_eq!(rejection_message(&status(code, "X")), None, "{code}");
+        }
+        let long = AzureError::Status {
+            status: 400,
+            code: None,
+            message: Some("é".repeat(800)),
+        };
+        let m = rejection_message(&long).unwrap();
+        assert_eq!(m.chars().count(), MAX_AZURE_MESSAGE + 3);
+        assert!(m.ends_with("..."));
+        let blank = AzureError::Status {
+            status: 400,
+            code: None,
+            message: Some("  ".into()),
+        };
+        assert_eq!(rejection_message(&blank), None);
     }
 
     #[test]

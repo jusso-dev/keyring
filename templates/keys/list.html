@@ -37,7 +37,14 @@
   </tbody>
 </table>
 </div>
-<p class="muted" data-live-filter-empty role="status" hidden>No keys match.</p>
+<p class="muted" data-live-filter-empty role="status" hidden>No keys on this page match.</p>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if let Some(url) = prev_url %}<a href="{{ url }}">Previous</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}, keys {{ shown_from + 1 }} to {{ shown_from + rows.len() }}</span>
+  {% if let Some(url) = next_url %}<a href="{{ url }}">Next</a>{% endif %}
+</nav>
+{% endif %}
 {% endif %}
 {% endif %}
 {% endblock %}

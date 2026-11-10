@@ -66,6 +66,8 @@ pub struct KvState {
     pub throttle_next: Mutex<u32>,
     /// Whether the vault allows HSM keys.
     pub premium: Mutex<bool>,
+    /// Certificate issuers and self-signed timing (see `certs.rs`).
+    pub cert_extra: super::certs::Extra,
     seq: Mutex<i64>,
 }
 
@@ -162,10 +164,7 @@ impl KvState {
             .lock()
             .unwrap()
             .entry(name.into())
-            .or_insert_with(|| super::keys::StoredKey {
-                versions: Vec::new(),
-                rotation: serde_json::json!({"lifetimeActions": []}),
-            })
+            .or_default()
             .versions
             .push(v);
         version
@@ -211,6 +210,8 @@ impl KvState {
         c.policy = policy;
         c.pending = None;
         c.versions.push(v);
+        drop(certs);
+        self.add_managed_key(name, &version);
         version
     }
 

@@ -270,6 +270,15 @@ pub struct RotationActionType {
     pub kind: String,
 }
 
+/// When the rotate trigger fires, with Key Vault's own duration string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RotateAt {
+    /// `timeAfterCreate`.
+    AfterCreate(String),
+    /// `timeBeforeExpiry`.
+    BeforeExpiry(String),
+}
+
 impl RotationPolicy {
     fn find(&self, kind: &str) -> Option<&RotationTrigger> {
         self.lifetime_actions
@@ -294,32 +303,116 @@ impl RotationPolicy {
 
     /// Days before expiry that Key Vault sends a near-expiry event.
     pub fn notify_before_days(&self) -> Option<u32> {
-        self.find("Notify")
-            .and_then(|t| t.time_before_expiry.as_deref())
-            .and_then(iso_days)
+        self.notify_before().and_then(iso_days)
     }
 
     /// Lifetime of each new version, in days.
     pub fn expiry_days(&self) -> Option<u32> {
+        self.expiry().and_then(iso_days)
+    }
+
+    /// The rotate trigger as Key Vault wrote it.
+    pub fn rotate_at(&self) -> Option<RotateAt> {
+        let t = self.find("Rotate")?;
+        match (&t.time_after_create, &t.time_before_expiry) {
+            (Some(d), _) => Some(RotateAt::AfterCreate(d.clone())),
+            (_, Some(d)) => Some(RotateAt::BeforeExpiry(d.clone())),
+            _ => None,
+        }
+    }
+
+    /// The notify trigger as Key Vault wrote it.
+    pub fn notify_before(&self) -> Option<&str> {
+        self.find("Notify")
+            .and_then(|t| t.time_before_expiry.as_deref())
+    }
+
+    /// The expiry as Key Vault wrote it.
+    pub fn expiry(&self) -> Option<&str> {
         self.attributes
             .as_ref()
             .and_then(|a| a.expiry_time.as_deref())
-            .and_then(iso_days)
     }
 
-    /// Build a policy from days. `None` leaves that part out.
-    pub fn from_days(
-        rotate_after: Option<u32>,
-        notify_before: Option<u32>,
-        expiry: Option<u32>,
+    /// Key Vault answers a key with no policy set with a default: one
+    /// Notify action 30 days before expiry, and no expiry, so it never
+    /// fires. Keyring treats that as "no policy".
+    pub fn is_key_vault_default(&self) -> bool {
+        matches!(self.lifetime_actions.as_slice(), [a]
+            if a.action.kind.eq_ignore_ascii_case("Notify")
+                && a.trigger.time_after_create.is_none()
+                && a.trigger.time_before_expiry.as_deref() == Some("P30D"))
+            && self.expiry().is_none()
+    }
+
+    /// Parts of the policy that Keyring's form can't show, in words. Empty
+    /// when the form can show all of it.
+    pub fn unsupported(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let (mut rotates, mut notifies) = (0, 0);
+        for a in &self.lifetime_actions {
+            let t = &a.trigger;
+            match a.action.kind.to_ascii_lowercase().as_str() {
+                "rotate" => {
+                    rotates += 1;
+                    if t.time_after_create.is_some() == t.time_before_expiry.is_some() {
+                        out.push("a rotate action that doesn't have exactly one trigger".into());
+                    }
+                }
+                "notify" => {
+                    notifies += 1;
+                    if t.time_after_create.is_some() || t.time_before_expiry.is_none() {
+                        out.push("a notify action that doesn't count back from expiry".into());
+                    }
+                }
+                _ => out.push(format!("an action of type {}", a.action.kind)),
+            }
+            for d in [&t.time_after_create, &t.time_before_expiry]
+                .into_iter()
+                .flatten()
+            {
+                if iso_days(d).is_none() {
+                    out.push(format!("the time {d}, which isn't a whole number of days"));
+                }
+            }
+        }
+        if rotates > 1 {
+            out.push(format!("{rotates} rotate actions"));
+        }
+        if notifies > 1 {
+            out.push(format!("{notifies} notify actions"));
+        }
+        if let Some(e) = self.expiry()
+            && iso_days(e).is_none()
+        {
+            out.push(format!(
+                "the expiry {e}, which isn't a whole number of days"
+            ));
+        }
+        out
+    }
+
+    /// Build a policy. Durations are ISO 8601 strings. `None` leaves that
+    /// part out.
+    pub fn from_parts(
+        rotate: Option<RotateAt>,
+        notify_before: Option<String>,
+        expiry: Option<String>,
     ) -> Self {
         let mut actions = Vec::new();
-        if let Some(d) = rotate_after {
-            actions.push(RotationAction {
-                trigger: RotationTrigger {
-                    time_after_create: Some(format!("P{d}D")),
+        if let Some(r) = rotate {
+            let trigger = match r {
+                RotateAt::AfterCreate(d) => RotationTrigger {
+                    time_after_create: Some(d),
                     time_before_expiry: None,
                 },
+                RotateAt::BeforeExpiry(d) => RotationTrigger {
+                    time_after_create: None,
+                    time_before_expiry: Some(d),
+                },
+            };
+            actions.push(RotationAction {
+                trigger,
                 action: RotationActionType {
                     kind: "Rotate".into(),
                 },
@@ -329,7 +422,7 @@ impl RotationPolicy {
             actions.push(RotationAction {
                 trigger: RotationTrigger {
                     time_after_create: None,
-                    time_before_expiry: Some(format!("P{d}D")),
+                    time_before_expiry: Some(d),
                 },
                 action: RotationActionType {
                     kind: "Notify".into(),
@@ -339,14 +432,17 @@ impl RotationPolicy {
         Self {
             lifetime_actions: actions,
             attributes: expiry.map(|d| RotationAttributes {
-                expiry_time: Some(format!("P{d}D")),
+                expiry_time: Some(d),
             }),
         }
     }
 }
 
 /// Parse simple ISO 8601 durations Key Vault uses: `P90D`, `P3M`, `P1Y`,
-/// `P1Y6M`. Months count as 30 days and years as 365.
+/// `P1Y6M`. Months count as 30 days and years as 365, so the result is for
+/// showing a number in the form. Keyring keeps the original string when
+/// saving an unchanged field, so `P18M` stays `P18M`. `None` for a time
+/// part (`PT48H`).
 pub fn iso_days(s: &str) -> Option<u32> {
     let rest = s.trim().strip_prefix('P')?;
     if rest.is_empty() || rest.contains('T') {
@@ -370,6 +466,13 @@ pub fn iso_days(s: &str) -> Option<u32> {
         })?;
     }
     num.is_empty().then_some(total)
+}
+
+/// True for a plain `P<n>D` duration.
+pub fn is_plain_days(s: &str) -> bool {
+    s.strip_prefix('P')
+        .and_then(|r| r.strip_suffix('D'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Body for creating a key.
@@ -454,6 +557,24 @@ impl KeysApi<'_> {
                 Method::POST,
                 &self.url(&format!("/keys/{name}/rotate")),
                 &serde_json::json!({}),
+            )
+            .await
+    }
+
+    /// Turn a key version on or off. Only `enabled` is sent.
+    pub async fn set_enabled(
+        &self,
+        name: &str,
+        version: &str,
+        enabled: bool,
+    ) -> Result<KeyBundle, AzureError> {
+        self.azure
+            .send_json(
+                self.session,
+                Resource::KeyVault,
+                Method::PATCH,
+                &self.url(&format!("/keys/{name}/{version}")),
+                &serde_json::json!({ "attributes": { "enabled": enabled } }),
             )
             .await
     }
@@ -600,7 +721,11 @@ pub(crate) mod tests {
 
     #[test]
     fn rotation_policy_round_trip() {
-        let p = RotationPolicy::from_days(Some(90), Some(30), Some(365));
+        let p = RotationPolicy::from_parts(
+            Some(RotateAt::AfterCreate("P90D".into())),
+            Some("P30D".into()),
+            Some("P365D".into()),
+        );
         assert_eq!(p.rotate_after_days(), Some(90));
         assert_eq!(p.notify_before_days(), Some(30));
         assert_eq!(p.expiry_days(), Some(365));
@@ -615,8 +740,64 @@ pub(crate) mod tests {
             "P30D"
         );
         assert_eq!(j["attributes"]["expiryTime"], "P365D");
-        let empty = RotationPolicy::from_days(None, None, None);
+        let empty = RotationPolicy::from_parts(None, None, None);
         assert!(empty.lifetime_actions.is_empty());
+        let before =
+            RotationPolicy::from_parts(Some(RotateAt::BeforeExpiry("P30D".into())), None, None);
+        assert_eq!(before.rotate_before_expiry_days(), Some(30));
+        assert_eq!(
+            before.rotate_at(),
+            Some(RotateAt::BeforeExpiry("P30D".into()))
+        );
+    }
+
+    fn policy(v: serde_json::Value) -> RotationPolicy {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn key_vault_default_policy_is_spotted() {
+        let default = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Notify"}}],
+            "attributes": {"created": 1, "updated": 1}
+        }));
+        assert!(default.is_key_vault_default());
+        assert!(default.unsupported().is_empty());
+        let with_expiry = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Notify"}}],
+            "attributes": {"expiryTime": "P1Y"}
+        }));
+        assert!(!with_expiry.is_key_vault_default());
+    }
+
+    #[test]
+    fn unsupported_parts_are_named() {
+        let p = policy(serde_json::json!({
+            "lifetimeActions": [
+                {"trigger": {"timeAfterCreate": "PT48H"}, "action": {"type": "Rotate"}},
+                {"trigger": {"timeAfterCreate": "P10D"}, "action": {"type": "Rotate"}},
+                {"trigger": {"timeBeforeExpiry": "P1DT12H"}, "action": {"type": "Notify"}}
+            ],
+            "attributes": {"expiryTime": "P90D"}
+        }));
+        let u = p.unsupported();
+        assert!(u.iter().any(|x| x.contains("PT48H")), "{u:?}");
+        assert!(u.iter().any(|x| x.contains("P1DT12H")), "{u:?}");
+        assert!(u.iter().any(|x| x == "2 rotate actions"), "{u:?}");
+        let simple = policy(serde_json::json!({
+            "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "rotate"}}],
+            "attributes": {"expiryTime": "P18M"}
+        }));
+        assert!(simple.unsupported().is_empty());
+        assert_eq!(simple.rotate_before_expiry_days(), Some(30));
+    }
+
+    #[test]
+    fn plain_days() {
+        assert!(is_plain_days("P90D"));
+        for no in ["P", "PD", "P18M", "P1Y", "P1DT1H", "90D"] {
+            assert!(!is_plain_days(no), "{no}");
+        }
     }
 
     #[test]
