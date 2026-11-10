@@ -5,7 +5,7 @@
 <p>Secrets, certificates and keys across your vaults, by when they expire. Only names and dates are read, never values.</p>
 <p class="muted">To get an email before things expire, ask whoever runs Keyring to set up <a href="https://github.com/yumaitau/keyring/blob/main/docs/alerts.md" rel="noopener noreferrer">expiry alerts</a>.</p>
 
-<form class="filters" method="get" action="/expiry">
+<form class="filters" method="get" action="/expiry" role="search">
   <div>
     <label for="vault">Vault</label>
     <select id="vault" name="vault">
@@ -44,12 +44,14 @@
 <nav aria-label="Expiry groups">
 <ul class="group-summary">
   {% for g in groups %}
-  <li><a href="#group-{{ g.group.slug() }}"><span class="badge {{ g.group.css() }}">{{ g.count }}</span> {{ g.group.label() }}</a></li>
+  <li>{% if g.count > 0 %}<a href="#group-{{ g.group.slug() }}"><span class="badge {{ g.group.css() }}">{{ g.count }}</span> {{ g.group.label() }}</a>{% else %}<span class="badge badge-muted">0</span> {{ g.group.label() }}{% endif %}</li>
   {% endfor %}
 </ul>
 </nav>
 
-{% if total == 0 %}
+{% if unknown_vault %}
+<div class="empty-state" role="status"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry">Show all vaults</a></p></div>
+{% elif total == 0 %}
 <div class="empty-state"><p>Nothing to show. Either nothing matches the filters, or these vaults are empty.</p></div>
 {% endif %}
 
