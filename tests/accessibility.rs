@@ -194,3 +194,54 @@ async fn confirm_mismatch_is_an_error_with_focus() {
     assert!(html.contains("Nothing was deleted."));
     describedby_targets_exist(&html, "delete mismatch");
 }
+
+/// Buttons the script hasn't switched on carry `hidden`. Author rules that
+/// set `display` beat the browser's own `[hidden]` rule, so the stylesheet
+/// must restate it. Nothing else would catch this going missing.
+#[test]
+fn stylesheet_keeps_hidden_things_hidden() {
+    let css = include_str!("../static/style.css");
+    assert!(
+        css.contains("[hidden] { display: none !important; }"),
+        "style.css needs the [hidden] rule"
+    );
+}
+
+/// Pages reflow at 320 CSS pixels: grid tracks can shrink below their
+/// content, so wide tables scroll inside `.table-wrap` instead of the page.
+#[test]
+fn stylesheet_lets_pages_reflow() {
+    let css = include_str!("../static/style.css");
+    assert!(css.contains("grid-template-columns: 12rem minmax(0, 1fr);"));
+    assert!(css.contains(".layout { grid-template-columns: minmax(0, 1fr);"));
+    assert!(css.contains(".table-wrap { overflow-x: auto; position: relative; }"));
+    assert!(
+        css.contains("max-width: 100%"),
+        "filter inputs fit the screen"
+    );
+    assert!(
+        !css.contains("columns: 1fr") && !css.contains("12rem 1fr"),
+        "a bare 1fr track grows to fit its content"
+    );
+}
+
+/// A revealed value doesn't go to paper or a PDF.
+#[test]
+fn stylesheet_hides_revealed_values_in_print() {
+    let css = include_str!("../static/style.css");
+    let print = css.split("@media print").nth(1).expect("a print rule");
+    assert!(print.contains("[data-secret-value] { visibility: hidden; }"));
+}
+
+#[tokio::test]
+async fn reveal_pages_say_what_really_happens() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "x");
+    let html = support::body_text(w.post("/secrets/db-password/reveal", &[]).await).await;
+    assert!(html.contains("Reloading asks Key Vault for it again."));
+    assert!(html.contains("Keyring will try to clear the clipboard"));
+    assert!(!html.contains("Shown once"), "reloading does show it again");
+    let html = support::body_text(w.post("/generator", &[("kind", "guid")]).await).await;
+    assert!(html.contains("Reloading makes a new one."));
+    assert!(html.contains("Keyring will try to clear the clipboard"));
+}
