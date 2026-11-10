@@ -414,7 +414,7 @@ pub async fn create(
                 shell,
                 &e,
                 Need::ManageCertificates,
-                "/certificates/new",
+                "/certificates/-/new",
             ));
         }
     }
@@ -456,7 +456,7 @@ pub async fn create(
                 shell,
                 &e,
                 Need::ManageCertificates,
-                "/certificates/new",
+                "/certificates/-/new",
             )),
         },
     }
@@ -620,13 +620,6 @@ mod tests {
         assert_eq!(days("12", "324").unwrap(), 324);
         assert!(days("12", "325").is_err());
         assert!(days("12", "0").is_err());
-    }
-
-    #[test]
-    fn reserved_names_refused() {
-        let mut f = form();
-        f.name = "upload".into();
-        assert_eq!(build(&f, &[]).err().unwrap()[0].field, "name");
     }
 
     #[test]

@@ -127,7 +127,7 @@ impl FormPage {
 
     fn action(&self) -> String {
         match self.mode {
-            Mode::Create => "/secrets/new".into(),
+            Mode::Create => "/secrets/-/new".into(),
             Mode::NewValue => format!("/secrets/{}/value", self.form.name),
             Mode::Properties => format!("/secrets/{}/edit", self.form.name),
         }
@@ -257,7 +257,7 @@ pub async fn create(
                 shell,
                 &err,
                 Need::ManageSecrets,
-                "/secrets/new",
+                "/secrets/-/new",
             ));
         }
     }
@@ -285,7 +285,7 @@ pub async fn create(
             shell,
             &err,
             Need::ManageSecrets,
-            "/secrets/new",
+            "/secrets/-/new",
         )),
     }
 }

@@ -80,22 +80,22 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/".to_owned(),
         "/vaults".into(),
         "/secrets".into(),
-        "/secrets/new".into(),
+        "/secrets/-/new".into(),
         "/secrets/db-password".into(),
         "/secrets/db-password/value".into(),
         "/secrets/db-password/edit".into(),
         "/secrets/db-password/versions".into(),
         format!("/secrets/db-password/rollback?version={v1}"),
         "/secrets/db-password/delete".into(),
-        "/secrets/deleted".into(),
+        "/secrets/-/deleted".into(),
         "/certificates".into(),
-        "/certificates/new".into(),
-        "/certificates/upload".into(),
+        "/certificates/-/new".into(),
+        "/certificates/-/upload".into(),
         "/certificates/web-tls".into(),
         "/certificates/web-tls/download-key".into(),
         "/certificates/web-tls/delete".into(),
         "/keys".into(),
-        "/keys/new".into(),
+        "/keys/-/new".into(),
         "/keys/app-key".into(),
         "/keys/app-key/rotate".into(),
         "/keys/app-key/rotation".into(),
@@ -124,7 +124,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
     let w = support::world().await;
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
         (
-            "/secrets/new",
+            "/secrets/-/new",
             vec![
                 ("name", "bad name"),
                 ("value", ""),
@@ -132,13 +132,13 @@ async fn error_summaries_take_focus_and_link_to_fields() {
                 ("expires", "2020-01-01"),
             ],
         ),
-        ("/keys/new", vec![("name", "k"), ("expires", "nope")]),
+        ("/keys/-/new", vec![("name", "k"), ("expires", "nope")]),
         (
-            "/certificates/new",
+            "/certificates/-/new",
             vec![("name", "bad name"), ("validity_months", "0")],
         ),
         (
-            "/keys/new",
+            "/keys/-/new",
             vec![
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
@@ -146,7 +146,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
             ],
         ),
         (
-            "/certificates/new",
+            "/certificates/-/new",
             vec![
                 ("name", "c"),
                 ("common_name", "a.example.com"),

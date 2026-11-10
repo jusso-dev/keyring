@@ -127,7 +127,7 @@ pub async fn list_deleted(
                 shell,
                 &err,
                 Need::ManageSecrets,
-                "/secrets/deleted",
+                "/secrets/-/deleted",
             ));
         }
     };
@@ -159,7 +159,7 @@ async fn load_deleted(
             shell,
             &err,
             Need::ManageSecrets,
-            "/secrets/deleted",
+            "/secrets/-/deleted",
         )),
     }
 }

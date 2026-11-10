@@ -24,7 +24,7 @@ use crate::routes::secrets::form::parse_tags;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
-use super::{api, current_vault, reserved_name_problem, unmanaged_key};
+use super::{api, current_vault, unmanaged_key};
 
 pub const KEY_TYPES: [(&str, &str); 7] = [
     ("RSA-3072", "RSA 3072 (recommended)"),
@@ -108,7 +108,7 @@ pub fn default_ops(kty: &str) -> Vec<String> {
 
 pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), FieldErrors> {
     let mut errors = FieldErrors::new();
-    if let Some(m) = name_problem(Kind::Key, &f.name).or_else(|| reserved_name_problem(&f.name)) {
+    if let Some(m) = name_problem(Kind::Key, &f.name) {
         errors.push("name", m);
     }
     let (mut kty, key_size, crv): (String, Option<u32>, Option<String>) = match f.key_type.as_str()
@@ -304,7 +304,7 @@ pub async fn create(
             return Ok(create_page(shell, vault, f, errors));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
-        Err(e) => return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
+        Err(e) => return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/-/new")),
     }
     match keys.create(&name, &body).await {
         Ok(_) => {
@@ -339,7 +339,7 @@ pub async fn create(
                 FieldErrors::new(),
                 Some(m),
             )),
-            None => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/new")),
+            None => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/-/new")),
         },
     }
 }
@@ -909,12 +909,5 @@ mod tests {
             "BadParameter",
             "Key size not supported for RSA-HSM."
         )));
-    }
-
-    #[test]
-    fn reserved_names_refused_on_create() {
-        let e = build(&pairs(&[("name", "new")]), 0).err().unwrap();
-        assert_eq!(e[0].field, "name");
-        assert!(e[0].message.contains("own pages"));
     }
 }

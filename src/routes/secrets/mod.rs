@@ -17,6 +17,7 @@ use crate::azure::secrets::{ExpiryState, SecretItem, SecretsApi, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageResult};
+use crate::routes::lifecycle::Kind;
 use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
@@ -248,12 +249,16 @@ pub async fn detail(
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
+    uri: axum::http::Uri,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     let item = match api(&state, &session, &vault).properties(&name).await {
         Ok(item) => item,
         Err(err) => {
+            if let Some(res) = crate::routes::moved::missing_item(Kind::Secret, &name, &err, &uri) {
+                return Ok(res);
+            }
             let path = format!("/secrets/{name}");
             return Err(azure_problem(shell, &err, Need::ReadSecrets, &path));
         }
@@ -269,7 +274,7 @@ pub async fn detail(
             a.recovery_level.as_deref(),
             a.recoverable_days,
         )
-        .sentence(crate::routes::lifecycle::Kind::Secret),
+        .sentence(Kind::Secret),
         row: SecretRow::from_item(&item, now),
         shell,
         vault,

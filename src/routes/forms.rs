@@ -106,6 +106,9 @@ pub fn name_problem(kind: Kind, name: &str) -> Option<String> {
             name.len()
         ));
     }
+    if name.starts_with('-') {
+        return Some("Names can't start with a hyphen. Start with a letter.".into());
+    }
     if !is_valid_object_name(name) {
         let shown: Vec<String> = name
             .chars()
@@ -149,6 +152,11 @@ mod tests {
             name_problem(Kind::Key, "my secret")
                 .unwrap()
                 .contains("spaces")
+        );
+        assert!(
+            name_problem(Kind::Secret, "-new")
+                .unwrap()
+                .contains("start with a hyphen")
         );
         assert!(
             name_problem(Kind::Key, &"a".repeat(128))

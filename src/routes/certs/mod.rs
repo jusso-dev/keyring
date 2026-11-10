@@ -20,33 +20,15 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
 use crate::routes::keys::section_note;
-use crate::routes::lifecycle::redirect_with;
+use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 use crate::x509;
 
-/// Names Keyring uses for its own pages under `/certificates`, so a
-/// certificate called one of these couldn't be opened from the list.
-pub const RESERVED_NAMES: [&str; 3] = ["new", "deleted", "upload"];
-
-/// Explain why a new certificate can't have this name, or `None` if it can.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses {name} for one of its own pages, so a certificate called that couldn't be opened here. Pick another name."
-            )
-        })
-}
-
-/// Name checks for a new certificate: Key Vault's rules, then Keyring's
-/// reserved names.
+/// Name checks for a new certificate.
 pub fn new_name_problem(name: &str) -> Option<String> {
-    crate::routes::forms::name_problem(crate::routes::lifecycle::Kind::Certificate, name)
-        .or_else(|| reserved_name_problem(name))
+    crate::routes::forms::name_problem(Kind::Certificate, name)
 }
 
 const DAY: i64 = 86_400;
@@ -404,6 +386,7 @@ pub async fn detail(
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
+    uri: axum::http::Uri,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
@@ -416,7 +399,14 @@ pub async fn detail(
     );
     let bundle = match bundle {
         Ok(b) => b,
-        Err(err) => return Err(azure_problem(shell, &err, Need::ReadCertificates, &path)),
+        Err(err) => {
+            if let Some(res) =
+                crate::routes::moved::missing_item(Kind::Certificate, &name, &err, &uri)
+            {
+                return Ok(res);
+            }
+            return Err(azure_problem(shell, &err, Need::ReadCertificates, &path));
+        }
     };
     let now = now_ts();
     // Each section says why it's empty rather than pretending there's
@@ -504,16 +494,6 @@ mod tests {
         assert_eq!(cert_expiry(Some(now + 10 * DAY), now), CertExpiry::Within30);
         assert_eq!(cert_expiry(Some(now + 60 * DAY), now), CertExpiry::Within90);
         assert_eq!(cert_expiry(Some(now + 200 * DAY), now), CertExpiry::Ok);
-    }
-
-    #[test]
-    fn reserved_names_are_refused() {
-        for n in ["new", "deleted", "upload", "Upload"] {
-            assert!(new_name_problem(n).is_some(), "{n}");
-        }
-        assert!(new_name_problem("web-tls").is_none());
-        assert!(new_name_problem("web tls").is_some());
-        assert!(new_name_problem("").unwrap().contains("certificate"));
     }
 
     #[test]

@@ -19,7 +19,7 @@
 </div>
 {% endif %}
 
-<form method="post" action="/certificates/new" class="stacked" novalidate>
+<form method="post" action="/certificates/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
 
   <label for="name">Name in Key Vault</label>

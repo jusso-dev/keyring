@@ -20,26 +20,10 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
-use crate::routes::lifecycle::redirect_with;
+use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::paginate;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
-
-/// Names Keyring uses for its own pages under `/keys`, so a key called one
-/// of these couldn't be opened from the list.
-pub const RESERVED_NAMES: [&str; 2] = ["new", "deleted"];
-
-/// Explain why a new key can't have this name, or `None` if it can.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses {name} for one of its own pages, so a key called that couldn't be opened here. Pick another name."
-            )
-        })
-}
 
 /// The page for a key that belongs to a certificate. Key Vault makes and
 /// changes these keys itself, so Keyring won't change them directly.
@@ -293,6 +277,7 @@ pub async fn detail(
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
+    uri: axum::http::Uri,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
@@ -305,6 +290,9 @@ pub async fn detail(
     let bundle = match bundle {
         Ok(b) => b,
         Err(e) => {
+            if let Some(res) = crate::routes::moved::missing_item(Kind::Key, &name, &e, &uri) {
+                return Ok(res);
+            }
             return Err(azure_problem(
                 shell,
                 &e,
@@ -388,20 +376,5 @@ pub async fn toggle(
             Ok(redirect_with(&state, &path, format!("{done} {name}.")))
         }
         Err(e) => Err(azure_problem(shell, &e, Need::ManageKeys, &path)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reserved_names_are_refused() {
-        for n in ["new", "deleted", "New"] {
-            assert!(reserved_name_problem(n).is_some(), "{n}");
-        }
-        for n in ["news", "app-key", "upload"] {
-            assert!(reserved_name_problem(n).is_none(), "{n}");
-        }
     }
 }

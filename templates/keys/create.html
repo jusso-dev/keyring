@@ -17,7 +17,7 @@
   <p class="mono">{{ m }}</p>
 </div>
 {% endif %}
-<form method="post" action="/keys/new" class="stacked" novalidate>
+<form method="post" action="/keys/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <label for="name">Name</label>
   <p class="field-help" id="name-help">Letters, numbers and hyphens only.</p>

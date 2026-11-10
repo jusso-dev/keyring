@@ -15,6 +15,7 @@ mod health;
 mod home;
 mod keys;
 pub mod lifecycle;
+mod moved;
 mod origin;
 pub mod paging;
 mod rejection;
@@ -51,22 +52,22 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/vaults/select", post(vaults::select))
         .route("/secrets", get(secrets::list))
         .route(
-            "/secrets/new",
+            "/secrets/-/new",
             get(secrets::edit::new_form)
                 .post(secrets::edit::create)
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
-        .route("/secrets/deleted", get(secrets::delete::list_deleted))
+        .route("/secrets/-/deleted", get(secrets::delete::list_deleted))
         .route(
-            "/secrets/deleted/{name}",
+            "/secrets/-/deleted/{name}",
             get(secrets::delete::deleted_detail),
         )
         .route(
-            "/secrets/deleted/{name}/recover",
+            "/secrets/-/deleted/{name}/recover",
             post(lifecycle::handlers::recover::<secrets::delete::Secrets>),
         )
         .route(
-            "/secrets/deleted/{name}/purge",
+            "/secrets/-/deleted/{name}/purge",
             get(lifecycle::handlers::purge_form::<secrets::delete::Secrets>)
                 .post(lifecycle::handlers::purge::<secrets::delete::Secrets>),
         )
@@ -75,7 +76,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(lifecycle::handlers::delete_form::<secrets::delete::Secrets>)
                 .post(lifecycle::handlers::delete::<secrets::delete::Secrets>),
         )
-        .route("/secrets/{name}", get(secrets::detail))
+        .route(
+            "/secrets/{name}",
+            get(secrets::detail).post(moved::post_item),
+        )
         .route(
             "/secrets/{name}/value",
             get(secrets::edit::value_form)
@@ -95,31 +99,34 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
         .route("/certificates", get(certs::list))
         .route(
-            "/certificates/upload",
+            "/certificates/-/upload",
             get(certs::upload::form).post(certs::upload::preview).layer(
                 axum::extract::DefaultBodyLimit::max(certs::upload::MAX_BODY_BYTES),
             ),
         )
-        .route("/certificates/upload/confirm", post(certs::upload::confirm))
-        .route("/certificates/upload/cancel", post(certs::upload::cancel))
         .route(
-            "/certificates/new",
+            "/certificates/-/upload/confirm",
+            post(certs::upload::confirm),
+        )
+        .route("/certificates/-/upload/cancel", post(certs::upload::cancel))
+        .route(
+            "/certificates/-/new",
             get(certs::create::form).post(certs::create::create),
         )
         .route(
-            "/certificates/deleted",
+            "/certificates/-/deleted",
             get(lifecycle::handlers::list_deleted::<certs::delete::Certificates>),
         )
         .route(
-            "/certificates/deleted/{name}",
+            "/certificates/-/deleted/{name}",
             get(lifecycle::handlers::deleted_detail::<certs::delete::Certificates>),
         )
         .route(
-            "/certificates/deleted/{name}/recover",
+            "/certificates/-/deleted/{name}/recover",
             post(lifecycle::handlers::recover::<certs::delete::Certificates>),
         )
         .route(
-            "/certificates/deleted/{name}/purge",
+            "/certificates/-/deleted/{name}/purge",
             get(lifecycle::handlers::purge_form::<certs::delete::Certificates>)
                 .post(lifecycle::handlers::purge::<certs::delete::Certificates>),
         )
@@ -128,7 +135,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(lifecycle::handlers::delete_form::<certs::delete::Certificates>)
                 .post(lifecycle::handlers::delete::<certs::delete::Certificates>),
         )
-        .route("/certificates/{name}", get(certs::detail))
+        .route(
+            "/certificates/{name}",
+            get(certs::detail).post(moved::post_item),
+        )
         .route("/certificates/{name}/enabled", post(certs::toggle))
         .route(
             "/certificates/{name}/pending/cancel",
@@ -141,27 +151,27 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/keys", get(keys::list))
         .route(
-            "/keys/new",
+            "/keys/-/new",
             get(keys::edit::create_form).post(keys::edit::create),
         )
         .route(
-            "/keys/deleted",
+            "/keys/-/deleted",
             get(lifecycle::handlers::list_deleted::<keys::delete::Keys>),
         )
         .route(
-            "/keys/deleted/{name}",
+            "/keys/-/deleted/{name}",
             get(lifecycle::handlers::deleted_detail::<keys::delete::Keys>),
         )
         .route(
-            "/keys/deleted/{name}/recover",
+            "/keys/-/deleted/{name}/recover",
             post(lifecycle::handlers::recover::<keys::delete::Keys>),
         )
         .route(
-            "/keys/deleted/{name}/purge",
+            "/keys/-/deleted/{name}/purge",
             get(lifecycle::handlers::purge_form::<keys::delete::Keys>)
                 .post(lifecycle::handlers::purge::<keys::delete::Keys>),
         )
-        .route("/keys/{name}", get(keys::detail))
+        .route("/keys/{name}", get(keys::detail).post(moved::post_item))
         .route("/keys/{name}/enabled", post(keys::toggle))
         .route(
             "/keys/{name}/rotate",
@@ -234,7 +244,10 @@ fn panicked(_: Box<dyn std::any::Any + Send + 'static>) -> Response {
     .into_response()
 }
 
-async fn not_found(shell: Shell) -> Response {
+async fn not_found(shell: Shell, req: axum::extract::Request) -> Response {
+    if let Some(res) = moved::from_fallback(&req) {
+        return res;
+    }
     PageError::new(shell, Problem::not_found()).into_response()
 }
 

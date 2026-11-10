@@ -72,14 +72,21 @@ impl Kind {
         format!("{}/{name}", self.base())
     }
 
+    /// A fixed page of this kind, such as `/secrets/-/new`. Fixed pages sit
+    /// under `/-/`, which can't be an item: Key Vault names start with a
+    /// letter.
+    pub fn page_url(self, page: &str) -> String {
+        format!("{}/-/{page}", self.base())
+    }
+
     /// The deleted list.
     pub fn deleted_list_url(self) -> String {
-        format!("{}/deleted", self.base())
+        self.page_url("deleted")
     }
 
     /// One deleted item's page.
     pub fn deleted_url(self, name: &str) -> String {
-        format!("{}/deleted/{name}", self.base())
+        format!("{}/{name}", self.deleted_list_url())
     }
 
     /// The role that allows delete, recover and purge.

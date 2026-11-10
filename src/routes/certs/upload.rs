@@ -217,7 +217,7 @@ pub async fn cancel(
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
     forget_pending_upload(&session);
-    let mut res = Redirect::to("/certificates/upload").into_response();
+    let mut res = Redirect::to("/certificates/-/upload").into_response();
     flash::set(
         &state,
         &mut res,
@@ -611,7 +611,7 @@ pub async fn confirm(
                 "That upload has expired",
                 "Keyring only holds an uploaded file for 10 minutes, and only for one import. Upload it again.",
             )
-            .returning_to("/certificates/upload"),
+            .returning_to("/certificates/-/upload"),
         )
         .into());
     };
@@ -675,10 +675,10 @@ pub async fn confirm(
                 "That name is taken",
                 format!("A deleted certificate called {name} can still be recovered. Recover it from deleted certificates, or pick another name."),
             )
-            .returning_to("/certificates/upload"),
+            .returning_to("/certificates/-/upload"),
         )
         .into()),
-        Err(err) => Err(azure_problem(shell, &err, Need::ManageCertificates, "/certificates/upload")),
+        Err(err) => Err(azure_problem(shell, &err, Need::ManageCertificates, "/certificates/-/upload")),
     }
 }
 

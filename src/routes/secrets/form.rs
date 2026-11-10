@@ -18,10 +18,6 @@ pub const MAX_TAGS: usize = 15;
 /// Key Vault's limit on a secret value (25 KB).
 pub const MAX_VALUE_BYTES: usize = 25 * 1024;
 pub const MAX_CONTENT_TYPE: usize = 255;
-/// Names that the create form refuses, because `/secrets/new` and
-/// `/secrets/deleted` are Keyring's own pages. A secret made elsewhere with
-/// one of these names can't be opened from the list.
-pub const RESERVED_NAMES: [&str; 2] = ["new", "deleted"];
 
 /// What the create and edit-properties forms post. Strings, because HTML
 /// forms send strings and a missing checkbox sends nothing.
@@ -63,20 +59,6 @@ impl std::fmt::Debug for SecretForm {
             .field("value", &self.value.as_ref().map(|_| "[redacted]"))
             .finish_non_exhaustive()
     }
-}
-
-/// Explain why a name can't be used on create, or `None` if it's free of
-/// Keyring's own page names.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses /secrets/{} for its own page, so a secret called {name} couldn't be opened here. Pick another name.",
-                name.to_ascii_lowercase()
-            )
-        })
 }
 
 /// Can these tags go through the `name=value` textarea and come back the
@@ -247,7 +229,7 @@ pub fn normalise_newlines(v: &str) -> String {
 pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), FieldErrors> {
     let mut errors = FieldErrors::new();
     let name = form.name.trim().to_owned();
-    if let Some(m) = name_problem(Kind::Secret, &name).or_else(|| reserved_name_problem(&name)) {
+    if let Some(m) = name_problem(Kind::Secret, &name) {
         errors.push("name", m);
     }
     let value = checked_value(form, &mut errors);
@@ -481,20 +463,6 @@ mod tests {
         // A value right at 25 KB once CRLF is LF isn't refused for its CRs.
         let line = "x".repeat(1023);
         f.value = Some(vec![line.as_str(); 25].join("\r\n") + "\r\n");
-        assert!(for_create(&f, NOW).is_ok());
-    }
-
-    #[test]
-    fn reserved_names_are_refused_on_create() {
-        for name in ["new", "deleted", "New", "DELETED"] {
-            let mut f = form();
-            f.name = name.into();
-            let e = for_create(&f, NOW).err().unwrap();
-            assert_eq!(e[0].field, "name", "{name}");
-            assert!(e[0].message.contains("Keyring uses /secrets/"), "{name}");
-        }
-        let mut f = form();
-        f.name = "new-thing".into();
         assert!(for_create(&f, NOW).is_ok());
     }
 

@@ -241,11 +241,11 @@ async fn keyrings_own_pages_win_over_secrets_with_their_names() {
     // names (see secrets_edit), so Keyring never makes one itself.
     let w = support::world().await;
     w.kv.state.put("new", "x");
-    let (status, html) = w.page("/secrets/new").await;
+    let (status, html) = w.page("/secrets/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Add a secret"));
     assert!(w.kv.state.value_reads().is_empty());
-    let (status, html) = w.page("/secrets/deleted").await;
+    let (status, html) = w.page("/secrets/-/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Deleted secrets"));
 }
