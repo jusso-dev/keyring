@@ -24,7 +24,7 @@ async fn get(path: &str) -> (StatusCode, String, Option<String>) {
 async fn sign_in_page_renders_with_shared_css() {
     let (status, body, _) = get("/auth/sign-in").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<link rel=\"stylesheet\" href=\"/static/style.css\">"));
+    assert!(body.contains("<link rel=\"stylesheet\" href=\"/static/style.css?v="));
     assert!(body.contains("Sign in with Microsoft"));
 }
 
