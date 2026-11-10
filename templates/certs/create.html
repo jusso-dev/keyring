@@ -3,12 +3,19 @@
 {% block content %}
 <p><a href="/certificates">Back to certificates</a></p>
 <h1>Create a certificate <span class="muted">in {{ vault }}</span></h1>
-<p>Key Vault makes the key and the certificate. Self-signed certificates are ready straight away. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
+<p>Key Vault makes the key and the certificate. Self-signed certificates are usually ready in a few seconds. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
 
 {% if !errors.is_empty() %}
 <div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
   <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
   <ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if let Some(m) = azure_message %}
+<div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
+  <p><strong>Key Vault didn't create the certificate. Check the details and try again.</strong></p>
+  <p>Key Vault said:</p>
+  <p class="mono">{{ m }}</p>
 </div>
 {% endif %}
 
@@ -36,11 +43,14 @@
   {% if let Some(m) = error_for("validity_months") %}<p class="field-error" id="validity_months-error">{{ m }}</p>{% endif %}
 
   <label for="issuer">Issuer</label>
-  <p class="field-help" id="issuer-help">Self for self-signed (fine for testing and internal use). Otherwise the name of an issuer already set up on this vault in the Azure portal.</p>
-  <input id="issuer" name="issuer" type="text" value="{{ form.issuer }}" autocomplete="off" spellcheck="false" aria-describedby="issuer-help{% if error_for("issuer").is_some() %} issuer-error{% endif %}"{% if error_for("issuer").is_some() %} aria-invalid="true"{% endif %}>
+  <p class="field-help" id="issuer-help">Self for self-signed (fine for testing and internal use). Otherwise an issuer already set up on this vault in the Azure portal.{% if let Some(n) = issuers.note %} {{ n }}{% endif %}</p>
+  <select id="issuer" name="issuer" aria-describedby="issuer-help{% if error_for("issuer").is_some() %} issuer-error{% endif %}"{% if error_for("issuer").is_some() %} aria-invalid="true"{% endif %}>
+    <option value="Self"{% if !issuers.names.contains(form.issuer) %} selected{% endif %}>Self (self-signed)</option>
+    {% for i in issuers.names %}<option value="{{ i }}"{% if issuer_selected(i) %} selected{% endif %}>{{ i }}</option>{% endfor %}
+  </select>
   {% if let Some(m) = error_for("issuer") %}<p class="field-error" id="issuer-error">{{ m }}</p>{% endif %}
 
-  <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() %} open{% endif %}>
+  <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() || azure_message.is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 
     <label for="key">Key type</label>
@@ -69,7 +79,8 @@
       <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
     </fieldset>
     <label for="renew_days">Days before expiry</label>
-    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% if error_for("renew_days").is_some() %} aria-describedby="renew_days-error" aria-invalid="true"{% endif %}>
+    <p class="field-help" id="renew_days-help">From 1 up to 27 days for each month the certificate is valid. Left blank, Keyring uses 30, or 27 for a one-month certificate.</p>
+    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}" aria-describedby="renew_days-help{% if error_for("renew_days").is_some() %} renew_days-error{% endif %}"{% if error_for("renew_days").is_some() %} aria-invalid="true"{% endif %}>
     {% if let Some(m) = error_for("renew_days") %}<p class="field-error" id="renew_days-error">{{ m }}</p>{% endif %}
 
     <label for="tags">Tags <span class="muted">(optional)</span></label>
