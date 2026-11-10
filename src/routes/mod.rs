@@ -15,6 +15,7 @@ mod home;
 mod keys;
 pub mod lifecycle;
 mod origin;
+mod rejection;
 mod secrets;
 pub mod shell;
 pub mod vault_ctx;
@@ -29,9 +30,16 @@ use crate::AppState;
 use crate::routes::error::{PageError, Problem};
 use crate::routes::shell::Shell;
 
-/// Largest request body for ordinary forms. Secret values are capped at
-/// 25 KB, so this leaves room for the rest of the form.
+/// Largest request body for ordinary forms.
 pub const MAX_FORM_BYTES: usize = 64 * 1024;
+
+/// Largest body for the two forms that carry a secret value. Values are
+/// capped at 25 KB once line breaks are LF. The worst case on the wire is a
+/// value of line breaks: the browser sends each as CRLF, encoded `%0D%0A`,
+/// so six bytes for every byte stored (150 KB). Other bytes take at most
+/// three. 256 KB leaves room for that and the other fields, so a valid
+/// value always gets the form's own message, not a 413.
+pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 
 pub fn router(state: AppState) -> Router<AppState> {
     // Everything here needs a signed-in session. New pages go in this list.
@@ -42,7 +50,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/secrets", get(secrets::list))
         .route(
             "/secrets/new",
-            get(secrets::edit::new_form).post(secrets::edit::create),
+            get(secrets::edit::new_form)
+                .post(secrets::edit::create)
+                .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
         .route("/secrets/deleted", get(secrets::delete::list_deleted))
         .route(
@@ -64,7 +74,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/secrets/{name}", get(secrets::detail))
         .route(
             "/secrets/{name}/value",
-            get(secrets::edit::value_form).post(secrets::edit::set_value),
+            get(secrets::edit::value_form)
+                .post(secrets::edit::set_value)
+                .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
         .route(
             "/secrets/{name}/edit",
@@ -149,6 +161,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
+        // Inside the session check, so the error page has the signed-in shell.
+        .route_layer(middleware::from_fn(rejection::layer))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,

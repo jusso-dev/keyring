@@ -37,6 +37,12 @@ pub struct FormView {
     pub not_before: String,
     pub tags: String,
     pub enabled: bool,
+    /// Tags the textarea can't show without changing them. When set, the
+    /// form lists them and keeps them as they are.
+    pub locked_tags: Option<Vec<(String, String)>>,
+    /// The version the edit form was opened on, and its `updated` time.
+    pub version: String,
+    pub updated: String,
 }
 
 impl FormView {
@@ -48,6 +54,9 @@ impl FormView {
             not_before: f.not_before.clone(),
             tags: f.tags.clone(),
             enabled: f.enabled.is_some(),
+            locked_tags: None,
+            version: f.version.clone(),
+            updated: f.updated.clone(),
         }
     }
 
@@ -60,8 +69,34 @@ impl FormView {
             not_before: a.not_before.map(dates::iso_date).unwrap_or_default(),
             tags: form::format_tags(item.tags()),
             enabled: a.is_enabled(),
+            locked_tags: None,
+            version: item.version().to_owned(),
+            updated: updated_stamp(item),
         }
+        .locking_tags_of(item)
     }
+
+    /// Lock the tags when the item's can't round-trip through the form.
+    fn locking_tags_of(mut self, item: &SecretItem) -> Self {
+        if !form::tags_editable(item.tags()) {
+            self.tags.clear();
+            self.locked_tags = Some(
+                item.tags()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            );
+        }
+        self
+    }
+}
+
+/// A version's `updated` time as the edit form carries it.
+fn updated_stamp(item: &SecretItem) -> String {
+    item.attributes
+        .updated
+        .map(|t| t.to_string())
+        .unwrap_or_default()
 }
 
 #[derive(Template)]
@@ -205,8 +240,11 @@ pub async fn create(
     let api = api(&state, &session, &vault);
 
     // Setting a value on an existing name would silently add a version.
-    // Check first so "Add" never overwrites.
+    // Check first so "Add" never overwrites. A name is taken when it has at
+    // least one version. Key Vault answers an unknown name with an empty
+    // list, and Keyring also takes a 404 to mean the name is free.
     match api.versions(&name).await {
+        Ok(v) if v.is_empty() => {}
         Ok(_) => {
             let errors = vec![FieldError {
                 field: "name",
@@ -270,13 +308,26 @@ async fn load(
 ) -> Result<(String, Shell, SecretItem), Halt> {
     let (vault, shell) = current_vault(session, shell)?;
     let (name, shell) = checked_name(name, shell)?;
-    match api(state, session, &vault).properties(&name).await {
+    let (shell, item) = fetch(state, session, shell, &vault, &name).await?;
+    Ok((vault, shell, item))
+}
+
+/// The current version's properties, refusing a certificate's backing
+/// secret. `vault` and `name` are already checked.
+async fn fetch(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<(Shell, SecretItem), Halt> {
+    match api(state, session, vault).properties(name).await {
         // Key Vault refuses changes to a certificate's backing secret;
         // say why instead of showing a confusing 403.
-        Ok(item) if item.managed.unwrap_or(false) => Err(
-            crate::routes::secrets::reveal::managed_problem(shell, &name),
-        ),
-        Ok(item) => Ok((vault, shell, item)),
+        Ok(item) if item.managed.unwrap_or(false) => {
+            Err(crate::routes::secrets::reveal::managed_problem(shell, name))
+        }
+        Ok(item) => Ok((shell, item)),
         Err(err) => Err(azure_problem(
             shell,
             &err,
@@ -314,27 +365,27 @@ pub async fn set_value(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
     // Refuse a certificate's backing secret, and refuse if we can't tell.
-    match api(&state, &session, &vault).properties(&name).await {
+    let item = match api(&state, &session, &vault).properties(&name).await {
         Ok(item) if item.managed.unwrap_or(false) => {
             return Err(crate::routes::secrets::reveal::managed_problem(
                 shell, &name,
             ));
         }
-        Ok(_) => {}
+        Ok(item) => item,
         Err(err) => {
             let path = format!("/secrets/{name}");
             return Err(azure_problem(shell, &err, Need::ManageSecrets, &path));
         }
-    }
+    };
     f.name = name.clone();
-    let body = match form::for_new_value(&f, now_ts()) {
+    let body = match form::for_new_value(&f, &item, now_ts()) {
         Ok(b) => b,
         Err(errors) => {
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::NewValue,
-                FormView::from_form(&f),
+                FormView::from_form(&f).locking_tags_of(&item),
                 errors,
                 None,
             ));
@@ -382,18 +433,25 @@ pub async fn update(
     Path(name): Path<String>,
     Form(mut f): Form<SecretForm>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &name).await?;
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
+    let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
+    // The whole form is written back, so refuse if someone else saved a
+    // new version or changed this one since the form was opened.
+    if f.version != item.version() || f.updated != updated_stamp(&item) {
+        return Err(changed_problem(shell, &name));
+    }
     f.name = item.name().to_owned();
     f.value = None;
-    let body = match form::for_update(&f, &item.attributes, now_ts()) {
+    let body = match form::for_update(&f, &item, now_ts()) {
         Ok(b) => b,
         Err(errors) => {
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::Properties,
-                FormView::from_form(&f),
+                FormView::from_form(&f).locking_tags_of(&item),
                 errors,
                 None,
             ));
@@ -409,6 +467,22 @@ pub async fn update(
         "Saved changes",
     )
     .await
+}
+
+/// The page for an edit form that is out of date.
+fn changed_problem(shell: Shell, name: &str) -> Halt {
+    PageError::new(
+        shell,
+        Problem::new(
+            StatusCode::CONFLICT,
+            "This secret changed since you opened it",
+            format!(
+                "Someone saved a change to {name} after you opened the form, so nothing was saved. Open the form again to see the latest details, then make your change."
+            ),
+        )
+        .returning_to(&format!("/secrets/{name}/edit")),
+    )
+    .into()
 }
 
 async fn update_current(
@@ -458,13 +532,15 @@ pub async fn toggle(
     Path(name): Path<String>,
     Form(f): Form<ToggleForm>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &name).await?;
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &f.csrf, shell)?;
     let enable = match f.state.as_str() {
         "on" => true,
         "off" => false,
         _ => return Err(PageError::new(shell, Problem::not_found()).into()),
     };
+    let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
     // Only `enabled` is sent. Key Vault keeps everything else.
     let body = UpdateSecret {
         content_type: None,

@@ -215,6 +215,7 @@ async fn delete_recover_and_purge_flag() {
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     let res = w.post("/keys/deleted/app-key/recover", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(support::location(&res), "/keys/deleted");
     assert_eq!(w.kv.state.key_versions("app-key"), 1);
 }
 

@@ -50,8 +50,11 @@ struct RevealedPage {
 }
 
 impl RevealedPage {
-    fn value(&self) -> &str {
-        self.value.expose()
+    /// The value for the textarea. The HTML parser drops one line break
+    /// straight after `<textarea>`, so start with one. Otherwise a value
+    /// that begins with a line break would lose it on screen and on Copy.
+    fn value(&self) -> String {
+        format!("\n{}", self.value.expose())
     }
 }
 
@@ -119,7 +122,7 @@ pub async fn reveal(
     };
     // Who read which secret is useful to the person running Keyring; the
     // value never is.
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret value revealed");
+    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, version = %bundle.item.version(), "secret value revealed");
     let now = now_ts();
     let page = RevealedPage {
         version: bundle.item.version().to_owned(),
