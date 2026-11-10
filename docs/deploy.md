@@ -187,10 +187,10 @@ If something's wrong, see [troubleshooting.md](troubleshooting.md).
 
 Keyring writes plain text lines to standard output:
 
-- one line per request: method, path (never the query string), status and duration
-- an action line each time someone reveals, downloads, creates, changes, deletes, recovers or purges something, naming who (their Entra ID) and what (vault and item name)
+- one line per request: `request method=GET path=/secrets status=200 ms=12`. The path never has the query string. A 5xx is logged at `warn`
+- an action line each time someone reveals, downloads, creates, changes, deletes, recovers or purges something, naming what (vault and item name) and who, as `subject=oid:<object ID>,tid:<tenant ID>`. Those are the same IDs as in Entra's sign-in logs and Key Vault's diagnostic logs, so you can match them up
 
-Secret values, tokens, passwords, headers and query strings are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`); `info`, the default, includes the action lines.
+Secret values, tokens, passwords, headers and query strings are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`); `info`, the default, includes the action lines. Keyring won't start with any other value, including `off`.
 
 Where they go:
 
@@ -215,6 +215,10 @@ ContainerAppConsoleLogs_CL
 ```
 
 Key Vault's own diagnostic logs (what the audit view reads) are separate and record every call, whether it came through Keyring or not.
+
+## First run against a real tenant
+
+Keyring's tests run against mock Azure services. Some behaviour only a real Entra tenant and Key Vault can confirm. Work through [real-vault-checklist.md](real-vault-checklist.md) after your first deployment, on a test vault, and record what you find there.
 
 ## Rotating secrets
 
