@@ -269,3 +269,57 @@ async fn backing_secret_cannot_bypass_private_key_download() {
         "no value read through the secrets pages"
     );
 }
+
+#[tokio::test]
+async fn detail_says_when_a_section_couldnt_load() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    *w.kv.state.fail_path.lock().unwrap() = Some("/versions".into());
+    *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
+    let (status, html) = w.page("/certificates/web-tls").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Couldn&#39;t load this certificate&#39;s versions just now"),
+        "{html}"
+    );
+    assert!(!html.contains("No versions listed"));
+    *w.kv.state.fail_path.lock().unwrap() = Some("/pending".into());
+    let (_, html) = w.page("/certificates/web-tls").await;
+    assert!(html.contains("Couldn&#39;t load whether a request is pending just now"));
+}
+
+#[tokio::test]
+async fn status_cell_is_never_empty() {
+    let w = support::world().await;
+    w.kv.state.add_cert_version(
+        "no-expiry",
+        support::pem_first_cert(support::TEST_CERT_PEM),
+        support::certs::default_policy(false, false),
+        |v| v.exp = None,
+    );
+    let (_, html) = w.page("/certificates").await;
+    let row = html.split(">no-expiry<").nth(1).unwrap();
+    let cell = row
+        .split("<td>")
+        .nth(1)
+        .unwrap()
+        .split("</td>")
+        .next()
+        .unwrap();
+    assert!(cell.contains("Active"), "{cell}");
+}
+
+#[tokio::test]
+async fn private_key_download_checks_the_token_before_key_vault() {
+    let mut w = support::world().await;
+    w.csrf = "forged".into();
+    // A name that doesn't exist: still a 403, and Key Vault isn't asked.
+    let res = w
+        .post(
+            "/certificates/no-such-cert/download-key",
+            &[("confirm_name", "no-such-cert")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert!(w.kv.state.log.lock().unwrap().is_empty());
+}

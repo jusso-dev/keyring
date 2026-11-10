@@ -244,6 +244,24 @@ pub struct OperationError {
     pub message: Option<String>,
 }
 
+/// An issuer set up on the vault, from `GET /certificates/issuers`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IssuerItem {
+    pub id: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+}
+
+impl IssuerItem {
+    /// The issuer's name: the last part of its ID.
+    pub fn name(&self) -> &str {
+        self.id
+            .split_once("/certificates/issuers/")
+            .map(|(_, n)| n.trim_end_matches('/'))
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletedCertItem {
@@ -360,6 +378,52 @@ impl CertsApi<'_> {
         }
     }
 
+    /// Issuers set up on this vault, by name.
+    pub async fn issuers(&self) -> Result<Vec<IssuerItem>, AzureError> {
+        let first = format!(
+            "{}&maxresults={MAX_RESULTS}",
+            self.url("/certificates/issuers")
+        );
+        let mut items: Vec<IssuerItem> = self.collect(first).await?;
+        items.retain(|i| crate::routes::vault_ctx::is_valid_object_name(i.name()));
+        items.sort_by_key(|i| i.name().to_ascii_lowercase());
+        Ok(items)
+    }
+
+    /// Ask Key Vault to stop a pending request, then remove the request.
+    /// Key Vault's reference: "Update Certificate Operation" (PATCH with
+    /// `cancellation_requested`) and "Delete Certificate Operation".
+    pub async fn cancel_pending(&self, name: &str) -> Result<(), AzureError> {
+        let path = format!("/certificates/{name}/pending");
+        let _: Operation = self
+            .send(
+                Method::PATCH,
+                &path,
+                &serde_json::json!({ "cancellation_requested": true }),
+            )
+            .await?;
+        match self.call(Method::DELETE, &path).await {
+            // Already gone once cancelled is fine.
+            Err(AzureError::Status { status: 404, .. }) => Ok(()),
+            other => other,
+        }
+    }
+
+    /// Turn a certificate version on or off. Only `enabled` is sent.
+    pub async fn set_enabled(
+        &self,
+        name: &str,
+        version: &str,
+        enabled: bool,
+    ) -> Result<CertBundle, AzureError> {
+        self.send(
+            Method::PATCH,
+            &format!("/certificates/{name}/{version}"),
+            &serde_json::json!({ "attributes": { "enabled": enabled } }),
+        )
+        .await
+    }
+
     pub async fn import(&self, name: &str, body: &ImportCert) -> Result<CertBundle, AzureError> {
         self.send(Method::POST, &format!("/certificates/{name}/import"), body)
             .await
@@ -462,6 +526,15 @@ mod tests {
         assert_eq!(c.version(), "abc123");
         assert_eq!(c.thumbprint(), "7CB8B7539D87BA7215357B9B9049DFF2D3FA59BA");
         assert_eq!(thumbprint_hex(None), "");
+    }
+
+    #[test]
+    fn issuer_names() {
+        let i: IssuerItem = serde_json::from_value(serde_json::json!({
+            "id": "https://kv.vault.azure.net/certificates/issuers/DigiCert-OV", "provider": "DigiCert"
+        }))
+        .unwrap();
+        assert_eq!(i.name(), "DigiCert-OV");
     }
 
     #[test]

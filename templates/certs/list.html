@@ -45,7 +45,7 @@
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <th scope="row"><a class="mono" href="/certificates/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{% include "certs/_status.html" %}{% if row.enabled && row.expiry == crate::routes::certs::CertExpiry::Ok %}<span class="muted">Active</span>{% endif %}</td>
+      <td>{% include "certs/_status.html" %}</td>
       <td>{% if row.expires.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.expires }} <span class="muted">({{ row.expires_note }})</span>{% endif %}</td>
       <td class="mono small">{{ row.thumbprint }}</td>
       <td>{% for (k, v) in row.tags %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}</td>

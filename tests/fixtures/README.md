@@ -10,6 +10,7 @@ trusted or used anywhere else.
 | `test-plain.pfx` | PFX with the certificate stored unencrypted. Password `test-password` |
 | `test-encrypted.pfx` | PFX with everything encrypted. Password `test-password` |
 | `test-bundle.pem` | Certificate and its private key in one PEM |
+| `test-chain.pem` | Public certificates only, CA first: `CN=Keyring Test CA`, then `CN=leaf.keyring.test` signed by it with the key from `test-bundle.pem`. The CA's key was deleted |
 
 The private keys in these files protect nothing. Don't reuse them.
 | `test-rsa-pub.pem`, `test-rsa-n.txt` | Public half of a throwaway RSA 2048 key, as PEM and as the JWK `n` value. The private key was deleted |

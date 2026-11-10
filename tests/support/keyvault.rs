@@ -66,6 +66,8 @@ pub struct KvState {
     pub throttle_next: Mutex<u32>,
     /// Whether the vault allows HSM keys.
     pub premium: Mutex<bool>,
+    /// Certificate issuers and self-signed timing (see `certs.rs`).
+    pub cert_extra: super::certs::Extra,
     seq: Mutex<i64>,
 }
 

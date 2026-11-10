@@ -60,6 +60,12 @@ async fn self_signed_creates_and_shows_in_list() {
 #[tokio::test]
 async fn ca_issued_shows_pending_status() {
     let w = support::world().await;
+    w.kv.state
+        .cert_extra
+        .issuers
+        .lock()
+        .unwrap()
+        .push("DigiCert-OV".into());
     let res = w
         .post(
             "/certificates/new",
@@ -203,4 +209,210 @@ async fn forged_tokens_refused() {
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     assert!(w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
+}
+
+#[tokio::test]
+async fn self_signed_is_created_in_progress_then_completes() {
+    let w = support::world().await;
+    *w.kv.state.cert_extra.hold_self_signed.lock().unwrap() = true;
+    let res = w
+        .post("/certificates/new", &create_fields("web-tls", "Self"))
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let flash = res
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>()
+        .join(";");
+    assert!(!flash.is_empty());
+    // Key Vault is still making it: the page says so, not "waiting for the issuer".
+    let (status, html) = w.page("/certificates/web-tls").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Certificate request: Being created"),
+        "{html}"
+    );
+    assert!(html.contains("usually takes a few seconds"));
+    assert!(html.contains("Check again"));
+    assert!(!html.contains("Waiting for the issuer"));
+    // A few seconds later it's done.
+    *w.kv.state.cert_extra.hold_self_signed.lock().unwrap() = false;
+    let (_, html) = w.page("/certificates/web-tls").await;
+    assert!(!html.contains("Certificate request:"), "{html}");
+    assert!(html.contains("CN=keyring.test"));
+}
+
+#[tokio::test]
+async fn issuer_is_a_list_from_the_vault() {
+    let w = support::world().await;
+    w.kv.state
+        .cert_extra
+        .issuers
+        .lock()
+        .unwrap()
+        .push("DigiCert-OV".into());
+    let (_, html) = w.page("/certificates/new").await;
+    assert!(html.contains("<select id=\"issuer\" name=\"issuer\""));
+    assert!(html.contains("<option value=\"Self\" selected>"));
+    assert!(html.contains("<option value=\"DigiCert-OV\">DigiCert-OV</option>"));
+    // Unknown, or a name not on the vault, is refused before Key Vault.
+    for issuer in ["Unknown", "Typo-CA"] {
+        let res = w
+            .post("/certificates/new", &create_fields("pub-tls", issuer))
+            .await;
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{issuer}");
+        let html = body_text(res).await;
+        assert!(html.contains("Pick an issuer from the list"), "{issuer}");
+    }
+    assert!(w.kv.state.creates.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn issuer_list_refused_offers_self_only() {
+    let w = support::world().await;
+    *w.kv.state.fail_path.lock().unwrap() = Some("/certificates/issuers".into());
+    *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
+    let (status, html) = w.page("/certificates/new").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<option value=\"Self\" selected>"));
+    assert!(
+        html.contains("can&#39;t see this vault&#39;s issuers"),
+        "{html}"
+    );
+    let res = w
+        .post("/certificates/new", &create_fields("web-tls", "Self"))
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn pending_request_can_be_cancelled() {
+    let w = support::world().await;
+    w.kv.state
+        .cert_extra
+        .issuers
+        .lock()
+        .unwrap()
+        .push("DigiCert-OV".into());
+    w.post(
+        "/certificates/new",
+        &create_fields("pub-tls", "DigiCert-OV"),
+    )
+    .await;
+    let (_, html) = w.page("/certificates/pub-tls").await;
+    assert!(html.contains("action=\"/certificates/pub-tls/pending/cancel\""));
+    let res = w.post("/certificates/pub-tls/pending/cancel", &[]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let log = w.kv.state.log.lock().unwrap().clone();
+    let patch = log
+        .iter()
+        .position(|l| l == "PATCH /kv-test/certificates/pub-tls/pending")
+        .expect("cancellation requested");
+    let delete = log
+        .iter()
+        .position(|l| l == "DELETE /kv-test/certificates/pub-tls/pending")
+        .expect("operation deleted");
+    assert!(patch < delete);
+    assert!(
+        w.kv.state.certs.lock().unwrap()["pub-tls"]
+            .pending
+            .is_none()
+    );
+    let (_, html) = w.page("/certificates/pub-tls").await;
+    assert!(!html.contains("Certificate request:"));
+}
+
+#[tokio::test]
+async fn existing_name_check_reads_both_key_vault_replies() {
+    // Real Key Vault: 200 with an empty list for an unknown name.
+    let w = support::world().await;
+    let res = w
+        .post("/certificates/new", &create_fields("fresh", "Self"))
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    // Some replies are 404. Both mean the name is free.
+    let w = support::world().await;
+    *w.kv.state.cert_extra.versions_404.lock().unwrap() = true;
+    let res = w
+        .post("/certificates/new", &create_fields("fresh", "Self"))
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn reserved_names_are_refused_on_create() {
+    let w = support::world().await;
+    for name in ["new", "deleted", "upload"] {
+        let res = w
+            .post("/certificates/new", &create_fields(name, "Self"))
+            .await;
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+        assert!(body_text(res).await.contains("own pages"), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn key_vault_400_keeps_the_form_and_shows_its_reason() {
+    let w = support::world().await;
+    *w.kv.state.fail_path.lock().unwrap() = Some("/create".into());
+    *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
+    let res = w
+        .post("/certificates/new", &create_fields("web-tls", "Self"))
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(html.contains("Key Vault said:"));
+    assert!(html.contains("mock Key Vault error with private detail"));
+    assert!(html.contains("value=\"web-tls\""), "form kept");
+    assert!(html.contains("value=\"app.example.com\""));
+}
+
+#[tokio::test]
+async fn one_month_certificate_with_blank_renewal_is_accepted() {
+    let w = support::world().await;
+    let mut f = create_fields("short", "Self");
+    f[3] = ("validity_months", "1");
+    f[9] = ("renew_days", "");
+    let res = w.post("/certificates/new", &f).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let body = w.kv.state.creates.lock().unwrap()[0].body.clone();
+    assert_eq!(
+        body["policy"]["lifetime_actions"][0]["trigger"]["days_before_expiry"],
+        27
+    );
+}
+
+#[tokio::test]
+async fn delete_form_needs_the_certificate_to_exist() {
+    let w = support::world().await;
+    let (status, html) = w.page("/certificates/no-such-thing/delete").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!html.contains("to confirm"));
+}
+
+#[tokio::test]
+async fn enable_and_disable() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    let (_, html) = w.page("/certificates/web-tls").await;
+    assert!(html.contains("action=\"/certificates/web-tls/enabled\""));
+    assert!(html.contains(">Disable<"));
+    let res = w
+        .post("/certificates/web-tls/enabled", &[("state", "off")])
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(!w.kv.state.certs.lock().unwrap()["web-tls"].versions[0].enabled);
+    let (_, html) = w.page("/certificates/web-tls").await;
+    assert!(html.contains(">Enable<"));
+    let res = w
+        .post("/certificates/web-tls/enabled", &[("state", "on")])
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert!(w.kv.state.certs.lock().unwrap()["web-tls"].versions[0].enabled);
+    let res = w
+        .post("/certificates/web-tls/enabled", &[("state", "maybe")])
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

@@ -2,7 +2,8 @@
 //!
 //! The file is read into memory, checked, and shown as a preview. On
 //! confirm it's imported into Key Vault and dropped. It's never written to
-//! disk, logged or sent back to the browser.
+//! disk, logged or sent back to the browser. Opening the upload page or
+//! pressing "Start again" drops any file still waiting.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -26,16 +27,16 @@ use crate::azure::secrets::{Attributes, now_ts};
 use crate::dates;
 use crate::pkcs12;
 use crate::routes::assets::render;
-use crate::routes::error::{Need, PageError, PageResult, Problem};
+use crate::routes::error::{Need, PageError, PageResult, Problem, rejection_message};
 use crate::routes::flash::{self, Flash};
-use crate::routes::secrets::form::{FieldError, name_problem, parse_tags};
+use crate::routes::secrets::form::{FieldError, parse_tags};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf};
 use crate::secret::Secret;
 use crate::x509;
 
-use super::{api, current_vault};
+use super::{api, current_vault, new_name_problem};
 
 /// Largest file we accept. Real certificate files are a few KB; chains a
 /// little more.
@@ -47,12 +48,23 @@ pub const PFX: &str = "application/x-pkcs12";
 pub const PEM: &str = "application/x-pem-file";
 
 /// Fields put back into the form after an error. Never the file or password.
-#[derive(Default)]
 pub struct UploadView {
     pub name: String,
     pub tags: String,
     pub enabled: bool,
     pub exportable: bool,
+}
+
+impl Default for UploadView {
+    /// What the form shows when first opened.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            tags: String::new(),
+            enabled: true,
+            exportable: true,
+        }
+    }
 }
 
 #[derive(Template)]
@@ -63,6 +75,8 @@ struct UploadPage {
     form: UploadView,
     errors: Vec<FieldError>,
     max_kb: usize,
+    /// Key Vault's own reason, after it refused the import.
+    azure_message: Option<String>,
 }
 
 impl UploadPage {
@@ -83,6 +97,32 @@ pub struct PreviewCert {
     pub expired: bool,
 }
 
+impl PreviewCert {
+    fn from_summary(s: x509::Summary, now: i64) -> Self {
+        Self {
+            expired: s.not_after <= now,
+            valid_from: dates::format_datetime(s.not_before),
+            valid_to: dates::format_datetime(s.not_after),
+            subject: s.subject,
+            issuer: s.issuer,
+            sans: s.sans,
+        }
+    }
+}
+
+/// The rest of the chain in the file, under the main certificate.
+pub struct ChainCert {
+    pub subject: String,
+    pub valid_to: String,
+}
+
+/// The certificate already in Key Vault under the name being uploaded to.
+pub struct ExistingCert {
+    pub subject: String,
+    pub thumbprint: String,
+    pub expires: String,
+}
+
 #[derive(Template)]
 #[template(path = "certs/upload_preview.html")]
 struct PreviewPage {
@@ -91,7 +131,15 @@ struct PreviewPage {
     name: String,
     kind: &'static str,
     cert: Option<PreviewCert>,
-    chain_len: usize,
+    /// False when Keyring couldn't tell which certificate is the main one.
+    leaf_sure: bool,
+    chain: Vec<ChainCert>,
+    /// Keyring couldn't read inside the file at all (BER encoding).
+    unreadable: bool,
+    has_password: bool,
+    existing: Option<ExistingCert>,
+    /// The name couldn't be looked up, so it may already be in use.
+    existing_unknown: bool,
     upload_id: String,
     tags: Vec<(String, String)>,
     enabled: bool,
@@ -103,8 +151,9 @@ fn upload_page(
     vault: String,
     form: UploadView,
     errors: Vec<FieldError>,
+    azure_message: Option<String>,
 ) -> axum::response::Response {
-    let status = if errors.is_empty() {
+    let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -118,24 +167,62 @@ fn upload_page(
                 form,
                 errors,
                 max_kb: MAX_FILE_BYTES / 1024,
+                azure_message,
             }),
         )
             .into_response(),
     )
 }
 
+/// Drop any file waiting in this session. `take_pending_upload` removes
+/// the upload whatever ID it's given, and an upload ID is never empty, so
+/// this always drops it and never returns it.
+fn forget_pending_upload(session: &CurrentSession) {
+    drop(session.0.take_pending_upload(""));
+}
+
+fn too_big_message() -> String {
+    format!(
+        "That file is over {} KB. Certificate files are usually much smaller; check it's the right one.",
+        MAX_FILE_BYTES / 1024
+    )
+}
+
 pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
+    // A fresh form means any file waiting from before isn't wanted.
+    forget_pending_upload(&session);
     Ok(upload_page(
         shell,
         vault,
-        UploadView {
-            enabled: true,
-            exportable: true,
-            ..UploadView::default()
-        },
+        UploadView::default(),
         Vec::new(),
+        None,
     ))
+}
+
+#[derive(Deserialize)]
+pub struct CancelForm {
+    #[serde(default)]
+    csrf: String,
+}
+
+/// "Start again" on the preview: drop the waiting file and go back.
+pub async fn cancel(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Form(f): Form<CancelForm>,
+) -> PageResult {
+    let _ = check_csrf(&session, &f.csrf, shell)?;
+    forget_pending_upload(&session);
+    let mut res = Redirect::to("/certificates/upload").into_response();
+    flash::set(
+        &state,
+        &mut res,
+        &Flash::success("Keyring has forgotten that file. Nothing was uploaded."),
+    );
+    Ok(res)
 }
 
 /// The posted form, gathered from multipart fields.
@@ -152,18 +239,37 @@ struct Posted {
     too_big: bool,
 }
 
-async fn read_multipart(mut mp: Multipart) -> Result<Posted, ()> {
-    let mut p = Posted::default();
-    while let Some(mut field) = mp.next_field().await.map_err(|_| ())? {
+/// Why the multipart body couldn't be read.
+enum ReadError {
+    /// The request went over the route's body limit.
+    TooBig,
+    Broken,
+}
+
+impl From<axum::extract::multipart::MultipartError> for ReadError {
+    fn from(e: axum::extract::multipart::MultipartError) -> Self {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            Self::TooBig
+        } else {
+            Self::Broken
+        }
+    }
+}
+
+/// Read every field. A file over the limit is drained and dropped, so the
+/// fields after it in the body are still read.
+async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadError> {
+    while let Some(mut field) = mp.next_field().await? {
         let name = field.name().unwrap_or_default().to_owned();
         match name.as_str() {
             "file" => {
                 p.file_name = field.file_name().unwrap_or_default().to_owned();
                 let mut buf = Vec::new();
-                while let Some(chunk) = field.chunk().await.map_err(|_| ())? {
-                    if buf.len() + chunk.len() > MAX_FILE_BYTES {
+                while let Some(chunk) = field.chunk().await? {
+                    if p.too_big || buf.len() + chunk.len() > MAX_FILE_BYTES {
                         p.too_big = true;
-                        break;
+                        buf.clear();
+                        continue;
                     }
                     buf.extend_from_slice(&chunk);
                 }
@@ -172,20 +278,20 @@ async fn read_multipart(mut mp: Multipart) -> Result<Posted, ()> {
                 }
             }
             "password" => {
-                let v = field.text().await.map_err(|_| ())?;
+                let v = field.text().await?;
                 if !v.is_empty() {
                     p.password = Some(Secret::new(v));
                 }
             }
-            "csrf" => p.csrf = field.text().await.map_err(|_| ())?,
-            "name" => p.name = field.text().await.map_err(|_| ())?.trim().to_owned(),
-            "tags" => p.tags = field.text().await.map_err(|_| ())?,
+            "csrf" => p.csrf = field.text().await?,
+            "name" => p.name = field.text().await?.trim().to_owned(),
+            "tags" => p.tags = field.text().await?,
             "enabled" => p.enabled = true,
             "exportable" => p.exportable = true,
             _ => {}
         }
     }
-    Ok(p)
+    Ok(())
 }
 
 /// What the file turned out to be.
@@ -194,10 +300,17 @@ pub enum Parsed {
         /// Certificates readable without the password (often none).
         certs: Vec<Vec<u8>>,
     },
+    /// Starts like a PFX but in an encoding Keyring can't walk (BER, or
+    /// indefinite lengths). Key Vault may still accept it.
+    PfxUnreadable,
     Pem {
         certs: Vec<Vec<u8>>,
+        /// The unencrypted PKCS #8 key, DER, for matching the certificate.
+        key: Option<Vec<u8>>,
     },
 }
+
+const TOPK8: &str = "openssl pkcs8 -topk8 -nocrypt -in key.pem -out key.pk8.pem";
 
 /// Check a file is a usable PFX or PEM. Errors are written for people.
 pub fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
@@ -207,7 +320,7 @@ pub fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
     if looks_pem {
         let text = std::str::from_utf8(bytes)
             .map_err(|_| "This PEM file has characters Keyring can't read.".to_owned())?;
-        if text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----") {
+        if text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----") || text.contains("Proc-Type:") {
             return Err("The private key in this PEM file is encrypted. Key Vault needs it unencrypted in a PEM upload. Use a .pfx with a password instead.".into());
         }
         let certs: Vec<Vec<u8>> = x509::pem_blocks(text, "CERTIFICATE")
@@ -217,17 +330,35 @@ pub fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
         if certs.is_empty() {
             return Err("This PEM file has no certificate in it. It needs a -----BEGIN CERTIFICATE----- block.".into());
         }
-        let has_key = ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"]
-            .iter()
-            .any(|l| text.contains(&format!("-----BEGIN {l}-----")));
-        if !has_key {
-            return Err("This PEM file has a certificate but no private key. Add the key to the same file, or upload a .pfx.".into());
+        // Key Vault's PEM import wants an unencrypted PKCS #8 key. PKCS #1
+        // (`RSA PRIVATE KEY`) and SEC1 (`EC PRIVATE KEY`) pass a quick look
+        // but fail at import.
+        for (label, kind) in [("RSA PRIVATE KEY", "an RSA"), ("EC PRIVATE KEY", "an EC")] {
+            if text.contains(&format!("-----BEGIN {label}-----")) {
+                return Err(format!(
+                    "The private key is in {kind} key format ({label}). Key Vault needs it as PKCS #8 (BEGIN PRIVATE KEY). Convert it with: {TOPK8}"
+                ));
+            }
         }
-        return Ok(Parsed::Pem { certs });
+        let key = x509::pem_blocks(text, "PRIVATE KEY").into_iter().next();
+        let Some(key) = key else {
+            return Err("This PEM file has a certificate but no private key. Add the key to the same file, or upload a .pfx.".into());
+        };
+        // When Keyring can tell, the key must belong to one of the
+        // certificates.
+        let results: Vec<Option<bool>> = certs.iter().map(|c| x509::key_matches(c, &key)).collect();
+        if results.iter().all(|r| *r == Some(false)) {
+            return Err("The private key in this PEM file doesn't belong to its certificate. Check you've put the right key with it.".into());
+        }
+        return Ok(Parsed::Pem {
+            certs,
+            key: Some(key),
+        });
     }
     match pkcs12::inspect(bytes) {
         Some(info) if info.has_key || info.has_encrypted_part => Ok(Parsed::Pfx { certs: info.certs }),
         Some(_) => Err("This .pfx file has no private key in it.".into()),
+        None if pkcs12::looks_like_pfx(bytes) => Ok(Parsed::PfxUnreadable),
         None if lower.ends_with(".cer") || lower.ends_with(".crt") || x509::summarise(bytes).is_some() => {
             Err("This is a public certificate only. Key Vault needs the private key too, in a .pfx or a PEM with the key.".into())
         }
@@ -235,20 +366,69 @@ pub fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
     }
 }
 
+/// The certificate being uploaded and the rest of its chain. For PEM the
+/// one matching the private key wins; otherwise the one that didn't issue
+/// any of the others.
+fn describe(
+    certs: &[Vec<u8>],
+    key: Option<&[u8]>,
+    now: i64,
+) -> (Option<PreviewCert>, bool, Vec<ChainCert>) {
+    let summaries: Vec<x509::Summary> = certs.iter().filter_map(|c| x509::summarise(c)).collect();
+    if summaries.is_empty() {
+        return (None, true, Vec::new());
+    }
+    let by_key = key.and_then(|k| {
+        certs
+            .iter()
+            .position(|c| x509::key_matches(c, k) == Some(true))
+    });
+    let (leaf, sure) = match by_key {
+        Some(i) if i < summaries.len() => (i, true),
+        _ => x509::pick_leaf(&summaries),
+    };
+    let chain = summaries
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != leaf)
+        .map(|(_, s)| ChainCert {
+            subject: s.subject.clone(),
+            valid_to: dates::format_date(s.not_after),
+        })
+        .collect();
+    let main = summaries
+        .into_iter()
+        .nth(leaf)
+        .map(|s| PreviewCert::from_summary(s, now));
+    (main, sure, chain)
+}
+
 pub async fn preview(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     multipart: Multipart,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
-    let Ok(p) = read_multipart(multipart).await else {
+    let mut p = Posted::default();
+    let read = read_multipart(multipart, &mut p).await;
+    // A body cut off at the size limit may end before the form token
+    // arrived. Then all Keyring can do is say the file is too big: nothing
+    // goes to Key Vault and nothing is kept. Every other path checks the
+    // token before anything else.
+    if matches!(read, Err(ReadError::TooBig)) && p.csrf.is_empty() {
         let errors = vec![FieldError {
             field: "file",
-            message: "The upload didn't come through. Try again.".into(),
+            message: too_big_message(),
         }];
-        return Ok(upload_page(shell, vault, UploadView::default(), errors));
-    };
+        return Ok(upload_page(
+            shell,
+            vault,
+            UploadView::default(),
+            errors,
+            None,
+        ));
+    }
     let shell = check_csrf(&session, &p.csrf, shell)?;
     let view = UploadView {
         name: p.name.clone(),
@@ -256,11 +436,35 @@ pub async fn preview(
         enabled: p.enabled,
         exportable: p.exportable,
     };
+    match read {
+        Ok(()) => {}
+        Err(ReadError::TooBig) => {
+            // Fields after the file never arrived, so the tick boxes go back
+            // to how the form first opened.
+            let view = UploadView {
+                name: p.name,
+                tags: p.tags,
+                ..UploadView::default()
+            };
+            let errors = vec![FieldError {
+                field: "file",
+                message: too_big_message(),
+            }];
+            return Ok(upload_page(shell, vault, view, errors, None));
+        }
+        Err(ReadError::Broken) => {
+            let errors = vec![FieldError {
+                field: "file",
+                message: "The upload didn't come through. Try again.".into(),
+            }];
+            return Ok(upload_page(shell, vault, view, errors, None));
+        }
+    }
     let mut errors = Vec::new();
-    if let Some(m) = name_problem(&p.name) {
+    if let Some(m) = new_name_problem(&p.name) {
         errors.push(FieldError {
             field: "name",
-            message: m.replace("the secret", "the certificate"),
+            message: m,
         });
     }
     let tags = parse_tags(&p.tags).unwrap_or_else(|m| {
@@ -273,7 +477,7 @@ pub async fn preview(
     let parsed = if p.too_big {
         errors.push(FieldError {
             field: "file",
-            message: format!("That file is over {} KB. Certificate files are usually much smaller; check it's the right one.", MAX_FILE_BYTES / 1024),
+            message: too_big_message(),
         });
         None
     } else {
@@ -298,30 +502,73 @@ pub async fn preview(
         }
     };
     let (Some(parsed), true) = (parsed, errors.is_empty()) else {
-        return Ok(upload_page(shell, vault, view, errors));
+        return Ok(upload_page(shell, vault, view, errors, None));
+    };
+    // Importing onto an existing name adds a new current version, so show
+    // what's there now next to the new file.
+    let (existing, existing_unknown) = match api(&state, &session, &vault)
+        .get_cert(&p.name, None)
+        .await
+    {
+        Ok(b) => {
+            let now = now_ts();
+            (
+                Some(ExistingCert {
+                    subject: b
+                        .der()
+                        .and_then(|d| x509::summarise(&d))
+                        .map(|s| s.subject)
+                        .unwrap_or_default(),
+                    thumbprint: crate::azure::certs::thumbprint_hex(b.x5t.as_deref()),
+                    expires: b
+                        .attributes
+                        .expires
+                        .map(|e| {
+                            format!(
+                                "{} ({})",
+                                dates::format_date(e),
+                                dates::relative_days(e, now)
+                            )
+                        })
+                        .unwrap_or_default(),
+                }),
+                false,
+            )
+        }
+        Err(AzureError::Status { status: 404, .. }) => (None, false),
+        // Don't block the upload on a failed lookup; say so on the page.
+        Err(e) => {
+            tracing::warn!(vault = %vault, certificate = %p.name, error = %e, "couldn't check whether a certificate name is in use");
+            (None, true)
+        }
     };
     let bytes = p.file.unwrap_or_default();
-    let (kind, content_type, value, certs) = match parsed {
-        Parsed::Pfx { certs } => (".pfx", PFX, STANDARD.encode(&bytes), certs),
-        Parsed::Pem { certs } => (
+    let now = now_ts();
+    let (kind, content_type, value, described, unreadable) = match parsed {
+        Parsed::Pfx { certs } => (
+            ".pfx",
+            PFX,
+            STANDARD.encode(&bytes),
+            describe(&certs, None, now),
+            false,
+        ),
+        Parsed::PfxUnreadable => (
+            ".pfx",
+            PFX,
+            STANDARD.encode(&bytes),
+            (None, true, Vec::new()),
+            true,
+        ),
+        Parsed::Pem { certs, key } => (
             ".pem",
             PEM,
             String::from_utf8(bytes).unwrap_or_default(),
-            certs,
+            describe(&certs, key.as_deref(), now),
+            false,
         ),
     };
-    let now = now_ts();
-    let cert = certs
-        .first()
-        .and_then(|c| x509::summarise(c))
-        .map(|s| PreviewCert {
-            expired: s.not_after <= now,
-            valid_from: dates::format_datetime(s.not_before),
-            valid_to: dates::format_datetime(s.not_after),
-            subject: s.subject,
-            issuer: s.issuer,
-            sans: s.sans,
-        });
+    let (cert, leaf_sure, chain) = described;
+    let has_password = p.password.is_some();
     let upload_id = random_token(16);
     session.0.set_pending_upload(PendingUpload {
         id: upload_id.clone(),
@@ -342,7 +589,12 @@ pub async fn preview(
             name: p.name,
             kind,
             cert,
-            chain_len: certs.len(),
+            leaf_sure,
+            chain,
+            unreadable,
+            has_password,
+            existing,
+            existing_unknown,
             upload_id,
             tags: tags.into_iter().collect(),
             enabled: p.enabled,
@@ -367,6 +619,8 @@ pub async fn confirm(
     Form(f): Form<ConfirmForm>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
+    // The token is checked before the upload is taken, so a forged post
+    // can't throw away someone's waiting file.
     let shell = check_csrf(&session, &f.csrf, shell)?;
     let Some(up) = session
         .0
@@ -383,6 +637,18 @@ pub async fn confirm(
             .returning_to("/certificates/upload"),
         )
         .into());
+    };
+    let is_pfx = up.content_type == PFX;
+    let view = UploadView {
+        name: up.name.clone(),
+        tags: up
+            .tags
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        enabled: up.enabled,
+        exportable: up.exportable,
     };
     let body = ImportCert {
         value: up.value,
@@ -411,24 +677,29 @@ pub async fn confirm(
             flash::set(&state, &mut res, &Flash::success(format!("Uploaded {name}.")));
             Ok(res)
         }
-        // Key Vault answers 400 when the password is wrong or the file is
-        // damaged. Say that plainly rather than "Azure turned it down".
-        Err(AzureError::Status { status: 400, .. }) => Err(PageError::new(
-            shell,
-            Problem::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "Key Vault couldn't open the file",
-                "The password is probably wrong, or the file is damaged. Nothing was uploaded. Upload it again with the right password.",
-            )
-            .returning_to("/certificates/upload"),
-        )
-        .into()),
+        // Key Vault answers 400 when it can't open the file. Say what's
+        // likely for this kind of file, keep the form, and show Key Vault's
+        // own reason.
+        Err(e @ AzureError::Status { status: 400, .. }) => {
+            let message = if is_pfx {
+                "Key Vault couldn't open the file. The password is probably wrong, or the file is damaged. Nothing was uploaded. Choose the file again and type the right password."
+            } else {
+                "Key Vault couldn't read this PEM file. It needs the certificate and an unencrypted PKCS #8 private key that belongs to it. Nothing was uploaded."
+            };
+            let errors = vec![FieldError {
+                field: "file",
+                message: message.into(),
+            }];
+            Ok(upload_page(shell, vault, view, errors, rejection_message(&e)))
+        }
+        // An existing live certificate never gives 409 on import. Only a
+        // deleted one that can still be recovered does.
         Err(AzureError::Status { status: 409, .. }) => Err(PageError::new(
             shell,
             Problem::new(
                 StatusCode::CONFLICT,
                 "That name is taken",
-                format!("There's a certificate called {name}, or one was deleted recently and can still be recovered. Pick another name, or recover the deleted one."),
+                format!("A deleted certificate called {name} can still be recovered. Recover it from deleted certificates, or pick another name."),
             )
             .returning_to("/certificates/upload"),
         )
@@ -455,8 +726,50 @@ mod tests {
             matches!(parse_file(ENCRYPTED, "a.p12"), Ok(Parsed::Pfx { certs }) if certs.is_empty())
         );
         assert!(
-            matches!(parse_file(BUNDLE.as_bytes(), "a.pem"), Ok(Parsed::Pem { certs }) if certs.len() == 1)
+            matches!(parse_file(BUNDLE.as_bytes(), "a.pem"), Ok(Parsed::Pem { certs, key: Some(_) }) if certs.len() == 1)
         );
+    }
+
+    #[test]
+    fn pem_key_formats_key_vault_refuses() {
+        let cert = CERT;
+        for (label, expect) in [
+            ("RSA PRIVATE KEY", "openssl pkcs8 -topk8"),
+            ("EC PRIVATE KEY", "openssl pkcs8 -topk8"),
+        ] {
+            let pem = format!("{cert}-----BEGIN {label}-----\nAA==\n-----END {label}-----\n");
+            let e = parse_file(pem.as_bytes(), "a.pem").err().unwrap();
+            assert!(e.contains(expect) && e.contains("PKCS #8"), "{label}: {e}");
+        }
+        let legacy = format!(
+            "{cert}-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\nAA==\n-----END RSA PRIVATE KEY-----\n"
+        );
+        assert!(
+            parse_file(legacy.as_bytes(), "a.pem")
+                .err()
+                .unwrap()
+                .contains("encrypted")
+        );
+    }
+
+    #[test]
+    fn pem_key_must_match_the_certificate() {
+        let key = x509::pem_blocks(BUNDLE, "PRIVATE KEY")[0].clone();
+        let mut other = key.clone();
+        // Change a byte inside the modulus: still parses, no longer matches.
+        other[100] ^= 0x01;
+        let pem = format!("{CERT}{}", x509::to_pem("PRIVATE KEY", &other));
+        let e = parse_file(pem.as_bytes(), "a.pem").err().unwrap();
+        assert!(e.contains("doesn't belong"), "{e}");
+    }
+
+    #[test]
+    fn ber_pfx_is_allowed_without_a_preview() {
+        let ber = crate::pkcs12::tests::ber_pfx();
+        assert!(matches!(
+            parse_file(&ber, "old.pfx"),
+            Ok(Parsed::PfxUnreadable)
+        ));
     }
 
     #[test]

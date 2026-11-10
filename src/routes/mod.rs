@@ -85,6 +85,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             ),
         )
         .route("/certificates/upload/confirm", post(certs::upload::confirm))
+        .route("/certificates/upload/cancel", post(certs::upload::cancel))
         .route(
             "/certificates/new",
             get(certs::create::form).post(certs::create::create),
@@ -107,6 +108,11 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(certs::delete::delete_form).post(certs::delete::delete),
         )
         .route("/certificates/{name}", get(certs::detail))
+        .route("/certificates/{name}/enabled", post(certs::toggle))
+        .route(
+            "/certificates/{name}/pending/cancel",
+            post(certs::create::cancel_pending),
+        )
         .route("/certificates/{name}/cer", get(certs::download::cer))
         .route(
             "/certificates/{name}/download-key",
