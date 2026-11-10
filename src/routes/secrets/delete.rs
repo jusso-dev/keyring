@@ -11,86 +11,29 @@
 //! refused on the form and on submit, the delete message gives the vault's
 //! real retention, and purge reads the deleted secret first so purge
 //! protection is refused before Azure is asked. The deleted list and
-//! deleted page have their own templates, because they show the content
-//! type and the vault's retention.
-
-use askama::Template;
-use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
+//! deleted page are the shared ones too; a secret's row also carries its
+//! content type.
 
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::azure::AzureError;
-use crate::azure::secrets::{DeletedSecretItem, now_ts};
-use crate::dates;
-use crate::routes::assets::render;
-use crate::routes::error::{Halt, Need, PageResult};
-use crate::routes::lifecycle::handlers::{Lifecycle, Stage};
-use crate::routes::lifecycle::{self, Kind, Recovery};
-use crate::routes::paging::{PageQuery, Pager};
-use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
+use crate::azure::secrets::DeletedSecretItem;
+use crate::routes::error::{Halt, Need};
+use crate::routes::lifecycle::handlers::{DeletedPages, Lifecycle, Stage};
+use crate::routes::lifecycle::{self, DeletedRow, Kind, Recovery};
+use crate::routes::secrets::{api, azure_problem};
 use crate::routes::shell::Shell;
 
 const KIND: Kind = Kind::Secret;
-
-pub struct DeletedRow {
-    pub name: String,
-    pub deleted: String,
-    pub purge: String,
-    pub purge_note: String,
-    pub content_type: String,
-    /// What the vault allows, from the item's recovery level.
-    pub recovery: Recovery,
-}
-
-impl DeletedRow {
-    fn from_item(d: &DeletedSecretItem, now: i64) -> Self {
-        Self {
-            name: d.name().to_owned(),
-            deleted: d
-                .deleted_date
-                .map(dates::format_datetime)
-                .unwrap_or_default(),
-            purge: d
-                .scheduled_purge_date
-                .map(dates::format_date)
-                .unwrap_or_default(),
-            purge_note: d
-                .scheduled_purge_date
-                .map(|p| dates::relative_days(p, now))
-                .unwrap_or_default(),
-            content_type: d.content_type.clone().unwrap_or_default(),
-            recovery: recovery_of(&d.attributes),
-        }
-    }
-}
 
 fn recovery_of(a: &crate::azure::secrets::Attributes) -> Recovery {
     Recovery::new(a.recovery_level.as_deref(), a.recoverable_days)
 }
 
-#[derive(Template)]
-#[template(path = "secrets/deleted.html")]
-struct DeletedList {
-    shell: Shell,
-    vault: String,
-    rows: Vec<DeletedRow>,
-    pager: Pager,
-}
-
-#[derive(Template)]
-#[template(path = "secrets/deleted_detail.html")]
-struct DeletedDetail {
-    shell: Shell,
-    vault: String,
-    row: DeletedRow,
-    allow_purge: bool,
-}
-
-impl DeletedDetail {
-    fn recovery_sentence(&self) -> String {
-        self.row.recovery.sentence(KIND)
-    }
+fn row(d: &DeletedSecretItem, now: i64) -> DeletedRow {
+    DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now)
+        .with_recovery(&d.attributes)
+        .with_content_type(d.content_type.as_deref())
 }
 
 /// The current version, refusing a certificate's backing secret.
@@ -113,39 +56,6 @@ async fn current(
     }
 }
 
-pub async fn list_deleted(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Query(query): Query<PageQuery>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let items = match api(&state, &session, &vault).list_deleted().await {
-        Ok(i) => i,
-        Err(err) => {
-            return Err(azure_problem(
-                shell,
-                &err,
-                Need::ManageSecrets,
-                "/secrets/-/deleted",
-            ));
-        }
-    };
-    let now = now_ts();
-    let rows = items
-        .iter()
-        .map(|d| DeletedRow::from_item(d, now))
-        .collect();
-    let (rows, pager) = lifecycle::deleted_page(KIND, rows, query.page);
-    Ok(render(&DeletedList {
-        rows,
-        pager,
-        shell,
-        vault,
-    })
-    .into_response())
-}
-
 async fn load_deleted(
     state: &AppState,
     session: &CurrentSession,
@@ -162,24 +72,6 @@ async fn load_deleted(
             "/secrets/-/deleted",
         )),
     }
-}
-
-pub async fn deleted_detail(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let (shell, item) = load_deleted(&state, &session, shell, &vault, &name).await?;
-    Ok(render(&DeletedDetail {
-        row: DeletedRow::from_item(&item, now_ts()),
-        allow_purge: state.config.allow_purge,
-        shell,
-        vault,
-    })
-    .into_response())
 }
 
 /// Secrets, for the shared lifecycle handlers.
@@ -252,5 +144,28 @@ impl Lifecycle for Secrets {
 
     fn purge_error(shell: Shell, err: &AzureError, name: &str) -> Halt {
         lifecycle::purge_problem(shell, err, KIND, name, Need::ManageSecrets)
+    }
+}
+
+impl DeletedPages for Secrets {
+    async fn list_deleted(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        now: i64,
+    ) -> Result<Vec<DeletedRow>, AzureError> {
+        let items = api(state, session, vault).list_deleted().await?;
+        Ok(items.iter().map(|d| row(d, now)).collect())
+    }
+
+    async fn get_deleted(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+        now: i64,
+    ) -> Result<DeletedRow, AzureError> {
+        let d = api(state, session, vault).get_deleted(name).await?;
+        Ok(row(&d, now))
     }
 }

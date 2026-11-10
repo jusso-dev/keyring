@@ -394,7 +394,15 @@ async fn delete(
 }
 
 fn deleted_item(b: &str, name: &str, d: &DeletedKey) -> Value {
-    json!({"kid": format!("{b}/keys/{name}"), "recoveryId": format!("{b}/deletedkeys/{name}"), "deletedDate": d.deleted, "scheduledPurgeDate": d.purge})
+    // Key Vault sends the deleted key's attributes, with its recovery level
+    // and retention: https://learn.microsoft.com/rest/api/keyvault/keys/get-deleted-key/get-deleted-key
+    let mut attributes = d
+        .key
+        .versions
+        .last()
+        .map_or_else(|| json!({"recoveryLevel": "Recoverable+Purgeable"}), attrs);
+    attributes["recoverableDays"] = json!(90);
+    json!({"kid": format!("{b}/keys/{name}"), "recoveryId": format!("{b}/deletedkeys/{name}"), "deletedDate": d.deleted, "scheduledPurgeDate": d.purge, "attributes": attributes})
 }
 
 async fn list_deleted(

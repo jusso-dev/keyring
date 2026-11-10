@@ -57,10 +57,13 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .post(secrets::edit::create)
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
-        .route("/secrets/-/deleted", get(secrets::delete::list_deleted))
+        .route(
+            "/secrets/-/deleted",
+            get(lifecycle::handlers::list_deleted::<secrets::delete::Secrets>),
+        )
         .route(
             "/secrets/-/deleted/{name}",
-            get(secrets::delete::deleted_detail),
+            get(lifecycle::handlers::deleted_detail::<secrets::delete::Secrets>),
         )
         .route(
             "/secrets/-/deleted/{name}/recover",

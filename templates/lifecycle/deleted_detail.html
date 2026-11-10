@@ -8,14 +8,15 @@
   <dt>Vault</dt><dd>{{ vault }}</dd>
   <dt>Deleted</dt><dd>{{ ui::or_none(row.deleted) }}</dd>
   <dt>Permanently deleted on</dt><dd>{% if row.purge.is_empty() %}<span class="muted">None</span>{% else %}{{ row.purge }} ({{ row.purge_note }}){% endif %}</dd>
+  {% if !row.content_type.is_empty() %}<dt>Content type</dt><dd>{{ row.content_type }}</dd>{% endif %}
 </dl>
-<p>Recovering brings back the {{ kind.noun() }} with every version.{% if row.purge_protected %} The vault has purge protection, so it can't be permanently deleted before that date.{% endif %}</p>
+<p>Recovering brings back the {{ kind.noun() }} {{ restores() }}. {{ recovery_sentence() }}</p>
 <div class="actions">
   <form method="post" action="{{ kind.deleted_url(row.name) }}/recover">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <button type="submit">Recover {{ row.name }}</button>
   </form>
-  {% if allow_purge && !row.purge_protected %}
+  {% if allow_purge && !row.recovery.purge_protected %}
   <a class="button button-danger" href="{{ kind.deleted_url(row.name) }}/purge">Permanently delete</a>
   {% endif %}
 </div>

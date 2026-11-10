@@ -69,7 +69,10 @@ impl DeletedPages for Keys {
         let items = api(state, session, vault).list_deleted().await?;
         Ok(items
             .iter()
-            .map(|d| DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now))
+            .map(|d| {
+                DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now)
+                    .with_recovery(&d.attributes)
+            })
             .collect())
     }
 
@@ -81,11 +84,9 @@ impl DeletedPages for Keys {
         now: i64,
     ) -> Result<DeletedRow, AzureError> {
         let d = api(state, session, vault).get_deleted(name).await?;
-        Ok(DeletedRow::new(
-            d.name(),
-            d.deleted_date,
-            d.scheduled_purge_date,
-            now,
-        ))
+        Ok(
+            DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now)
+                .with_recovery(&d.attributes),
+        )
     }
 }
