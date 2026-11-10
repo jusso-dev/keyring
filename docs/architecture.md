@@ -7,7 +7,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 - **Act as the user.** Every Azure call uses a token obtained through the on-behalf-of (OBO) flow. Keyring has no identity of its own with data-plane or control-plane access.
 - **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk.
 - **Let Key Vault decide.** Authorisation is Key Vault RBAC (or access policies on older vaults). Keyring shows what Azure allows and explains clearly when it doesn't.
-- **Safe by default.** Purge is off. Deletes need typed confirmation. Secret values are hidden until revealed and the clipboard clears itself.
+- **Safe by default.** Purge is off. Deletes need typed confirmation. Secret values are hidden until revealed, and Keyring tries to clear the clipboard after a copy.
 
 ## Request flow
 
@@ -27,7 +27,7 @@ Keyring works with the Azure public cloud only: these hosts, `login.microsoftonl
 | --- | --- |
 | Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry, generator and audit |
 | Pages | Askama templates compiled into the binary. Plain hand-written CSS |
-| Browser script | One small hand-written vanilla JS file for copy to clipboard with auto clear and similar extras. Pages work without it |
+| Browser script | One small hand-written vanilla JS file for copy to clipboard, clearing it again, and similar extras. Pages work without it |
 | Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
 | Azure calls | `reqwest` with rustls, calling the Key Vault, Resource Graph, ARM and Log Analytics REST APIs directly. No `azure_*` crates (see below) |
 | Sessions | In-memory store keyed by a random cookie. Nothing persisted |
@@ -58,7 +58,16 @@ Rules for the codebase:
 
 Static files are compiled in rather than read from disk, so the container needs no writable or readable app directory and nothing can be swapped at run time.
 
-Logging uses `tracing`, as plain text lines on standard output. Two kinds of line are written: one per request (method, path without the query string, status and duration), and an action line for each change or read of a value, naming who did it (their Entra ID) and what (vault and item name). Request and response bodies, headers, query strings, secret values and tokens are never logged. Vault and item names do appear. Where the lines end up on each host is in [deploy.md](deploy.md#logs).
+Logging uses `tracing`, as plain text lines on standard output. Two kinds of line are written:
+
+- one per request, `request method=GET path=/secrets status=200 ms=12`. The path never has the query string. Requests that end in a 5xx are logged at `warn`, the rest at `info`.
+- an action line for each change or read of a value, naming who did it and what (vault and item name). The person is `subject=oid:<object ID>,tid:<tenant ID>` from the ID token, the same IDs Entra's sign-in logs and Key Vault's diagnostic logs use. Without those claims it falls back to `sub:<subject>`.
+
+Request and response bodies, headers, query strings, secret values, tokens and Azure's error messages are never logged. Vault and item names do appear. `KEYRING_LOG_LEVEL` is checked at start against `error`, `warn`, `info`, `debug` and `trace`; `off` and filter strings are refused, so the action lines can't be turned off by mistake. Where the lines end up on each host is in [deploy.md](deploy.md#logs).
+
+Release builds unwind on a panic rather than abort, so one request that hits a bug gets a 500 page and every other session carries on. Keyring's own panic hook logs only where the panic happened, never its message, since that can hold request data.
+
+Static files are served from `/static/` with a version in the query string, taken from a hash of the file's contents. A request with the current version is cached for a year (`immutable`), since a new build changes the URL. Without it, or with an old one, the current file comes back with a five-minute cache. HTML pages, reveals, downloads and CSVs are `no-store`.
 
 `unsafe_code` is set to `forbid` in `Cargo.toml` lints, which has the same effect as `#![forbid(unsafe_code)]` on every target in the crate.
 
@@ -66,8 +75,11 @@ Logging uses `tracing`, as plain text lines on standard output. Two kinds of lin
 
 - `/auth/start` builds the Entra authorise URL with the `openidconnect` crate: authorisation code flow, PKCE (S256), random state and nonce. It asks for `openid profile offline_access` and Keyring's own API scope, so the access token can later be exchanged on behalf of the user.
 - State, nonce, PKCE verifier and the return path go in a short-lived (10 minute) cookie, encrypted with AES-256-GCM using a key derived from `SESSION_SECRET` (HKDF-SHA256). The cookie name is bound in as associated data.
-- `/auth/callback` checks the state in constant time, swaps the code for tokens and has the crate verify the ID token: signature against the tenant's published keys, issuer, audience, expiry and nonce. If the signature check fails the cached keys are dropped so a key rollover is picked up on the next try.
-- Sessions live in server memory. The browser only gets a random 256-bit ID in an http-only, `SameSite=Lax` cookie (`Secure` and `__Host-` prefixed over HTTPS). Tokens never leave the server. Sessions end after an hour idle or 12 hours in total. A restart signs everyone out; running several copies needs sticky sessions.
+- `/auth/callback` checks the state in constant time, swaps the code for tokens and has the crate verify the ID token: signature against the tenant's published keys, issuer, audience, expiry and nonce. An `error=` reply is only acted on when its `state` matches the sign-in in progress.
+- Entra's metadata and signing keys are cached for an hour, and concurrent sign-ins share one fetch. If an ID token is signed with a key that isn't in the cache, the cache is marked out of date, the keys are fetched again and the same sign-in is checked once more, so a key rollover doesn't fail anyone. If a fetch fails, the last good copy is kept and Keyring waits 30 seconds before trying again.
+- Sessions live in server memory. The browser only gets a random 256-bit ID in an http-only, `SameSite=Lax` cookie (`Secure` and `__Host-` prefixed over HTTPS). Tokens never leave the server. Sessions end after an hour idle or 12 hours in total. A task drops expired sessions, with their tokens, every minute. A restart signs everyone out; running several copies needs sticky sessions.
+- Sealed cookies (sign-in state and one-off messages) carry the time they were made, and the server refuses them once they're too old (10 minutes for sign-in, one minute for messages), whatever the browser does with `Max-Age`.
+- A form posted after the session ended goes back to sign-in, and then to the form's page, with a message that nothing was saved.
 - Every route except sign-in, callback, signed-out, `/healthz` and `/static` sits behind a middleware that requires a session. Without one, GET requests are sent to sign-in with the path remembered. Return paths must be local (`/` but not `//`, no backslashes or control characters).
 - Sign-out is a form post with a per-session token. It drops the session here, then sends the browser to Entra's end-session endpoint, which returns to `/auth/signed-out`.
 - `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider. `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL` do the same for ARM, Key Vault and Log Analytics. Leave all four unset in real deployments; Keyring logs a warning at start naming any that are set. Plain `http://` is only accepted for localhost.
@@ -77,7 +89,8 @@ Logging uses `tracing`, as plain text lines on standard output. Two kinds of lin
 - `azure::TokenBroker` swaps the user's access token (issued for Keyring's own API scope at sign-in) for a token scoped to Key Vault, ARM or Log Analytics, using the OBO grant (`urn:ietf:params:oauth:grant-type:jwt-bearer`, `requested_token_use=on_behalf_of`).
 - If the user's own token has less than five minutes left, the broker refreshes it with the refresh token first, keeping any rotated refresh token.
 - Exchanged tokens are cached in the session, in memory, per resource, and reused until five minutes before expiry. Sessions never share tokens.
-- Entra errors are mapped: `interaction_required`, `invalid_grant` and `login_required` mean sign in again (MFA, conditional access, revoked or expired refresh token). `consent_required` and AADSTS 65001, 65004 and 650057 mean an admin must consent. Only the error code is logged, never the description.
+- Concurrent requests in one session, such as the expiry dashboard reading several vaults at once, share one refresh and one exchange per resource. If that call fails, the requests waiting on it get the same answer instead of each trying in turn. A request that arrives later tries again.
+- Entra errors are mapped: `interaction_required` and `login_required` mean sign in again, and so does `invalid_grant` with an Entra error number a fresh sign-in fixes (MFA, conditional access, an expired or revoked refresh token). Any other `invalid_grant`, such as a wrong `ENTRA_API_SCOPE`, is shown as a setting for the admin. `consent_required` and AADSTS 65001, 65004 and 650057 mean an admin must consent. Only the error code is logged, never the description.
 - There is no client-credentials grant, managed identity or app-only token in the Azure data path. The client secret is only used to authenticate the OBO and refresh requests.
 - Tokens live in `AccessToken` and `Secret` wrappers whose `Debug` and `Display` print `[redacted]`.
 
@@ -85,9 +98,9 @@ Logging uses `tracing`, as plain text lines on standard output. Two kinds of lin
 
 `azure::AzureClient` calls the Key Vault, ARM, Resource Graph and Log Analytics REST APIs directly with `reqwest`. The official Rust SDK crates are still in beta, change often between releases and pull in a large dependency tree of their own, including their own identity and HTTP layers we'd have to work around to plug in OBO tokens. The REST APIs Keyring uses are a handful of stable, versioned endpoints, so a thin typed wrapper is less code to trust. We'll revisit when the SDK reaches a stable 1.0.
 
-The client attaches the user's token to every call. On a 401 it drops the cached token, gets a fresh one and tries once more. Error replies keep the status and Azure's error code, which the UI maps to its own plain-English text. Azure's message is kept in the error value but is never shown or logged, since it can name items and isn't written for the people using Keyring.
+The client attaches the user's token to every call. On a 401 it drops the cached token, gets a fresh one and tries once more. Error replies keep the status and Azure's error code, which the UI maps to its own plain-English text.
 
-Concurrent requests in one session, such as the expiry dashboard reading several vaults at once, can each try to refresh the user's token at the same moment. With the dashboard fanning out that is worth sharing one refresh between them; [issue 75](https://github.com/jusso-dev/keyring/issues/75) tracks it.
+Azure's own message is shown in one case only: a 400 on a write, under the form it came from, as "Key Vault said:". For a validation failure it is the only thing that names the field and the rule. The forms are certificate create and upload, key create and the key rotation policy. The message is cut to 500 characters and escaped as text, and the form keeps what was typed. It is never logged. It isn't shown on read paths or for 401, 403 and 404, where Keyring's own text is clearer and the message can name items the person can't see.
 
 ## HTTP client and TLS
 
@@ -168,7 +181,7 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 
 - The list uses `GET /secrets`, which returns properties only, in pages of 25 following `nextLink`. A `nextLink` is only followed if it points at the same vault.
 - A secret's page reads `GET /secrets/{name}/versions` and shows the newest version. That call never returns values, so opening a page doesn't read the secret.
-- Values are only read by the reveal action.
+- Values are only read by the reveal action, and by rollback, which copies an older version's value into a new version on the server without showing it.
 - Names from URLs are checked against Key Vault's rules (letters, digits and hyphens, up to 127) and versions must be 32 hex characters, before they go into a request.
 - "Expiring soon" means within 30 days. Dates are shown in UTC.
 - Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
@@ -176,16 +189,25 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 ## Certificates
 
 - The list and pages use the certificates API (7.5), which only returns the public certificate. Subject, issuer, validity, serial and other names are read from the DER with `x509-cert` 0.3 (RustCrypto, pure Rust). It brings its own `der` 0.8, `spki` 0.8 and `const-oid` 0.10, alongside the older versions other crates use, plus `tls_codec`.
+- The list is read 25 at a time from Key Vault and shown 100 to a page.
+- **Create.** The issuer is a select: Self, plus the vault's own issuers from `GET /certificates/issuers`. `Unknown` is refused on the server, since Keyring can't show the signing request or merge a signed certificate. If the issuer list can't be read (403 without Certificates Officer), only Self is offered, with a note saying why. A self-signed create comes back `inProgress` and shows as "Being created" until Key Vault finishes it, usually within seconds. `days_before_expiry` is checked against Key Vault's limit of 27 days per month of validity.
+- **Pending requests.** A request waiting for its issuer can be stopped with "Cancel this request": a PATCH with `cancellation_requested: true`, then a DELETE of the operation, which frees the name.
+- **Upload.** The file is read and shown as a preview before anything is sent: the leaf certificate's subject, issuer and dates, and if the name already exists, that the upload becomes a new version of it. A PEM must hold the certificate and an unencrypted PKCS #8 key (`BEGIN PRIVATE KEY`); PKCS #1 and SEC1 keys are refused with the openssl command that converts them, and the key must match the certificate. A BER-encoded PFX, which Keyring's own parser can't read, can still be uploaded, with a note that there's no preview. The file waits in the server-side session, never a cookie.
+- **Enable and disable** set `attributes.enabled` on the current version.
 - Expiry bands: expired, within 30 days, within 90 days.
 - `.cer` (DER) and PEM downloads are the public certificate only, and need certificate read access.
-- The private key lives in the certificate's backing secret. "Download with private key" is only offered when the policy marks the key exportable. It shows a warning and needs the name typed, then reads the backing secret (so it also needs secret read access) and sends it with `no-store`. The backing secret URL from Key Vault is only used if it points at the same vault and name. Each download logs at `warn` with subject, vault and name.
+- The private key lives in the certificate's backing secret. "Download with private key" is only offered when the policy marks the key exportable. It shows a warning and needs the name typed, then reads the backing secret (so it also needs secret read access) and sends it with `no-store`. The backing secret URL from Key Vault is only used if it is exactly `/secrets/{name}/{version}` on the same vault, with the certificate's name and a 32 hex character version. Each download logs at `warn` with subject, vault and name.
 
 ## Keys
 
 - Keyring only ever reads keys with `GET /keys/{name}` and the list and versions calls, which return the public part. There is no export, backup, release, decrypt, unwrap or sign call anywhere; a test checks the keys client source for them.
 - The JWK type only has public fields (`n`, `e`, `crv`, `x`, `y`). Any private field Key Vault might send is dropped while parsing.
 - Public keys are shown as JWK and as PEM (SubjectPublicKeyInfo). The PEM is built with a few lines of DER encoding and tested byte for byte against openssl output for RSA and EC.
-- Create defaults to RSA 3072 with every RSA operation, or sign and verify for EC. Rotate now and the rotation policy (rotate after, expiry, near-expiry event) use Key Vault's own rotation API.
+- Create defaults to RSA 3072 with every RSA operation, or sign and verify for EC. An HSM key on a Standard vault is refused by Key Vault (400 `BadParameter`), and the form says the vault needs the Premium tier.
+- The list is read 25 at a time from Key Vault and shown 100 to a page.
+- Rotate now and the rotation policy use Key Vault's own rotation API. The policy form rotates either a number of days after each version is made or a number of days before it expires, with an expiry and a near-expiry event. Durations Key Vault already holds (for example `P18M`) are sent back unchanged if the field wasn't changed. A policy with parts the form can't show, such as a time in hours, is listed on the page, and saving needs "Replace the whole policy" ticked. Key Vault's default policy (one Notify 30 days before expiry, no expiry) is shown as no policy set.
+- **Enable and disable** set `attributes.enabled` on the current version.
+- **Managed keys**, the ones Key Vault made for a certificate (`managed: true`), are refused on the server for delete, rotate, rotation policy and enable or disable, with a page that sends you to the certificate.
 
 ## Audit
 
@@ -195,7 +217,12 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - Queries go to the Log Analytics resource-centric endpoint (`/v1/<workspace ARM ID>/query`) with the user's OBO token for `https://api.loganalytics.io/.default`.
 - **No query injection.** Filters are checked against strict patterns first (names: letters, digits and hyphens; people: letters, digits, `@ . _ -`; actions: a fixed list), so anything else is refused before a query is sent. Values then appear only as escaped string literals in `let` lines at the top of the query; the rest of the KQL is fixed text. Time ranges come from a fixed list.
 - Operations are shown in plain words ("Viewed secret value" for `SecretGet`). Up to 500 most recent rows. CSV export uses the same query and rows, with formula guarding.
+- When a vault logs to several workspaces and some can't be read, the others are still shown, and the page and the CSV say how many were left out and why. If none can be read, the CSV answers 403 or 404 with an explanation instead of an empty file.
 - Each secret, certificate and key page has "Who used it", which opens the audit view filtered to that item for the last 30 days.
+
+## Expiry dashboard
+
+The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV.
 
 ## Alerts
 
@@ -231,21 +258,21 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | --- | --- |
 | Keyring used to reach vaults a person can't | Every Azure call carries the person's own OBO token. Keyring has no managed identity, service principal or app-only token with vault access. Its deployment identity can only read its own two config secrets |
 | Stolen session cookie | Random 256-bit ID, http-only, `SameSite=Lax`, `Secure` and `__Host-` prefixed over HTTPS. One hour idle and 12 hour absolute timeouts. Sign-out removes the session server-side |
-| Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route |
+| Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route. The token is bound to the vault the form was rendered for, so a form from before a vault switch in another tab is refused ("You switched vaults") instead of acting on the new vault |
 | Open redirects after sign-in | Return paths must be local paths; absolute URLs, `//host`, backslashes and control characters fall back to `/` |
 | Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
 | Cross-site scripting | Askama escapes all output. CSP `default-src 'none'` with scripts and styles from this site only, no inline code, no `eval`. The one script uses no `innerHTML` (tested) |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
 | Log forging | OAuth error codes from query strings are only kept if they look like codes; error strings are logged with escaping so a crafted value can't start a new log line |
-| Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`. Only metadata is logged. A test captures all `tracing` output at TRACE during reveals, uploads, generation and errors and checks no value, token, password or Azure message appears |
+| Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`, and are zeroised when dropped. The request log has method, path, status and duration only; action lines add the person's Entra `oid` and `tid` and the vault and item names. A panic logs only its location. A test captures all `tracing` output at TRACE during reveals, uploads, generation and errors and checks no value, token, password or Azure message appears |
 | Values cached by browsers or proxies | `Cache-Control: no-store` on every HTML page, reveal, download and CSV |
-| Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page, and the clipboard is cleared if it still holds the value |
+| Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page. Keyring tries to clear the clipboard if it still holds the value. Browsers only allow that while the tab has focus, so a clear that fails in a background tab is tried again when you come back |
 | Accidental or malicious deletes | Typed-name confirmation checked on the server. Purge is refused by the server unless `KEYRING_ALLOW_PURGE=true` |
 | Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name. A certificate's backing secret can't be revealed, rolled back, changed or deleted through the secrets pages |
 | Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed |
 | CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
 | Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault |
-| Large or slow requests | Request headers must arrive within 10 seconds (slow-header clients are cut off). 64 KB body limit on forms (256 KB for certificate uploads). 90 second limit per request. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
+| Large or slow requests | Request headers must arrive within 10 seconds (slow-header clients are cut off). 64 KB body limit on forms (256 KB on the two forms that carry a secret value, and 272 KB for a certificate upload of up to 256 KB). 90 second limit per request. At most 512 connections at once; past that, new ones wait in the listen backlog. Each connection is asked to close after 5 minutes and cut off 2 minutes later. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
 | Supply chain | Few crates, all from crates.io, licence allow-list, `cargo deny` and `cargo audit` on every change and weekly, `Cargo.lock` and toolchain pinned, actions pinned by SHA, images pinned by digest, SBOM per build. No npm |
 | Memory safety | `unsafe` code is forbidden in the crate |
 | Container escape or tampering | Distroless static image, no shell, non-root, read-only root filesystem, no capabilities |
@@ -253,5 +280,9 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 ### Known limits
 
 - **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
-- **The session secret** only protects short-lived cookies (sign-in state and flash messages). Pending certificate uploads are kept in the server-side session. Rotating it means a restart, which signs everyone out (sessions are in memory), and cancels sign-ins in progress.
+- **The session secret** only protects short-lived cookies (sign-in state and flash messages), which the server also refuses once they're past their age limit. Pending certificate uploads are kept in the server-side session. Rotating it means a restart, which signs everyone out (sessions are in memory), and cancels sign-ins in progress.
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
+- **The connection cap is shared** by every client, and idle keep-alive connections and slow request bodies aren't limited beyond the 90 second request limit and the 5 minute connection age. A front-end proxy or the platform's load balancer normally covers this.
+- **Zeroising covers Keyring's own copies.** Copies of tokens held inside `openidconnect` and `reqwest` aren't zeroised.
+- **A panic** gives that one request a 500 page. Sessions survive it, since release builds unwind.
+- **Nothing has run against a real tenant yet.** The tests use mock Entra, ARM, Key Vault and Log Analytics servers that follow Microsoft's REST reference. [real-vault-checklist.md](real-vault-checklist.md) lists what the first real run has to confirm.
