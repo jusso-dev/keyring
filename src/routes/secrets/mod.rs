@@ -87,7 +87,8 @@ pub struct SecretFilter {
     /// `key` or `key=value`.
     #[serde(default)]
     pub tag: String,
-    /// `expiring`, `expired` or `disabled`.
+    /// `expiring` (within 30 days, not yet expired), `expired` or
+    /// `disabled`.
     #[serde(default)]
     pub show: String,
     #[serde(default)]
@@ -100,8 +101,10 @@ impl SecretFilter {
     }
 
     pub fn matches(&self, row: &SecretRow) -> bool {
+        // The same text the browser's live filter searches: the name and
+        // every tag as `key=value`.
         let q = self.q.trim().to_lowercase();
-        if !q.is_empty() && !row.name.to_lowercase().contains(&q) {
+        if !q.is_empty() && !row.filter_text.contains(&q) {
             return false;
         }
         let tag = self.tag.trim();
@@ -118,7 +121,7 @@ impl SecretFilter {
             }
         }
         match self.show.as_str() {
-            "expiring" => matches!(row.expiry, ExpiryState::Soon | ExpiryState::Expired),
+            "expiring" => row.expiry == ExpiryState::Soon,
             "expired" => row.expiry == ExpiryState::Expired,
             "disabled" => !row.enabled,
             _ => true,
@@ -204,7 +207,7 @@ pub async fn list(
 
     let show_options = [
         ("", "All secrets"),
-        ("expiring", "Expired or expiring within 30 days"),
+        ("expiring", "Expiring within 30 days"),
         ("expired", "Expired"),
         ("disabled", "Disabled"),
     ]
@@ -302,7 +305,10 @@ mod tests {
                 .map(|(k, v)| ((*k).into(), (*v).into()))
                 .collect(),
             managed: false,
-            filter_text: String::new(),
+            filter_text: std::iter::once(name.to_lowercase())
+                .chain(tags.iter().map(|(k, v)| format!("{k}={v}").to_lowercase()))
+                .collect::<Vec<_>>()
+                .join(" "),
         }
     }
 
@@ -325,9 +331,14 @@ mod tests {
         assert!(f("", "", "expiring").matches(&r));
         assert!(!f("", "", "expired").matches(&r));
         assert!(!f("", "", "disabled").matches(&r));
+        // The search box matches tags too, as the live filter does.
+        assert!(f("prod", "", "").matches(&r));
+        assert!(f("env=pr", "", "").matches(&r));
+        assert!(!f("staging", "", "").matches(&r));
         let d = row("old", false, ExpiryState::Expired, &[]);
         assert!(f("", "", "disabled").matches(&d));
         assert!(f("", "", "expired").matches(&d));
-        assert!(f("", "", "expiring").matches(&d));
+        // "Expiring" means soon, not already expired, to match its count.
+        assert!(!f("", "", "expiring").matches(&d));
     }
 }
