@@ -128,7 +128,7 @@ async fn delete_needs_typed_name_then_recover() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(!w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
     let (_, html) = w.page("/certificates/-/deleted").await;
-    assert!(html.contains(">web-tls<") && html.contains("Gone for good on"));
+    assert!(html.contains(">web-tls<") && html.contains("Permanently deleted on"));
 
     let res = w.post("/certificates/-/deleted/web-tls/recover", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
@@ -146,7 +146,7 @@ async fn purge_off_by_default() {
     )
     .await;
     let (_, html) = w.page("/certificates/-/deleted/web-tls").await;
-    assert!(!html.contains("Permanently delete"));
+    assert!(!html.contains("/purge\""), "no purge link");
     let (status, _) = w.page("/certificates/-/deleted/web-tls/purge").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let res = w
@@ -404,8 +404,10 @@ async fn enable_and_disable() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
     let (_, html) = w.page("/certificates/web-tls").await;
+    // Disable goes through a confirmation page that posts here.
+    assert!(html.contains("href=\"/certificates/web-tls/disable\">Disable<"));
+    let (_, html) = w.page("/certificates/web-tls/disable").await;
     assert!(html.contains("action=\"/certificates/web-tls/enabled\""));
-    assert!(html.contains(">Disable<"));
     let res = w
         .post("/certificates/web-tls/enabled", &[("state", "off")])
         .await;

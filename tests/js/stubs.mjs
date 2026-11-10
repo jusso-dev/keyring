@@ -36,10 +36,14 @@ export class Element {
     this.hidden = false;
     this.value = "";
     this.defaultValue = "";
+    // Layout sizes, for the table wrapper. Tests set them by hand.
+    this.scrollWidth = 0;
+    this.clientWidth = 0;
     this.texts = []; // Every textContent set, in order, for live region checks.
     this._text = "";
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "hidden") this.hidden = !!v;
+      else if (k === "scrollWidth" || k === "clientWidth") this[k] = v;
       else if (k === "text") this._text = v;
       else if (k === "value") {
         this.value = v;
@@ -77,6 +81,9 @@ export class Element {
   }
   hasAttribute(k) {
     return this.attrs.has(k);
+  }
+  removeAttribute(k) {
+    this.attrs.delete(k);
   }
   appendChild(c) {
     return this.insertBefore(c, null);

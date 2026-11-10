@@ -10,6 +10,7 @@ use crate::auth::CurrentSession;
 use crate::generator::{self, KeyFormat, PasswordOptions};
 use crate::routes::assets::render;
 use crate::routes::error::{PageError, PageResult, Problem};
+use crate::routes::forms::FieldErrors;
 use crate::routes::secrets::reveal::{CLEAR_AFTER_SECS, no_store};
 use crate::routes::shell::{Section, Shell};
 use crate::secret::Secret;
@@ -70,7 +71,8 @@ struct GenPage {
     shell: Shell,
     form: GenForm,
     value: Option<Secret>,
-    error: Option<String>,
+    /// What stopped a value being made, tied to the field at fault.
+    errors: FieldErrors,
     clear_after: u32,
 }
 
@@ -81,9 +83,16 @@ impl GenPage {
     fn is(&self, kind: &str) -> bool {
         self.form.kind == kind
     }
+    fn error_for(&self, field: &str) -> Option<&str> {
+        self.errors.error_for(field)
+    }
 }
 
-fn make(f: &GenForm) -> Result<Secret, String> {
+fn field_err(field: &'static str, message: impl Into<String>) -> FieldErrors {
+    FieldErrors::one(field, message)
+}
+
+fn make(f: &GenForm) -> Result<Secret, FieldErrors> {
     match f.kind.as_str() {
         "guid" => Ok(Secret::new(generator::guid())),
         "api_key" => {
@@ -91,12 +100,13 @@ fn make(f: &GenForm) -> Result<Secret, String> {
                 .bytes
                 .trim()
                 .parse()
-                .map_err(|_| "Pick a number of bytes.".to_owned())?;
+                .map_err(|_| field_err("bytes", "Pick a number of bytes."))?;
             let prefix = f.prefix.trim();
             if !generator::is_valid_prefix(prefix) {
-                return Err(
-                    "The prefix can use letters, numbers, _ and -, up to 16 characters.".into(),
-                );
+                return Err(field_err(
+                    "prefix",
+                    "The prefix can use letters, numbers, _ and -, up to 16 characters.",
+                ));
             }
             let format = if f.format == "hex" {
                 KeyFormat::Hex
@@ -104,10 +114,13 @@ fn make(f: &GenForm) -> Result<Secret, String> {
                 KeyFormat::Base64Url
             };
             generator::api_key(bytes, format, prefix).map_err(|_| {
-                format!(
-                    "Pick between {} and {} bytes.",
-                    generator::MIN_KEY_BYTES,
-                    generator::MAX_KEY_BYTES
+                field_err(
+                    "bytes",
+                    format!(
+                        "Pick between {} and {} bytes.",
+                        generator::MIN_KEY_BYTES,
+                        generator::MAX_KEY_BYTES
+                    ),
                 )
             })
         }
@@ -116,7 +129,7 @@ fn make(f: &GenForm) -> Result<Secret, String> {
                 .length
                 .trim()
                 .parse()
-                .map_err(|_| "Pick a length.".to_owned())?;
+                .map_err(|_| field_err("length", "Pick a length."))?;
             let o = PasswordOptions {
                 length,
                 lower: f.lower.is_some(),
@@ -126,15 +139,16 @@ fn make(f: &GenForm) -> Result<Secret, String> {
                 no_look_alikes: f.no_look_alikes.is_some(),
             };
             generator::password(&o).map_err(|e| match e {
-                generator::GenError::Length => {
+                generator::GenError::Length => field_err(
+                    "length",
                     format!(
                         "Pick a length from {} to {}.",
                         generator::MIN_LENGTH,
                         generator::MAX_LENGTH
-                    )
-                }
+                    ),
+                ),
                 generator::GenError::NoCharacterSets => {
-                    "Tick at least one kind of character.".into()
+                    field_err("charsets", "Tick at least one kind of character.")
                 }
             })
         }
@@ -153,7 +167,7 @@ pub async fn page(
         shell: shell.at(Section::Generator),
         form,
         value: None,
-        error: None,
+        errors: FieldErrors::new(),
         clear_after: CLEAR_AFTER_SECS,
     })
     .into_response())
@@ -171,16 +185,16 @@ pub async fn generate(session: CurrentSession, shell: Shell, Form(f): Form<GenFo
     if !session.0.csrf_matches_any(&f.csrf) {
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
-    let (value, error) = match make(&f) {
-        Ok(v) => (Some(v), None),
-        Err(e) => (None, Some(e)),
+    let (value, errors) = match make(&f) {
+        Ok(v) => (Some(v), FieldErrors::new()),
+        Err(e) => (None, e),
     };
     Ok(no_store(
         render(&GenPage {
             shell,
             form: f,
             value,
-            error,
+            errors,
             clear_after: CLEAR_AFTER_SECS,
         })
         .into_response(),

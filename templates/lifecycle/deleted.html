@@ -1,34 +1,37 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Deleted {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p><a href="{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
 <h1>Deleted {{ kind.plural() }} <span class="muted">in {{ vault }}</span></h1>
-<p>Deleted {{ kind.plural() }} are kept for a while so they can be recovered. On the purge date Key Vault removes them for good.</p>
+<p>Deleted {{ kind.plural() }} are kept for a while so they can be recovered. On the date shown, Key Vault deletes them permanently.</p>
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No deleted {{ kind.plural() }} in this vault.</p></div>
 {% else %}
-<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+{% call ui::table_wrap("deleted-caption") %}
 <table>
-  <caption class="visually-hidden">Deleted {{ kind.plural() }} in {{ vault }}</caption>
-  <thead><tr><th scope="col">Name</th><th scope="col">Deleted</th><th scope="col">Gone for good on</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <caption class="visually-hidden" id="deleted-caption">Deleted {{ kind.plural() }} in {{ vault }}</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">Deleted</th><th scope="col">Permanently deleted on</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr>
       <th scope="row" class="mono">{{ row.name }}</th>
-      <td>{{ row.deleted }}</td>
-      <td>{% if row.purge.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.purge }} <span class="muted">({{ row.purge_note }})</span>{% endif %}</td>
-      <td class="row-actions">
+      <td>{{ ui::or_none(row.deleted) }}</td>
+      <td>{% if row.purge.is_empty() %}<span class="muted">None</span>{% else %}{{ row.purge }} <span class="muted">({{ row.purge_note }})</span>{% endif %}</td>
+      <td>
+        <div class="row-actions">
         <form method="post" action="{{ kind.deleted_url(row.name) }}/recover">
           <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
           <button type="submit" class="button-small">Recover<span class="visually-hidden"> {{ row.name }}</span></button>
         </form>
         <a href="{{ kind.deleted_url(row.name) }}">Details<span class="visually-hidden"> for {{ row.name }}</span></a>
+        </div>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 {% include "_pager.html" %}
 {% endif %}
 {% endblock %}

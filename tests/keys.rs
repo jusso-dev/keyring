@@ -62,7 +62,7 @@ async fn detail_shows_public_key_as_pem_and_jwk() {
     assert!(html.contains("&#34;kty&#34;: &#34;RSA&#34;"), "JWK shown");
     assert!(html.contains("data-copy-plain=\"public-pem\""));
     assert!(
-        html.contains("Versions") && html.matches("<th scope=\"row\" class=\"mono\"").count() == 2
+        html.contains("Versions") && html.matches("<span class=\"mono version-id\">").count() == 2
     );
     assert_no_private_material(&w);
 
@@ -205,7 +205,7 @@ async fn delete_recover_and_purge_flag() {
     let (_, html) = w.page("/keys/-/deleted").await;
     assert!(html.contains(">app-key<"));
     let (_, html) = w.page("/keys/-/deleted/app-key").await;
-    assert!(!html.contains("Permanently delete"));
+    assert!(!html.contains("/purge\""), "no purge link");
     let res = w
         .post(
             "/keys/-/deleted/app-key/purge",
@@ -336,7 +336,9 @@ async fn key_vault_default_policy_shows_as_none_and_saves_untouched() {
     let (_, html) = w.page("/keys/app-key").await;
     assert!(html.contains("No rotation policy"), "{html}");
     let (_, html) = w.page("/keys/app-key/rotation").await;
-    assert!(html.contains("name=\"notify_before\" type=\"number\" min=\"7\" value=\"\""));
+    assert!(
+        html.contains("name=\"notify_before\" type=\"number\" min=\"7\" max=\"36500\" value=\"\"")
+    );
     // Pressing Save on the untouched form works.
     let res = w
         .post(
@@ -371,7 +373,9 @@ async fn before_expiry_policy_survives_a_notify_change() {
     });
     let (_, html) = w.page("/keys/app-key/rotation").await;
     assert!(html.contains("value=\"expiry\" checked"), "{html}");
-    assert!(html.contains("name=\"rotate_days\" type=\"number\" min=\"7\" value=\"30\""));
+    assert!(
+        html.contains("name=\"rotate_days\" type=\"number\" min=\"7\" max=\"36500\" value=\"30\"")
+    );
     assert!(html.contains("value=\"540\""));
     let res = w
         .post(
@@ -507,7 +511,10 @@ async fn enable_and_disable() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     let (_, html) = w.page("/keys/app-key").await;
-    assert!(html.contains("action=\"/keys/app-key/enabled\"") && html.contains(">Disable<"));
+    // Disable goes through a confirmation page that posts here.
+    assert!(html.contains("href=\"/keys/app-key/disable\">Disable<"));
+    let (_, html) = w.page("/keys/app-key/disable").await;
+    assert!(html.contains("action=\"/keys/app-key/enabled\""));
     let res = w.post("/keys/app-key/enabled", &[("state", "off")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(!w.kv.state.keys.lock().unwrap()["app-key"].versions[0].enabled);

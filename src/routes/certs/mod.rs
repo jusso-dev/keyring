@@ -21,7 +21,7 @@ use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
 use crate::routes::keys::section_note;
 use crate::routes::lifecycle::{Kind, redirect_with};
-use crate::routes::paging::paginate;
+use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 use crate::x509;
@@ -182,11 +182,7 @@ struct ListPage {
     within90: usize,
     filter: CertFilter,
     show_options: Vec<ShowOption>,
-    page: usize,
-    pages: usize,
-    shown_from: usize,
-    prev_url: Option<String>,
-    next_url: Option<String>,
+    pager: Pager,
 }
 
 pub async fn list(
@@ -232,11 +228,7 @@ pub async fn list(
     })
     .collect();
     Ok(render(&ListPage {
-        page: pager.page,
-        pages: pager.pages,
-        shown_from: pager.shown_from,
-        prev_url: pager.prev_url,
-        next_url: pager.next_url,
+        pager,
         shell,
         vault,
         rows,
@@ -453,6 +445,28 @@ pub async fn detail(
 }
 
 /// Enable or disable the current version, like the secrets page does.
+/// Ask before disabling. Reads the certificate first, so a missing one
+/// gets the not-found page rather than a confirmation.
+pub async fn disable_form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let path = format!("/certificates/{name}");
+    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+        return Err(azure_problem(shell, &e, Need::ReadCertificates, &path));
+    }
+    Ok(crate::routes::lifecycle::disable_page(
+        shell,
+        &vault,
+        crate::routes::lifecycle::Kind::Certificate,
+        &name,
+    ))
+}
+
 pub async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,

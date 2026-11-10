@@ -1,19 +1,20 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Generator - Keyring{% endblock %}
 {% block content %}
 <h1>Generator</h1>
 <p>Make a strong password, a GUID or an API key. Values come from your server's secure random source, aren't stored or logged, and only appear on this page.</p>
 
-{% if let Some(e) = error %}<p class="notice notice-error" role="alert">{{ e }}</p>{% endif %}
+{% call ui::error_summary(errors) %}{% endcall %}
 
 {% if value.is_some() %}
 <section class="panel reveal" aria-labelledby="gen-heading" data-reveal data-clear-after="{{ clear_after }}">
   <h2 id="gen-heading">Your {% if is("guid") %}GUID{% elif is("api_key") %}API key{% else %}password{% endif %}</h2>
   <p class="muted">Not kept in your browser history. Reloading makes a new one. If you copy it, Keyring will try to clear the clipboard after {{ clear_after }} seconds.</p>
   <label for="secret-value" class="visually-hidden">Generated value</label>
-  <textarea id="secret-value" class="secret-value mono" readonly rows="2" spellcheck="false" autocomplete="off" data-secret-value>{{ value() }}</textarea>
+  <textarea id="secret-value" class="secret-value mono" readonly rows="2"{% call ui::ident() %}{% endcall %} data-secret-value>{{ value() }}</textarea>
   <div class="actions">
-    <button type="button" data-copy="secret-value" hidden>Copy</button>
+    <button type="button" data-copy hidden>Copy</button>
     <button type="button" class="button-secondary" data-extend hidden>Show for longer</button>
     {% if form.for_secret == "1" %}<button type="button" class="button-secondary" data-use-value hidden>Use this value</button>{% endif %}
     <a href="/generator" data-hide-link>Hide</a>
@@ -24,7 +25,7 @@
 </section>
 {% endif %}
 
-<form method="post" action="/generator" class="stacked">
+<form method="post" action="/generator" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <input type="hidden" name="for_secret" value="{{ form.for_secret }}">
   <fieldset>
@@ -36,26 +37,40 @@
 
   <fieldset>
     <legend>Password options</legend>
+    {% let field_name = "length" %}
     <label for="length">Length</label>
-    <p class="field-help">Longer is stronger. 24 characters is plenty for most uses; some old systems cap passwords at 16 or 32.</p>
-    <input id="length" name="length" type="number" min="8" max="256" value="{{ form.length }}">
-    <div class="checkbox"><input id="lower" name="lower" type="checkbox"{% if form.lower.is_some() %} checked{% endif %}><label for="lower">Lower case letters (a to z)</label></div>
-    <div class="checkbox"><input id="upper" name="upper" type="checkbox"{% if form.upper.is_some() %} checked{% endif %}><label for="upper">Capital letters (A to Z)</label></div>
-    <div class="checkbox"><input id="digits" name="digits" type="checkbox"{% if form.digits.is_some() %} checked{% endif %}><label for="digits">Numbers (0 to 9)</label></div>
-    <div class="checkbox"><input id="symbols" name="symbols" type="checkbox"{% if form.symbols.is_some() %} checked{% endif %}><label for="symbols">Symbols, such as ! # % and @</label></div>
+    <p class="field-help" id="length-help">Characters, from 8 to 256. Longer is stronger. 24 characters is plenty for most uses; some old systems cap passwords at 16 or 32.</p>
+    <input id="length" name="length" type="number" min="8" max="256" value="{{ form.length }}"{% call ui::aria("length", "length-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
+    {% let field_name = "charsets" %}
+    <fieldset id="charsets"{% call ui::aria("charsets") %}{% endcall %}>
+      <legend>Characters to use</legend>
+      <div class="checkbox"><input id="lower" name="lower" type="checkbox"{% if form.lower.is_some() %} checked{% endif %}><label for="lower">Lower case letters (a to z)</label></div>
+      <div class="checkbox"><input id="upper" name="upper" type="checkbox"{% if form.upper.is_some() %} checked{% endif %}><label for="upper">Capital letters (A to Z)</label></div>
+      <div class="checkbox"><input id="digits" name="digits" type="checkbox"{% if form.digits.is_some() %} checked{% endif %}><label for="digits">Numbers (0 to 9)</label></div>
+      <div class="checkbox"><input id="symbols" name="symbols" type="checkbox"{% if form.symbols.is_some() %} checked{% endif %}><label for="symbols">Symbols, such as ! # % and @</label></div>
+    </fieldset>
+    {% include "_field_error.html" %}
     <div class="checkbox"><input id="no_look_alikes" name="no_look_alikes" type="checkbox"{% if form.no_look_alikes.is_some() %} checked{% endif %}><label for="no_look_alikes">Leave out characters that look alike (0 and O, 1, l and I)</label></div>
   </fieldset>
 
   <fieldset>
     <legend>API key options</legend>
+    {% let field_name = "bytes" %}
     <label for="bytes">Random bytes</label>
-    <p class="field-help">32 bytes (256 bits) is a strong default.</p>
-    <input id="bytes" name="bytes" type="number" min="16" max="128" value="{{ form.bytes }}">
-    <div class="checkbox"><input id="fmt-b64" name="format" type="radio" value="base64url"{% if form.format != "hex" %} checked{% endif %}><label for="fmt-b64">Letters, numbers, - and _ (base64url, shorter)</label></div>
-    <div class="checkbox"><input id="fmt-hex" name="format" type="radio" value="hex"{% if form.format == "hex" %} checked{% endif %}><label for="fmt-hex">0 to 9 and a to f (hex)</label></div>
+    <p class="field-help" id="bytes-help">From 16 to 128. 32 bytes (256 bits) is a strong default.</p>
+    <input id="bytes" name="bytes" type="number" min="16" max="128" value="{{ form.bytes }}"{% call ui::aria("bytes", "bytes-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
+    <fieldset>
+      <legend>Format</legend>
+      <div class="checkbox"><input id="fmt-b64" name="format" type="radio" value="base64url"{% if form.format != "hex" %} checked{% endif %}><label for="fmt-b64">Letters, numbers, - and _ (base64url, shorter)</label></div>
+      <div class="checkbox"><input id="fmt-hex" name="format" type="radio" value="hex"{% if form.format == "hex" %} checked{% endif %}><label for="fmt-hex">0 to 9 and a to f (hex)</label></div>
+    </fieldset>
+    {% let field_name = "prefix" %}
     <label for="prefix">Prefix <span class="muted">(optional)</span></label>
-    <p class="field-help">Added to the front so the key is easy to spot, such as sk_live_. Letters, numbers, _ and -.</p>
-    <input id="prefix" name="prefix" type="text" maxlength="16" value="{{ form.prefix }}" autocomplete="off">
+    <p class="field-help" id="prefix-help">Added to the front so the key is easy to spot, such as sk_live_. Letters, numbers, _ and -, up to 16 characters.</p>
+    <input id="prefix" name="prefix" type="text" maxlength="16" value="{{ form.prefix }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("prefix", "prefix-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
   </fieldset>
 
   <div class="actions"><button type="submit">Generate</button></div>

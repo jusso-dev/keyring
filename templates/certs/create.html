@@ -1,70 +1,65 @@
 {% extends "base.html" %}
-{% block title %}Create a certificate - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Create a certificate in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p><a href="/certificates">Back to certificates</a></p>
 <h1>Create a certificate <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault makes the key and the certificate. Self-signed certificates are usually ready in a few seconds. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
 
-{% if !errors.is_empty() %}
-<div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
-  <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
-  <ul>{% for e in errors %}<li><a href="#{{ e.field }}">{{ e.message }}</a></li>{% endfor %}</ul>
-</div>
-{% endif %}
+{% call ui::error_summary(errors) %}{% endcall %}
 {% if let Some(m) = azure_message %}
-<div class="notice notice-error" role="alert" tabindex="-1" data-error-summary>
+<div class="notice notice-error" tabindex="-1" data-error-summary>
   <p><strong>Key Vault didn't create the certificate. Check the details and try again.</strong></p>
   <p>Key Vault said:</p>
   <p class="mono">{{ m }}</p>
 </div>
 {% endif %}
 
+{% call ui::optional_note() %}{% endcall %}
+
 <form method="post" action="/certificates/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
 
-  <label for="name">Name in Key Vault</label>
-  <p class="field-help" id="name-help">Letters, numbers and hyphens only.</p>
-  <input id="name" name="name" type="text" value="{{ form.name }}" required maxlength="127" autocomplete="off" spellcheck="false" aria-describedby="name-help{% if error_for("name").is_some() %} name-error{% endif %}"{% if error_for("name").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("name") %}<p class="field-error" id="name-error">{{ m }}</p>{% endif %}
+  {% call ui::name_field(form.name, "certificate") %}{% endcall %}
 
   <label for="common_name">Main name (common name)</label>
   <p class="field-help" id="common_name-help">The name the certificate is for, usually a website or service address such as app.example.com.</p>
-  <input id="common_name" name="common_name" type="text" value="{{ form.common_name }}" required maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="common_name-help{% if error_for("common_name").is_some() %} common_name-error{% endif %}"{% if error_for("common_name").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("common_name") %}<p class="field-error" id="common_name-error">{{ m }}</p>{% endif %}
+  <input id="common_name" name="common_name" type="text" value="{{ form.common_name }}" required maxlength="64"{% call ui::ident() %}{% endcall %}{% call ui::aria("common_name", "common_name-help") %}{% endcall %}>
+  {% let field_name = "common_name" %}{% include "_field_error.html" %}
 
   <label for="dns_names">Other names <span class="muted">(optional)</span></label>
   <p class="field-help" id="dns_names-help">More addresses the certificate should cover, one per line. Use *.example.com for every subdomain. The main name is added for you.</p>
-  <textarea id="dns_names" name="dns_names" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="dns_names-help{% if error_for("dns_names").is_some() %} dns_names-error{% endif %}"{% if error_for("dns_names").is_some() %} aria-invalid="true"{% endif %}>{{ form.dns_names }}</textarea>
-  {% if let Some(m) = error_for("dns_names") %}<p class="field-error" id="dns_names-error">{{ m }}</p>{% endif %}
+  <textarea id="dns_names" name="dns_names" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("dns_names", "dns_names-help") %}{% endcall %}>{{ form.dns_names }}</textarea>
+  {% let field_name = "dns_names" %}{% include "_field_error.html" %}
 
-  <label for="validity_months">Valid for (months)</label>
-  <p class="field-help" id="validity_months-help">Public certificate authorities limit this, often to 12 months or less.</p>
-  <input id="validity_months" name="validity_months" type="number" min="1" max="120" value="{{ form.validity_months }}" aria-describedby="validity_months-help{% if error_for("validity_months").is_some() %} validity_months-error{% endif %}"{% if error_for("validity_months").is_some() %} aria-invalid="true"{% endif %}>
-  {% if let Some(m) = error_for("validity_months") %}<p class="field-error" id="validity_months-error">{{ m }}</p>{% endif %}
+  <label for="validity_months">Valid for</label>
+  <p class="field-help" id="validity_months-help">Months, from 1 to 120. Public certificate authorities limit this, often to 12 months or less.</p>
+  <input id="validity_months" name="validity_months" type="number" min="1" max="120" value="{{ form.validity_months }}"{% call ui::aria("validity_months", "validity_months-help") %}{% endcall %}>
+  {% let field_name = "validity_months" %}{% include "_field_error.html" %}
 
   <label for="issuer">Issuer</label>
   <p class="field-help" id="issuer-help">Self for self-signed (fine for testing and internal use). Otherwise an issuer already set up on this vault in the Azure portal.{% if let Some(n) = issuers.note %} {{ n }}{% endif %}</p>
-  <select id="issuer" name="issuer" aria-describedby="issuer-help{% if error_for("issuer").is_some() %} issuer-error{% endif %}"{% if error_for("issuer").is_some() %} aria-invalid="true"{% endif %}>
+  <select id="issuer" name="issuer"{% call ui::aria("issuer", "issuer-help") %}{% endcall %}>
     <option value="Self"{% if !issuers.names.contains(form.issuer) %} selected{% endif %}>Self (self-signed)</option>
     {% for i in issuers.names %}<option value="{{ i }}"{% if issuer_selected(i) %} selected{% endif %}>{{ i }}</option>{% endfor %}
   </select>
-  {% if let Some(m) = error_for("issuer") %}<p class="field-error" id="issuer-error">{{ m }}</p>{% endif %}
+  {% let field_name = "issuer" %}{% include "_field_error.html" %}
 
   <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() || azure_message.is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 
     <label for="key">Key type</label>
     <p class="field-help" id="key-help">RSA 2048 works with almost everything. Pick EC only if you know your systems support it.</p>
-    <select id="key" name="key" aria-describedby="key-help{% if error_for("key").is_some() %} key-error{% endif %}"{% if error_for("key").is_some() %} aria-invalid="true"{% endif %}>
+    <select id="key" name="key"{% call ui::aria("key", "key-help") %}{% endcall %}>
       {% for (value, label) in key_choices() %}<option value="{{ value }}"{% if key_selected(value) %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
-    {% if let Some(m) = error_for("key") %}<p class="field-error" id="key-error">{{ m }}</p>{% endif %}
+    {% let field_name = "key" %}{% include "_field_error.html" %}
 
     <div class="checkbox">
-      <input id="exportable" name="exportable" type="checkbox"{% if form.exportable.is_some() %} checked{% endif %}>
+      <input id="exportable" name="exportable" type="checkbox"{% if form.exportable.is_some() %} checked{% endif %} aria-describedby="exportable-help">
       <label for="exportable">Allow the private key to be downloaded</label>
     </div>
-    <p class="field-help">Needed if the certificate will be installed somewhere outside Azure. Untick to keep the key inside Key Vault for good.</p>
+    <p class="field-help" id="exportable-help">Needed if the certificate will be installed somewhere outside Azure. Untick to keep the key inside Key Vault, with no way to export it later.</p>
 
     <fieldset>
       <legend>Stored as</legend>
@@ -78,15 +73,15 @@
       <div class="checkbox"><input id="renew-email" name="renewal" type="radio" value="email"{% if form.renewal == "email" %} checked{% endif %}><label for="renew-email">Email the vault's certificate contacts</label></div>
       <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
     </fieldset>
-    <label for="renew_days">Days before expiry</label>
+    <label for="renew_days">Days before expiry <span class="muted">(optional)</span></label>
     <p class="field-help" id="renew_days-help">From 1 up to 27 days for each month the certificate is valid. Left blank, Keyring uses 30, or 27 for a one-month certificate.</p>
-    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}" aria-describedby="renew_days-help{% if error_for("renew_days").is_some() %} renew_days-error{% endif %}"{% if error_for("renew_days").is_some() %} aria-invalid="true"{% endif %}>
-    {% if let Some(m) = error_for("renew_days") %}<p class="field-error" id="renew_days-error">{{ m }}</p>{% endif %}
+    <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% call ui::aria("renew_days", "renew_days-help") %}{% endcall %}>
+    {% let field_name = "renew_days" %}{% include "_field_error.html" %}
 
     <label for="tags">Tags <span class="muted">(optional)</span></label>
-    <p class="field-help" id="tags-help">One per line, as name=value.</p>
-    <textarea id="tags" name="tags" rows="3" class="mono" autocomplete="off" spellcheck="false" aria-describedby="tags-help{% if error_for("tags").is_some() %} tags-error{% endif %}"{% if error_for("tags").is_some() %} aria-invalid="true"{% endif %}>{{ form.tags }}</textarea>
-    {% if let Some(m) = error_for("tags") %}<p class="field-error" id="tags-error">{{ m }}</p>{% endif %}
+    <p class="field-help" id="tags-help">One per line, as name=value. Up to 15, each name used once.</p>
+    <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
+    {% let field_name = "tags" %}{% include "_field_error.html" %}
   </details>
 
   <div class="actions">

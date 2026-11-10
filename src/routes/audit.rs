@@ -16,6 +16,7 @@ use crate::azure::vaults;
 use crate::expiry::csv_field;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
+use crate::routes::forms::{FieldError, FieldErrors};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
@@ -159,10 +160,15 @@ struct AuditPage {
     partial: Option<String>,
     capped: bool,
     csv_url: String,
-    error: Option<String>,
+    /// A filter that isn't valid, tied to its field.
+    errors: FieldErrors,
 }
 
 impl AuditPage {
+    fn error_for(&self, field: &str) -> Option<&str> {
+        self.errors.error_for(field)
+    }
+
     /// Link back to the item this view is filtered to, if we know its kind.
     fn back_url(&self) -> Option<String> {
         let base = match self.filter.from.as_str() {
@@ -280,12 +286,17 @@ pub async fn load(
     }))
 }
 
-fn build_query(vault: &str, f: &AuditFilter) -> Result<AuditQuery, &'static str> {
-    AuditQuery::new(vault, Range::parse(&f.range), &f.item, &f.operation, &f.person).map_err(|e| match e.0 {
-        "item" => "Item names use letters, numbers and hyphens.",
-        "person" => "Search for a person by part of their sign-in name, email or ID: letters, numbers, @, dots, _ and - only.",
-        "operation" => "Pick an action from the list.",
-        _ => "Pick a vault first.",
+/// On a bad filter, the field at fault (empty for the vault, which has no
+/// field on the page) and what to do about it.
+fn build_query(vault: &str, f: &AuditFilter) -> Result<AuditQuery, FieldError> {
+    AuditQuery::new(vault, Range::parse(&f.range), &f.item, &f.operation, &f.person).map_err(|e| {
+        let (field, message) = match e.0 {
+            "item" => ("item", "Item names use letters, numbers and hyphens."),
+            "person" => ("person", "Search for a person by part of their sign-in name, email or ID: letters, numbers, @, dots, _ and - only."),
+            "operation" => ("operation", "Pick an action from the list."),
+            _ => ("", "Pick a vault first."),
+        };
+        FieldError { field, message: message.into() }
     })
 }
 
@@ -306,7 +317,7 @@ fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
         unavailable: None,
         partial: None,
         capped: false,
-        error: None,
+        errors: FieldErrors::new(),
     }
 }
 
@@ -320,8 +331,8 @@ pub async fn page(
     let mut page = empty_page(shell, &vault, &filter);
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
-        Err(m) => {
-            page.error = Some(m.into());
+        Err(e) => {
+            page.errors.push(e.field, e.message);
             return Ok((StatusCode::UNPROCESSABLE_ENTITY, render(&page)).into_response());
         }
     };
@@ -372,13 +383,13 @@ pub async fn csv(
     let (vault, shell) = current_vault(&session, shell)?;
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
-        Err(m) => {
+        Err(e) => {
             return Err(PageError::new(
                 shell,
                 Problem::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "Those filters aren't valid",
-                    m,
+                    e.message,
                 ),
             )
             .into());

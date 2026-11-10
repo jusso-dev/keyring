@@ -21,7 +21,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
 use crate::routes::lifecycle::{Kind, redirect_with};
-use crate::routes::paging::paginate;
+use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
 
@@ -131,9 +131,6 @@ impl KeyRow {
     pub fn is_expiring(&self) -> bool {
         self.expiry == ExpiryState::Soon
     }
-    pub fn short_version(&self) -> String {
-        self.version.chars().take(8).collect()
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -159,11 +156,7 @@ struct ListPage {
     rows: Vec<KeyRow>,
     total: usize,
     filter: KeyFilter,
-    page: usize,
-    pages: usize,
-    shown_from: usize,
-    prev_url: Option<String>,
-    next_url: Option<String>,
+    pager: Pager,
 }
 
 pub async fn list(
@@ -187,11 +180,7 @@ pub async fn list(
         .collect();
     let (rows, pager) = paginate(matching, filter.page, "keys", |p| filter.page_url(p));
     Ok(render(&ListPage {
-        page: pager.page,
-        pages: pager.pages,
-        shown_from: pager.shown_from,
-        prev_url: pager.prev_url,
-        next_url: pager.next_url,
+        pager,
         shell,
         vault,
         rows,
@@ -348,6 +337,25 @@ pub async fn detail(
         vault,
     })
     .into_response())
+}
+
+/// Ask before disabling. A key that belongs to a certificate is refused
+/// here too.
+pub async fn disable_form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
+    Ok(crate::routes::lifecycle::disable_page(
+        shell,
+        &vault,
+        crate::routes::lifecycle::Kind::Key,
+        &name,
+    ))
 }
 
 /// Enable or disable the current version, like the secrets page does.
