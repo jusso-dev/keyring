@@ -165,12 +165,61 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Small forms only by default. The certificate upload route sets
         // its own larger limit.
         .layer(axum::extract::DefaultBodyLimit::max(MAX_FORM_BYTES))
+        // A panic in any handler becomes a 500 page for that request
+        // instead of ending the process. Inside the headers layer, so the
+        // page still gets the security headers.
+        .layer(tower_http::catch_panic::CatchPanicLayer::custom(panicked))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             headers::layer,
         ))
+        // Outermost, so the logged status includes timeouts and panics.
+        .layer(middleware::from_fn(crate::telemetry::request_log))
+}
+
+/// The page for a request whose handler panicked. The panic message is not
+/// logged: it could hold a value from the request.
+fn panicked(_: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    tracing::error!("request handler panicked");
+    PageError::new(
+        Shell::anonymous(),
+        Problem::new(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Something went wrong",
+            "Keyring hit a problem showing this page. Nothing else was affected. Try again, and if it keeps happening, let whoever runs Keyring know.",
+        ),
+    )
+    .into_response()
 }
 
 async fn not_found(shell: Shell) -> Response {
     PageError::new(shell, Problem::not_found()).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_handler_gets_a_500_page() {
+        let app: Router = Router::new()
+            .route(
+                "/boom",
+                get(|| async {
+                    panic!("test panic");
+                    #[allow(unreachable_code)]
+                    ""
+                }),
+            )
+            .layer(tower_http::catch_panic::CatchPanicLayer::custom(panicked));
+        let res = app
+            .oneshot(Request::get("/boom").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }
