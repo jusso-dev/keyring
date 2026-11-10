@@ -298,3 +298,65 @@ async fn browser_shaped_same_origin_posts_are_accepted() {
         "{policy}"
     );
 }
+
+#[tokio::test]
+async fn static_files_are_versioned_and_cached_for_a_year() {
+    let w = support::world().await;
+    let (_, html) = w.page("/").await;
+    let start = html
+        .find("/static/app.js?v=")
+        .expect("versioned script tag");
+    let url = &html[start..];
+    let url = &url[..url.find('"').unwrap()];
+    let res = w.get(url).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert!(html.contains("/static/style.css?v="));
+    // Pages left open across an upgrade still get the file, briefly cached.
+    for old in ["/static/app.js", "/static/app.js?v=0123456789abcdef"] {
+        let res = w.get(old).await;
+        assert_eq!(res.status(), StatusCode::OK, "{old}");
+        assert_eq!(
+            res.headers().get("cache-control").unwrap(),
+            "public, max-age=300",
+            "{old}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn favicon_is_a_short_empty_answer() {
+    let w = support::world().await;
+    let res = w.get("/favicon.ico").await;
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert!(support::body_text(res).await.is_empty());
+}
+
+#[tokio::test]
+async fn cross_site_refusal_is_a_styled_page() {
+    let w = support::world().await;
+    let req = Request::post("/generator")
+        .header("cookie", &w.cookie)
+        .header("origin", "https://evil.example")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(format!("csrf={}&kind=guid", w.csrf)))
+        .unwrap();
+    let res = w.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert!(
+        res.headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    let html = support::body_text(res).await;
+    assert!(html.contains("<html lang=\"en-AU\">"));
+    assert!(html.contains("/static/style.css?v="));
+    assert!(html.contains("didn't come from Keyring"));
+    assert!(html.contains("href=\"/\">Back to home</a>"));
+}
