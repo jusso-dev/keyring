@@ -20,8 +20,9 @@ pub fn csp(authority_host: &str) -> String {
 }
 
 /// Longest any request may take, including Azure calls. The expiry
-/// dashboard is the slowest page; it limits each vault to 20 seconds and
-/// reads them in parallel.
+/// dashboard is the slowest page; it gives each vault its own limit and
+/// stops the whole read well before this one (see `routes::expiry`), so it
+/// can still show what it found.
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
@@ -32,7 +33,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
             tracing::warn!(%method, %path, "request timed out");
             (
                 axum::http::StatusCode::GATEWAY_TIMEOUT,
-                "That took too long, so Keyring stopped. Try again, or narrow what you asked for.",
+                crate::routes::assets::plain_page(
+                    "That took too long",
+                    "Keyring stopped waiting for Azure. Try again, or narrow what you asked for.",
+                ),
             )
                 .into_response()
         }

@@ -12,11 +12,14 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 ## Request flow
 
 1. The browser signs in with Entra ID using OIDC (authorisation code flow with PKCE).
-2. The server keeps the user's tokens in an encrypted, http-only session cookie or a server-side memory session. Nothing is persisted.
+2. The server keeps the user's tokens in a server-side memory session. The browser only holds a random session ID. Nothing is persisted.
 3. For each Azure call, the server exchanges the user's token via OBO for a token scoped to:
    - `https://vault.azure.net/.default` for Key Vault data plane
    - `https://management.azure.com/.default` for ARM and Resource Graph
+   - `https://api.loganalytics.io/.default` for Log Analytics (the audit view)
 4. Results go back to the browser. Errors from Azure (403, 404, throttling) are mapped to plain-English messages.
+
+Keyring works with the Azure public cloud only: these hosts, `login.microsoftonline.com` and `<vault>.vault.azure.net` are fixed in the code. Sovereign clouds and managed HSM aren't supported.
 
 ## Components
 
@@ -26,7 +29,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 | Pages | Askama templates compiled into the binary. Plain hand-written CSS |
 | Browser script | One small hand-written vanilla JS file for copy to clipboard with auto clear and similar extras. Pages work without it |
 | Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
-| Azure calls | `reqwest` with rustls, calling the Key Vault, Resource Graph, ARM and Log Analytics REST APIs. Official `azure_*` crates only where they're stable enough |
+| Azure calls | `reqwest` with rustls, calling the Key Vault, Resource Graph, ARM and Log Analytics REST APIs directly. No `azure_*` crates (see below) |
 | Sessions | In-memory store keyed by a random cookie. Nothing persisted |
 
 ## Stack and why
@@ -51,11 +54,11 @@ Rules for the codebase:
 | `src/auth/` | Sign-in and sessions |
 | `src/azure/` | On-behalf-of exchange and REST clients for Azure |
 | `templates/` | Askama templates, compiled into the binary |
-| `static/` | Hand-written CSS (and later one small JS file), embedded in the binary with `include_str!` |
+| `static/` | Hand-written CSS and one small JS file, embedded in the binary with `include_str!` |
 
 Static files are compiled in rather than read from disk, so the container needs no writable or readable app directory and nothing can be swapped at run time.
 
-Logging uses `tracing`. Only metadata is logged (method, path, status, timing). Request and response bodies, headers and query strings are never logged.
+Logging uses `tracing`, as plain text lines on standard output. Two kinds of line are written: one per request (method, path without the query string, status and duration), and an action line for each change or read of a value, naming who did it (their Entra ID) and what (vault and item name). Request and response bodies, headers, query strings, secret values and tokens are never logged. Vault and item names do appear. Where the lines end up on each host is in [deploy.md](deploy.md#logs).
 
 `unsafe_code` is set to `forbid` in `Cargo.toml` lints, which has the same effect as `#![forbid(unsafe_code)]` on every target in the crate.
 
@@ -67,7 +70,7 @@ Logging uses `tracing`. Only metadata is logged (method, path, status, timing). 
 - Sessions live in server memory. The browser only gets a random 256-bit ID in an http-only, `SameSite=Lax` cookie (`Secure` and `__Host-` prefixed over HTTPS). Tokens never leave the server. Sessions end after an hour idle or 12 hours in total. A restart signs everyone out; running several copies needs sticky sessions.
 - Every route except sign-in, callback, signed-out, `/healthz` and `/static` sits behind a middleware that requires a session. Without one, GET requests are sent to sign-in with the path remembered. Return paths must be local (`/` but not `//`, no backslashes or control characters).
 - Sign-out is a form post with a per-session token. It drops the session here, then sends the browser to Entra's end-session endpoint, which returns to `/auth/signed-out`.
-- `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider. `KEYRING_TEST_MANAGEMENT_URL` and `KEYRING_TEST_KEYVAULT_URL` do the same for ARM and Key Vault. Leave all three unset in real deployments. Plain `http://` is only accepted for localhost.
+- `ENTRA_AUTHORITY_HOST` (default `https://login.microsoftonline.com`) exists so tests can point at a mock identity provider. `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL` do the same for ARM, Key Vault and Log Analytics. Leave all four unset in real deployments; Keyring logs a warning at start naming any that are set. Plain `http://` is only accepted for localhost.
 
 ## On-behalf-of tokens
 
@@ -82,13 +85,17 @@ Logging uses `tracing`. Only metadata is logged (method, path, status, timing). 
 
 `azure::AzureClient` calls the Key Vault, ARM, Resource Graph and Log Analytics REST APIs directly with `reqwest`. The official Rust SDK crates are still in beta, change often between releases and pull in a large dependency tree of their own, including their own identity and HTTP layers we'd have to work around to plug in OBO tokens. The REST APIs Keyring uses are a handful of stable, versioned endpoints, so a thin typed wrapper is less code to trust. We'll revisit when the SDK reaches a stable 1.0.
 
-The client attaches the user's token to every call. On a 401 it drops the cached token, gets a fresh one and tries once more. Error replies keep the status and Azure's error code for the UI; Azure's message is shown to the user but not logged, since it can name items.
+The client attaches the user's token to every call. On a 401 it drops the cached token, gets a fresh one and tries once more. Error replies keep the status and Azure's error code, which the UI maps to its own plain-English text. Azure's message is kept in the error value but is never shown or logged, since it can name items and isn't written for the people using Keyring.
 
-Concurrent requests in one session can each refresh the user's token at the same moment. That's harmless (Entra keeps old refresh tokens valid for a while) and not worth a lock yet.
+Concurrent requests in one session, such as the expiry dashboard reading several vaults at once, can each try to refresh the user's token at the same moment. With the dashboard fanning out that is worth sharing one refresh between them; [issue 75](https://github.com/yumaitau/keyring/issues/75) tracks it.
 
 ## HTTP client and TLS
 
-All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
+All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc; `deny.toml` bans both). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
+
+- **Trust store.** Server certificates are checked against the operating system's roots (`rustls-platform-verifier`, which on Linux reads them with `rustls-native-certs`). Setting `SSL_CERT_FILE` (or `SSL_CERT_DIR`) replaces the system roots with that file or folder, which is how a private CA is trusted.
+- **Proxies.** `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (and their lower-case forms) are read from the environment, as reqwest does by default.
+- **Inbound proxies.** `X-Forwarded-*` headers are ignored. `APP_BASE_URL` is the only source of Keyring's own origin.
 
 ## Supply chain
 
@@ -96,8 +103,9 @@ All outbound calls use one `reqwest` client on rustls with the `ring` crypto pro
 - Toolchain pinned in `rust-toolchain.toml`.
 - `cargo deny check` covers licences (allow-list), advisories, bans and sources (crates.io only). `cargo audit` runs as well. Both run in CI and fail the build.
 - Adding a crate needs a reason in the PR. Prefer crates that are widely used, maintained and light on dependencies.
-- Dependabot opens weekly, grouped updates for `cargo`, `docker` and `github-actions`.
-- GitHub Actions are pinned by full commit SHA.
+- Dependabot opens weekly, grouped updates for `cargo`, `docker`, `rust-toolchain` and `github-actions`. The Rust toolchain and the Docker images share one pull request, so the builder image and `rust-toolchain.toml` move together. CI also fails if they differ.
+- The repository has secret scanning with push protection and Dependabot security updates turned on, and its Actions settings refuse any action not pinned by SHA.
+- GitHub Actions are pinned by full commit SHA. Tools that actions install are pinned by version, with no fallback download. The Bicep CLI is pinned by version and the Dockerfile frontend by digest.
 - CI produces two CycloneDX SBOMs as build artifacts: one from `Cargo.lock` listing every crate in the binary (`cargo cyclonedx`), and one for the image's base packages (Syft). An image scan alone can't see the crates, since they're compiled into one stripped binary. Signed build provenance isn't set up, because this repository doesn't publish an image. Add it (for example GitHub artifact attestations) wherever you build and push your own.
 
 ### Dependency policy
@@ -108,11 +116,11 @@ What CI checks, on every PR, every push to `main` and weekly:
 | --- | --- | --- |
 | Licences | `cargo deny` | A crate's licence isn't on the allow-list in `deny.toml` (permissive licences only) |
 | Advisories | `cargo deny`, `cargo audit` | A crate has a RustSec advisory, is unmaintained or is yanked |
-| Bans | `cargo deny` | A banned crate turns up (`openssl`, `native-tls`) or a dependency uses a `*` version |
+| Bans | `cargo deny` | A banned crate turns up (`openssl`, `native-tls`, `aws-lc-rs`, `aws-lc-sys`) or a dependency uses a `*` version |
 | Sources | `cargo deny` | A crate comes from anywhere other than crates.io |
 | Lock file | `--locked` | `Cargo.lock` is out of date |
 
-Duplicate versions of the same crate are reported as warnings, not failures. Trim them when it's easy.
+Duplicate versions of the same crate are reported as warnings, not failures, so they show in the CI log for review. There are several today. Trim them when it's easy.
 
 To add a crate:
 
@@ -125,17 +133,18 @@ To accept an advisory that doesn't affect Keyring, add its ID to `ignore` in `de
 
 ## Container
 
-Built by `Dockerfile` and checked in CI on every change: non-root numeric user, no shell, under 30 MB, and a smoke test with `--read-only --cap-drop ALL --security-opt no-new-privileges` that checks `/healthz` answers without sign-in and `/` redirects to sign-in. Size today is about 15 MB.
+Built by `Dockerfile` and checked in CI on every change: non-root numeric user, no shell, under 30 MB, and a smoke test with `--read-only --cap-drop ALL --security-opt no-new-privileges` that checks `/healthz` answers without sign-in and `/` redirects to sign-in. Size today is about 8 MB.
 
 - Multi-stage Dockerfile. Builder and runtime images pinned by digest.
-- Static binary (musl or static glibc) on `gcr.io/distroless/static` (nonroot) or `scratch`.
+- Static musl binary on `gcr.io/distroless/static` (nonroot).
+- `VERSION` and `VCS_REF` build arguments set the `org.opencontainers.image.version` and `org.opencontainers.image.revision` labels. CI passes the crate version and commit, and checks the labels.
 - Runs as non-root, with a read-only root filesystem and no extra capabilities. No shell in the runtime image.
 - `/healthz` for probes.
 
 ## Local development
 
 - `cargo run` with a `.env` file, or `docker build` and `docker run --env-file .env --read-only`.
-- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass before a PR merges.
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass before a PR merges. CI runs them with the supply chain, Bicep and container checks, and a ruleset on `main` requires a pull request with all four CI jobs passing on an up-to-date branch. Force pushes and deleting `main` are blocked.
 
 ## Vault discovery
 
@@ -159,14 +168,14 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 
 - The list uses `GET /secrets`, which returns properties only, in pages of 25 following `nextLink`. A `nextLink` is only followed if it points at the same vault.
 - A secret's page reads `GET /secrets/{name}/versions` and shows the newest version. That call never returns values, so opening a page doesn't read the secret.
-- Values are only read by the reveal action (next issue).
+- Values are only read by the reveal action.
 - Names from URLs are checked against Key Vault's rules (letters, digits and hyphens, up to 127) and versions must be 32 hex characters, before they go into a request.
 - "Expiring soon" means within 30 days. Dates are shown in UTC.
 - Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
 
 ## Certificates
 
-- The list and pages use the certificates API (7.5), which only returns the public certificate. Subject, issuer, validity, serial and other names are read from the DER with `x509-cert` (RustCrypto, pure Rust, reuses `der` and `spki` already in the tree).
+- The list and pages use the certificates API (7.5), which only returns the public certificate. Subject, issuer, validity, serial and other names are read from the DER with `x509-cert` 0.3 (RustCrypto, pure Rust). It brings its own `der` 0.8, `spki` 0.8 and `const-oid` 0.10, alongside the older versions other crates use, plus `tls_codec`.
 - Expiry bands: expired, within 30 days, within 90 days.
 - `.cer` (DER) and PEM downloads are the public certificate only, and need certificate read access.
 - The private key lives in the certificate's backing secret. "Download with private key" is only offered when the policy marks the key exportable. It shows a warning and needs the name typed, then reads the backing secret (so it also needs secret read access) and sends it with `no-store`. The backing secret URL from Key Vault is only used if it points at the same vault and name. Each download logs at `warn` with subject, vault and name.
@@ -198,7 +207,7 @@ Expiry alerts are optional. Since Keyring stores nothing and has no identity of 
 - `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references. It has no role on any other vault, so it can't be used to reach user data.
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
 - `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events (`docs/alerts.md`).
-- CI runs `az bicep build` on every template and example parameter file. Nothing is deployed from this repository.
+- CI runs `az bicep build` on every template and example parameter file, and on each example copied next to its template the way the docs say. Nothing is deployed from this repository.
 
 ## Threat model
 
@@ -244,5 +253,5 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 ### Known limits
 
 - **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
-- **The session secret** only protects short-lived cookies (sign-in state, flash messages, pending uploads). Rotating it signs no one out but cancels sign-ins in progress.
+- **The session secret** only protects short-lived cookies (sign-in state and flash messages). Pending certificate uploads are kept in the server-side session. Rotating it means a restart, which signs everyone out (sessions are in memory), and cancels sign-ins in progress.
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.

@@ -202,3 +202,59 @@ async fn open_switches_vault_and_goes_to_the_item() {
         .await;
     assert_eq!(support::location(&res), "/");
 }
+
+#[tokio::test]
+async fn csv_lists_vaults_it_could_not_read() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-a", "kv-test"]);
+    w.kv.state.put("a", "x");
+    *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
+    let csv = body_text(w.get("/expiry.csv").await).await;
+    let lines: Vec<_> = csv.lines().collect();
+    assert_eq!(lines.len(), 3, "{csv}");
+    assert_eq!(
+        lines[1],
+        "kv-a,NOT READ,You don't have a Key Vault role on it,,,,"
+    );
+    assert!(lines[2].starts_with("kv-test,NOT READ,"));
+}
+
+#[tokio::test]
+async fn csv_says_when_vaults_were_cut_off() {
+    let w = support::world().await;
+    // One more than the dashboard's limit of 100, plus two.
+    let names: Vec<String> = (0..103).map(|i| format!("kv{i:04}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    seed_vaults(&w, &refs);
+    let csv = body_text(w.get("/expiry.csv").await).await;
+    let last = csv.lines().last().unwrap();
+    assert!(
+        last.starts_with(",NOT READ,Only the first 100 of 103 vaults by name were read"),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn unknown_vault_filter_is_explained() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-test"]);
+    w.kv.state.put("a", "x");
+    let (status, html) = w.page("/expiry?vault=kv-gone").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("isn't one of the vaults you can see"));
+    assert!(!html.contains("Nothing to show"));
+    let csv = body_text(w.get("/expiry.csv?vault=kv-gone").await).await;
+    assert!(csv.contains("kv-gone,NOT READ,Not in the list of vaults you can see"));
+}
+
+#[tokio::test]
+async fn empty_groups_are_not_links_and_the_form_is_a_search() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-test"]);
+    w.kv.state.put("forever", "x");
+    let (_, html) = w.page("/expiry").await;
+    assert!(html.contains("action=\"/expiry\" role=\"search\""));
+    assert!(html.contains("href=\"#group-none\""));
+    assert!(!html.contains("href=\"#group-expired\""));
+    assert!(html.contains("<span class=\"badge badge-muted\">0</span> Expired"));
+}

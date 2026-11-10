@@ -151,6 +151,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let public = Router::new()
         .route("/healthz", get(health::healthz))
         .route("/static/{file}", get(assets::serve))
+        .route("/favicon.ico", get(assets::favicon))
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/start", get(auth::start))
         .route("/auth/callback", get(auth::callback))

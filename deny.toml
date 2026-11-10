@@ -40,15 +40,21 @@ unused-allowed-license = "allow"
 ignore = true
 
 [bans]
+# Duplicate versions are warnings, so new ones show up in the CI log for
+# review. The tree has several today (x509-cert 0.3 brings its own der,
+# spki and const-oid); see docs/architecture.md, "Dependency policy".
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = false
 highlight = "all"
-# Crates we never want. TLS goes through rustls, not OpenSSL.
+# Crates we never want. TLS goes through rustls with the ring provider: not
+# OpenSSL, and not aws-lc (a large C build that rustls turns on by default).
 deny = [
     { crate = "openssl", reason = "use rustls" },
     { crate = "openssl-sys", reason = "use rustls" },
     { crate = "native-tls", reason = "use rustls" },
+    { crate = "aws-lc-rs", reason = "use rustls with the ring provider" },
+    { crate = "aws-lc-sys", reason = "use rustls with the ring provider" },
 ]
 
 [sources]

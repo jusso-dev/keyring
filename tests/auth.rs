@@ -708,9 +708,18 @@ async fn with_no_document_a_failed_fetch_backs_off() {
     assert_eq!(hits(&idp), 2);
 }
 
+/// Both vaults the vault-switch tests use, as Resource Graph lists them.
+fn seed_vaults(w: &support::World) {
+    *w.arm.state.vaults.lock().unwrap() = ["kv-test", "kv-other"]
+        .iter()
+        .map(|n| support::vault_row(n, "sub-a", true))
+        .collect();
+}
+
 #[tokio::test]
 async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
     let w = support::world().await;
+    seed_vaults(&w);
     w.kv.state.put("db-password", "x");
     // The delete form is rendered while kv-test is chosen.
     let (_, html) = w.page("/secrets/db-password/delete").await;
@@ -754,9 +763,11 @@ async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
 #[tokio::test]
 async fn forms_using_the_shared_check_name_the_vault_they_were_for() {
     let mut w = support::world().await;
+    seed_vaults(&w);
     let (_, html) = w.page("/keys/new").await;
     let form_token = support::hidden_value(&html, "csrf").unwrap();
-    w.post("/vaults/select", &[("name", "kv-other")]).await;
+    let res = w.post("/vaults/select", &[("name", "kv-other")]).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     w.csrf = form_token;
     let res = w.post("/keys/new", &[("name", "k1"), ("kty", "RSA")]).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
