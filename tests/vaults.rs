@@ -182,3 +182,18 @@ async fn picking_rejects_bad_names_and_forged_forms() {
     let html = text(h.get("/secrets").await).await;
     assert!(html.contains("Choose a vault"));
 }
+
+#[tokio::test]
+async fn picking_a_vault_not_in_the_list_is_refused() {
+    let h = harness().await;
+    seed(&h);
+    let res = h
+        .post("/vaults/select", &format!("csrf={}&name=kv-gone", h.csrf))
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let html = text(res).await;
+    assert!(html.contains("That vault isn"));
+    assert!(html.contains("href=\"/vaults\">Choose a vault</a>"));
+    let html = text(h.get("/secrets").await).await;
+    assert!(html.contains("Choose a vault first"), "nothing was stored");
+}
