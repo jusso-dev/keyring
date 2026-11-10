@@ -14,7 +14,7 @@ use crate::routes::vault_ctx::azure_problem;
 use super::api;
 
 /// Certificates, for the shared lifecycle handlers.
-pub struct Certificates;
+pub(crate) struct Certificates;
 
 impl Lifecycle for Certificates {
     const KIND: Kind = Kind::Certificate;

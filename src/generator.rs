@@ -7,16 +7,16 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::secret::Secret;
 
-pub const LOWER: &str = "abcdefghijklmnopqrstuvwxyz";
-pub const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-pub const DIGITS: &str = "0123456789";
+pub(crate) const LOWER: &str = "abcdefghijklmnopqrstuvwxyz";
+pub(crate) const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+pub(crate) const DIGITS: &str = "0123456789";
 /// Symbols that are safe in most config files and shells when quoted.
-pub const SYMBOLS: &str = "!#$%&()*+,-./:;<=>?@[]^_{|}~";
+pub(crate) const SYMBOLS: &str = "!#$%&()*+,-./:;<=>?@[]^_{|}~";
 /// Characters easy to mix up when read aloud or on screen.
-pub const LOOK_ALIKES: &str = "0O1lI|";
+pub(crate) const LOOK_ALIKES: &str = "0O1lI|";
 
-pub const MIN_LENGTH: usize = 8;
-pub const MAX_LENGTH: usize = 256;
+pub(crate) const MIN_LENGTH: usize = 8;
+pub(crate) const MAX_LENGTH: usize = 256;
 
 fn fill(buf: &mut [u8]) {
     SystemRandom::new()
@@ -38,7 +38,7 @@ fn below(n: usize) -> usize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PasswordOptions {
+pub(crate) struct PasswordOptions {
     pub length: usize,
     pub lower: bool,
     pub upper: bool,
@@ -61,13 +61,13 @@ impl Default for PasswordOptions {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum GenError {
+pub(crate) enum GenError {
     NoCharacterSets,
     Length,
 }
 
 /// A password with at least one character from each chosen set.
-pub fn password(o: &PasswordOptions) -> Result<Secret, GenError> {
+pub(crate) fn password(o: &PasswordOptions) -> Result<Secret, GenError> {
     if !(MIN_LENGTH..=MAX_LENGTH).contains(&o.length) {
         return Err(GenError::Length);
     }
@@ -99,7 +99,7 @@ pub fn password(o: &PasswordOptions) -> Result<Secret, GenError> {
 }
 
 /// A random (version 4) GUID.
-pub fn guid() -> String {
+pub(crate) fn guid() -> String {
     let mut b = [0u8; 16];
     fill(&mut b);
     b[6] = (b[6] & 0x0f) | 0x40;
@@ -116,16 +116,16 @@ pub fn guid() -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyFormat {
+pub(crate) enum KeyFormat {
     Base64Url,
     Hex,
 }
 
-pub const MIN_KEY_BYTES: usize = 16;
-pub const MAX_KEY_BYTES: usize = 128;
+pub(crate) const MIN_KEY_BYTES: usize = 16;
+pub(crate) const MAX_KEY_BYTES: usize = 128;
 
 /// An API key: `bytes` random bytes, optionally after a prefix.
-pub fn api_key(bytes: usize, format: KeyFormat, prefix: &str) -> Result<Secret, GenError> {
+pub(crate) fn api_key(bytes: usize, format: KeyFormat, prefix: &str) -> Result<Secret, GenError> {
     if !(MIN_KEY_BYTES..=MAX_KEY_BYTES).contains(&bytes) {
         return Err(GenError::Length);
     }
@@ -139,7 +139,7 @@ pub fn api_key(bytes: usize, format: KeyFormat, prefix: &str) -> Result<Secret, 
 }
 
 /// Prefixes may only use letters, digits, `_` and `-`, up to 16 characters.
-pub fn is_valid_prefix(p: &str) -> bool {
+pub(crate) fn is_valid_prefix(p: &str) -> bool {
     p.len() <= 16
         && p.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')

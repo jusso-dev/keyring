@@ -53,7 +53,7 @@ struct SignedOutPage {
 }
 
 #[derive(Deserialize)]
-pub struct SignInQuery {
+pub(super) struct SignInQuery {
     #[serde(default)]
     return_to: Option<String>,
     #[serde(default)]
@@ -61,11 +61,11 @@ pub struct SignInQuery {
 }
 
 /// `reason` values the session guard sends to the sign-in page.
-pub const REASON_EXPIRED: &str = "expired";
+pub(super) const REASON_EXPIRED: &str = "expired";
 /// Signed out, and the form being posted was not saved.
-pub const REASON_UNSAVED: &str = "unsaved";
+pub(super) const REASON_UNSAVED: &str = "unsaved";
 
-pub async fn sign_in(Query(q): Query<SignInQuery>) -> Response {
+pub(super) async fn sign_in(Query(q): Query<SignInQuery>) -> Response {
     let return_to = return_to::sanitise(q.return_to.as_deref());
     let unsaved = q.reason.as_deref() == Some(REASON_UNSAVED);
     let mut start_url = format!("/auth/start?return_to={}", return_to::encode(&return_to));
@@ -85,7 +85,7 @@ pub async fn sign_in(Query(q): Query<SignInQuery>) -> Response {
 }
 
 #[derive(Deserialize)]
-pub struct StartQuery {
+pub(super) struct StartQuery {
     #[serde(default)]
     return_to: Option<String>,
     #[serde(default)]
@@ -94,7 +94,7 @@ pub struct StartQuery {
 
 /// Send the browser to Entra ID, keeping state, nonce and the PKCE verifier
 /// in a short-lived encrypted cookie.
-pub async fn start(
+pub(super) async fn start(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(q): Query<StartQuery>,
@@ -132,7 +132,7 @@ pub async fn start(
 }
 
 #[derive(Deserialize)]
-pub struct CallbackQuery {
+pub(super) struct CallbackQuery {
     #[serde(default)]
     code: Option<String>,
     #[serde(default)]
@@ -141,7 +141,7 @@ pub struct CallbackQuery {
     error: Option<String>,
 }
 
-pub async fn callback(
+pub(super) async fn callback(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(q): Query<CallbackQuery>,
@@ -222,13 +222,13 @@ pub async fn callback(
 }
 
 #[derive(Deserialize)]
-pub struct SignOutForm {
+pub(super) struct SignOutForm {
     #[serde(default)]
     csrf: String,
 }
 
 /// Sign out: forget the session here, then sign out of Entra ID too.
-pub async fn sign_out(
+pub(super) async fn sign_out(
     State(state): State<AppState>,
     headers: HeaderMap,
     Form(form): Form<SignOutForm>,
@@ -258,11 +258,11 @@ pub async fn sign_out(
 /// Keep the session alive. The idle-warning script calls this when the
 /// person chooses to stay signed in. Behind the session guard, which marks
 /// the session as used.
-pub async fn keepalive(_session: CurrentSession) -> Response {
+pub(super) async fn keepalive(_session: CurrentSession) -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
-pub async fn signed_out() -> Response {
+pub(super) async fn signed_out() -> Response {
     render(&SignedOutPage {
         shell: Shell::anonymous(),
     })

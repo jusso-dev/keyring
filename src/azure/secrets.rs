@@ -175,11 +175,6 @@ impl DeletedSecretItem {
     }
 }
 
-/// Key Vault secret names: 1 to 127 letters, digits and hyphens.
-pub fn is_valid_secret_name(name: &str) -> bool {
-    crate::routes::vault_ctx::is_valid_object_name(name)
-}
-
 /// Versions are 32 hex characters.
 pub fn is_valid_version(v: &str) -> bool {
     v.len() == 32 && v.bytes().all(|b| b.is_ascii_hexdigit())
@@ -475,12 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn name_and_version_rules() {
-        assert!(is_valid_secret_name("db-Password-1"));
-        assert!(is_valid_secret_name(&"a".repeat(127)));
-        for bad in ["", "a_b", "a.b", "a/b", "a b", "../x", &"a".repeat(128)] {
-            assert!(!is_valid_secret_name(bad), "{bad}");
-        }
+    fn version_rules() {
         assert!(is_valid_version("0123456789abcdef0123456789ABCDEF"));
         assert!(!is_valid_version("../../secrets"));
         assert!(!is_valid_version("0123"));

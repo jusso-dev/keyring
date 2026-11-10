@@ -23,7 +23,7 @@ use crate::routes::vault_ctx::check_csrf;
 
 /// Which form is being shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     Create,
     NewValue,
     Properties,
@@ -31,7 +31,7 @@ pub enum Mode {
 
 /// Values to put back in the form. Never includes the secret value.
 #[derive(Default)]
-pub struct FormView {
+pub(crate) struct FormView {
     pub name: String,
     pub content_type: String,
     pub expires: String,
@@ -185,7 +185,7 @@ fn saved(state: &AppState, to: &str, message: String) -> Response {
     res
 }
 
-pub async fn new_form(session: CurrentSession, shell: Shell) -> PageResult {
+pub(crate) async fn new_form(session: CurrentSession, shell: Shell) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let view = FormView {
         enabled: true,
@@ -206,7 +206,7 @@ async fn is_soft_deleted(api: &SecretsApi<'_>, name: &str) -> bool {
     api.get_deleted(name).await.is_ok()
 }
 
-pub async fn create(
+pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -327,7 +327,7 @@ async fn fetch(
     }
 }
 
-pub async fn value_form(
+pub(crate) async fn value_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -344,7 +344,7 @@ pub async fn value_form(
     ))
 }
 
-pub async fn set_value(
+pub(crate) async fn set_value(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -399,7 +399,7 @@ pub async fn set_value(
     }
 }
 
-pub async fn edit_form(
+pub(crate) async fn edit_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -416,7 +416,7 @@ pub async fn edit_form(
     ))
 }
 
-pub async fn update(
+pub(crate) async fn update(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -499,7 +499,7 @@ async fn update_current(
 
 /// Ask before disabling. Reads the secret first, so a missing or managed
 /// secret gets the same page as the detail view would give.
-pub async fn disable_form(
+pub(crate) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -516,7 +516,7 @@ pub async fn disable_form(
     ))
 }
 
-pub async fn toggle(
+pub(crate) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

@@ -30,7 +30,7 @@ use crate::x509;
 use super::{api, current_vault};
 
 #[derive(Deserialize)]
-pub struct CerQuery {
+pub(crate) struct CerQuery {
     /// `der` (default) or `pem`.
     #[serde(default)]
     format: String,
@@ -60,7 +60,7 @@ fn attachment(body: Vec<u8>, mime: &'static str, filename: &str) -> Response {
     no_store(res)
 }
 
-pub async fn cer(
+pub(crate) async fn cer(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -164,7 +164,7 @@ async fn require_exportable(
     }
 }
 
-pub async fn pfx_form(
+pub(crate) async fn pfx_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -186,7 +186,7 @@ pub async fn pfx_form(
 
 /// True when `sid` is `{vault}/secrets/{name}/{version}` on this vault:
 /// same origin (host in any case), the exact name, and a hex version.
-pub fn is_backing_secret(vault_url: &str, name: &str, sid: &str) -> bool {
+pub(crate) fn is_backing_secret(vault_url: &str, name: &str, sid: &str) -> bool {
     if !crate::azure::paging::same_vault(vault_url, sid) {
         return false;
     }
@@ -220,7 +220,7 @@ struct SecretValue {
     content_type: Option<String>,
 }
 
-pub async fn pfx(
+pub(crate) async fn pfx(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

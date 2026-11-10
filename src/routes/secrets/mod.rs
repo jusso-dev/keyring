@@ -1,10 +1,10 @@
 //! Secrets pages: list, search and detail.
 
-pub mod delete;
-pub mod edit;
-pub mod form;
-pub mod reveal;
-pub mod versions;
+pub(super) mod delete;
+pub(super) mod edit;
+pub(super) mod form;
+pub(super) mod reveal;
+pub(super) mod versions;
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
@@ -21,10 +21,10 @@ use crate::routes::lifecycle::Kind;
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
-pub use crate::routes::vault_ctx::{azure_problem, checked_name};
+pub(super) use crate::routes::vault_ctx::{azure_problem, checked_name};
 
 /// One row in the list, ready to show.
-pub struct SecretRow {
+pub(super) struct SecretRow {
     pub name: String,
     pub enabled: bool,
     pub content_type: String,
@@ -39,7 +39,7 @@ pub struct SecretRow {
 }
 
 impl SecretRow {
-    pub fn from_item(item: &SecretItem, now: i64) -> Self {
+    pub(super) fn from_item(item: &SecretItem, now: i64) -> Self {
         let a = &item.attributes;
         let tags: Vec<(String, String)> = item
             .tags()
@@ -69,18 +69,18 @@ impl SecretRow {
         }
     }
 
-    pub fn is_expired(&self) -> bool {
+    pub(super) fn is_expired(&self) -> bool {
         self.expiry == ExpiryState::Expired
     }
 
-    pub fn is_expiring(&self) -> bool {
+    pub(super) fn is_expiring(&self) -> bool {
         self.expiry == ExpiryState::Soon
     }
 }
 
 /// List filters. All optional.
 #[derive(Debug, Default, Clone, Deserialize)]
-pub struct SecretFilter {
+pub(super) struct SecretFilter {
     #[serde(default)]
     pub q: String,
     /// `key` or `key=value`.
@@ -95,11 +95,11 @@ pub struct SecretFilter {
 }
 
 impl SecretFilter {
-    pub fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.q.trim().is_empty() && self.tag.trim().is_empty() && self.show.is_empty()
     }
 
-    pub fn matches(&self, row: &SecretRow) -> bool {
+    pub(super) fn matches(&self, row: &SecretRow) -> bool {
         // The same text the browser's live filter searches: the name and
         // every tag as `key=value`.
         let q = self.q.trim().to_lowercase();
@@ -138,7 +138,7 @@ impl SecretFilter {
     }
 }
 
-pub struct ShowOption {
+pub(super) struct ShowOption {
     pub value: &'static str,
     pub label: &'static str,
     pub selected: bool,
@@ -160,11 +160,18 @@ struct ListPage {
 }
 
 /// The chosen vault, or the page to show when there isn't one.
-pub fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shell), Halt> {
+pub(super) fn current_vault(
+    session: &CurrentSession,
+    shell: Shell,
+) -> Result<(String, Shell), Halt> {
     vault_ctx::current_vault(session, shell, Section::Secrets)
 }
 
-pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) -> SecretsApi<'a> {
+pub(super) fn api<'a>(
+    state: &'a AppState,
+    session: &'a CurrentSession,
+    vault: &str,
+) -> SecretsApi<'a> {
     SecretsApi {
         azure: &state.azure,
         session: &session.0,
@@ -172,7 +179,7 @@ pub fn api<'a>(state: &'a AppState, session: &'a CurrentSession, vault: &str) ->
     }
 }
 
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -236,7 +243,7 @@ struct DetailPage {
     recovery: String,
 }
 
-pub async fn detail(
+pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

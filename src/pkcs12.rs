@@ -73,7 +73,7 @@ const OID_CERT_BAG: &[u8] = &[
 
 /// What we could tell about a PFX without the password.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct PfxInfo {
+pub(crate) struct PfxInfo {
     pub has_key: bool,
     /// Key or certificates are in a password-encrypted part we can't read.
     pub has_encrypted_part: bool,
@@ -85,7 +85,7 @@ pub struct PfxInfo {
 /// SEQUENCE (definite or indefinite length) holding INTEGER 3. Some tools
 /// write PFX files in BER, with indefinite lengths, which [`inspect`]
 /// can't walk. Those are still worth sending to Key Vault.
-pub fn looks_like_pfx(der: &[u8]) -> bool {
+pub(crate) fn looks_like_pfx(der: &[u8]) -> bool {
     let Some((&SEQUENCE, rest)) = der.split_first() else {
         return false;
     };
@@ -107,7 +107,7 @@ pub fn looks_like_pfx(der: &[u8]) -> bool {
 }
 
 /// Inspect a PFX. `None` if it isn't one.
-pub fn inspect(der: &[u8]) -> Option<PfxInfo> {
+pub(crate) fn inspect(der: &[u8]) -> Option<PfxInfo> {
     let (pfx, rest) = read_tlv(der)?;
     if pfx.tag != SEQUENCE || !rest.is_empty() {
         return None;

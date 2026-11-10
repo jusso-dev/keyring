@@ -199,9 +199,6 @@ impl KeyBundle {
     pub fn kid(&self) -> &str {
         self.key.kid.as_deref().unwrap_or_default()
     }
-    pub fn name(&self) -> &str {
-        id_part(self.kid(), "keys", 0)
-    }
     pub fn version(&self) -> &str {
         id_part(self.kid(), "keys", 1)
     }
@@ -462,13 +459,6 @@ pub fn iso_days(s: &str) -> Option<u32> {
         })?;
     }
     num.is_empty().then_some(total)
-}
-
-/// True for a plain `P<n>D` duration.
-pub fn is_plain_days(s: &str) -> bool {
-    s.strip_prefix('P')
-        .and_then(|r| r.strip_suffix('D'))
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Body for creating a key.
@@ -786,14 +776,6 @@ pub(crate) mod tests {
         }));
         assert!(simple.unsupported().is_empty());
         assert_eq!(simple.rotate_before_expiry_days(), Some(30));
-    }
-
-    #[test]
-    fn plain_days() {
-        assert!(is_plain_days("P90D"));
-        for no in ["P", "PD", "P18M", "P1Y", "P1DT1H", "90D"] {
-            assert!(!is_plain_days(no), "{no}");
-        }
     }
 
     #[test]

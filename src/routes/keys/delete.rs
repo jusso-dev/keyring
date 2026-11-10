@@ -12,7 +12,7 @@ use crate::routes::shell::Shell;
 use super::{api, unmanaged_key};
 
 /// Keys, for the shared lifecycle handlers.
-pub struct Keys;
+pub(crate) struct Keys;
 
 impl Lifecycle for Keys {
     const KIND: Kind = Kind::Key;

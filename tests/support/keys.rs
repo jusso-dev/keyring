@@ -15,7 +15,7 @@ use super::json_response;
 use super::keyvault::KvState;
 
 #[derive(Clone, Debug)]
-pub struct KeyVersion {
+pub(crate) struct KeyVersion {
     pub version: String,
     pub kty: String,
     pub crv: Option<String>,
@@ -27,7 +27,7 @@ pub struct KeyVersion {
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredKey {
+pub(crate) struct StoredKey {
     pub versions: Vec<KeyVersion>,
     pub rotation: Value,
     /// A key Key Vault made behind a certificate.
@@ -35,7 +35,7 @@ pub struct StoredKey {
 }
 
 impl StoredKey {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             versions: Vec::new(),
             rotation: default_rotation_policy(),
@@ -54,7 +54,7 @@ impl Default for StoredKey {
 /// on: one Notify action 30 days before expiry and no expiry time (REST
 /// reference, Keys, Get Key Rotation Policy; the portal shows the same
 /// default).
-pub fn default_rotation_policy() -> Value {
+pub(crate) fn default_rotation_policy() -> Value {
     json!({
         "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Notify"}}],
         "attributes": {"created": 1_790_000_000, "updated": 1_790_000_000}
@@ -62,17 +62,17 @@ pub fn default_rotation_policy() -> Value {
 }
 
 #[derive(Clone, Debug)]
-pub struct DeletedKey {
+pub(crate) struct DeletedKey {
     pub key: StoredKey,
     pub deleted: i64,
     pub purge: i64,
 }
 
-pub const RSA_N: &str = include_str!("../fixtures/test-rsa-n.txt");
-pub const EC_X: &str = include_str!("../fixtures/test-ec-x.txt");
-pub const EC_Y: &str = include_str!("../fixtures/test-ec-y.txt");
+pub(crate) const RSA_N: &str = include_str!("../fixtures/test-rsa-n.txt");
+pub(crate) const EC_X: &str = include_str!("../fixtures/test-ec-x.txt");
+pub(crate) const EC_Y: &str = include_str!("../fixtures/test-ec-y.txt");
 
-pub fn router() -> Router<Arc<KvState>> {
+pub(crate) fn router() -> Router<Arc<KvState>> {
     Router::new()
         .route("/{vault}/keys", get(list))
         .route("/{vault}/keys/{name}", get(get_current).delete(delete))
@@ -460,7 +460,7 @@ impl KvState {
     /// Get Key: "managed: True if the key's lifetime is managed by key
     /// vault. If this is a key backing a certificate, then managed will be
     /// true.").
-    pub fn add_managed_key(&self, name: &str, version: &str) {
+    pub(crate) fn add_managed_key(&self, name: &str, version: &str) {
         let mut keys = self.keys.lock().unwrap();
         let k = keys.entry(name.into()).or_default();
         k.managed = true;

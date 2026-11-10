@@ -34,14 +34,14 @@ use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 
 /// Vaults read at the same time.
-pub const CONCURRENCY: usize = 6;
+pub(super) const CONCURRENCY: usize = 6;
 /// Most vaults read for one dashboard. More than this, and you pick.
-pub const MAX_VAULTS: usize = 100;
+pub(super) const MAX_VAULTS: usize = 100;
 /// Time limit for reading one vault.
-pub const VAULT_TIMEOUT: Duration = Duration::from_secs(20);
+pub(super) const VAULT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Time limit for the whole dashboard. Well under the 90 second request
 /// limit in `routes::headers`, so there is time left to build the page.
-pub const DEADLINE: Duration = Duration::from_secs(60);
+pub(super) const DEADLINE: Duration = Duration::from_secs(60);
 
 /// Why a vault not finished by [`DEADLINE`] is missing.
 const OUT_OF_TIME: &str = "Not read in time. The dashboard stops after a minute so it can show what it has. Pick this vault on its own to see it";
@@ -49,7 +49,7 @@ const OUT_OF_TIME: &str = "Not read in time. The dashboard stops after a minute 
 const TASK_FAILED: &str = "Keyring hit a problem reading it";
 
 #[derive(Debug, Default, Deserialize, Clone)]
-pub struct ExpiryFilter {
+pub(super) struct ExpiryFilter {
     /// One vault, or empty for all.
     #[serde(default)]
     pub vault: String,
@@ -99,7 +99,7 @@ impl ExpiryFilter {
 }
 
 /// A vault that couldn't be read, and why in plain words.
-pub struct Skipped {
+pub(super) struct Skipped {
     pub vault: String,
     pub reason: String,
 }
@@ -350,13 +350,13 @@ where
     (items, skipped)
 }
 
-pub struct GroupView {
+pub(super) struct GroupView {
     pub group: Group,
     pub count: usize,
     pub rows: Vec<RowView>,
 }
 
-pub struct RowView {
+pub(super) struct RowView {
     pub vault: String,
     pub kind: ItemType,
     pub name: String,
@@ -381,7 +381,7 @@ struct ExpiryPage {
     max_vaults: usize,
 }
 
-pub async fn page(
+pub(super) async fn page(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -443,7 +443,7 @@ pub async fn page(
     .into_response())
 }
 
-pub async fn csv(
+pub(super) async fn csv(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

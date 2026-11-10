@@ -15,7 +15,7 @@ use crate::auth::CurrentSession;
 use crate::routes::error::{PageError, Problem};
 use crate::routes::shell::Shell;
 
-pub async fn layer(req: Request, next: Next) -> Response {
+pub(super) async fn layer(req: Request, next: Next) -> Response {
     let mut shell = req
         .extensions()
         .get::<CurrentSession>()
