@@ -1,185 +1,91 @@
-//! Delete, deleted list, recover and purge for keys.
-
-use axum::Form;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+//! Delete, deleted list, recover and purge for keys. The handlers are in
+//! [`crate::routes::lifecycle::handlers`]; this is the keys part.
 
 use crate::AppState;
 use crate::auth::CurrentSession;
-use crate::azure::secrets::now_ts;
-use crate::routes::confirm::ConfirmForm;
-use crate::routes::error::{Need, PageResult};
-use crate::routes::forms::CsrfForm;
-use crate::routes::lifecycle::{self, DeletedRow, Kind};
+use crate::azure::AzureError;
+use crate::routes::error::{Halt, Need};
+use crate::routes::lifecycle::handlers::{DeletedPages, Lifecycle, Stage};
+use crate::routes::lifecycle::{DeletedRow, Kind, Recovery};
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
-use super::{api, current_vault, unmanaged_key};
+use super::{api, unmanaged_key};
 
-const KIND: Kind = Kind::Key;
+/// Keys, for the shared lifecycle handlers.
+pub struct Keys;
 
-pub async fn delete_form(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
-    Ok(lifecycle::confirm_page(
-        shell,
-        lifecycle::delete_view(KIND, &vault, &name),
-        StatusCode::OK,
-    ))
-}
+impl Lifecycle for Keys {
+    const KIND: Kind = Kind::Key;
+    const MANAGE: Need = Need::ManageKeys;
 
-pub async fn delete(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<ConfirmForm>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = lifecycle::verify(
-        &session,
-        &vault,
-        &form,
-        &name,
-        shell,
-        lifecycle::delete_view(KIND, &vault, &name),
-    )?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
-    match api(&state, &session, &vault).delete(&name).await {
-        Ok(()) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key deleted");
-            Ok(lifecycle::redirect_with(
-                &state,
-                "/keys",
-                format!("Deleted {name}. You can recover it from deleted keys."),
-            ))
-        }
-        Err(e) => Err(azure_problem(
-            shell,
-            &e,
-            Need::ManageKeys,
-            &format!("/keys/{name}"),
-        )),
+    async fn delete(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).delete(name).await
+    }
+
+    async fn recover(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).recover(name).await
+    }
+
+    async fn purge(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+    ) -> Result<(), AzureError> {
+        api(state, session, vault).purge(name).await
+    }
+
+    /// A certificate's key is refused, on the form and on submit.
+    async fn check_delete(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+        shell: Shell,
+        _stage: Stage,
+    ) -> Result<(Shell, Recovery), Halt> {
+        let (_, shell) = unmanaged_key(state, session, vault, name, shell).await?;
+        Ok((shell, Recovery::default()))
     }
 }
 
-pub async fn list_deleted(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let items = match api(&state, &session, &vault).list_deleted().await {
-        Ok(i) => i,
-        Err(e) => {
-            return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/deleted"));
-        }
-    };
-    let now = now_ts();
-    let rows: Vec<DeletedRow> = items
-        .iter()
-        .map(|d| DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now))
-        .collect();
-    Ok(lifecycle::deleted_list(shell, vault, KIND, &rows))
-}
-
-pub async fn deleted_detail(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let d = match api(&state, &session, &vault).get_deleted(&name).await {
-        Ok(d) => d,
-        Err(e) => {
-            return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/deleted"));
-        }
-    };
-    let row = DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now_ts());
-    Ok(lifecycle::deleted_detail(&state, shell, vault, KIND, &row))
-}
-
-pub async fn recover(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<CsrfForm>,
-) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
-    match api(&state, &session, &vault).recover(&name).await {
-        Ok(()) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key recovered");
-            Ok(lifecycle::recovered(&state, KIND, &name))
-        }
-        Err(e) => Err(azure_problem(
-            shell,
-            &e,
-            Need::ManageKeys,
-            &format!("/keys/deleted/{name}"),
-        )),
+impl DeletedPages for Keys {
+    async fn list_deleted(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        now: i64,
+    ) -> Result<Vec<DeletedRow>, AzureError> {
+        let items = api(state, session, vault).list_deleted().await?;
+        Ok(items
+            .iter()
+            .map(|d| DeletedRow::new(d.name(), d.deleted_date, d.scheduled_purge_date, now))
+            .collect())
     }
-}
 
-pub async fn purge_form(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-) -> PageResult {
-    let shell = lifecycle::purge_allowed(&state, shell, KIND)?;
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    Ok(lifecycle::confirm_page(
-        shell,
-        lifecycle::purge_view(KIND, &vault, &name),
-        StatusCode::OK,
-    ))
-}
-
-pub async fn purge(
-    State(state): State<AppState>,
-    session: CurrentSession,
-    shell: Shell,
-    Path(name): Path<String>,
-    Form(form): Form<ConfirmForm>,
-) -> PageResult {
-    let shell = lifecycle::purge_allowed(&state, shell, KIND)?;
-    let (vault, shell) = current_vault(&session, shell)?;
-    let (name, shell) = checked_name(&name, shell)?;
-    let shell = lifecycle::verify(
-        &session,
-        &vault,
-        &form,
-        &name,
-        shell,
-        lifecycle::purge_view(KIND, &vault, &name),
-    )?;
-    match api(&state, &session, &vault).purge(&name).await {
-        Ok(()) => {
-            tracing::warn!(subject = %session.0.user.subject, vault = %vault, key = %name, "key purged");
-            Ok(lifecycle::redirect_with(
-                &state,
-                "/keys/deleted",
-                format!("Permanently deleted {name}."),
-            ))
-        }
-        Err(e) => Err(azure_problem(
-            shell,
-            &e,
-            Need::ManageKeys,
-            &format!("/keys/deleted/{name}"),
-        )),
+    async fn get_deleted(
+        state: &AppState,
+        session: &CurrentSession,
+        vault: &str,
+        name: &str,
+        now: i64,
+    ) -> Result<DeletedRow, AzureError> {
+        let d = api(state, session, vault).get_deleted(name).await?;
+        Ok(DeletedRow::new(
+            d.name(),
+            d.deleted_date,
+            d.scheduled_purge_date,
+            now,
+        ))
     }
 }

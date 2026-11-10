@@ -5,6 +5,8 @@
 //! Purge is refused on the server unless `KEYRING_ALLOW_PURGE=true`, and on
 //! vaults with purge protection.
 
+pub mod handlers;
+
 use askama::Template;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -52,6 +54,31 @@ impl Kind {
             Self::Certificate => "/certificates",
             Self::Key => "/keys",
         }
+    }
+
+    /// The nav section the item's pages sit under.
+    pub fn section(self) -> crate::routes::shell::Section {
+        use crate::routes::shell::Section;
+        match self {
+            Self::Secret => Section::Secrets,
+            Self::Certificate => Section::Certificates,
+            Self::Key => Section::Keys,
+        }
+    }
+
+    /// The item's own page.
+    pub fn item_url(self, name: &str) -> String {
+        format!("{}/{name}", self.base())
+    }
+
+    /// The deleted list.
+    pub fn deleted_list_url(self) -> String {
+        format!("{}/deleted", self.base())
+    }
+
+    /// One deleted item's page.
+    pub fn deleted_url(self, name: &str) -> String {
+        format!("{}/deleted/{name}", self.base())
     }
 
     /// The role that allows delete, recover and purge.
@@ -166,9 +193,9 @@ pub fn delete_view_for(kind: Kind, vault: &str, name: &str, recovery: Recovery) 
             recovery.period()
         ),
         expected: name.to_owned(),
-        action: format!("{}/{name}/delete", kind.base()),
+        action: format!("{}/delete", kind.item_url(name)),
         button: format!("Delete {}", kind.noun()),
-        cancel_url: format!("{}/{name}", kind.base()),
+        cancel_url: kind.item_url(name),
         second_warning: None,
         error: None,
     }
@@ -181,9 +208,9 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             "This removes {name} and every version of it from {vault} for good. It can't be recovered by you, Keyring or Microsoft."
         ),
         expected: name.to_owned(),
-        action: format!("{}/deleted/{name}/purge", kind.base()),
+        action: format!("{}/purge", kind.deleted_url(name)),
         button: "Permanently delete".into(),
-        cancel_url: format!("{}/deleted/{name}", kind.base()),
+        cancel_url: kind.deleted_url(name),
         second_warning: Some(match kind {
             Kind::Secret => "Only do this if you're sure nothing needs this secret any more, or a policy requires it to be destroyed.".into(),
             Kind::Key => "Anything encrypted with this key can never be decrypted again. Only do this if you're sure.".into(),
@@ -251,7 +278,7 @@ pub fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
             kind.plural()
         ),
     )
-    .returning_to(&format!("{}/deleted/{name}", kind.base()))
+    .returning_to(&kind.deleted_url(name))
 }
 
 /// Refuse a purge early when the deleted item says the vault has purge
@@ -293,7 +320,7 @@ pub fn purge_problem(
     if is_purge_protection_error(err) {
         PageError::new(shell, purge_protected_problem(kind, name)).into()
     } else {
-        azure_problem(shell, err, need, &format!("{}/deleted/{name}", kind.base()))
+        azure_problem(shell, err, need, &kind.deleted_url(name))
     }
 }
 
@@ -390,7 +417,7 @@ pub fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
     };
     redirect_with(
         state,
-        &format!("{}/deleted", kind.base()),
+        &kind.deleted_list_url(),
         format!(
             "Recovering {name}{extra}. It can take a few seconds to show in {}. Refresh that list if it isn't there yet.",
             kind.plural()

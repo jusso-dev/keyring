@@ -62,15 +62,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route(
             "/secrets/deleted/{name}/recover",
-            post(secrets::delete::recover),
+            post(lifecycle::handlers::recover::<secrets::delete::Secrets>),
         )
         .route(
             "/secrets/deleted/{name}/purge",
-            get(secrets::delete::purge_form).post(secrets::delete::purge),
+            get(lifecycle::handlers::purge_form::<secrets::delete::Secrets>)
+                .post(lifecycle::handlers::purge::<secrets::delete::Secrets>),
         )
         .route(
             "/secrets/{name}/delete",
-            get(secrets::delete::delete_form).post(secrets::delete::delete),
+            get(lifecycle::handlers::delete_form::<secrets::delete::Secrets>)
+                .post(lifecycle::handlers::delete::<secrets::delete::Secrets>),
         )
         .route("/secrets/{name}", get(secrets::detail))
         .route(
@@ -103,22 +105,27 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/certificates/new",
             get(certs::create::form).post(certs::create::create),
         )
-        .route("/certificates/deleted", get(certs::delete::list_deleted))
+        .route(
+            "/certificates/deleted",
+            get(lifecycle::handlers::list_deleted::<certs::delete::Certificates>),
+        )
         .route(
             "/certificates/deleted/{name}",
-            get(certs::delete::deleted_detail),
+            get(lifecycle::handlers::deleted_detail::<certs::delete::Certificates>),
         )
         .route(
             "/certificates/deleted/{name}/recover",
-            post(certs::delete::recover),
+            post(lifecycle::handlers::recover::<certs::delete::Certificates>),
         )
         .route(
             "/certificates/deleted/{name}/purge",
-            get(certs::delete::purge_form).post(certs::delete::purge),
+            get(lifecycle::handlers::purge_form::<certs::delete::Certificates>)
+                .post(lifecycle::handlers::purge::<certs::delete::Certificates>),
         )
         .route(
             "/certificates/{name}/delete",
-            get(certs::delete::delete_form).post(certs::delete::delete),
+            get(lifecycle::handlers::delete_form::<certs::delete::Certificates>)
+                .post(lifecycle::handlers::delete::<certs::delete::Certificates>),
         )
         .route("/certificates/{name}", get(certs::detail))
         .route("/certificates/{name}/enabled", post(certs::toggle))
@@ -136,12 +143,22 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/keys/new",
             get(keys::edit::create_form).post(keys::edit::create),
         )
-        .route("/keys/deleted", get(keys::delete::list_deleted))
-        .route("/keys/deleted/{name}", get(keys::delete::deleted_detail))
-        .route("/keys/deleted/{name}/recover", post(keys::delete::recover))
+        .route(
+            "/keys/deleted",
+            get(lifecycle::handlers::list_deleted::<keys::delete::Keys>),
+        )
+        .route(
+            "/keys/deleted/{name}",
+            get(lifecycle::handlers::deleted_detail::<keys::delete::Keys>),
+        )
+        .route(
+            "/keys/deleted/{name}/recover",
+            post(lifecycle::handlers::recover::<keys::delete::Keys>),
+        )
         .route(
             "/keys/deleted/{name}/purge",
-            get(keys::delete::purge_form).post(keys::delete::purge),
+            get(lifecycle::handlers::purge_form::<keys::delete::Keys>)
+                .post(lifecycle::handlers::purge::<keys::delete::Keys>),
         )
         .route("/keys/{name}", get(keys::detail))
         .route("/keys/{name}/enabled", post(keys::toggle))
@@ -155,7 +172,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route(
             "/keys/{name}/delete",
-            get(keys::delete::delete_form).post(keys::delete::delete),
+            get(lifecycle::handlers::delete_form::<keys::delete::Keys>)
+                .post(lifecycle::handlers::delete::<keys::delete::Keys>),
         )
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
