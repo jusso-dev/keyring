@@ -74,10 +74,25 @@ impl Kind {
             }
         }
     }
+
+    /// What stops working when the current version is disabled.
+    fn disable_effect(self) -> &'static str {
+        match self {
+            Self::Secret => {
+                "Key Vault will refuse to hand out its value. Apps that read this secret will start failing on their next read."
+            }
+            Self::Certificate => {
+                "Key Vault will refuse to hand out the current version. Apps that read this certificate, or its key or secret, can start failing on their next read."
+            }
+            Self::Key => {
+                "Key Vault will refuse to use the current version. Anything that encrypts, decrypts, signs or verifies with it will start failing."
+            }
+        }
+    }
 }
 
 #[derive(Template)]
-#[template(path = "lifecycle/confirm.html")]
+#[template(path = "confirm.html")]
 struct ConfirmPage {
     shell: Shell,
     confirm: ConfirmView,
@@ -85,6 +100,30 @@ struct ConfirmPage {
 
 pub fn confirm_page(shell: Shell, confirm: ConfirmView, status: StatusCode) -> Response {
     (status, render(&ConfirmPage { shell, confirm })).into_response()
+}
+
+#[derive(Template)]
+#[template(path = "lifecycle/disable.html")]
+struct DisablePage<'a> {
+    shell: Shell,
+    vault: &'a str,
+    kind: Kind,
+    name: &'a str,
+    effect: &'static str,
+}
+
+/// The confirmation before a disable. Disabling can break apps as fast as
+/// a delete, so it is never one click. The form posts to the existing
+/// `enabled` route.
+pub fn disable_page(shell: Shell, vault: &str, kind: Kind, name: &str) -> Response {
+    render(&DisablePage {
+        shell,
+        vault,
+        kind,
+        name,
+        effect: kind.disable_effect(),
+    })
+    .into_response()
 }
 
 /// How long a deleted item can be recovered for, and whether it can be
@@ -143,7 +182,7 @@ impl Recovery {
         };
         if self.purge_protected {
             s.push_str(
-                " The vault has purge protection, so nobody can delete one for good before then.",
+                " The vault has purge protection, so nobody can permanently delete one before then.",
             );
         }
         s
@@ -178,7 +217,7 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
     ConfirmView {
         heading: format!("Permanently delete {name}?"),
         warning: format!(
-            "This removes {name} and every version of it from {vault} for good. It can't be recovered by you, Keyring or Microsoft."
+            "This permanently deletes {name} and every version of it from {vault}. It can't be recovered by you, Keyring or Microsoft."
         ),
         expected: name.to_owned(),
         action: format!("{}/deleted/{name}/purge", kind.base()),
@@ -247,7 +286,7 @@ pub fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
         StatusCode::FORBIDDEN,
         "This vault has purge protection",
         format!(
-            "Nobody can permanently delete {name} before its purge date, whatever their role. Key Vault removes deleted {} for good once the vault's retention period ends, and they can be recovered until then.",
+            "Nobody can permanently delete {name} before its purge date, whatever their role. Key Vault permanently deletes deleted {} once the vault's retention period ends, and they can be recovered until then.",
             kind.plural()
         ),
     )
@@ -385,7 +424,7 @@ pub fn redirect_with(state: &AppState, to: &str, message: String) -> Response {
 /// poll; the message says to wait.
 pub fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
     let extra = match kind {
-        Kind::Secret => ", with its value and history",
+        Kind::Secret => ", with its value and versions",
         Kind::Certificate | Kind::Key => ", with every version",
     };
     redirect_with(

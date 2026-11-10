@@ -83,6 +83,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(secrets::edit::edit_form).post(secrets::edit::update),
         )
         .route("/secrets/{name}/enabled", post(secrets::edit::toggle))
+        .route("/secrets/{name}/disable", get(secrets::edit::disable_form))
         .route("/secrets/{name}/versions", get(secrets::versions::list))
         .route(
             "/secrets/{name}/rollback",
@@ -121,6 +122,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/certificates/{name}", get(certs::detail))
         .route("/certificates/{name}/enabled", post(certs::toggle))
+        .route("/certificates/{name}/disable", get(certs::disable_form))
         .route(
             "/certificates/{name}/pending/cancel",
             post(certs::create::cancel_pending),
@@ -144,6 +146,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         )
         .route("/keys/{name}", get(keys::detail))
         .route("/keys/{name}/enabled", post(keys::toggle))
+        .route("/keys/{name}/disable", get(keys::disable_form))
         .route(
             "/keys/{name}/rotate",
             get(keys::edit::rotate_form).post(keys::edit::rotate),

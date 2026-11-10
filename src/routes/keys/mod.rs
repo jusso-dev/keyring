@@ -148,9 +148,6 @@ impl KeyRow {
     pub fn is_expiring(&self) -> bool {
         self.expiry == ExpiryState::Soon
     }
-    pub fn short_version(&self) -> String {
-        self.version.chars().take(8).collect()
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -377,6 +374,25 @@ pub struct ToggleForm {
     /// `on` or `off`.
     #[serde(default)]
     state: String,
+}
+
+/// Ask before disabling. A key that belongs to a certificate is refused
+/// here too.
+pub async fn disable_form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
+    Ok(crate::routes::lifecycle::disable_page(
+        shell,
+        &vault,
+        crate::routes::lifecycle::Kind::Key,
+        &name,
+    ))
 }
 
 /// Enable or disable the current version, like the secrets page does.

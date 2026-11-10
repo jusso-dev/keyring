@@ -477,6 +477,28 @@ pub struct ToggleForm {
 }
 
 /// Enable or disable the current version, like the secrets page does.
+/// Ask before disabling. Reads the certificate first, so a missing one
+/// gets the not-found page rather than a confirmation.
+pub async fn disable_form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let path = format!("/certificates/{name}");
+    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+        return Err(azure_problem(shell, &e, Need::ReadCertificates, &path));
+    }
+    Ok(crate::routes::lifecycle::disable_page(
+        shell,
+        &vault,
+        crate::routes::lifecycle::Kind::Certificate,
+        &name,
+    ))
+}
+
 pub async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
