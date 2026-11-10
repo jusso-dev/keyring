@@ -66,6 +66,15 @@ pub struct KvState {
     pub throttle_next: Mutex<u32>,
     /// Whether the vault allows HSM keys.
     pub premium: Mutex<bool>,
+    /// The vault's recovery level and retention days, as Key Vault reports
+    /// them on every secret. `None` is a vault without purge protection and
+    /// the default 90 days.
+    pub retention: Mutex<Option<(&'static str, u32)>>,
+    /// Secrets recovered but not readable yet, with how many more reads
+    /// answer 404 before they are.
+    pub recovering: Mutex<BTreeMap<String, (StoredSecret, u32)>>,
+    /// How many reads a recovered secret stays hidden for.
+    pub recover_lag: Mutex<Option<u32>>,
     /// Certificate issuers and self-signed timing (see `certs.rs`).
     pub cert_extra: super::certs::Extra,
     seq: Mutex<i64>,
@@ -74,6 +83,34 @@ pub struct KvState {
 pub const BASE_TIME: i64 = 1_790_000_000;
 
 impl KvState {
+    fn retention(&self) -> (&'static str, u32) {
+        self.retention
+            .lock()
+            .unwrap()
+            .unwrap_or(("Recoverable+Purgeable", 90))
+    }
+
+    /// Count a read of `name` (or of every secret, for a list) against any
+    /// recover still in progress, and finish those that are done.
+    fn settle(&self, name: Option<&str>) {
+        let mut rec = self.recovering.lock().unwrap();
+        let mut done = Vec::new();
+        for (n, (_, left)) in rec.iter_mut() {
+            if name.is_some_and(|x| x != n) {
+                continue;
+            }
+            if *left == 0 {
+                done.push(n.clone());
+            } else {
+                *left -= 1;
+            }
+        }
+        for n in done {
+            let (sec, _) = rec.remove(&n).unwrap();
+            self.secrets.lock().unwrap().insert(n, sec);
+        }
+    }
+
     fn tick(&self) -> i64 {
         let mut s = self.seq.lock().unwrap();
         *s += 1;
@@ -236,12 +273,13 @@ impl KvState {
     pub fn soft_delete(&self, name: &str) {
         let sec = self.secrets.lock().unwrap().remove(name).unwrap();
         let t = self.tick();
+        let days = i64::from(self.retention().1);
         self.deleted.lock().unwrap().insert(
             name.into(),
             Deleted {
                 secret: sec,
                 deleted: t,
-                purge: t + 90 * 86_400,
+                purge: t + days * 86_400,
             },
         );
     }
@@ -369,13 +407,15 @@ fn base(headers: &HeaderMap, vault: &str) -> String {
     format!("http://{host}/{vault}")
 }
 
-fn attrs(v: &Version) -> Value {
+type Retention = (&'static str, u32);
+
+fn attrs(v: &Version, r: Retention) -> Value {
     let mut a = json!({
         "enabled": v.enabled,
         "created": v.created,
         "updated": v.updated,
-        "recoveryLevel": "Recoverable+Purgeable",
-        "recoverableDays": 90,
+        "recoveryLevel": r.0,
+        "recoverableDays": r.1,
     });
     if let Some(e) = v.exp {
         a["exp"] = json!(e);
@@ -386,13 +426,20 @@ fn attrs(v: &Version) -> Value {
     a
 }
 
-fn item(base: &str, name: &str, v: &Version, managed: bool, with_version: bool) -> Value {
+fn item(
+    base: &str,
+    name: &str,
+    v: &Version,
+    managed: bool,
+    with_version: bool,
+    r: Retention,
+) -> Value {
     let id = if with_version {
         format!("{base}/secrets/{name}/{}", v.version)
     } else {
         format!("{base}/secrets/{name}")
     };
-    let mut out = json!({"id": id, "attributes": attrs(v), "tags": v.tags});
+    let mut out = json!({"id": id, "attributes": attrs(v, r), "tags": v.tags});
     if let Some(ct) = &v.content_type {
         out["contentType"] = json!(ct);
     }
@@ -402,8 +449,8 @@ fn item(base: &str, name: &str, v: &Version, managed: bool, with_version: bool) 
     out
 }
 
-fn bundle(base: &str, name: &str, v: &Version, managed: bool) -> Value {
-    let mut out = item(base, name, v, managed, true);
+fn bundle(base: &str, name: &str, v: &Version, managed: bool, r: Retention) -> Value {
+    let mut out = item(base, name, v, managed, true, r);
     out["value"] = json!(v.value);
     out
 }
@@ -440,6 +487,8 @@ async fn list(
     uri: Uri,
 ) -> Response {
     let b = base(&headers, &vault);
+    s.settle(None);
+    let r = s.retention();
     let items: Vec<Value> = s
         .secrets
         .lock()
@@ -448,7 +497,7 @@ async fn list(
         .filter_map(|(n, sec)| {
             sec.versions
                 .last()
-                .map(|v| item(&b, n, v, sec.managed, false))
+                .map(|v| item(&b, n, v, sec.managed, false, r))
         })
         .collect();
     page(items, &q, &uri, &b)
@@ -462,14 +511,25 @@ async fn versions(
     uri: Uri,
 ) -> Response {
     let b = base(&headers, &vault);
-    let Some(sec) = s.secrets.lock().unwrap().get(&name).cloned() else {
-        return err(404, "SecretNotFound");
-    };
-    let items: Vec<Value> = sec
-        .versions
-        .iter()
-        .map(|v| item(&b, &name, v, sec.managed, true))
-        .collect();
+    // A name with no secret gets 200 and an empty list, not a 404. "List
+    // versions" is a list call, and Key Vault's list calls answer with an
+    // empty `value` when nothing matches:
+    // https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret-versions/get-secret-versions
+    // Tests that need the 404 answer set `fail` with `fail_path`.
+    s.settle(Some(&name));
+    let r = s.retention();
+    let items: Vec<Value> = s
+        .secrets
+        .lock()
+        .unwrap()
+        .get(&name)
+        .map(|sec| {
+            sec.versions
+                .iter()
+                .map(|v| item(&b, &name, v, sec.managed, true, r))
+                .collect()
+        })
+        .unwrap_or_default();
     page(items, &q, &uri, &b)
 }
 
@@ -479,10 +539,12 @@ async fn get_current(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    s.settle(Some(&name));
+    let r = s.retention();
     match s.secrets.lock().unwrap().get(&name) {
         Some(sec) => match sec.versions.last() {
             Some(v) if !v.enabled => err(403, "SecretDisabled"),
-            Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed)),
+            Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed, r)),
             None => err(404, "SecretNotFound"),
         },
         None => err(404, "SecretNotFound"),
@@ -495,13 +557,15 @@ async fn get_version(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    s.settle(Some(&name));
+    let r = s.retention();
     let secrets = s.secrets.lock().unwrap();
     let Some(sec) = secrets.get(&name) else {
         return err(404, "SecretNotFound");
     };
     match sec.versions.iter().find(|v| v.version == version) {
         Some(v) if !v.enabled => err(403, "Forbidden"),
-        Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed)),
+        Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed, r)),
         None => err(404, "SecretNotFound"),
     }
 }
@@ -523,7 +587,10 @@ async fn set(
     headers: HeaderMap,
     body: String,
 ) -> Response {
-    if s.deleted.lock().unwrap().contains_key(&name) {
+    s.settle(Some(&name));
+    if s.deleted.lock().unwrap().contains_key(&name)
+        || s.recovering.lock().unwrap().contains_key(&name)
+    {
         return err(409, "Conflict");
     }
     let body: Value = serde_json::from_str(&body).unwrap();
@@ -540,7 +607,10 @@ async fn set(
     });
     let b = base(&headers, &vault);
     let current = s.current(&name).unwrap();
-    json_response(StatusCode::OK, bundle(&b, &name, &current, false))
+    json_response(
+        StatusCode::OK,
+        bundle(&b, &name, &current, false, s.retention()),
+    )
 }
 
 async fn update(
@@ -553,6 +623,8 @@ async fn update(
     if body.get("value").is_some() {
         return err(400, "BadParameter");
     }
+    s.settle(Some(&name));
+    let r = s.retention();
     let t = s.tick();
     let mut secrets = s.secrets.lock().unwrap();
     let Some(sec) = secrets.get_mut(&name) else {
@@ -584,7 +656,7 @@ async fn update(
     }
     v.updated = t;
     let b = base(&headers, &vault);
-    json_response(StatusCode::OK, item(&b, &name, v, managed, true))
+    json_response(StatusCode::OK, item(&b, &name, v, managed, true, r))
 }
 
 async fn delete(
@@ -595,20 +667,21 @@ async fn delete(
         return err(404, "SecretNotFound");
     };
     let t = s.tick();
+    let days = i64::from(s.retention().1);
     s.deleted.lock().unwrap().insert(
         name,
         Deleted {
             secret: sec,
             deleted: t,
-            purge: t + 90 * 86_400,
+            purge: t + days * 86_400,
         },
     );
     json_response(StatusCode::OK, json!({}))
 }
 
-fn deleted_item(b: &str, name: &str, d: &Deleted) -> Value {
+fn deleted_item(b: &str, name: &str, d: &Deleted, r: Retention) -> Value {
     let v = d.secret.versions.last().unwrap();
-    let mut out = item(b, name, v, d.secret.managed, false);
+    let mut out = item(b, name, v, d.secret.managed, false, r);
     out["recoveryId"] = json!(format!("{b}/deletedsecrets/{name}"));
     out["deletedDate"] = json!(d.deleted);
     out["scheduledPurgeDate"] = json!(d.purge);
@@ -623,12 +696,13 @@ async fn list_deleted(
     uri: Uri,
 ) -> Response {
     let b = base(&headers, &vault);
+    let r = s.retention();
     let items: Vec<Value> = s
         .deleted
         .lock()
         .unwrap()
         .iter()
-        .map(|(n, d)| deleted_item(&b, n, d))
+        .map(|(n, d)| deleted_item(&b, n, d, r))
         .collect();
     page(items, &q, &uri, &b)
 }
@@ -639,8 +713,9 @@ async fn get_deleted(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    let r = s.retention();
     match s.deleted.lock().unwrap().get(&name) {
-        Some(d) => json_response(StatusCode::OK, deleted_item(&b, &name, d)),
+        Some(d) => json_response(StatusCode::OK, deleted_item(&b, &name, d, r)),
         None => err(404, "SecretNotFound"),
     }
 }
@@ -652,7 +727,12 @@ async fn recover(
     let Some(d) = s.deleted.lock().unwrap().remove(&name) else {
         return err(404, "SecretNotFound");
     };
-    s.secrets.lock().unwrap().insert(name, d.secret);
+    // Key Vault answers a recover at once, but the secret only becomes
+    // readable some seconds later, and reads answer 404 until then:
+    // https://learn.microsoft.com/rest/api/keyvault/secrets/recover-deleted-secret/recover-deleted-secret
+    // Here that's the next `recover_lag` reads of it (one by default).
+    let lag = s.recover_lag.lock().unwrap().unwrap_or(1);
+    s.recovering.lock().unwrap().insert(name, (d.secret, lag));
     json_response(StatusCode::OK, json!({}))
 }
 
@@ -660,6 +740,15 @@ async fn purge(
     State(s): State<Arc<KvState>>,
     Path((_vault, name)): Path<(String, String)>,
 ) -> Response {
+    // A vault with purge protection refuses every purge with 403 until the
+    // retention period ends. Its recovery level has no "Purgeable":
+    // https://learn.microsoft.com/rest/api/keyvault/secrets/purge-deleted-secret/purge-deleted-secret
+    if !s.retention().0.contains("Purgeable") && s.deleted.lock().unwrap().contains_key(&name) {
+        return json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "Forbidden", "message": "Operation \"purge\" is not allowed because purge protection is enabled for this vault. Key Vault service will automatically purge it after the retention period has passed."}}),
+        );
+    }
     match s.deleted.lock().unwrap().remove(&name) {
         Some(_) => axum::response::IntoResponse::into_response(StatusCode::NO_CONTENT),
         None => err(404, "SecretNotFound"),

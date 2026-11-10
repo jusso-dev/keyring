@@ -132,6 +132,7 @@ async fn delete_needs_typed_name_then_recover() {
 
     let res = w.post("/certificates/deleted/web-tls/recover", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(support::location(&res), "/certificates/deleted");
     assert!(w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
 }
 

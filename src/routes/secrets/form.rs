@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::azure::secrets::{
-    Attributes, DateChange, SetSecret, UpdateAttributes, UpdateSecret, is_valid_secret_name,
+    Attributes, DateChange, SecretItem, SetSecret, UpdateAttributes, UpdateSecret,
+    is_valid_secret_name,
 };
 use crate::dates;
 use crate::secret::Secret;
@@ -16,6 +17,10 @@ pub const MAX_TAGS: usize = 15;
 /// Key Vault's limit on a secret value (25 KB).
 pub const MAX_VALUE_BYTES: usize = 25 * 1024;
 pub const MAX_CONTENT_TYPE: usize = 255;
+/// Names that the create form refuses, because `/secrets/new` and
+/// `/secrets/deleted` are Keyring's own pages. A secret made elsewhere with
+/// one of these names can't be opened from the list.
+pub const RESERVED_NAMES: [&str; 2] = ["new", "deleted"];
 
 /// What the create and edit-properties forms post. Strings, because HTML
 /// forms send strings and a missing checkbox sends nothing.
@@ -42,6 +47,12 @@ pub struct SecretForm {
     /// Checkbox: present means on.
     #[serde(default)]
     pub enabled: Option<String>,
+    /// Edit form only: the version the form was opened on.
+    #[serde(default)]
+    pub version: String,
+    /// Edit form only: that version's `updated` time, in Unix seconds.
+    #[serde(default)]
+    pub updated: String,
 }
 
 impl std::fmt::Debug for SecretForm {
@@ -102,7 +113,31 @@ pub fn name_problem(name: &str) -> Option<String> {
     None
 }
 
-/// Parse tag lines. Blank lines are skipped.
+/// Explain why a name can't be used on create, or `None` if it's free of
+/// Keyring's own page names.
+pub fn reserved_name_problem(name: &str) -> Option<String> {
+    RESERVED_NAMES
+        .iter()
+        .any(|r| r.eq_ignore_ascii_case(name))
+        .then(|| {
+            format!(
+                "Keyring uses /secrets/{} for its own page, so a secret called {name} couldn't be opened here. Pick another name.",
+                name.to_ascii_lowercase()
+            )
+        })
+}
+
+/// Can these tags go through the `name=value` textarea and come back the
+/// same? Not if a name has an `=`, either side has a line break, or either
+/// side starts or ends with a space, because parsing trims and splits.
+pub fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
+    let clean = |s: &str| s == s.trim() && !s.contains(['\n', '\r']);
+    tags.iter()
+        .all(|(k, v)| !k.is_empty() && !k.contains('=') && clean(k) && clean(v))
+}
+
+/// Parse tag lines. Blank lines are skipped. A name given twice is an
+/// error, so nothing is dropped without a word.
 pub fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
     let mut tags = BTreeMap::new();
     for (i, line) in raw.lines().enumerate() {
@@ -121,7 +156,12 @@ pub fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
                 i + 1
             ));
         }
-        tags.insert(k.to_owned(), v.to_owned());
+        if tags.insert(k.to_owned(), v.to_owned()).is_some() {
+            return Err(format!(
+                "Line {} repeats the tag name {k}. Each name can only be used once.",
+                i + 1
+            ));
+        }
     }
     if tags.len() > MAX_TAGS {
         return Err(format!(
@@ -160,7 +200,22 @@ pub struct Properties {
     pub tags: BTreeMap<String, String>,
 }
 
-fn properties(form: &SecretForm, now: i64, errors: &mut Vec<FieldError>) -> Properties {
+/// A date from the form, kept at the current version's exact time when the
+/// calendar day is the same. The form only shows days, so without this an
+/// expiry at 10:00 would move to the end of the day on every save.
+fn same_day(current: Option<i64>, wanted: Option<i64>) -> Option<i64> {
+    match (current, wanted) {
+        (Some(c), Some(w)) if c.div_euclid(86_400) == w.div_euclid(86_400) => Some(c),
+        _ => wanted,
+    }
+}
+
+fn properties(
+    form: &SecretForm,
+    now: i64,
+    current: Option<&Attributes>,
+    errors: &mut Vec<FieldError>,
+) -> Properties {
     let content_type = form.content_type.trim();
     if content_type.len() > MAX_CONTENT_TYPE {
         errors.push(err(
@@ -177,8 +232,9 @@ fn properties(form: &SecretForm, now: i64, errors: &mut Vec<FieldError>) -> Prop
         None
     });
     // Expiry is end of the chosen day, so "expires 1 March" works all of
-    // 1 March.
-    let expires = expires.map(|d| d + 86_399);
+    // 1 March. A day that matches the current version keeps its exact time.
+    let expires = same_day(current.and_then(|c| c.expires), expires.map(|d| d + 86_399));
+    let not_before = same_day(current.and_then(|c| c.not_before), not_before);
     if let Some(exp) = expires
         && exp <= now
     {
@@ -212,8 +268,16 @@ fn properties(form: &SecretForm, now: i64, errors: &mut Vec<FieldError>) -> Prop
 }
 
 fn checked_value(form: &SecretForm, errors: &mut Vec<FieldError>) -> Option<Secret> {
-    match form.value.as_deref() {
-        None | Some("") => {
+    // Keep the value as typed, spaces included, except line breaks.
+    // Browsers send a textarea's line breaks as CRLF whatever was pasted,
+    // so store LF, which is what PEM files and .env blocks expect.
+    let value = form.value.as_deref().map(normalise_newlines);
+    match value {
+        None => {
+            errors.push(err("value", "Enter a value."));
+            None
+        }
+        Some(v) if v.is_empty() => {
             errors.push(err("value", "Enter a value."));
             None
         }
@@ -221,20 +285,24 @@ fn checked_value(form: &SecretForm, errors: &mut Vec<FieldError>) -> Option<Secr
             errors.push(err("value", "Values can be up to 25 KB."));
             None
         }
-        // Keep the value exactly as typed. Spaces can matter.
         Some(v) => Some(Secret::new(v)),
     }
+}
+
+/// CRLF to LF. A lone CR is left alone.
+pub fn normalise_newlines(v: &str) -> String {
+    v.replace("\r\n", "\n")
 }
 
 /// Check a create form. Gives the name and a body that sets a value.
 pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), Vec<FieldError>> {
     let mut errors = Vec::new();
     let name = form.name.trim().to_owned();
-    if let Some(m) = name_problem(&name) {
+    if let Some(m) = name_problem(&name).or_else(|| reserved_name_problem(&name)) {
         errors.push(err("name", m));
     }
     let value = checked_value(form, &mut errors);
-    let props = properties(form, now, &mut errors);
+    let props = properties(form, now, None, &mut errors);
     match value {
         Some(value) if errors.is_empty() => Ok((
             name,
@@ -249,11 +317,22 @@ pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), Ve
     }
 }
 
-/// Check a "new value" form. Setting a value always makes a new version.
-pub fn for_new_value(form: &SecretForm, now: i64) -> Result<SetSecret, Vec<FieldError>> {
+/// Check a "new value" form against the current version. Setting a value
+/// always makes a new version. Dates on the same day as the current ones
+/// keep their exact times, and tags the form can't show are carried over
+/// as they are.
+pub fn for_new_value(
+    form: &SecretForm,
+    current: &SecretItem,
+    now: i64,
+) -> Result<SetSecret, Vec<FieldError>> {
     let mut errors = Vec::new();
     let value = checked_value(form, &mut errors);
-    let props = properties(form, now, &mut errors);
+    let mut props = properties(form, now, Some(&current.attributes), &mut errors);
+    if !tags_editable(current.tags()) {
+        errors.retain(|e| e.field != "tags");
+        props.tags = current.tags().clone();
+    }
     match value {
         Some(value) if errors.is_empty() => Ok(SetSecret {
             value,
@@ -267,15 +346,21 @@ pub fn for_new_value(form: &SecretForm, now: i64) -> Result<SetSecret, Vec<Field
 
 /// Check an edit-properties form against the current version. The body
 /// has no value, so this can never create a new version. Dates that didn't
-/// change are left out; removed dates are sent as `null`.
+/// change are left out; removed dates are sent as `null`. Tags are only
+/// sent when they changed, and never when the form can't show them.
 pub fn for_update(
     form: &SecretForm,
-    current: &Attributes,
+    item: &SecretItem,
     now: i64,
 ) -> Result<UpdateSecret, Vec<FieldError>> {
+    let current = &item.attributes;
     let mut errors = Vec::new();
+    let editable = tags_editable(item.tags());
     // An expiry that's already passed but wasn't touched isn't an error.
-    let mut props = properties(form, now, &mut errors);
+    let mut props = properties(form, now, Some(current), &mut errors);
+    if !editable {
+        errors.retain(|e| e.field != "tags");
+    }
     let wanted_exp = props.attributes.expires;
     let expires = DateChange::between(current.expires, wanted_exp);
     if expires == DateChange::Keep {
@@ -291,7 +376,7 @@ pub fn for_update(
                 not_before: DateChange::between(current.not_before, props.attributes.not_before),
                 expires,
             },
-            tags: Some(props.tags),
+            tags: (editable && props.tags != *item.tags()).then_some(props.tags),
         })
     } else {
         Err(errors)
@@ -303,6 +388,21 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_790_000_000;
+
+    fn item(attributes: Attributes, tags: &[(&str, &str)]) -> SecretItem {
+        SecretItem {
+            id: "https://kv.vault.azure.net/secrets/db-password/0123456789abcdef0123456789abcdef"
+                .into(),
+            attributes,
+            tags: Some(
+                tags.iter()
+                    .map(|(k, v)| ((*k).into(), (*v).into()))
+                    .collect(),
+            ),
+            content_type: None,
+            managed: None,
+        }
+    }
 
     fn form() -> SecretForm {
         SecretForm {
@@ -391,6 +491,7 @@ mod tests {
         let mut f = form();
         f.expires = "2027-02-06".into();
         f.tags = "env=prod".into();
+        let current = item(current, &[]);
         let body = for_update(&f, &current, NOW).unwrap();
         let j = serde_json::to_value(&body).unwrap();
         assert!(
@@ -410,14 +511,14 @@ mod tests {
         };
         let mut f = form();
         f.expires = crate::dates::iso_date(NOW - 60);
-        assert!(for_update(&f, &past, NOW).is_ok());
+        assert!(for_update(&f, &item(past, &[]), NOW).is_ok());
     }
 
     #[test]
     fn update_never_has_a_value() {
         let mut f = form();
         f.value = Some("should be ignored".into());
-        let body = for_update(&f, &Attributes::default(), NOW).unwrap();
+        let body = for_update(&f, &item(Attributes::default(), &[]), NOW).unwrap();
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("value").is_none());
         assert_eq!(json["contentType"], "");
@@ -429,6 +530,108 @@ mod tests {
         assert!(parse_tags(&many).unwrap_err().contains("15"));
         let t = parse_tags("a=1\nb=2").unwrap();
         assert_eq!(format_tags(&t), "a=1\nb=2");
+    }
+
+    #[test]
+    fn line_breaks_become_lf() {
+        let mut f = form();
+        f.value = Some("\na\r\nb\r\n".into());
+        let (_, body) = for_create(&f, NOW).unwrap();
+        assert_eq!(body.value.expose(), "\na\nb\n");
+        // A value right at 25 KB once CRLF is LF isn't refused for its CRs.
+        let line = "x".repeat(1023);
+        f.value = Some(vec![line.as_str(); 25].join("\r\n") + "\r\n");
+        assert!(for_create(&f, NOW).is_ok());
+    }
+
+    #[test]
+    fn reserved_names_are_refused_on_create() {
+        for name in ["new", "deleted", "New", "DELETED"] {
+            let mut f = form();
+            f.name = name.into();
+            let e = for_create(&f, NOW).err().unwrap();
+            assert_eq!(e[0].field, "name", "{name}");
+            assert!(e[0].message.contains("Keyring uses /secrets/"), "{name}");
+        }
+        let mut f = form();
+        f.name = "new-thing".into();
+        assert!(for_create(&f, NOW).is_ok());
+    }
+
+    #[test]
+    fn repeated_tag_names_are_an_error() {
+        let e = parse_tags("env=prod\nteam=a\nenv=test").unwrap_err();
+        assert!(e.contains("Line 3 repeats the tag name env"), "{e}");
+    }
+
+    #[test]
+    fn which_tags_the_form_can_show() {
+        let t = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect()
+        };
+        assert!(tags_editable(&t(&[("env", "prod"), ("flag", "")])));
+        assert!(tags_editable(&t(&[("url", "a=b")])), "= in a value is fine");
+        assert!(!tags_editable(&t(&[("a=b", "c")])));
+        assert!(!tags_editable(&t(&[("note", "two\nlines")])));
+        assert!(!tags_editable(&t(&[(" padded", "x")])));
+        assert!(!tags_editable(&t(&[("k", "x ")])));
+        // Each editable set comes back the same from the textarea.
+        let ok = t(&[("env", "prod"), ("url", "a=b"), ("flag", "")]);
+        assert_eq!(parse_tags(&format_tags(&ok)).unwrap(), ok);
+    }
+
+    #[test]
+    fn update_sends_tags_only_when_changed() {
+        let current = item(Attributes::default(), &[("env", "prod")]);
+        let mut f = form();
+        f.tags = "env=prod".into();
+        let body = for_update(&f, &current, NOW).unwrap();
+        assert!(body.tags.is_none(), "unchanged tags not sent");
+        f.tags = "env=test".into();
+        let body = for_update(&f, &current, NOW).unwrap();
+        assert_eq!(body.tags.unwrap()["env"], "test");
+    }
+
+    #[test]
+    fn tags_the_form_cant_show_are_never_rewritten() {
+        let odd = item(Attributes::default(), &[("a=b", " c ")]);
+        let mut f = form();
+        // The form shows no textarea for these, so it posts nothing.
+        f.tags = String::new();
+        let body = for_update(&f, &odd, NOW).unwrap();
+        assert!(body.tags.is_none());
+        let body = for_new_value(&f, &odd, NOW).unwrap();
+        assert_eq!(body.tags.unwrap()["a=b"], " c ");
+    }
+
+    #[test]
+    fn new_value_keeps_exact_times_on_the_same_day() {
+        let day = 86_400;
+        let midnight = (NOW / day + 100) * day;
+        let current = item(
+            Attributes {
+                expires: Some(midnight + 10 * 3600),
+                not_before: Some(midnight - 30 * day + 9 * 3600),
+                ..Attributes::default()
+            },
+            &[],
+        );
+        let mut f = form();
+        f.expires = crate::dates::iso_date(midnight);
+        f.not_before = crate::dates::iso_date(midnight - 30 * day);
+        let body = for_new_value(&f, &current, NOW).unwrap();
+        assert_eq!(body.attributes.expires, Some(midnight + 10 * 3600));
+        assert_eq!(
+            body.attributes.not_before,
+            Some(midnight - 30 * day + 9 * 3600)
+        );
+        // A different day is taken as chosen: end of day for expiry.
+        f.expires = crate::dates::iso_date(midnight + day);
+        let body = for_new_value(&f, &current, NOW).unwrap();
+        assert_eq!(body.attributes.expires, Some(midnight + 2 * day - 1));
     }
 
     #[test]

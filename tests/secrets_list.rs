@@ -98,6 +98,9 @@ async fn search_and_filters() {
     assert!(html.contains(">db-password<") && !html.contains(">old-token<"));
     let (_, html) = w.page("/secrets?show=expiring").await;
     assert!(html.contains(">api-key<") && !html.contains(">db-password<"));
+    // The search box matches tags on the server too, as the label says.
+    let (_, html) = w.page("/secrets?q=data").await;
+    assert!(html.contains(">db-password<") && !html.contains(">api-key<"));
     let (_, html) = w.page("/secrets?show=disabled").await;
     assert!(html.contains(">old-token<") && !html.contains(">api-key<"));
     // Live filtering text includes tags.
@@ -202,4 +205,47 @@ async fn firewall_blocks_use_key_vaults_inner_code() {
         html.contains("This vault is blocked from here"),
         "outer code is Forbidden, inner is ForbiddenByFirewall"
     );
+}
+
+#[tokio::test]
+async fn expiring_count_and_link_agree() {
+    let w = support::world().await;
+    let n = now();
+    w.kv.state.put_with("soon", "x", |v| v.exp = Some(n + DAY));
+    for name in ["gone-1", "gone-2"] {
+        w.kv.state.put_with(name, "x", |v| v.exp = Some(n - DAY));
+    }
+    let (_, html) = w.page("/secrets").await;
+    assert!(html.contains("1 expiring within 30 days"));
+    assert!(html.contains("2 expired"));
+    let (_, html) = w.page("/secrets?show=expiring").await;
+    assert!(html.contains(">soon<"));
+    assert!(!html.contains(">gone-1<") && !html.contains(">gone-2<"));
+    assert!(html.contains(">Expiring within 30 days</option>"));
+}
+
+#[tokio::test]
+async fn a_bad_query_string_gets_the_error_page() {
+    let w = support::world().await;
+    let (status, html) = w.page("/secrets?page=abc").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(html.contains("Keyring couldn&#39;t read that"), "{html}");
+    assert!(html.contains("<nav"), "the normal page layout");
+    assert!(!html.contains("abc"), "the query isn't echoed");
+}
+
+#[tokio::test]
+async fn keyrings_own_pages_win_over_secrets_with_their_names() {
+    // A secret called "new" or "deleted" can be made outside Keyring. The
+    // fixed pages still answer at those addresses, and create refuses the
+    // names (see secrets_edit), so Keyring never makes one itself.
+    let w = support::world().await;
+    w.kv.state.put("new", "x");
+    let (status, html) = w.page("/secrets/new").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Add a secret"));
+    assert!(w.kv.state.value_reads().is_empty());
+    let (status, html) = w.page("/secrets/deleted").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Deleted secrets"));
 }

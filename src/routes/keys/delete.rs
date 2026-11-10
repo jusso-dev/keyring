@@ -125,11 +125,7 @@ pub async fn recover(
     match api(&state, &session, &vault).recover(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key recovered");
-            Ok(lifecycle::redirect_with(
-                &state,
-                &format!("/keys/{name}"),
-                format!("Recovered {name}. It can take a few seconds to show everywhere."),
-            ))
+            Ok(lifecycle::recovered(&state, KIND, &name))
         }
         Err(e) => Err(azure_problem(
             shell,
