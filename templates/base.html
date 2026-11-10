@@ -15,7 +15,7 @@
     <div class="vault-picker">
       {% if let Some(vault) = shell.vault %}
       <span class="muted">Vault:</span> <strong>{{ vault.name }}</strong>
-      <a href="/vaults">Change</a>
+      <a href="/vaults">Change vault</a>
       {% else %}
       <a href="/vaults">Choose a vault</a>
       {% endif %}
@@ -41,7 +41,9 @@
     {% endif %}
     <main id="main" class="content">
       {% if let Some(flash) = shell.flash %}
-      <p class="notice {% if flash.is_error() %}notice-error{% else %}notice-ok{% endif %}" role="{% if flash.is_error() %}alert{% else %}status{% endif %}">{{ flash.message }}</p>
+      {#- Present when the page loads, so no live role: the script focuses it
+          instead, the same as a form's error summary. -#}
+      <p class="notice {% if flash.is_error() %}notice-error{% else %}notice-ok{% endif %}" tabindex="-1" data-flash>{{ flash.message }}</p>
       {% endif %}
       {% block content %}{% endblock %}
     </main>

@@ -205,8 +205,8 @@ label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
 input[type="text"],
 input[type="search"],
 input[type="password"],
-input[type="datetime-local"],
 input[type="date"],
+input[type="number"],
 select,
 textarea {
   font: inherit;
@@ -233,19 +233,13 @@ a.button-danger, .button-danger {
   color: #ffffff;
 }
 
-@media (max-width: 48rem) {
-  .layout { grid-template-columns: minmax(0, 1fr); align-content: start; }
-  .side-nav { border-right: none; border-bottom: 1px solid var(--line); padding: 0.5rem 0; }
-  .side-nav ul { display: flex; flex-wrap: wrap; }
-  .side-nav a { border-left: none; border-bottom: 3px solid transparent; padding: 0.4rem 0.75rem; }
-  .side-nav a[aria-current="page"] { border-bottom-color: var(--accent); }
-  .site-header { flex-wrap: wrap; }
-}
-
 .visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
@@ -344,11 +338,12 @@ section { margin-top: 1.5rem; }
   color: var(--accent);
   border-color: var(--accent);
 }
-button:disabled { opacity: 0.6; cursor: not-allowed; filter: none; }
 .actions form { margin: 0; }
 
+/* A div inside the cell, so the td stays a table cell. */
 .row-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
-a.button-small { padding: 0.25rem 0.75rem; font-size: 0.9rem; }
+/* Full version IDs fit in the column by wrapping anywhere. */
+.version-id { overflow-wrap: anywhere; word-break: break-all; }
 .small { font-size: 0.85rem; }
 
 details.advanced {
@@ -361,13 +356,7 @@ details.advanced {
 details.advanced summary { cursor: pointer; font-weight: 600; }
 fieldset { border: none; padding: 0; margin: 1rem 0 0; }
 legend { font-weight: 600; }
-input[type="number"] {
-  font: inherit;
-  width: 8rem;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--muted);
-  border-radius: var(--radius);
-}
+input[type="number"] { width: 8rem; }
 
 .group-summary { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
 .group-summary a { text-decoration: none; }
@@ -380,6 +369,9 @@ input[type="number"] {
 
 @media (forced-colors: active) {
   .badge, .tag, .button, button { border: 1px solid CanvasText; }
+  /* Forced colours can flatten the accent border, so the current page
+     keeps a system colour and an underline. */
+  .side-nav a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
 }
 
 /* Facts stack on narrow screens so long labels don't push values off. */
@@ -391,8 +383,6 @@ input[type="number"] {
 /* Scrollable tables can be reached and scrolled with a keyboard. */
 .table-wrap:focus-visible { outline-offset: 0; }
 
-.visually-hidden { margin: -1px; padding: 0; border: 0; }
-
 /* The idle sign-out notice stays in view while the page scrolls. */
 .idle-status { position: sticky; top: 0; z-index: 5; }
 .idle-notice { margin-bottom: 1rem; }
@@ -401,4 +391,14 @@ input[type="number"] {
 /* A revealed value never goes to paper or a saved PDF. */
 @media print {
   [data-secret-value] { visibility: hidden; }
+}
+
+/* Small screens. Last, so it overrides the rules above. */
+@media (max-width: 48rem) {
+  .layout { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .side-nav { border-right: none; border-bottom: 1px solid var(--line); padding: 0.5rem 0; }
+  .side-nav ul { display: flex; flex-wrap: wrap; }
+  .side-nav a { border-left: none; border-bottom: 3px solid transparent; padding: 0.4rem 0.75rem; }
+  .side-nav a[aria-current="page"] { border-bottom-color: var(--accent); }
+  .site-header { flex-wrap: wrap; }
 }

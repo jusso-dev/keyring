@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Audit for {{ vault }} - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}{% if !filter.item.is_empty() %}Who used {{ filter.item }} in {{ vault }}{% else %}Audit for {{ vault }}{% endif %} - Keyring{% endblock %}
 {% block content %}
 {% if !filter.item.is_empty() %}
 <h1>Who used <span class="mono">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
@@ -7,9 +8,9 @@
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
 {% endif %}
-<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events.</p>
+<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC.</p>
 
-{% if let Some(e) = error %}<p class="notice notice-error" role="alert">{{ e }}</p>{% endif %}
+{% call ui::error_summary(errors) %}{% endcall %}
 
 <form class="filters" method="get" action="/audit" role="search">
   {% if !filter.from.is_empty() %}<input type="hidden" name="from" value="{{ filter.from }}">{% endif %}
@@ -20,23 +21,30 @@
     </select>
   </div>
   <div>
-    <label for="item">Item name</label>
-    <input id="item" name="item" type="text" value="{{ filter.item }}" autocomplete="off" spellcheck="false">
+    {% let field_name = "item" %}
+    <label for="item">Item name <span class="muted">(optional)</span></label>
+    <input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}>
+    {% include "_field_error.html" %}
   </div>
   <div>
+    {% let field_name = "operation" %}
     <label for="operation">Action</label>
-    <select id="operation" name="operation">
+    <select id="operation" name="operation"{% call ui::aria("operation") %}{% endcall %}>
       <option value="">Any action</option>
       {% for (op, label) in operations %}<option value="{{ op }}"{% if filter.operation == *op %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
+    {% include "_field_error.html" %}
   </div>
   <div>
-    <label for="person">Person</label>
-    <input id="person" name="person" type="text" value="{{ filter.person }}" placeholder="name@example.com" autocomplete="off" spellcheck="false">
+    {% let field_name = "person" %}
+    <label for="person">Person <span class="muted">(optional)</span></label>
+    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
+    <input id="person" name="person" type="text" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>
-    {% if unavailable.is_none() && error.is_none() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+    {% if unavailable.is_none() && errors.is_empty() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
   </div>
 </form>
 
@@ -56,28 +64,28 @@
   <p><strong>This vault's logs go to a Log Analytics workspace you can't read.</strong></p>
   <p class="hint"><strong>What to ask for:</strong> the Log Analytics Reader role on the workspace the vault's diagnostic setting uses.</p>
 </div>
-{% elif rows.is_empty() && error.is_none() %}
+{% elif rows.is_empty() && errors.is_empty() %}
 <div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
 {% elif !rows.is_empty() %}
-{% if let Some(p) = partial %}<p class="notice notice-warn" role="status">{{ p }}</p>{% endif %}
+{% if let Some(p) = partial %}<p class="notice notice-warn">{{ p }}</p>{% endif %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
-<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+{% call ui::table_wrap("audit-caption") %}
 <table>
-  <caption class="visually-hidden">Audit events for {{ vault }}</caption>
+  <caption class="visually-hidden" id="audit-caption">Audit events for {{ vault }}</caption>
   <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>
       <td class="small">{{ r.time }}</td>
       <td>{{ r.who }}</td>
-      <th scope="row" title="{{ r.operation }}">{{ r.what }}</th>
-      <td class="mono">{{ r.item }}</td>
+      <th scope="row">{{ r.what }}{% if r.operation != r.what %}<br><span class="muted small mono">{{ r.operation }}</span>{% endif %}</th>
+      <td class="mono">{{ ui::or_none(r.item) }}</td>
       <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}Allowed{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
-      <td class="mono small">{{ r.client_ip }}</td>
+      <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 {% endif %}
 {% endblock %}

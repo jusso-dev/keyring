@@ -135,7 +135,7 @@ impl FormPage {
 
     fn heading(&self) -> String {
         match self.mode {
-            Mode::Create => "Add a secret".into(),
+            Mode::Create => "Create a secret".into(),
             Mode::NewValue => format!("New value for {}", self.form.name),
             Mode::Properties => format!("Edit {}", self.form.name),
         }
@@ -268,7 +268,7 @@ pub async fn create(
             Ok(saved(
                 &state,
                 &format!("/secrets/{name}"),
-                format!("Added {name}."),
+                format!("Created {name}."),
             ))
         }
         Err(AzureError::Status { status: 409, .. }) if is_soft_deleted(&api, &name).await => {
@@ -387,7 +387,7 @@ pub async fn set_value(
             Ok(saved(
                 &state,
                 &format!("/secrets/{name}"),
-                format!("Saved a new version of {name}. The old value is still in its history."),
+                format!("Saved a new version of {name}. The old value is still in its versions."),
             ))
         }
         Err(err) => Err(azure_problem(
@@ -495,6 +495,25 @@ async fn update_current(
                 &format!("/secrets/{name}"),
             )
         })
+}
+
+/// Ask before disabling. Reads the secret first, so a missing or managed
+/// secret gets the same page as the detail view would give.
+pub async fn disable_form(
+    State(state): State<AppState>,
+    session: CurrentSession,
+    shell: Shell,
+    Path(name): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
+    Ok(crate::routes::lifecycle::disable_page(
+        shell,
+        &vault,
+        crate::routes::lifecycle::Kind::Secret,
+        item.name(),
+    ))
 }
 
 pub async fn toggle(

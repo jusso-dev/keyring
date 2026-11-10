@@ -1,1 +1,2 @@
+{#- The error under one form field. Set `field_name` first. Needs error_for. -#}
 {%- if let Some(msg) = error_for(field_name) %}<p class="field-error" id="{{ field_name }}-error">{{ msg }}</p>{% endif -%}

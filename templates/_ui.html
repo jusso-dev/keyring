@@ -1,0 +1,77 @@
+{#- Shared pieces for every page. Import with {% import "_ui.html" as ui %}.
+    Macros that mention error_for only work in templates that have it. -#}
+
+{#- For a field that holds a name, a value or a tag: no autofill, and no
+    capital letters, corrections or spellcheck from a phone keyboard. -#}
+{%- macro ident() %} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"{% endmacro -%}
+
+{#- aria-describedby (help text, then the error) and aria-invalid for one
+    form field. `help` is the id of its help text, if it has one. -#}
+{%- macro aria(field, help = "") -%}
+{%- if let Some(_m) = error_for(field) %} aria-describedby="{% if !help.is_empty() %}{{ help }} {% endif %}{{ field }}-error" aria-invalid="true"
+{%- elif !help.is_empty() %} aria-describedby="{{ help }}"
+{%- endif -%}
+{%- endmacro -%}
+
+{#- The list of problems at the top of a form. The script focuses it, so it
+    takes focus and has no live role (it is there when the page loads).
+    Fields with an empty name are listed without a link. -#}
+{%- macro error_summary(errors) -%}
+{%- if !errors.is_empty() %}
+<div class="notice notice-error" tabindex="-1" data-error-summary>
+  <p><strong>Please fix {% if errors.len() == 1 %}this{% else %}these {{ errors.len() }} things{% endif %}:</strong></p>
+  <ul>{% for e in errors %}<li>{% if e.field.is_empty() %}{{ e.message }}{% else %}<a href="#{{ e.field }}">{{ e.message }}</a>{% endif %}</li>{% endfor %}</ul>
+  {{- caller() }}
+</div>
+{%- endif -%}
+{%- endmacro -%}
+
+{#- A table that may scroll sideways on a small screen. Named by the
+    table's caption, which needs the id given here. The tab stop is there
+    for keyboard scrolling; the script removes it while the table fits. -#}
+{%- macro table_wrap(caption_id) -%}
+<div class="table-wrap" role="region" aria-labelledby="{{ caption_id }}" tabindex="0" data-table-wrap>
+{{- caller() -}}
+</div>
+{%- endmacro -%}
+
+{#- Status badges for a secret, certificate or key. "Active" when nothing
+    else applies. -#}
+{%- macro status(enabled, expired, within30, within90 = false, not_yet = false, managed = false) -%}
+{%- if !enabled %}<span class="badge badge-muted">Disabled</span> {% endif -%}
+{%- if expired %}<span class="badge badge-error">Expired</span> {% elif within30 %}<span class="badge badge-error">Expires within 30 days</span> {% elif within90 %}<span class="badge badge-warn">Expires within 90 days</span> {% endif -%}
+{%- if not_yet %}<span class="badge badge-muted">Not active yet</span> {% endif -%}
+{%- if managed %}<span class="badge badge-muted">Managed by a certificate</span> {% endif -%}
+{%- if enabled && !expired && !within30 && !within90 && !not_yet && !managed %}<span class="muted">Active</span>{% endif -%}
+{%- endmacro -%}
+
+{#- Tags as name=value, or a muted "None". A tag with an empty value shows
+    its name only. -#}
+{%- macro tags(list) -%}
+{%- if list.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in list.iter() %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}{% endif -%}
+{%- endmacro -%}
+
+{#- A value, or a muted "None" so an empty cell doesn't read as a fault. -#}
+{%- macro or_none(text) -%}
+{%- if text.is_empty() %}<span class="muted">None</span>{% else %}{{ text }}{% endif -%}
+{%- endmacro -%}
+
+{#- An expiry date with its note, or "No expiry". -#}
+{%- macro expires(date, note = "") -%}
+{%- if date.is_empty() %}<span class="muted">No expiry</span>{% else %}{{ date }}{% if !note.is_empty() %} <span class="muted">({{ note }})</span>{% endif %}{% endif -%}
+{%- endmacro -%}
+
+{#- The name field on every create form. The same rule holds for secrets,
+    certificates and keys, so the same words say it. -#}
+{%- macro name_field(value, noun) -%}
+{%- let field_name = "name" %}
+  <label for="name">Name</label>
+  <p class="field-help" id="name-help">Letters, numbers and hyphens, up to 127 characters. You can't rename a {{ noun }} later.</p>
+  <input id="name" name="name" type="text" value="{{ value }}" required maxlength="127" pattern="[A-Za-z0-9-]+"{% call ident() %}{% endcall %}{% call aria("name", "name-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+{%- endmacro -%}
+
+{#- Said once at the top of each form, so "(optional)" is the only marker. -#}
+{%- macro optional_note() -%}
+<p class="muted">Every field is needed unless it says optional.</p>
+{%- endmacro -%}

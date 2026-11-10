@@ -1,4 +1,0 @@
-{%- if !row.enabled %}<span class="badge badge-muted">Disabled</span> {% endif -%}
-{%- if row.is_expired() %}<span class="badge badge-error">Expired</span> {% elif row.is_expiring() %}<span class="badge badge-warn">Expires within 30 days</span> {% endif -%}
-{%- if row.managed %}<span class="badge badge-muted">Managed by a certificate</span>{% endif -%}
-{%- if row.enabled && !row.is_expired() && !row.is_expiring() && !row.managed %}<span class="muted">Active</span>{% endif -%}

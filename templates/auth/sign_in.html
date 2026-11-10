@@ -4,9 +4,9 @@
 <div class="panel narrow">
   <h1>Sign in to Keyring</h1>
   {% if unsaved %}
-  <p class="notice notice-warn" role="status">You were signed out before that was saved, so nothing changed. Sign in again, then enter it again.</p>
+  <p class="notice notice-warn">You were signed out before that was saved, so nothing changed. Sign in again, then enter it again.</p>
   {% else if expired %}
-  <p class="notice notice-warn" role="status">You were signed out after a while without activity. Sign in again to carry on.</p>
+  <p class="notice notice-warn">You were signed out after a while without activity. Sign in again to carry on.</p>
   {% endif %}
   <p>Use your work account. Keyring acts as you, so you'll see the vaults and secrets you already have access to.</p>
   <p>Keyring signs you out after {{ idle_minutes }} minutes without activity, and after {{ absolute_hours }} hours in any case.</p>

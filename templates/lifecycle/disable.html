@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{#- Disabling can break an app as fast as deleting, so it is confirmed
+    first. No typed name: it is undone with one click on Enable. -#}
+{% block title %}Disable {{ kind.noun() }} {{ name }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Disable <span class="mono">{{ name }}</span> in {{ vault }}?</h1>
+  <p>{{ effect }}</p>
+  <p>Nothing is deleted. Enable it again from its page to undo this.</p>
+  <form method="post" action="{{ kind.base() }}/{{ name }}/enabled">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    <input type="hidden" name="state" value="off">
+    <div class="actions">
+      <button type="submit" class="button-danger">Disable {{ kind.noun() }}</button>
+      <a href="{{ kind.base() }}/{{ name }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

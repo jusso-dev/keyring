@@ -141,7 +141,9 @@ async fn flash_messages_show_once() {
     assert!(cleared, "flash cookie is cleared after showing");
     let html = text(res).await;
     assert!(html.contains("Secret saved"));
-    assert!(html.contains("role=\"status\""));
+    // Focused by the script, not a live region: it is there at load.
+    assert!(html.contains("tabindex=\"-1\" data-flash>Secret saved"));
+    assert!(!html.contains("role=\"status\""));
 
     // A forged flash cookie is ignored.
     let res = get(&app, "/", Some(&format!("{cookie}; keyring_flash=forged"))).await;

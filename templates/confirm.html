@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- Typed confirmation for anything that deletes or exports. -#}
+{% block title %}{{ confirm.heading }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>{{ confirm.heading }}</h1>
+  {% if let Some(e) = confirm.error %}
+  <p class="notice notice-error" tabindex="-1" data-error-summary id="confirm_name-error">{{ e }}</p>
+  {% endif %}
+  <p>{{ confirm.warning }}</p>
+  {% if let Some(second) = confirm.second_warning %}
+  <p class="notice notice-error">{{ second }}</p>
+  {% endif %}
+  <form method="post" action="{{ confirm.action }}">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    <label for="confirm_name">Type <strong class="mono">{{ confirm.expected }}</strong> to confirm</label>
+    <input id="confirm_name" name="confirm_name" type="text" required{% call ui::ident() %}{% endcall %}{% if confirm.error.is_some() %} aria-invalid="true" aria-describedby="confirm_name-error"{% endif %}>
+    <div class="actions">
+      <button type="submit" class="button-danger">{{ confirm.button }}</button>
+      <a href="{{ confirm.cancel_url }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

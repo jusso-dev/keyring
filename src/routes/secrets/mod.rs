@@ -18,7 +18,7 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::lifecycle::Kind;
-use crate::routes::paging::paginate;
+use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
 pub use crate::routes::vault_ctx::{azure_problem, checked_name};
@@ -156,11 +156,7 @@ struct ListPage {
     disabled_count: usize,
     filter: SecretFilter,
     show_options: Vec<ShowOption>,
-    page: usize,
-    pages: usize,
-    shown_from: usize,
-    prev_url: Option<String>,
-    next_url: Option<String>,
+    pager: Pager,
 }
 
 /// The chosen vault, or the page to show when there isn't one.
@@ -212,11 +208,7 @@ pub async fn list(
     .collect();
 
     Ok(render(&ListPage {
-        page: pager.page,
-        pages: pager.pages,
-        shown_from: pager.shown_from,
-        prev_url: pager.prev_url,
-        next_url: pager.next_url,
+        pager,
         shell,
         vault,
         rows,

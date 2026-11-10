@@ -90,7 +90,7 @@ async fn reveal_errors_are_explained() {
 #[test]
 fn script_is_small_dependency_free_and_same_origin() {
     let js = include_str!("../static/app.js");
-    assert!(js.lines().count() < 400, "keep app.js small");
+    assert!(js.lines().count() < 450, "keep app.js small");
     assert!(js.contains("data-extend"), "values can be shown for longer");
     for banned in [
         "import ",

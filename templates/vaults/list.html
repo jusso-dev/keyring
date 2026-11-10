@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Vaults - Keyring{% endblock %}
 {% block content %}
 <h1>Vaults</h1>
@@ -14,7 +15,7 @@
 <form class="filters" method="get" action="/vaults" role="search" data-live-filter="vault-table">
   <div>
     <label for="q">Search by name or resource group</label>
-    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+    <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
   </div>
   <div>
     <label for="subscription">Subscription</label>
@@ -27,7 +28,8 @@
   </div>
   <div>
     <label for="tag">Tag</label>
-    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" placeholder="env or env=prod" autocomplete="off">
+    <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>
@@ -40,9 +42,9 @@
   <p>No vaults match. Try a shorter search or clear the filters.</p>
 </div>
 {% else %}
-<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+{% call ui::table_wrap("vault-table-caption") %}
 <table id="vault-table">
-  <caption class="visually-hidden">Vaults you can see</caption>
+  <caption class="visually-hidden" id="vault-table-caption">Vaults you can see</caption>
   <thead>
     <tr>
       <th scope="col">Name</th>
@@ -59,9 +61,9 @@
     {% for v in vaults %}
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="mono">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
-      <td>{{ v.subscription_name }}</td>
-      <td>{{ v.resource_group }}</td>
-      <td>{{ v.location }}</td>
+      <td>{{ ui::or_none(v.subscription_name) }}</td>
+      <td>{{ ui::or_none(v.resource_group) }}</td>
+      <td>{{ ui::or_none(v.location) }}</td>
       <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
       <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>
       <td>{% if v.purge_protection %}On{% else %}Off{% endif %}</td>
@@ -76,7 +78,7 @@
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 <p class="muted" data-live-filter-empty role="status" hidden>No vaults on this page match.</p>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">

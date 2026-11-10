@@ -1,25 +1,25 @@
 {% extends "base.html" %}
-{% block title %}{{ row.name }} - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p><a href="/keys">Back to keys in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
-<p>{% include "keys/_status.html" %}</p>
+<p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</p>
 <div class="actions">
   {% if !row.managed %}
   <a class="button" href="/keys/{{ row.name }}/rotate">Rotate now</a>
   <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
   <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
+  {% if row.enabled %}
+  <a class="button button-secondary" href="/keys/{{ row.name }}/disable">Disable</a>
+  {% else %}
   <form method="post" action="/keys/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-    {% if row.enabled %}
-    <input type="hidden" name="state" value="off">
-    <button type="submit" class="button-secondary">Disable</button>
-    {% else %}
     <input type="hidden" name="state" value="on">
     <button type="submit" class="button-secondary">Enable</button>
-    {% endif %}
   </form>
+  {% endif %}
   {% else %}
   <p class="muted">This key belongs to the certificate <a href="/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
@@ -30,11 +30,11 @@
   <h2 id="key-heading">Current version</h2>
   <dl class="props">
     <dt>Type</dt><dd>{{ kind }}{% if hsm %} <span class="muted">(protected by a hardware security module)</span>{% endif %}</dd>
-    <dt>Allowed to</dt><dd>{% if operations.is_empty() %}<span class="muted">Not set</span>{% else %}{{ operations|join(", ") }}{% endif %}</dd>
+    <dt>Allowed to</dt><dd>{% if operations.is_empty() %}<span class="muted">None</span>{% else %}{{ operations|join(", ") }}{% endif %}</dd>
     <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
-    <dt>Created</dt><dd>{{ row.created }}</dd>
-    <dt>Expires</dt><dd>{% if row.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ row.expires }} ({{ row.expires_note }}){% endif %}</dd>
-    <dt>Tags</dt><dd>{% if row.tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+    <dt>Created</dt><dd>{{ ui::or_none(row.created) }}</dd>
+    <dt>Expires</dt><dd>{{ ui::expires(row.expires, row.expires_note) }}</dd>
+    <dt>Tags</dt><dd>{{ ui::tags(row.tags) }}</dd>
   </dl>
 </section>
 
@@ -43,11 +43,11 @@
   <p class="muted">Safe to share. The private key never leaves Key Vault.</p>
   {% if let Some(pem) = pem %}
   <label for="public-pem">PEM</label>
-  <textarea id="public-pem" class="mono secret-value" rows="8" readonly spellcheck="false">{{ pem }}</textarea>
+  <textarea id="public-pem" class="mono secret-value" rows="8" readonly{{ ui::ident() }}>{{ pem }}</textarea>
   <p><button type="button" class="button-secondary" data-copy-plain="public-pem" hidden>Copy PEM</button></p>
   {% endif %}
   <label for="public-jwk">JWK</label>
-  <textarea id="public-jwk" class="mono secret-value" rows="8" readonly spellcheck="false">{{ jwk }}</textarea>
+  <textarea id="public-jwk" class="mono secret-value" rows="8" readonly{{ ui::ident() }}>{{ jwk }}</textarea>
   <p><button type="button" class="button-secondary" data-copy-plain="public-jwk" hidden>Copy JWK</button> <span class="muted" role="status" aria-live="polite" data-copy-plain-status></span></p>
 </section>
 
@@ -55,7 +55,7 @@
 <section aria-labelledby="rotation-heading">
   <h2 id="rotation-heading">Rotation policy</h2>
   {% if let Some(note) = rotation_note %}
-  <p class="notice notice-warn" role="status">{{ note }}</p>
+  <p class="notice notice-warn">{{ note }}</p>
   {% endif %}
   {% if let Some(r) = rotation %}
   {% if r.any %}
@@ -75,24 +75,24 @@
   <h2 id="versions-heading">Versions</h2>
   <p class="muted">Older versions can still decrypt and verify what they made, unless disabled.</p>
   {% if let Some(note) = versions_note %}
-  <p class="notice notice-warn" role="status">{{ note }}</p>
+  <p class="notice notice-warn">{{ note }}</p>
   {% else %}
-  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+  {% call ui::table_wrap("versions-caption") %}
   <table>
-    <caption class="visually-hidden">Versions of {{ row.name }}</caption>
+    <caption class="visually-hidden" id="versions-caption">Versions of {{ row.name }}</caption>
     <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Status</th><th scope="col">Expires</th></tr></thead>
     <tbody>
       {% for v in versions %}
       <tr>
-        <th scope="row" class="mono" title="{{ v.version }}">{{ v.short_version() }}{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
-        <td>{{ v.created }}</td>
+        <th scope="row"><span class="mono version-id">{{ v.version }}</span>{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
+        <td>{{ ui::or_none(v.created) }}</td>
         <td>{% if v.enabled %}Enabled{% else %}<span class="badge badge-muted">Disabled</span>{% endif %}</td>
-        <td>{% if v.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ v.expires }}{% endif %}</td>
+        <td>{{ ui::expires(v.expires) }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  </div>
+  {% endcall %}
   {% endif %}
 </section>
 {% endblock %}

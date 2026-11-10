@@ -455,3 +455,47 @@ test("a keepalive that can't reach Keyring can be tried again", async () => {
   assert.equal(stay(p).hidden, false);
   assert.match(notice(p).querySelector("p").textContent, /Couldn't reach Keyring/);
 });
+
+// Table wrappers as the _ui.html table_wrap macro renders them.
+function tables(widths) {
+  return page((h) =>
+    widths.map(([scrollWidth, clientWidth]) =>
+      h("div", { class: "table-wrap", role: "region", tabindex: "0", "data-table-wrap": "", scrollWidth, clientWidth }),
+    ),
+  );
+}
+
+test("a table wrapper is a tab stop only while its table overflows", () => {
+  const p = tables([[900, 400], [300, 400]]);
+  const [wide, narrow] = p.main.querySelectorAll("[data-table-wrap]");
+  assert.equal(wide.getAttribute("tabindex"), "0");
+  assert.equal(narrow.hasAttribute("tabindex"), false);
+});
+
+test("the tab stop follows the table when the window is resized", () => {
+  const p = tables([[300, 400]]);
+  const wrap = p.main.querySelector("[data-table-wrap]");
+  assert.equal(wrap.hasAttribute("tabindex"), false);
+  wrap.clientWidth = 200;
+  p.win.dispatch("resize");
+  assert.equal(wrap.hasAttribute("tabindex"), false, "waits for resizing to stop");
+  p.clock.advance(200);
+  assert.equal(wrap.getAttribute("tabindex"), "0");
+  wrap.clientWidth = 600;
+  p.win.dispatch("resize");
+  p.clock.advance(200);
+  assert.equal(wrap.hasAttribute("tabindex"), false);
+});
+
+test("a flash message takes focus when there is no error summary", () => {
+  const p = page((h) => [h("p", { tabindex: "-1", "data-flash": "", text: "Saved." })]);
+  assert.equal(p.doc.activeElement, p.main.querySelector("[data-flash]"));
+});
+
+test("an error summary takes focus before a flash message", () => {
+  const p = page((h) => [
+    h("p", { tabindex: "-1", "data-flash": "", text: "Saved." }),
+    h("div", { tabindex: "-1", "data-error-summary": "" }),
+  ]);
+  assert.equal(p.doc.activeElement, p.main.querySelector("[data-error-summary]"));
+});
