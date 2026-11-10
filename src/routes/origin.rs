@@ -54,7 +54,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     tracing::warn!(method = %req.method(), path = %req.uri().path(), "cross-site request refused");
     (
         StatusCode::FORBIDDEN,
-        "This request didn't come from Keyring, so it was refused. Go back to Keyring and try again.",
+        crate::routes::assets::plain_page(
+            "That request was refused",
+            "This request didn't come from Keyring, so it was refused. Go back to Keyring and try again.",
+        ),
     )
         .into_response()
 }

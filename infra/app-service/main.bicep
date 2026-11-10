@@ -2,8 +2,9 @@
 //
 // Creates: an App Service plan, the web app running the Keyring image, and
 // Keyring's own config vault and managed identity (modules/config-vault.bicep).
-// Optional: outbound VNet integration (to reach private vaults) and an
-// inbound private endpoint.
+// Optional: outbound VNet integration (to reach private vaults), an
+// inbound private endpoint, and sending the container's output (Keyring's
+// action lines) to a Log Analytics workspace.
 //
 // The managed identity can only read Keyring's two config secrets. It has
 // no access to user vaults. See docs/deploy.md.
@@ -40,7 +41,7 @@ param appBaseUrl string
 @maxLength(24)
 param configVaultName string
 
-@description('App Service plan size. B1 is enough for a small team; P0v3 or above for VNet integration and private endpoints.')
+@description('App Service plan size. B1 or above is enough for a small team, and Basic supports VNet integration and private endpoints.')
 param skuName string = 'P0v3'
 
 @description('Allow permanent deletes (purge) in Keyring.')
@@ -60,6 +61,23 @@ param configVaultPrivateEndpointSubnetId string = ''
 
 @description('Private DNS zone ID for privatelink.vaultcore.azure.net, used with the config vault private endpoint.')
 param vaultPrivateDnsZoneId string = ''
+
+@description('Full API scope Keyring asks for at sign-in. Leave empty for the default, api://<clientId>/access_as_user.')
+param apiScope string = ''
+
+@description('Log level. Leave empty for the default, info.')
+@allowed([
+  ''
+  'error'
+  'warn'
+  'info'
+  'debug'
+  'trace'
+])
+param logLevel string = ''
+
+@description('Resource ID of a Log Analytics workspace to send the container\'s output and HTTP logs to. Leave empty to keep a short local log on the app instead (7 days, see docs/deploy.md).')
+param logAnalyticsWorkspaceId string = ''
 
 param tags object = {}
 
@@ -135,16 +153,23 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
       scmMinTlsVersion: '1.2'
       healthCheckPath: '/healthz'
       vnetRouteAllEnabled: !empty(vnetIntegrationSubnetId)
-      appSettings: [
-        { name: 'WEBSITES_PORT', value: '3000' }
-        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
-        { name: 'ENTRA_TENANT_ID', value: tenantId }
-        { name: 'ENTRA_CLIENT_ID', value: clientId }
-        { name: 'APP_BASE_URL', value: appBaseUrl }
-        { name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }
-        { name: 'SESSION_SECRET', value: sessionSecretRef }
-        { name: 'KEYRING_ALLOW_PURGE', value: string(allowPurge) }
-      ]
+      // Every setting is listed here, so one added by hand in the portal is
+      // removed by the next deployment. Optional ones are left out when
+      // empty.
+      appSettings: concat(
+        [
+          { name: 'WEBSITES_PORT', value: '3000' }
+          { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
+          { name: 'ENTRA_TENANT_ID', value: tenantId }
+          { name: 'ENTRA_CLIENT_ID', value: clientId }
+          { name: 'APP_BASE_URL', value: appBaseUrl }
+          { name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }
+          { name: 'SESSION_SECRET', value: sessionSecretRef }
+          { name: 'KEYRING_ALLOW_PURGE', value: string(allowPurge) }
+        ],
+        empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
+        empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }]
+      )
     }
   }
 }
@@ -163,6 +188,46 @@ resource scm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01'
   name: 'scm'
   properties: {
     allow: false
+  }
+}
+
+// Keyring writes its action lines (who revealed, changed or deleted what) to
+// standard output. App Service keeps none of it by default, so send it to
+// Log Analytics, or failing that keep a short log on the app's own storage.
+resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceId)) {
+  name: 'keyring-logs'
+  scope: site
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'AppServiceConsoleLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServiceHTTPLogs'
+        enabled: true
+      }
+    ]
+  }
+}
+
+resource localLogs 'Microsoft.Web/sites/config@2024-04-01' = if (empty(logAnalyticsWorkspaceId)) {
+  parent: site
+  name: 'logs'
+  properties: {
+    applicationLogs: {
+      fileSystem: {
+        level: 'Information'
+      }
+    }
+    httpLogs: {
+      fileSystem: {
+        enabled: true
+        retentionInDays: 7
+        retentionInMb: 35
+      }
+    }
   }
 }
 

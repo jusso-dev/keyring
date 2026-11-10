@@ -12,11 +12,13 @@ Use GitHub's private reporting instead: go to the repository's **Security** tab 
 - how to reproduce it
 - what an attacker could do with it
 
-You'll get an acknowledgement within five working days. We'll agree a fix and a disclosure date with you, and credit you in the release notes unless you'd rather not be named.
+If the **Report a vulnerability** button isn't there, open a public issue titled "Security contact request" with **no details** of the problem. A maintainer will reply with a private way to send them.
+
+You'll get an acknowledgement within five working days. We'll agree a fix and a disclosure date with you, and credit you in the fix's pull request and in [CHANGELOG.md](CHANGELOG.md) unless you'd rather not be named.
 
 ## Supported versions
 
-Keyring is in early development. Only the latest commit on `main` gets security fixes.
+Keyring is in early development and has no releases yet. Only the latest commit on `main` gets security fixes. To check whether a running copy has a fix, compare its image's `org.opencontainers.image.revision` label with the fix's commit (see the README, "Which version am I running?").
 
 ## What's in scope
 

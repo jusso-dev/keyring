@@ -4,7 +4,11 @@
 <h1>{{ title }}</h1>
 <div class="empty-state">
   <p><strong>Choose a vault first.</strong></p>
+  {% if title == "Audit" %}
+  <p>The audit view shows who used one vault. Pick one from your list of vaults and Keyring will show its events here.</p>
+  {% else %}
   <p>{{ noun }} live in a vault. Pick one from your list of vaults and Keyring will show them here.</p>
+  {% endif %}
   <p><a class="button" href="/vaults">Choose a vault</a></p>
 </div>
 {% endblock %}

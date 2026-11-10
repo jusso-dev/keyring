@@ -1,5 +1,7 @@
-// Example parameters. Contains no secrets: those go straight into the
-// config vault after deployment.
+// Example parameters. Copy next to main.bicep, fill in, and keep out of
+// source control (.gitignore skips *.bicepparam except the examples).
+// Contains no secrets: those go straight into the config vault after
+// deployment.
 using './main.bicep'
 
 param name = 'keyring-prod'
@@ -8,3 +10,7 @@ param clientId = '00000000-0000-0000-0000-000000000000'
 param appBaseUrl = 'https://keyring.example.com'
 param configVaultName = 'kv-keyring-config-01'
 param ingress = 'external'
+
+// Optional. Leave empty for the defaults.
+param apiScope = '' // only if your app registration's scope isn't api://<clientId>/access_as_user
+param logLevel = '' // error, warn, info (default), debug or trace

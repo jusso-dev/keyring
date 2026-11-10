@@ -12,6 +12,7 @@
 {% if let Some(e) = error %}<p class="notice notice-error" role="alert">{{ e }}</p>{% endif %}
 
 <form class="filters" method="get" action="/audit" role="search">
+  {% if !filter.from.is_empty() %}<input type="hidden" name="from" value="{{ filter.from }}">{% endif %}
   <div>
     <label for="range">When</label>
     <select id="range" name="range">
@@ -58,6 +59,7 @@
 {% elif rows.is_empty() && error.is_none() %}
 <div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
 {% elif !rows.is_empty() %}
+{% if let Some(p) = partial %}<p class="notice notice-warn" role="status">{{ p }}</p>{% endif %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
 <table>
@@ -70,7 +72,7 @@
       <td>{{ r.who }}</td>
       <th scope="row" title="{{ r.operation }}">{{ r.what }}</th>
       <td class="mono">{{ r.item }}</td>
-      <td>{% if r.ok %}Allowed{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
+      <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}Allowed{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
       <td class="mono small">{{ r.client_ip }}</td>
     </tr>
     {% endfor %}

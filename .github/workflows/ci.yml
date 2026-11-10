@@ -11,9 +11,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces the older run. Each push to main
+# gets its own group (by commit), so no merged commit loses its run to a
+# later one, and the weekly run has its own group too.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'schedule' && 'schedule' || github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -44,6 +47,16 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      # Docs that name a file under src/ must name one that exists.
+      - name: Docs point at real source files
+        run: |
+          status=0
+          tick='`'
+          for path in $(grep -rhoE "${tick}src/[A-Za-z0-9_./-]+${tick}" README.md SECURITY.md docs | tr -d "$tick" | sort -u); do
+            test -e "$path" || { echo "::error::docs name $path, which doesn't exist"; status=1; }
+          done
+          exit $status
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -52,6 +65,11 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+      # static/app.js against hand-written browser stubs. The runner's own
+      # Node, no packages.
+      - name: Browser script tests
+        run: node --test tests/js/*.test.mjs
 
       - name: Release build
         run: cargo build --release --locked
@@ -68,10 +86,14 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
 
-      # Prebuilt binaries, checksums verified by the action. Tool versions pinned.
+      # Prebuilt binaries from the action's manifest, checksums verified by
+      # the action. Tool versions pinned. fallback: none makes a version
+      # that isn't in the manifest fail the build, rather than download an
+      # unpinned binary from somewhere else.
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: cargo-deny@0.20.2,cargo-audit@0.22.2,cargo-cyclonedx@0.5.10
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2,cargo-cyclonedx@0.5.9
+          fallback: none
 
       - name: cargo deny (licences, advisories, bans, sources)
         run: cargo deny --locked check
@@ -103,11 +125,15 @@ jobs:
           persist-credentials: false
 
       # Validation only: builds every template and example parameter file.
-      # No sign-in and no deployment.
+      # No sign-in and no deployment. Bicep is pinned so a new release can't
+      # change the result without a change here.
       - name: Build templates
         working-directory: infra
+        env:
+          BICEP_VERSION: v0.49.2
         run: |
-          az bicep install
+          az bicep install --version "$BICEP_VERSION"
+          az bicep version
           status=0
           for f in $(find . -name '*.bicep' -not -path './modules/*') $(find . -name '*.bicepparam'); do
             echo "::group::$f"
@@ -120,6 +146,14 @@ jobs:
           for f in modules/*.bicep; do
             az bicep build --file "$f" --stdout > /dev/null || status=1
           done
+          # Copy each example the way the docs say (next to its template,
+          # as main.bicepparam), so a broken `using` path fails here.
+          for f in */main.example.bicepparam; do
+            copy="${f%.example.bicepparam}.bicepparam"
+            cp "$f" "$copy"
+            az bicep build-params --file "$copy" --stdout > /dev/null || status=1
+            rm "$copy"
+          done
           exit $status
 
   docker:
@@ -131,11 +165,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # Dependabot moves rust-toolchain.toml and the builder image in one
+      # pull request; this catches the two drifting apart anyway.
       - name: Builder image matches rust-toolchain.toml
         run: |
           want=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
           grep -q "FROM rust:${want}-" Dockerfile || { echo "Dockerfile builder isn't Rust ${want}" >&2; exit 1; }
-          grep -q "RUSTUP_TOOLCHAIN=${want}" Dockerfile || { echo "RUSTUP_TOOLCHAIN isn't ${want}" >&2; exit 1; }
+
+      - name: Image version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -146,13 +188,21 @@ jobs:
           push: false
           load: true
           tags: keyring:ci
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Check the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # Non-root, numeric user.
           test "$(docker inspect keyring:ci --format '{{.Config.User}}')" = "65532:65532"
+          # Tied to the commit it was built from.
+          test "$(docker inspect keyring:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          test "$(docker inspect keyring:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
           # No shell in the runtime image.
           if docker run --rm --entrypoint /bin/sh keyring:ci -c true 2>/dev/null; then
             echo "runtime image has a shell" >&2; exit 1

@@ -21,7 +21,7 @@ pub enum Need {
     ManageSecrets,
     ReadCertificates,
     /// Download a certificate with its private key: needs certificate read
-    /// and read access to its backing secret.
+    /// and read access to its backing secret (a secret value).
     ExportCertificate,
     ManageCertificates,
     ReadKeys,
@@ -36,10 +36,13 @@ impl Need {
             Self::ListVaults => "Reader",
             Self::ReadSecrets => "Key Vault Secrets User",
             Self::ManageSecrets => "Key Vault Secrets Officer",
-            Self::ReadCertificates => "Key Vault Certificate User",
-            Self::ExportCertificate => {
-                "Key Vault Secrets User (as well as Key Vault Certificate User)"
-            }
+            // Smallest role first: Key Vault Reader can list and view
+            // certificates but can't read any secret value.
+            Self::ReadCertificates => "Key Vault Reader",
+            // Certificate User has certificates/read and secrets/getSecret,
+            // so it covers the backing secret on its own. It can also read
+            // every other secret value at the scope it's given.
+            Self::ExportCertificate => "Key Vault Certificate User",
             Self::ManageCertificates => "Key Vault Certificates Officer",
             Self::ReadKeys => "Key Vault Reader",
             Self::ManageKeys => "Key Vault Crypto Officer",
@@ -85,6 +88,32 @@ pub enum NextStep {
     SignIn(String),
     /// "Back to home".
     Home,
+    /// A link with its own label, for when "Try again" would be wrong.
+    Go { url: String, label: &'static str },
+}
+
+impl NextStep {
+    /// Where the button goes, and what it says.
+    pub fn link(&self) -> (String, &'static str) {
+        match self {
+            Self::Retry(p) => (p.clone(), "Try again"),
+            Self::SignIn(p) => (
+                format!("/auth/sign-in?return_to={}", return_to::encode(p)),
+                "Sign in again",
+            ),
+            Self::Home => ("/".to_owned(), "Back to home"),
+            Self::Go { url, label } => (url.clone(), label),
+        }
+    }
+
+    /// "Choose another vault", for pages where the chosen vault is the
+    /// problem.
+    pub fn other_vault() -> Self {
+        Self::Go {
+            url: "/vaults".into(),
+            label: "Choose another vault",
+        }
+    }
 }
 
 /// A failure, ready to show to a person.
@@ -93,9 +122,14 @@ pub struct Problem {
     pub status: StatusCode,
     pub heading: &'static str,
     pub message: String,
-    /// What to ask an admin for, if anything.
+    /// More detail, or what to ask an admin for, if anything.
     pub admin_hint: Option<String>,
+    /// True when `admin_hint` names a role to ask for. Shown as "What to
+    /// ask for:"; any other hint is shown as "Details:".
+    pub hint_is_role: bool,
     pub next: NextStep,
+    /// A second, smaller link shown beside the main button.
+    pub also: Option<NextStep>,
 }
 
 impl Problem {
@@ -105,12 +139,28 @@ impl Problem {
             heading,
             message: message.into(),
             admin_hint: None,
+            hint_is_role: false,
             next: NextStep::Home,
+            also: None,
         }
     }
 
+    /// Extra detail shown under "Details:".
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.admin_hint = Some(hint.into());
+        self.hint_is_role = false;
+        self
+    }
+
+    /// The role to ask an admin for, shown under "What to ask for:".
+    pub fn with_role_hint(mut self, hint: impl Into<String>) -> Self {
+        self.admin_hint = Some(hint.into());
+        self.hint_is_role = true;
+        self
+    }
+
+    pub fn with_also(mut self, also: NextStep) -> Self {
+        self.also = Some(also);
         self
     }
 
@@ -119,12 +169,14 @@ impl Problem {
         self
     }
 
-    /// Point "Try again" or "Sign in again" back at this path.
+    /// Point "Try again" or "Sign in again" back at this path. A
+    /// [`NextStep::Go`] link is kept as it is.
     pub fn returning_to(mut self, path: &str) -> Self {
         let path = return_to::sanitise(Some(path));
         self.next = match self.next {
             NextStep::SignIn(_) => NextStep::SignIn(path),
             NextStep::Retry(_) | NextStep::Home => NextStep::Retry(path),
+            go @ NextStep::Go { .. } => go,
         };
         self
     }
@@ -150,10 +202,19 @@ impl Problem {
     /// 403 can name the missing role.
     pub fn from_azure(err: &AzureError, need: Need) -> Self {
         match err {
-            AzureError::Token(t) => Self::from_token(t),
-            AzureError::Status { status, code, .. } => {
-                Self::from_status(*status, code.as_deref(), need)
+            // The audit view is the only page that needs Log Analytics, so a
+            // consent failure there is most likely that one permission.
+            AzureError::Token(TokenError::ConsentNeeded) if need == Need::ReadAuditLogs => {
+                Self::from_token(&TokenError::ConsentNeeded).with_hint(
+                    "Ask your admin to add the delegated permission Log Analytics API, Data.Read, to the Keyring app registration and grant admin consent.",
+                )
             }
+            AzureError::Token(t) => Self::from_token(t),
+            AzureError::Status {
+                status,
+                code,
+                message,
+            } => Self::from_status(*status, code.as_deref(), message.as_deref(), need),
             // A vault call that can't connect is usually a vault that only
             // accepts private traffic, with Keyring outside that network.
             AzureError::Network(_) if need.uses_vault_rbac() => Self::new(
@@ -162,7 +223,8 @@ impl Problem {
                 "Keyring couldn't connect to the vault. It may only accept connections from a private network, and Keyring isn't on that network.",
             )
             .with_hint("Ask your admin whether the vault has public access turned off. If so, Keyring needs to run in a network that can reach the vault's private endpoint, with private DNS for privatelink.vaultcore.azure.net. Keyring's private vault guide explains the setup.")
-            .with_next(NextStep::Retry("/".into())),
+            .with_next(NextStep::Retry("/".into()))
+            .with_also(NextStep::other_vault()),
             AzureError::Network(_) => Self::new(
                 StatusCode::BAD_GATEWAY,
                 "Can't reach Azure",
@@ -209,7 +271,9 @@ impl Problem {
         }
     }
 
-    fn from_status(status: u16, code: Option<&str>, need: Need) -> Self {
+    /// `message` is Azure's own text. It is only checked for a known
+    /// phrase, never shown or logged.
+    fn from_status(status: u16, code: Option<&str>, message: Option<&str>, need: Need) -> Self {
         let code = code.unwrap_or_default();
         match status {
             401 => Self::from_token(&TokenError::SignInAgain),
@@ -240,18 +304,24 @@ impl Problem {
                     "You don't have access",
                     format!("You don't have permission to {}.", need.doing()),
                 )
-                .with_hint(hint)
+                .with_role_hint(hint)
             }
             404 => Self::new(
                 StatusCode::NOT_FOUND,
                 "Not found",
                 "Keyring couldn't find that. It may have been deleted or renamed.",
             ),
+            409 if is_deleted_but_recoverable(code, message) => Self::new(
+                StatusCode::CONFLICT,
+                "A deleted item has this name",
+                "A deleted item with this name can still be recovered, so the name can't be used yet. Recover the deleted one, or pick another name.",
+            ),
             409 => Self::new(
                 StatusCode::CONFLICT,
-                "That name is taken",
-                "Something with this name already exists, or was deleted recently and can still be recovered. Recover the deleted one, or pick another name.",
-            ),
+                "Key Vault couldn't do that right now",
+                "Key Vault refused because the item is changing or in a conflicting state. Try again.",
+            )
+            .with_next(NextStep::Retry("/".into())),
             429 => Self::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "Azure asked Keyring to slow down",
@@ -302,6 +372,21 @@ pub fn rejection_message(err: &AzureError) -> Option<String> {
     }
 }
 
+/// Key Vault answers a write to the name of a soft-deleted item with 409.
+/// The outer code is `Conflict`; the inner one, where sent, is
+/// `ObjectIsDeletedButRecoverable`, and the message says the item "is
+/// currently in a deleted but recoverable state". Other conflicts, such as
+/// an item that is still being deleted or recovered, use other wording.
+/// <https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview>
+fn is_deleted_but_recoverable(code: &str, message: Option<&str>) -> bool {
+    code.eq_ignore_ascii_case("ObjectIsDeletedButRecoverable")
+        || (code.eq_ignore_ascii_case("Conflict")
+            && message.is_some_and(|m| {
+                m.to_ascii_lowercase()
+                    .contains("deleted but recoverable state")
+            }))
+}
+
 #[derive(Template)]
 #[template(path = "error.html")]
 struct ErrorPage<'a> {
@@ -309,6 +394,7 @@ struct ErrorPage<'a> {
     problem: &'a Problem,
     next_url: String,
     next_label: &'static str,
+    also: Option<(String, &'static str)>,
 }
 
 /// A [`Problem`] with the page chrome to show it in.
@@ -325,19 +411,13 @@ impl PageError {
 
 impl IntoResponse for PageError {
     fn into_response(self) -> Response {
-        let (next_url, next_label) = match &self.problem.next {
-            NextStep::Retry(p) => (p.clone(), "Try again"),
-            NextStep::SignIn(p) => (
-                format!("/auth/sign-in?return_to={}", return_to::encode(p)),
-                "Sign in again",
-            ),
-            NextStep::Home => ("/".to_owned(), "Back to home"),
-        };
+        let (next_url, next_label) = self.problem.next.link();
         let page = ErrorPage {
             shell: self.shell,
             problem: &self.problem,
             next_url,
             next_label,
+            also: self.problem.also.as_ref().map(NextStep::link),
         };
         (self.problem.status, render(&page)).into_response()
     }
@@ -402,6 +482,32 @@ mod tests {
     }
 
     #[test]
+    fn certificate_hints_name_the_smallest_role() {
+        let p = Problem::from_azure(&status(403, "Forbidden"), Need::ReadCertificates);
+        let hint = p.admin_hint.unwrap();
+        assert!(hint.contains("Key Vault Reader role on this vault"));
+        assert!(!hint.contains("Certificate User"));
+        let p = Problem::from_azure(&status(403, "Forbidden"), Need::ExportCertificate);
+        let hint = p.admin_hint.unwrap();
+        assert!(hint.contains("Key Vault Certificate User role on this vault"));
+        assert!(!hint.contains("Secrets User"));
+    }
+
+    #[test]
+    fn audit_consent_names_the_log_analytics_permission() {
+        let consent = AzureError::Token(TokenError::ConsentNeeded);
+        let p = Problem::from_azure(&consent, Need::ReadAuditLogs);
+        assert_eq!(p.heading, "Your organisation needs to approve Keyring");
+        assert!(
+            p.admin_hint
+                .unwrap()
+                .contains("Log Analytics API, Data.Read")
+        );
+        let p = Problem::from_azure(&consent, Need::ReadSecrets);
+        assert!(!p.admin_hint.unwrap().contains("Log Analytics"));
+    }
+
+    #[test]
     fn firewall_blocks_get_their_own_message() {
         let p = Problem::from_azure(&status(403, "ForbiddenByFirewall"), Need::ReadSecrets);
         assert_eq!(p.heading, "This vault is blocked from here");
@@ -424,8 +530,68 @@ mod tests {
             assert!(!p.message.contains("raw Azure text"));
             assert!(!p.admin_hint.unwrap_or_default().contains("raw Azure text"));
         }
-        let p = Problem::from_azure(&status(409, "Conflict"), Need::ManageSecrets);
-        assert!(p.message.contains("Recover the deleted one"));
+    }
+
+    #[test]
+    fn conflicts_are_told_apart_by_key_vault_code() {
+        // Real Key Vault wording for a write to a soft-deleted name.
+        let deleted = AzureError::Status {
+            status: 409,
+            code: Some("Conflict".into()),
+            message: Some("Secret db is currently in a deleted but recoverable state, and its name cannot be reused; in this state, the secret can only be recovered or purged.".into()),
+        };
+        let p = Problem::from_azure(&deleted, Need::ManageSecrets);
+        assert_eq!(p.heading, "A deleted item has this name");
+        assert!(p.message.contains("can still be recovered"));
+        let p = Problem::from_azure(
+            &status(409, "ObjectIsDeletedButRecoverable"),
+            Need::ManageKeys,
+        );
+        assert_eq!(p.heading, "A deleted item has this name");
+        // Anything else is a general conflict, with no talk of names.
+        for code in ["Conflict", "ObjectIsBeingDeleted", "X"] {
+            let p = Problem::from_azure(&status(409, code), Need::ManageSecrets);
+            assert_eq!(p.status, StatusCode::CONFLICT, "{code}");
+            assert_eq!(
+                p.message,
+                "Key Vault refused because the item is changing or in a conflicting state. Try again.",
+                "{code}"
+            );
+            assert!(!p.message.contains("name"));
+            assert!(matches!(p.next, NextStep::Retry(_)));
+        }
+    }
+
+    #[test]
+    fn only_role_hints_are_labelled_as_requests() {
+        let p = Problem::from_azure(&status(403, "Forbidden"), Need::ReadSecrets);
+        assert!(p.hint_is_role);
+        let p = Problem::from_azure(&status(400, "BadParameter"), Need::ReadSecrets);
+        assert_eq!(
+            p.admin_hint.as_deref(),
+            Some("Azure gave status 400 BadParameter.")
+        );
+        assert!(!p.hint_is_role);
+        let p = Problem::from_azure(&AzureError::Network("x".into()), Need::ReadSecrets);
+        assert!(!p.hint_is_role);
+    }
+
+    #[test]
+    fn go_keeps_its_own_label_and_target() {
+        let step = NextStep::Go {
+            url: "/certificates/web".into(),
+            label: "Open the certificate",
+        };
+        let p = Problem::not_found()
+            .with_next(step.clone())
+            .returning_to("/secrets/web");
+        assert_eq!(p.next, step);
+        assert_eq!(
+            p.next.link(),
+            ("/certificates/web".to_owned(), "Open the certificate")
+        );
+        let p = Problem::from_azure(&AzureError::Network("x".into()), Need::ReadSecrets);
+        assert_eq!(p.also, Some(NextStep::other_vault()));
     }
 
     #[test]

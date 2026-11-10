@@ -5,8 +5,8 @@
   <h1>{{ problem.heading }}</h1>
   <p>{{ problem.message }}</p>
   {% if let Some(hint) = problem.admin_hint %}
-  <p class="hint"><strong>What to ask for:</strong> {{ hint }}</p>
+  <p class="hint"><strong>{% if problem.hint_is_role %}What to ask for:{% else %}Details:{% endif %}</strong> {{ hint }}</p>
   {% endif %}
-  <p><a class="button" href="{{ next_url }}">{{ next_label }}</a></p>
+  <p><a class="button" href="{{ next_url }}">{{ next_label }}</a>{% if let Some((url, label)) = also %} <a href="{{ url }}">{{ label }}</a>{% endif %}</p>
 </div>
 {% endblock %}

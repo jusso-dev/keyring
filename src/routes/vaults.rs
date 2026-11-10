@@ -10,7 +10,7 @@ use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::azure::vaults::{self, Vault, VaultFilter};
 use crate::routes::assets::render;
-use crate::routes::error::{Need, PageError, Problem};
+use crate::routes::error::{Need, NextStep, PageError, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::shell::{Section, Shell};
 
@@ -152,7 +152,33 @@ pub async fn select(
         .returning_to("/vaults");
         return PageError::new(shell, problem).into_response();
     }
-    session.0.select_vault(name.to_owned());
+    // Only a vault the user can actually see. A stale form, a vault deleted
+    // since the list was shown or a hand-made post would otherwise leave a
+    // name that every page reports as unreachable.
+    let all =
+        match vaults::list_vaults(&state.azure, &session.0, &state.config.management_url).await {
+            Ok(v) => v,
+            Err(err) => {
+                let problem = Problem::from_azure(&err, Need::ListVaults).returning_to("/vaults");
+                return PageError::new(shell, problem).into_response();
+            }
+        };
+    let Some(vault) = all.into_iter().find(|v| v.name.eq_ignore_ascii_case(name)) else {
+        let problem = Problem::new(
+            axum::http::StatusCode::NOT_FOUND,
+            "That vault isn't in your list",
+            "Keyring can't find a vault with that name among the ones you can see. It may have been deleted, or you may have lost access. Pick a vault from the list.",
+        )
+        .with_next(NextStep::Go {
+            url: "/vaults".into(),
+            label: "Choose a vault",
+        });
+        return PageError::new(shell, problem).into_response();
+    };
+    let name = vault.name;
+    session.0.select_vault(name.clone());
+    // Kept with the name so the audit view doesn't need to look it up.
+    session.0.set_selected_vault_id(vault.id);
     let next = if form.return_to.is_empty() {
         "/secrets".to_owned()
     } else {

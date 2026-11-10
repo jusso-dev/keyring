@@ -193,6 +193,24 @@ pub fn to_csv(items: &[Item], now: i64) -> String {
     out
 }
 
+/// A CSV row for a vault that isn't in the export, so the file can't be
+/// taken for a complete report. The columns line up with [`to_csv`]: the
+/// vault, `NOT READ` in the Type column and the reason in the Name column.
+pub fn not_read_row(vault: &str, reason: &str) -> String {
+    let row = [
+        csv_field(vault),
+        "NOT READ".to_owned(),
+        csv_field(reason),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+    ];
+    let mut out = row.join(",");
+    out.push_str("\r\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
