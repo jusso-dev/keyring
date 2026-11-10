@@ -193,7 +193,7 @@ async fn maps_entra_errors() {
             "unauthorized_client",
             700016,
             TokenError::Refused {
-                code: "unauthorized_client".into(),
+                code: "unauthorized_client (AADSTS700016)".into(),
             },
         ),
     ] {
@@ -414,4 +414,64 @@ async fn conditional_access_challenge_is_passed_to_the_next_sign_in() {
     // Anything that isn't a JSON object is ignored.
     s.set_claims_challenge("not json");
     assert_eq!(s.claims_challenge().as_deref(), Some(claims.as_str()));
+}
+
+#[tokio::test]
+async fn concurrent_callers_share_one_refresh_and_one_exchange_per_resource() {
+    // The user's own token is inside the expiry margin, so the first call
+    // has to refresh it and then exchange it.
+    let h = harness_with(Duration::from_secs(30), Some("user-refresh")).await;
+    // Slow token answers, so every call below is waiting at once.
+    *h.idp.state.token_delay.lock().unwrap() = Duration::from_millis(200);
+    let mut tasks = Vec::new();
+    for i in 0..12 {
+        let state = h.state.clone();
+        let session = h.session.clone();
+        let resource = if i % 3 == 0 {
+            Resource::Management
+        } else {
+            Resource::KeyVault
+        };
+        tasks.push(tokio::spawn(async move {
+            state
+                .azure_broker()
+                .token_for(&session, resource)
+                .await
+                .map(|t| (resource, t.expose().to_owned()))
+        }));
+    }
+    let mut kv = std::collections::HashSet::new();
+    for t in tasks {
+        let (resource, token) = t.await.unwrap().unwrap();
+        if resource == Resource::KeyVault {
+            kv.insert(token);
+        }
+    }
+    assert_eq!(kv.len(), 1, "every Key Vault caller got the same token");
+    assert_eq!(h.idp.state.requests_of("refresh_token").len(), 1);
+    assert_eq!(
+        h.idp.state.requests_of(OBO_GRANT).len(),
+        2,
+        "one exchange each for Key Vault and Management"
+    );
+}
+
+#[tokio::test]
+async fn wrong_api_scope_is_reported_as_a_setting_not_a_sign_in() {
+    // Entra answers a bad assertion audience with invalid_grant and a code
+    // that a fresh sign-in doesn't fix.
+    let h = harness().await;
+    *h.idp.state.grant_error.lock().unwrap() = Some(("invalid_grant", 50013));
+    let err = h
+        .state
+        .azure_broker()
+        .token_for(&h.session, Resource::KeyVault)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        TokenError::Refused {
+            code: "invalid_grant (AADSTS50013)".into()
+        }
+    );
 }

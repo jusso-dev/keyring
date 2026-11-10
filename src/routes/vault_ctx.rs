@@ -65,11 +65,21 @@ pub fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
     }
 }
 
-/// Check the session's form token.
+/// Check the form token: this session's, and rendered for the vault chosen
+/// now. A form from another vault gets a page saying so.
 pub fn check_csrf(session: &CurrentSession, presented: &str, shell: Shell) -> Result<Shell, Halt> {
     if session.0.csrf_matches(presented) {
         Ok(shell)
     } else {
-        Err(PageError::new(shell, Problem::stale_form()).into())
+        Err(PageError::new(shell, stale_form_for(&session.0, presented)).into())
+    }
+}
+
+/// The "stale form" problem for a refused token, naming the vault the form
+/// was for when that is why it was refused.
+pub fn stale_form_for(session: &crate::auth::session::Session, presented: &str) -> Problem {
+    match session.csrf_other_vault(presented) {
+        Some(vault) => Problem::vault_changed(&vault),
+        None => Problem::stale_form(),
     }
 }

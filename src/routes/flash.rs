@@ -14,6 +14,8 @@ use crate::auth::cookies;
 
 pub const FLASH_COOKIE: &str = "keyring_flash";
 const MAX_LEN: usize = 300;
+/// How long a flash message lives, in the cookie and on the server.
+const FLASH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlashKind {
@@ -75,7 +77,11 @@ impl Flash {
 pub fn set(state: &AppState, res: &mut Response, flash: &Flash) {
     let name = state.cookies.name(FLASH_COOKIE);
     let sealed = state.sealer.seal(&name, &flash.encode());
-    if let Ok(v) = HeaderValue::from_str(&state.cookies.set(&name, &sealed, Some(60))) {
+    if let Ok(v) = HeaderValue::from_str(&state.cookies.set(
+        &name,
+        &sealed,
+        Some(FLASH_MAX_AGE.as_secs()),
+    )) {
         res.headers_mut().append(SET_COOKIE, v);
     }
 }
@@ -86,7 +92,7 @@ pub async fn layer(State(state): State<AppState>, mut req: Request, next: Next) 
     let present = cookies::get(req.headers(), &name).map(str::to_owned);
     if let Some(flash) = present
         .as_deref()
-        .and_then(|v| state.sealer.open(&name, v))
+        .and_then(|v| state.sealer.open_within(&name, v, FLASH_MAX_AGE))
         .and_then(|raw| Flash::decode(&raw))
     {
         req.extensions_mut().insert(flash);

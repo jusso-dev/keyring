@@ -21,7 +21,7 @@ async fn harness() -> Harness {
     let arm = support::start_arm().await;
     let (state, app, cookie) = support::signed_in_app(support::config_with_arm(&idp, &arm));
     let id = cookie.split('=').nth(1).unwrap();
-    let csrf = state.sessions.get(id).unwrap().csrf.clone();
+    let csrf = state.sessions.get(id).unwrap().csrf_token();
     Harness {
         app,
         cookie,

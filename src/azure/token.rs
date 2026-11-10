@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
+use crate::auth::entra::{EntraAdvice, classify};
 use crate::auth::session::{Session, UserTokens};
 use crate::config::Config;
 use crate::http::HttpError;
@@ -19,6 +20,22 @@ use crate::secret::Secret;
 /// Treat tokens as expired this long before they really expire, so a request
 /// never starts with a token that runs out halfway.
 pub const EXPIRY_SKEW: Duration = Duration::from_secs(5 * 60);
+
+/// Lifetime assumed when a token response has no `expires_in`. Entra always
+/// sends one; this only has to be longer than [`EXPIRY_SKEW`], or the token
+/// would be stale on arrival and every call would fetch another.
+pub const DEFAULT_LIFETIME: Duration = Duration::from_secs(10 * 60);
+
+/// Longest lifetime believed from a token response. Entra's are about an
+/// hour; anything far beyond that is a bad value, not a real lifetime.
+pub const MAX_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// When a token from a response with this `expires_in` stops working.
+/// Never panics, whatever the value.
+pub fn expiry_from(expires_in: Option<Duration>, now: SystemTime) -> SystemTime {
+    let lifetime = expires_in.unwrap_or(DEFAULT_LIFETIME).min(MAX_LIFETIME);
+    now.checked_add(lifetime).unwrap_or(now)
+}
 
 /// Which Azure API a token is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,6 +49,16 @@ pub enum Resource {
 }
 
 impl Resource {
+    const ALL: [Resource; 3] = [Self::KeyVault, Self::Management, Self::LogAnalytics];
+
+    fn index(self) -> usize {
+        match self {
+            Self::KeyVault => 0,
+            Self::Management => 1,
+            Self::LogAnalytics => 2,
+        }
+    }
+
     pub fn scope(self) -> &'static str {
         match self {
             Self::KeyVault => "https://vault.azure.net/.default",
@@ -85,9 +112,17 @@ impl fmt::Display for AccessToken {
 }
 
 /// Per-session cache of exchanged tokens. Memory only.
+///
+/// Concurrent requests that miss the cache wait for one exchange per
+/// resource, and one refresh of the user's own token, instead of each
+/// making its own. The expiry dashboard reads several vaults at once.
 #[derive(Debug, Default)]
 pub struct TokenCache {
     tokens: Mutex<HashMap<Resource, AccessToken>>,
+    /// Held while exchanging for a resource, one per [`Resource`].
+    exchanging: [tokio::sync::Mutex<()>; Resource::ALL.len()],
+    /// Held while refreshing the user's own token.
+    refreshing: tokio::sync::Mutex<()>,
 }
 
 impl TokenCache {
@@ -160,24 +195,15 @@ struct TokenFailure {
     claims: Option<String>,
 }
 
-/// Entra error codes that mean an admin must consent.
-const CONSENT_CODES: [u64; 3] = [65001, 65004, 650057];
-
-fn classify(failure: &TokenFailure) -> TokenError {
-    if failure.error == "consent_required"
-        || failure
-            .error_codes
-            .iter()
-            .any(|c| CONSENT_CODES.contains(c))
-    {
-        return TokenError::ConsentNeeded;
-    }
-    match failure.error.as_str() {
-        // MFA, conditional access, expired or revoked refresh token.
-        "interaction_required" | "invalid_grant" | "login_required" => TokenError::SignInAgain,
-        other => TokenError::Refused {
-            code: other.to_owned(),
-        },
+/// Map a refused token request with the shared classifier.
+fn token_error(failure: &TokenFailure) -> TokenError {
+    let error = crate::auth::oidc::safe_code(&failure.error);
+    match classify(&error, &failure.error_codes) {
+        EntraAdvice::SignInAgain => TokenError::SignInAgain,
+        EntraAdvice::ConsentNeeded => TokenError::ConsentNeeded,
+        EntraAdvice::Configuration { code } => TokenError::Refused { code },
+        // Not expected on a back-channel request.
+        EntraAdvice::Cancelled => TokenError::Refused { code: error },
     }
 }
 
@@ -213,27 +239,39 @@ impl TokenBroker {
         session: &Session,
         resource: Resource,
     ) -> Result<AccessToken, TokenError> {
-        let now = SystemTime::now();
-        if let Some(t) = session.azure_tokens.get(resource, now) {
+        let cache = &session.azure_tokens;
+        if let Some(t) = cache.get(resource, SystemTime::now()) {
             return Ok(t);
         }
-        let user = self.fresh_user_token(session, now).await?;
+        // One exchange per resource at a time. Whoever waited checks the
+        // cache again, since the one before may have filled it.
+        let _guard = cache.exchanging[resource.index()].lock().await;
+        if let Some(t) = cache.get(resource, SystemTime::now()) {
+            return Ok(t);
+        }
+        let user = self.fresh_user_token(session).await?;
         let token = self.exchange(session, &user.access_token, resource).await?;
-        session.azure_tokens.put(resource, token.clone());
+        cache.put(resource, token.clone());
         Ok(token)
     }
 
-    async fn fresh_user_token(
-        &self,
-        session: &Session,
-        now: SystemTime,
-    ) -> Result<UserTokens, TokenError> {
-        let tokens = session.tokens();
-        let current = AccessToken {
-            secret: tokens.access_token.clone(),
-            expires_at: tokens.expires_at,
+    async fn fresh_user_token(&self, session: &Session) -> Result<UserTokens, TokenError> {
+        let is_fresh = |t: &UserTokens| {
+            AccessToken {
+                secret: t.access_token.clone(),
+                expires_at: t.expires_at,
+            }
+            .is_fresh(SystemTime::now())
         };
-        if current.is_fresh(now) {
+        let tokens = session.tokens();
+        if is_fresh(&tokens) {
+            return Ok(tokens);
+        }
+        // One refresh at a time, so concurrent refreshes don't race on
+        // which rotated refresh token is kept.
+        let _guard = session.azure_tokens.refreshing.lock().await;
+        let tokens = session.tokens();
+        if is_fresh(&tokens) {
             return Ok(tokens);
         }
         let Some(refresh) = tokens.refresh_token.as_ref() else {
@@ -250,7 +288,7 @@ impl TokenBroker {
         let ok = self.post(Some(session), &form).await?;
         let refreshed = UserTokens {
             access_token: Secret::new(ok.access_token),
-            expires_at: SystemTime::now() + Duration::from_secs(ok.expires_in.unwrap_or(300)),
+            expires_at: expiry_from(ok.expires_in.map(Duration::from_secs), SystemTime::now()),
             // Entra rotates refresh tokens; keep the old one if it didn't.
             refresh_token: ok.refresh_token.map(Secret::new).or(tokens.refresh_token),
         };
@@ -277,7 +315,7 @@ impl TokenBroker {
         tracing::debug!(resource = ?resource, "exchanged token on behalf of user");
         Ok(AccessToken::new(
             ok.access_token,
-            SystemTime::now() + Duration::from_secs(ok.expires_in.unwrap_or(300)),
+            expiry_from(ok.expires_in.map(Duration::from_secs), SystemTime::now()),
         ))
     }
 
@@ -286,18 +324,25 @@ impl TokenBroker {
         session: Option<&Session>,
         form: &[(&str, &str)],
     ) -> Result<TokenSuccess, TokenError> {
+        let unreachable = |e: reqwest::Error| {
+            let e = HttpError::from(e);
+            tracing::warn!(error = %e, "token endpoint unreachable");
+            TokenError::from(e)
+        };
         let res = self
             .http
             .post(&self.token_url)
             .form(form)
             .send()
             .await
-            .map_err(HttpError::from)?;
+            .map_err(unreachable)?;
         let status = res.status();
-        let body = res.bytes().await.map_err(HttpError::from)?;
+        let body = res.bytes().await.map_err(unreachable)?;
         if status.is_success() {
-            return serde_json::from_slice(&body)
-                .map_err(|_| TokenError::Unreachable("unreadable token response".into()));
+            return serde_json::from_slice(&body).map_err(|_| {
+                tracing::warn!(status = status.as_u16(), "unreadable token response");
+                TokenError::Unreachable("unreadable token response".into())
+            });
         }
         match serde_json::from_slice::<TokenFailure>(&body) {
             Ok(f) => {
@@ -311,11 +356,17 @@ impl TokenBroker {
                     suberror = ?f.suberror,
                     "token request refused"
                 );
-                Err(classify(&f))
+                Err(token_error(&f))
             }
-            Err(_) => Err(TokenError::Unreachable(format!(
-                "token endpoint returned {status}"
-            ))),
+            Err(_) => {
+                tracing::warn!(
+                    status = status.as_u16(),
+                    "token endpoint returned an error with no OAuth body"
+                );
+                Err(TokenError::Unreachable(format!(
+                    "token endpoint returned {status}"
+                )))
+            }
         }
     }
 }
@@ -352,26 +403,55 @@ mod tests {
     #[test]
     fn classifies_entra_errors() {
         assert_eq!(
-            classify(&failure("invalid_grant", &[65001])),
+            token_error(&failure("invalid_grant", &[65001])),
             TokenError::ConsentNeeded
         );
         assert_eq!(
-            classify(&failure("consent_required", &[])),
+            token_error(&failure("consent_required", &[])),
             TokenError::ConsentNeeded
         );
         assert_eq!(
-            classify(&failure("interaction_required", &[50076])),
+            token_error(&failure("interaction_required", &[50076])),
             TokenError::SignInAgain
         );
         assert_eq!(
-            classify(&failure("invalid_grant", &[70008])),
+            token_error(&failure("invalid_grant", &[70008])),
             TokenError::SignInAgain
         );
+        // A wrong ENTRA_API_SCOPE: signing in again wouldn't help.
         assert_eq!(
-            classify(&failure("invalid_client", &[7000215])),
+            token_error(&failure("invalid_grant", &[50013])),
             TokenError::Refused {
-                code: "invalid_client".into()
+                code: "invalid_grant (AADSTS50013)".into()
             }
+        );
+        assert_eq!(
+            token_error(&failure("invalid_client", &[7000215])),
+            TokenError::Refused {
+                code: "invalid_client (AADSTS7000215)".into()
+            }
+        );
+        // A crafted error name can't reach the page or the log as-is.
+        assert_eq!(
+            token_error(&failure("x\nFORGED", &[])),
+            TokenError::Refused {
+                code: "unrecognised".into()
+            }
+        );
+    }
+
+    #[test]
+    fn lifetimes_never_panic_and_outlast_the_skew() {
+        let now = SystemTime::now();
+        let missing = expiry_from(None, now);
+        assert!(AccessToken::new("a", missing).is_fresh(now));
+        assert_eq!(
+            expiry_from(Some(Duration::from_secs(u64::MAX)), now),
+            now + MAX_LIFETIME
+        );
+        assert_eq!(
+            expiry_from(Some(Duration::from_secs(3600)), now),
+            now + Duration::from_secs(3600)
         );
     }
 

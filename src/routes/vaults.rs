@@ -139,7 +139,7 @@ pub async fn select(
     shell: Shell,
     Form(form): Form<SelectForm>,
 ) -> Response {
-    if !session.0.csrf_matches(&form.csrf) {
+    if !session.0.csrf_matches_any(&form.csrf) {
         return PageError::new(shell, Problem::stale_form()).into_response();
     }
     let name = form.name.trim();

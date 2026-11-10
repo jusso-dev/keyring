@@ -19,12 +19,12 @@ use axum::routing::{get, post};
 use chrono::{DateTime, Utc};
 use keyring::config::Config;
 use openidconnect::core::{
-    CoreIdToken, CoreIdTokenClaims, CoreJsonWebKey, CoreJwsSigningAlgorithm,
+    CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
     CoreRsaPrivateSigningKey,
 };
 use openidconnect::{
-    Audience, EmptyAdditionalClaims, EndUserName, EndUserUsername, IssuerUrl, JsonWebKeyId,
-    LocalizedClaim, Nonce, PrivateSigningKey, StandardClaims, SubjectIdentifier,
+    Audience, EndUserName, EndUserUsername, IssuerUrl, JsonWebKeyId, LocalizedClaim, Nonce,
+    PrivateSigningKey, StandardClaims, SubjectIdentifier,
 };
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use serde_json::json;
@@ -95,6 +95,14 @@ pub struct IdpState {
     pub grant_error: Mutex<Option<(&'static str, u64)>>,
     /// Lifetime in seconds of tokens handed out by OBO and refresh.
     pub grant_expires_in: Mutex<u64>,
+    /// Discovery document requests served.
+    pub discovery_hits: Mutex<usize>,
+    /// Make discovery answer 503.
+    pub discovery_down: Mutex<bool>,
+    /// Entra rolled its signing keys: publish and sign with the second key.
+    pub rolled_over: Mutex<bool>,
+    /// Delay before answering token requests, so tests can overlap them.
+    pub token_delay: Mutex<Duration>,
 }
 
 impl IdpState {
@@ -115,6 +123,17 @@ pub fn field<'a>(form: &'a [(String, String)], key: &str) -> Option<&'a str> {
 }
 
 pub const OBO_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+
+/// The object ID the mock puts in every ID token, as Entra does with `oid`.
+pub const USER_OID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
+
+/// An ID token with Entra's `oid` and `tid` claims.
+type EntraIdToken = openidconnect::IdToken<
+    keyring::auth::oidc::EntraClaims,
+    CoreGenderClaim,
+    CoreJweContentEncryptionAlgorithm,
+    CoreJwsSigningAlgorithm,
+>;
 
 impl MockIdp {
     pub fn authority(&self) -> String {
@@ -156,6 +175,10 @@ pub async fn start_idp() -> MockIdp {
         token_requests: Mutex::new(Vec::new()),
         grant_error: Mutex::new(None),
         grant_expires_in: Mutex::new(3600),
+        discovery_hits: Mutex::new(0),
+        discovery_down: Mutex::new(false),
+        rolled_over: Mutex::new(false),
+        token_delay: Mutex::new(Duration::ZERO),
     });
     let app = Router::new()
         .route(
@@ -173,6 +196,10 @@ pub async fn start_idp() -> MockIdp {
 }
 
 async fn discovery(State(s): State<Arc<IdpState>>) -> Response {
+    *s.discovery_hits.lock().unwrap() += 1;
+    if *s.discovery_down.lock().unwrap() {
+        return json_response(StatusCode::SERVICE_UNAVAILABLE, json!({}));
+    }
     let base = s
         .issuer
         .trim_end_matches(&format!("/{TENANT}/v2.0"))
@@ -193,7 +220,12 @@ async fn discovery(State(s): State<Arc<IdpState>>) -> Response {
 }
 
 async fn jwks(State(s): State<Arc<IdpState>>) -> Response {
-    let jwk: CoreJsonWebKey = s.key.as_verification_key();
+    let key = if *s.rolled_over.lock().unwrap() {
+        &s.other_key
+    } else {
+        &s.key
+    };
+    let jwk: CoreJsonWebKey = key.as_verification_key();
     json_response(StatusCode::OK, json!({ "keys": [jwk] }))
 }
 
@@ -209,6 +241,10 @@ async fn token(
 ) -> Response {
     *s.last_token_form.lock().unwrap() = Some(form.clone());
     s.token_requests.lock().unwrap().push(form.clone());
+    let delay = *s.token_delay.lock().unwrap();
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
     let grant = field(&form, "grant_type").unwrap_or_default().to_owned();
     if grant == OBO_GRANT || grant == "refresh_token" {
         return other_grant(&s, &form, &grant);
@@ -230,7 +266,7 @@ async fn token(
     };
     let mut name = LocalizedClaim::new();
     name.insert(None, EndUserName::new("Alex Example".into()));
-    let claims = CoreIdTokenClaims::new(
+    let claims = openidconnect::IdTokenClaims::new(
         IssuerUrl::new(s.issuer.clone()).unwrap(),
         vec![Audience::new(audience.into())],
         now_plus(3600),
@@ -238,14 +274,20 @@ async fn token(
         StandardClaims::new(SubjectIdentifier::new("user-subject".into()))
             .set_name(Some(name))
             .set_preferred_username(Some(EndUserUsername::new("alex@example.com".into()))),
-        EmptyAdditionalClaims {},
+        keyring::auth::oidc::EntraClaims {
+            oid: Some(USER_OID.into()),
+            tid: Some(TENANT.into()),
+        },
     )
     .set_nonce(Some(Nonce::new(nonce)));
+    let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
+        TokenBehaviour::WrongKey if rolled => &s.key,
         TokenBehaviour::WrongKey => &s.other_key,
+        _ if rolled => &s.other_key,
         _ => &s.key,
     };
-    let id_token = CoreIdToken::new(
+    let id_token = EntraIdToken::new(
         claims,
         key,
         CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
@@ -318,7 +360,11 @@ pub fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String
         User {
             name: "Alex Example".into(),
             username: Some("alex@example.com".into()),
-            subject: "sub".into(),
+            subject: keyring::auth::session::UserId {
+                sub: "sub".into(),
+                oid: Some(USER_OID.into()),
+                tid: Some(TENANT.into()),
+            },
         },
         UserTokens {
             access_token: Secret::new("user-api-token"),
@@ -578,7 +624,7 @@ pub async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
     let id = cookie.split('=').nth(1).unwrap().to_owned();
     let session = state.sessions.get(&id).unwrap();
     session.select_vault("kv-test".into());
-    let csrf = session.csrf.clone();
+    let csrf = session.csrf_token();
     World {
         app,
         state,

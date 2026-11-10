@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::auth::crypto::random_token;
+use crate::auth::crypto::{constant_time_eq, random_token};
 use crate::azure::token::TokenCache;
 use crate::secret::Secret;
 
@@ -18,6 +18,9 @@ pub const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 
 /// How long an uploaded file waits for confirmation.
 pub const PENDING_UPLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// How often expired sessions and stale uploads are dropped.
+pub const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A certificate file waiting to be imported. Never written anywhere.
 pub struct PendingUpload {
@@ -49,7 +52,55 @@ impl std::fmt::Debug for PendingUpload {
 pub struct User {
     pub name: String,
     pub username: Option<String>,
-    pub subject: String,
+    /// Who this is in the logs. See [`UserId`].
+    pub subject: UserId,
+}
+
+/// The identity written on every log line about a person's action.
+///
+/// Entra's `sub` claim is pairwise: unique to this app registration and
+/// found nowhere else. Admins match people by object ID (`oid`) and tenant
+/// ID (`tid`), which Entra's sign-in logs and Key Vault's audit logs both
+/// use, so those are shown when the ID token has them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserId {
+    pub sub: String,
+    pub oid: Option<String>,
+    pub tid: Option<String>,
+}
+
+impl UserId {
+    /// An identity with only the pairwise subject.
+    pub fn from_sub(sub: impl Into<String>) -> Self {
+        Self {
+            sub: sub.into(),
+            oid: None,
+            tid: None,
+        }
+    }
+}
+
+impl From<&str> for UserId {
+    fn from(sub: &str) -> Self {
+        Self::from_sub(sub)
+    }
+}
+
+impl From<String> for UserId {
+    fn from(sub: String) -> Self {
+        Self::from_sub(sub)
+    }
+}
+
+/// `oid:<object ID>,tid:<tenant ID>`, or `sub:<subject>` without them.
+impl std::fmt::Display for UserId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.oid, &self.tid) {
+            (Some(oid), Some(tid)) => write!(f, "oid:{oid},tid:{tid}"),
+            (Some(oid), None) => write!(f, "oid:{oid}"),
+            _ => write!(f, "sub:{}", self.sub),
+        }
+    }
 }
 
 /// Tokens from sign-in. The access token is for Keyring's own API and is what
@@ -62,11 +113,11 @@ pub struct UserTokens {
 }
 
 /// One signed-in session.
-#[derive(Debug)]
 pub struct Session {
     pub user: User,
-    /// Per-session token every form posts back, checked on the server.
-    pub csrf: String,
+    /// Per-session key for form tokens. Never sent to the browser; forms
+    /// carry a token derived from it and the chosen vault.
+    csrf: Secret,
     /// Tokens for Azure APIs, exchanged on behalf of this user.
     pub azure_tokens: TokenCache,
     /// Vault picked in the header. Lives only as long as the session.
@@ -142,9 +193,77 @@ impl Session {
             || now.saturating_duration_since(*lock(&self.last_seen)) >= IDLE_TIMEOUT
     }
 
-    /// True when the form's token matches this session's.
+    /// Drop a pending upload nobody confirmed in time.
+    fn drop_stale_upload(&self, now: Instant) {
+        let mut slot = lock(&self.pending_upload);
+        if slot
+            .as_ref()
+            .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
+        {
+            *slot = None;
+        }
+    }
+
+    /// The form token for `vault`, or for no vault. It is
+    /// `<vault>.<HMAC-SHA256 of the vault, keyed with this session's secret>`,
+    /// so a form says which vault it was rendered for and can't be forged.
+    pub fn csrf_for(&self, vault: Option<&str>) -> String {
+        let vault = vault.unwrap_or_default();
+        format!("{vault}.{}", self.csrf_mac(vault))
+    }
+
+    /// The form token for the vault chosen now. Every form renders this.
+    pub fn csrf_token(&self) -> String {
+        self.csrf_for(self.selected_vault().as_deref())
+    }
+
+    fn csrf_mac(&self, vault: &str) -> String {
+        use base64::Engine;
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.csrf.expose().as_bytes());
+        let tag = ring::hmac::sign(&key, format!("keyring form v1\0{vault}").as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tag.as_ref())
+    }
+
+    /// The vault a genuine form token was rendered for (empty for none).
+    /// `None` if the token isn't one of this session's.
+    fn csrf_vault<'a>(&self, presented: &'a str) -> Option<&'a str> {
+        let (vault, mac) = presented.rsplit_once('.')?;
+        constant_time_eq(self.csrf_mac(vault).as_bytes(), mac.as_bytes()).then_some(vault)
+    }
+
+    /// True when the form's token is this session's and was rendered for
+    /// the vault chosen now. A form from before a vault switch in another
+    /// tab is refused, so it can't act on the wrong vault.
     pub fn csrf_matches(&self, presented: &str) -> bool {
-        crate::auth::crypto::constant_time_eq(self.csrf.as_bytes(), presented.as_bytes())
+        let now = self.selected_vault().unwrap_or_default();
+        self.csrf_vault(presented).is_some_and(|v| v == now)
+    }
+
+    /// True when the form's token is this session's, whichever vault it
+    /// was rendered for. Only for forms that don't act on a vault: signing
+    /// out and switching vaults.
+    pub fn csrf_matches_any(&self, presented: &str) -> bool {
+        self.csrf_vault(presented).is_some()
+    }
+
+    /// When a genuine form was refused only because it was rendered for
+    /// another vault, that vault. Used to explain the refusal.
+    pub fn csrf_other_vault(&self, presented: &str) -> Option<String> {
+        let now = self.selected_vault().unwrap_or_default();
+        self.csrf_vault(presented)
+            .filter(|v| !v.is_empty() && *v != now)
+            .map(str::to_owned)
+    }
+}
+
+/// Written by hand so the form key and tokens can never be printed.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("user", &self.user)
+            .field("selected_vault", &self.selected_vault())
+            .field("created", &self.created)
+            .finish_non_exhaustive()
     }
 }
 
@@ -154,9 +273,32 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// All live sessions, keyed by the random ID in the session cookie.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+}
+
+/// Prints only how many sessions there are. The keys are live session IDs.
+impl std::fmt::Debug for SessionStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionStore")
+            .field("sessions", &self.len())
+            .finish()
+    }
+}
+
+/// Every [`SWEEP_INTERVAL`], drop expired sessions (with their tokens) and
+/// uploads nobody confirmed. Without this they would stay in memory until
+/// someone next signs in.
+pub fn spawn_sweeper(store: Arc<SessionStore>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(SWEEP_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            store.sweep_at(Instant::now());
+        }
+    })
 }
 
 impl SessionStore {
@@ -169,7 +311,7 @@ impl SessionStore {
         let id = random_token(32);
         let session = Arc::new(Session {
             user,
-            csrf: random_token(32),
+            csrf: Secret::new(random_token(32)),
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
@@ -201,6 +343,16 @@ impl SessionStore {
         Some(session)
     }
 
+    /// Drop expired sessions, and pending uploads older than
+    /// [`PENDING_UPLOAD_TTL`] in the sessions that are left.
+    pub fn sweep_at(&self, now: Instant) {
+        let mut map = lock(&self.sessions);
+        map.retain(|_, s| !s.expired_at(now));
+        for s in map.values() {
+            s.drop_stale_upload(now);
+        }
+    }
+
     pub fn remove(&self, id: &str) -> Option<Arc<Session>> {
         lock(&self.sessions).remove(id)
     }
@@ -222,7 +374,11 @@ pub(crate) mod tests {
         User {
             name: "Alex Example".into(),
             username: Some("alex@example.com".into()),
-            subject: "sub-1".into(),
+            subject: UserId {
+                sub: "sub-1".into(),
+                oid: Some("aaaaaaaa-0000-0000-0000-000000000001".into()),
+                tid: Some("bbbbbbbb-0000-0000-0000-000000000002".into()),
+            },
         }
     }
 
@@ -241,7 +397,7 @@ pub(crate) mod tests {
         let s = store.get(&id).unwrap();
         assert_eq!(s.user.name, "Alex Example");
         assert!(store.get("nope").is_none());
-        assert_ne!(id, s.csrf);
+        assert_ne!(id, s.csrf.expose());
     }
 
     #[test]
@@ -286,19 +442,101 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn csrf_check() {
+    fn sweep_drops_expired_sessions_without_a_sign_in() {
         let store = SessionStore::default();
-        let s = store.get(&store.create(user(), tokens())).unwrap();
-        assert!(s.csrf_matches(&s.csrf.clone()));
-        assert!(!s.csrf_matches("wrong"));
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        store.sweep_at(t0 + IDLE_TIMEOUT / 2);
+        assert_eq!(store.len(), 1);
+        store.sweep_at(t0 + IDLE_TIMEOUT);
+        assert!(store.is_empty());
+        assert!(store.get_at(&id, t0).is_none());
+    }
+
+    fn upload(created: Instant) -> PendingUpload {
+        PendingUpload {
+            id: "up-1".into(),
+            vault: "kv-a".into(),
+            name: "web".into(),
+            content_type: "application/x-pkcs12",
+            value: Secret::new("pfx"),
+            password: Some(Secret::new("pw")),
+            tags: Default::default(),
+            enabled: true,
+            exportable: false,
+            created,
+        }
     }
 
     #[test]
-    fn debug_does_not_leak_tokens() {
+    fn sweep_drops_stale_uploads_from_live_sessions() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        s.set_pending_upload(upload(t0));
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL / 2);
+        assert!(lock(&s.pending_upload).is_some());
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL);
+        assert!(lock(&s.pending_upload).is_none());
+        assert_eq!(store.len(), 1, "the session itself stays");
+    }
+
+    #[test]
+    fn csrf_token_is_bound_to_the_vault() {
         let store = SessionStore::default();
         let s = store.get(&store.create(user(), tokens())).unwrap();
-        let out = format!("{s:?} {:?}", s.tokens());
+        let none = s.csrf_token();
+        assert!(s.csrf_matches(&none));
+        assert!(!s.csrf_matches("wrong"));
+        assert!(!s.csrf_matches(""));
+        assert!(!s.csrf_matches(s.csrf.expose()));
+
+        s.select_vault("kv-a".into());
+        let a = s.csrf_token();
+        assert!(a.starts_with("kv-a."));
+        assert!(s.csrf_matches(&a));
+        assert!(
+            !s.csrf_matches(&none),
+            "form from before a vault was chosen"
+        );
+        assert_eq!(s.csrf_other_vault(&a), None);
+
+        s.select_vault("kv-b".into());
+        assert!(!s.csrf_matches(&a), "form rendered for another vault");
+        assert_eq!(s.csrf_other_vault(&a).as_deref(), Some("kv-a"));
+        assert!(s.csrf_matches(&s.csrf_token()));
+
+        // Sign-out and the vault switch accept any of this session's tokens.
+        assert!(s.csrf_matches_any(&a) && s.csrf_matches_any(&none));
+        // A token naming a vault but with another session's MAC is refused.
+        let other = store.get(&store.create(user(), tokens())).unwrap();
+        other.select_vault("kv-b".into());
+        assert!(!s.csrf_matches_any(&other.csrf_token()));
+        assert!(!s.csrf_matches_any("kv-b.forged"));
+        assert_eq!(s.csrf_other_vault("kv-a.forged"), None);
+    }
+
+    #[test]
+    fn user_id_prefers_object_and_tenant_ids() {
+        assert_eq!(
+            user().subject.to_string(),
+            "oid:aaaaaaaa-0000-0000-0000-000000000001,tid:bbbbbbbb-0000-0000-0000-000000000002"
+        );
+        assert_eq!(UserId::from("pairwise").to_string(), "sub:pairwise");
+    }
+
+    #[test]
+    fn debug_does_not_leak_tokens_ids_or_form_keys() {
+        let store = SessionStore::default();
+        let id = store.create(user(), tokens());
+        let s = store.get(&id).unwrap();
+        s.select_vault("kv-a".into());
+        let out = format!("{s:?} {:?} {store:?}", s.tokens());
         assert!(!out.contains("access-token-value"));
         assert!(!out.contains("refresh-token-value"));
+        assert!(!out.contains(s.csrf.expose()), "form key leaked: {out}");
+        assert!(!out.contains(&s.csrf_token()), "form token leaked: {out}");
+        assert!(!out.contains(&id), "session ID leaked: {out}");
     }
 }

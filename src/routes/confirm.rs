@@ -19,6 +19,8 @@ pub struct ConfirmForm {
 /// Why a confirmation was refused.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfirmError {
+    /// The form token didn't match: an old page, or one rendered for
+    /// another vault.
     StaleForm,
     NameMismatch,
 }
@@ -93,11 +95,11 @@ mod tests {
     fn accepts_exact_name_with_valid_token() {
         let s = session();
         assert_eq!(
-            verify(&s, &form(&s.csrf, "db-password"), "db-password"),
+            verify(&s, &form(&s.csrf_token(), "db-password"), "db-password"),
             Ok(())
         );
         assert_eq!(
-            verify(&s, &form(&s.csrf, "  db-password "), "db-password"),
+            verify(&s, &form(&s.csrf_token(), "  db-password "), "db-password"),
             Ok(())
         );
     }
@@ -107,13 +109,13 @@ mod tests {
         let s = session();
         for typed in ["", "db-passwor", "DB-PASSWORD", "db-password2"] {
             assert_eq!(
-                verify(&s, &form(&s.csrf, typed), "db-password"),
+                verify(&s, &form(&s.csrf_token(), typed), "db-password"),
                 Err(ConfirmError::NameMismatch),
                 "{typed:?}"
             );
         }
         assert_eq!(
-            verify(&s, &form(&s.csrf, ""), ""),
+            verify(&s, &form(&s.csrf_token(), ""), ""),
             Err(ConfirmError::NameMismatch)
         );
     }
@@ -123,6 +125,18 @@ mod tests {
         let s = session();
         assert_eq!(
             verify(&s, &form("forged", "db-password"), "db-password"),
+            Err(ConfirmError::StaleForm)
+        );
+    }
+
+    #[test]
+    fn form_for_another_vault_is_refused_and_named() {
+        let s = session();
+        s.select_vault("kv-prod".into());
+        let token = s.csrf_token();
+        s.select_vault("kv-dev".into());
+        assert_eq!(
+            verify(&s, &form(&token, "db-password"), "db-password"),
             Err(ConfirmError::StaleForm)
         );
     }

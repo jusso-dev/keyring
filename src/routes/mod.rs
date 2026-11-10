@@ -142,6 +142,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
+        .route("/auth/keepalive", get(auth::keepalive))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,
@@ -164,7 +165,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         // Small forms only by default. The certificate upload route sets
         // its own larger limit.
         .layer(axum::extract::DefaultBodyLimit::max(MAX_FORM_BYTES))
-        .layer(middleware::from_fn_with_state(state, headers::layer))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            headers::layer,
+        ))
 }
 
 async fn not_found(shell: Shell) -> Response {
