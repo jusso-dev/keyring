@@ -2,9 +2,9 @@
 //!
 //! The add, upload and deleted pages were at `/secrets/new` and the like,
 //! beside `/secrets/{name}`, so an item called `new` couldn't be opened.
-//! They now sit under `/-/` (`/secrets/-/new`), which can't be an item: Key
-//! Vault names are letters, digits and hyphens, and must start with a
-//! letter.
+//! They now sit under `/-/` (`/secrets/-/new`), which can't be an item:
+//! Keyring refuses any name that starts with a hyphen (see
+//! `vault_ctx::is_valid_object_name`).
 //!
 //! Old bookmarks and forms still work, with a 308 so a form post keeps its
 //! method and body. An old path that no route matches
