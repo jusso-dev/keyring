@@ -149,3 +149,61 @@ async fn detail_links_to_history() {
     assert!(html.contains("href=\"/secrets/db-password/versions\""));
     assert!(html.contains("href=\"/audit?item=db-password&amp;range=30d&amp;from=secret\""));
 }
+
+#[tokio::test]
+async fn rollback_keeps_a_disabled_secret_disabled_and_says_so() {
+    let w = support::world().await;
+    let v1 = w.kv.state.put("db-password", "good");
+    w.kv.state
+        .put_with("db-password", "leaked", |v| v.enabled = false);
+    let (_, html) = w
+        .page(&format!("/secrets/db-password/rollback?version={v1}"))
+        .await;
+    assert!(html.contains("<strong>The new version is disabled</strong>"));
+    let res = w
+        .post("/secrets/db-password/rollback", &[("version", &v1)])
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let current = w.kv.state.current("db-password").unwrap();
+    assert_eq!(current.value, "good");
+    assert!(!current.enabled, "stays disabled, as the page said");
+}
+
+#[tokio::test]
+async fn rollback_page_says_when_the_expiry_is_dropped() {
+    let w = support::world().await;
+    let n = keyring::azure::secrets::now_ts();
+    let v1 = w.kv.state.put("db-password", "a");
+    w.kv.state
+        .put_with("db-password", "b", |v| v.exp = Some(n - 60));
+    let (_, html) = w
+        .page(&format!("/secrets/db-password/rollback?version={v1}"))
+        .await;
+    assert!(html.contains("<strong>no expiry date</strong>"), "{html}");
+    w.post("/secrets/db-password/rollback", &[("version", &v1)])
+        .await;
+    assert_eq!(w.kv.state.current("db-password").unwrap().exp, None);
+}
+
+#[tokio::test]
+async fn disabled_versions_cant_be_rolled_back_to() {
+    let w = support::world().await;
+    let v1 =
+        w.kv.state
+            .put_with("db-password", "a", |v| v.enabled = false);
+    w.kv.state.put("db-password", "b");
+    let (_, html) = w.page("/secrets/db-password/versions").await;
+    assert!(!html.contains(&format!("rollback?version={v1}")));
+    assert!(html.contains("can't be read or rolled back to"));
+    let (status, html) = w
+        .page(&format!("/secrets/db-password/rollback?version={v1}"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(html.contains("That version is disabled"));
+    let res = w
+        .post("/secrets/db-password/rollback", &[("version", &v1)])
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(w.kv.state.version_count("db-password"), 2);
+    assert!(w.kv.state.value_reads().is_empty());
+}
