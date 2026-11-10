@@ -125,6 +125,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(keys::delete::purge_form).post(keys::delete::purge),
         )
         .route("/keys/{name}", get(keys::detail))
+        .route("/keys/{name}/enabled", post(keys::toggle))
         .route(
             "/keys/{name}/rotate",
             get(keys::edit::rotate_form).post(keys::edit::rotate),

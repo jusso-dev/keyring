@@ -162,10 +162,7 @@ impl KvState {
             .lock()
             .unwrap()
             .entry(name.into())
-            .or_insert_with(|| super::keys::StoredKey {
-                versions: Vec::new(),
-                rotation: serde_json::json!({"lifetimeActions": []}),
-            })
+            .or_default()
             .versions
             .push(v);
         version
@@ -211,6 +208,8 @@ impl KvState {
         c.policy = policy;
         c.pending = None;
         c.versions.push(v);
+        drop(certs);
+        self.add_managed_key(name, &version);
         version
     }
 

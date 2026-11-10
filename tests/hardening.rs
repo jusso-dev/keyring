@@ -28,6 +28,7 @@ const MUTATING: &[&str] = &[
     "/keys/new",
     "/keys/app-key/rotate",
     "/keys/app-key/rotation",
+    "/keys/app-key/enabled",
     "/keys/app-key/delete",
     "/keys/deleted/old-key/recover",
     "/keys/deleted/old-key/purge",
@@ -297,4 +298,27 @@ async fn browser_shaped_same_origin_posts_are_accepted() {
         ),
         "{policy}"
     );
+}
+
+#[test]
+fn fixed_certificate_and_key_pages_are_reserved_names() {
+    // Every fixed page beside `/certificates/{name}` and `/keys/{name}`
+    // must be a name Keyring refuses on create and upload, or an object
+    // with that name couldn't be opened.
+    let src = include_str!("../src/routes/mod.rs");
+    for (prefix, reserved) in [
+        ("\"/certificates/", &["new", "deleted", "upload"][..]),
+        ("\"/keys/", &["new", "deleted"][..]),
+    ] {
+        for chunk in src.split(prefix).skip(1) {
+            let first = chunk.split(['/', '"']).next().unwrap_or_default();
+            if first.starts_with('{') {
+                continue;
+            }
+            assert!(
+                reserved.contains(&first),
+                "{prefix}{first} is a fixed page but not a reserved name"
+            );
+        }
+    }
 }

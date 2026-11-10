@@ -13,17 +13,19 @@ use crate::routes::lifecycle::{self, DeletedRow, Kind};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
-use super::{api, current_vault};
+use super::{api, current_vault, unmanaged_key};
 
 const KIND: Kind = Kind::Key;
 
 pub async fn delete_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     Ok(lifecycle::confirm_page(
         shell,
         lifecycle::delete_view(KIND, &vault, &name),
@@ -47,6 +49,7 @@ pub async fn delete(
         shell,
         lifecycle::delete_view(KIND, &vault, &name),
     )?;
+    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     match api(&state, &session, &vault).delete(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key deleted");
