@@ -5,6 +5,15 @@ mod support;
 use axum::http::StatusCode;
 use support::{body_text, location};
 
+/// The flash cookie a redirect set, as `name=value`.
+fn flash_cookie(res: &axum::http::Response<axum::body::Body>) -> Option<String> {
+    res.headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_owned())
+        .find(|c| c.starts_with("keyring_flash="))
+}
+
 #[tokio::test]
 async fn delete_needs_the_name_typed() {
     let w = support::world().await;
@@ -81,15 +90,96 @@ async fn deleted_list_shows_purge_dates_and_recover_restores() {
 
     let res = w.post("/secrets/deleted/db-password/recover", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/secrets/db-password");
+    // Not the detail page, which may not be readable for a few seconds.
+    assert_eq!(location(&res), "/secrets/deleted");
+    let (_, html) = w.page("/secrets/deleted").await;
+    assert!(html.contains("No deleted secrets"));
+    // Like Key Vault, the mock answers 404 for a moment after a recover.
+    let (status, _) = w.page("/secrets/db-password").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = w.page("/secrets/db-password").await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(
         w.kv.state.version_count("db-password"),
         2,
         "history comes back"
     );
     assert_eq!(w.kv.state.current("db-password").unwrap().value, "and-this");
+}
+
+#[tokio::test]
+async fn recover_flash_says_it_can_take_a_few_seconds() {
+    let mut w = support::world().await;
+    w.kv.state.put("db-password", "x");
+    w.kv.state.soft_delete("db-password");
+    let res = w.post("/secrets/deleted/db-password/recover", &[]).await;
+    let flash = flash_cookie(&res).unwrap();
+    w.cookie = format!("{}; {flash}", w.cookie);
     let (_, html) = w.page("/secrets/deleted").await;
-    assert!(html.contains("No deleted secrets"));
+    assert!(html.contains("Recovering db-password"), "{html}");
+    assert!(html.contains("can take a few seconds"));
+}
+
+#[tokio::test]
+async fn delete_warning_uses_the_vaults_retention() {
+    let w = support::world().await;
+    *w.kv.state.retention.lock().unwrap() = Some(("CustomizedRecoverable+Purgeable", 7));
+    w.kv.state.put("db-password", "x");
+    let (status, html) = w.page("/secrets/db-password/delete").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("You can recover it for 7 days after it&#39;s deleted"),
+        "{html}"
+    );
+    assert!(!html.contains("usually 90"));
+    let (_, html) = w.page("/secrets/db-password").await;
+    assert!(html.contains("Deleted secrets in this vault can be recovered for 7 days."));
+    assert!(
+        !html.contains("CustomizedRecoverable"),
+        "raw level not shown"
+    );
+}
+
+#[tokio::test]
+async fn delete_form_for_a_missing_secret_is_not_found() {
+    let w = support::world().await;
+    let (status, html) = w.page("/secrets/no-such-thing/delete").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!html.contains("to confirm"));
+}
+
+#[tokio::test]
+async fn purge_is_not_offered_on_a_purge_protected_vault() {
+    let w = support::world_with(&[("KEYRING_ALLOW_PURGE", "true")]).await;
+    *w.kv.state.retention.lock().unwrap() = Some(("Recoverable", 90));
+    w.kv.state.put("db-password", "x");
+    w.kv.state.soft_delete("db-password");
+    let (_, html) = w.page("/secrets/deleted/db-password").await;
+    assert!(!html.contains("/purge\""), "no purge link");
+    assert!(html.contains("purge protection"));
+
+    let (status, html) = w.page("/secrets/deleted/db-password/purge").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(html.contains("This vault has purge protection"));
+    let res = w
+        .post(
+            "/secrets/deleted/db-password/purge",
+            &[("confirm_name", "db-password")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let html = body_text(res).await;
+    assert!(html.contains("This vault has purge protection"));
+    assert!(!html.contains("Secrets Officer"), "not blamed on a role");
+    assert!(
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|l| !l.starts_with("DELETE /kv-test/deletedsecrets")),
+        "Key Vault isn't asked"
+    );
 }
 
 #[tokio::test]

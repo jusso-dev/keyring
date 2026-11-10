@@ -8,8 +8,19 @@
 {% if let Some(p) = pending %}
 <div class="notice {% if p.failed %}notice-error{% else %}notice-warn{% endif %}" role="status">
   <p><strong>Certificate request: {{ p.status }}.</strong> {{ p.details }}</p>
-  {% if !p.failed %}<p>The certificate appears here once the issuer signs it. Refresh this page to check.</p>{% endif %}
+  {% if p.creating %}
+  <p>Key Vault is making this self-signed certificate. It usually takes a few seconds. <a href="/certificates/{{ row.name }}">Check again</a></p>
+  {% elif !p.failed %}
+  <p>The certificate appears here once the issuer signs it. <a href="/certificates/{{ row.name }}">Check again</a></p>
+  {% endif %}
+  <form method="post" action="/certificates/{{ row.name }}/pending/cancel">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    <button type="submit" class="button-secondary">Cancel this request</button>
+  </form>
 </div>
+{% endif %}
+{% if let Some(note) = pending_note %}
+<p class="notice notice-warn" role="status">{{ note }}</p>
 {% endif %}
 
 <div class="actions">
@@ -20,6 +31,16 @@
   {% endif %}{% endif %}
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
   <a class="button button-danger" href="/certificates/{{ row.name }}/delete">Delete</a>
+  <form method="post" action="/certificates/{{ row.name }}/enabled">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    {% if row.enabled %}
+    <input type="hidden" name="state" value="off">
+    <button type="submit" class="button-secondary">Disable</button>
+    {% else %}
+    <input type="hidden" name="state" value="on">
+    <button type="submit" class="button-secondary">Enable</button>
+    {% endif %}
+  </form>
 </div>
 
 <section aria-labelledby="cert-heading">
@@ -58,7 +79,9 @@
 
 <section aria-labelledby="versions-heading">
   <h2 id="versions-heading">Versions</h2>
-  {% if versions.is_empty() %}
+  {% if let Some(note) = versions_note %}
+  <p class="notice notice-warn" role="status">{{ note }}</p>
+  {% elif versions.is_empty() %}
   <p class="muted">No versions listed.</p>
   {% else %}
   <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">

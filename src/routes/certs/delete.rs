@@ -18,12 +18,22 @@ use super::{api, current_vault};
 const KIND: Kind = Kind::Certificate;
 
 pub async fn delete_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(name): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
+    // Make sure there's something to delete before asking for the name.
+    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+        return Err(azure_problem(
+            shell,
+            &e,
+            Need::ReadCertificates,
+            &format!("/certificates/{name}"),
+        ));
+    }
     Ok(lifecycle::confirm_page(
         shell,
         lifecycle::delete_view(KIND, &vault, &name),
@@ -132,11 +142,7 @@ pub async fn recover(
     match api(&state, &session, &vault).recover(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate recovered");
-            Ok(lifecycle::redirect_with(
-                &state,
-                &format!("/certificates/{name}"),
-                format!("Recovered {name}. It can take a few seconds to show everywhere."),
-            ))
+            Ok(lifecycle::recovered(&state, KIND, &name))
         }
         Err(e) => Err(azure_problem(
             shell,

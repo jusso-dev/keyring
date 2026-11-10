@@ -10,6 +10,16 @@
   <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
   <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
+  <form method="post" action="/keys/{{ row.name }}/enabled">
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    {% if row.enabled %}
+    <input type="hidden" name="state" value="off">
+    <button type="submit" class="button-secondary">Disable</button>
+    {% else %}
+    <input type="hidden" name="state" value="on">
+    <button type="submit" class="button-secondary">Enable</button>
+    {% endif %}
+  </form>
   {% else %}
   <p class="muted">This key belongs to the certificate <a href="/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
@@ -41,9 +51,13 @@
   <p><button type="button" class="button-secondary" data-copy-plain="public-jwk" hidden>Copy JWK</button> <span class="muted" role="status" aria-live="polite" data-copy-plain-status></span></p>
 </section>
 
-{% if let Some(r) = rotation %}
+{% if rotation.is_some() || rotation_note.is_some() %}
 <section aria-labelledby="rotation-heading">
   <h2 id="rotation-heading">Rotation policy</h2>
+  {% if let Some(note) = rotation_note %}
+  <p class="notice notice-warn" role="status">{{ note }}</p>
+  {% endif %}
+  {% if let Some(r) = rotation %}
   {% if r.any %}
   <dl class="props">
     <dt>Rotates</dt><dd>{% if r.rotate_after.is_empty() %}<span class="muted">Not automatically</span>{% else %}{{ r.rotate_after }}{% endif %}</dd>
@@ -53,12 +67,16 @@
   {% else %}
   <p class="muted">No rotation policy. The key only changes when someone rotates it.</p>
   {% endif %}
+  {% endif %}
 </section>
 {% endif %}
 
 <section aria-labelledby="versions-heading">
   <h2 id="versions-heading">Versions</h2>
   <p class="muted">Older versions can still decrypt and verify what they made, unless disabled.</p>
+  {% if let Some(note) = versions_note %}
+  <p class="notice notice-warn" role="status">{{ note }}</p>
+  {% else %}
   <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
   <table>
     <caption class="visually-hidden">Versions of {{ row.name }}</caption>
@@ -75,5 +93,6 @@
     </tbody>
   </table>
   </div>
+  {% endif %}
 </section>
 {% endblock %}

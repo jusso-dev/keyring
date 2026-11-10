@@ -30,6 +30,35 @@ pub struct KeyVersion {
 pub struct StoredKey {
     pub versions: Vec<KeyVersion>,
     pub rotation: Value,
+    /// A key Key Vault made behind a certificate.
+    pub managed: bool,
+}
+
+impl StoredKey {
+    pub fn new() -> Self {
+        Self {
+            versions: Vec::new(),
+            rotation: default_rotation_policy(),
+            managed: false,
+        }
+    }
+}
+
+impl Default for StoredKey {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// What "Get Key Rotation Policy" returns for a key nobody set a policy
+/// on: one Notify action 30 days before expiry and no expiry time (REST
+/// reference, Keys, Get Key Rotation Policy; the portal shows the same
+/// default).
+pub fn default_rotation_policy() -> Value {
+    json!({
+        "lifetimeActions": [{"trigger": {"timeBeforeExpiry": "P30D"}, "action": {"type": "Notify"}}],
+        "attributes": {"created": 1_790_000_000, "updated": 1_790_000_000}
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -54,7 +83,10 @@ pub fn router() -> Router<Arc<KvState>> {
             "/{vault}/keys/{name}/rotationpolicy",
             get(get_policy).put(put_policy),
         )
-        .route("/{vault}/keys/{name}/{version}", get(get_version))
+        .route(
+            "/{vault}/keys/{name}/{version}",
+            get(get_version).patch(update_version),
+        )
         .route("/{vault}/deletedkeys", get(list_deleted))
         .route(
             "/{vault}/deletedkeys/{name}",
@@ -86,16 +118,20 @@ fn attrs(v: &KeyVersion) -> Value {
     a
 }
 
-fn item(b: &str, name: &str, v: &KeyVersion, with_version: bool) -> Value {
+fn item(b: &str, name: &str, v: &KeyVersion, with_version: bool, managed: bool) -> Value {
     let kid = if with_version {
         format!("{b}/keys/{name}/{}", v.version)
     } else {
         format!("{b}/keys/{name}")
     };
-    json!({"kid": kid, "attributes": attrs(v), "tags": v.tags})
+    let mut out = json!({"kid": kid, "attributes": attrs(v), "tags": v.tags});
+    if managed {
+        out["managed"] = json!(true);
+    }
+    out
 }
 
-fn bundle(b: &str, name: &str, v: &KeyVersion) -> Value {
+fn bundle(b: &str, name: &str, v: &KeyVersion, managed: bool) -> Value {
     let mut key =
         json!({"kid": format!("{b}/keys/{name}/{}", v.version), "kty": v.kty, "key_ops": v.ops});
     if v.kty.starts_with("RSA") {
@@ -106,7 +142,11 @@ fn bundle(b: &str, name: &str, v: &KeyVersion) -> Value {
         key["x"] = json!(EC_X.trim());
         key["y"] = json!(EC_Y.trim());
     }
-    json!({"key": key, "attributes": attrs(v), "tags": v.tags})
+    let mut out = json!({"key": key, "attributes": attrs(v), "tags": v.tags});
+    if managed {
+        out["managed"] = json!(true);
+    }
+    out
 }
 
 fn page(items: Vec<Value>) -> Response {
@@ -124,7 +164,7 @@ async fn list(
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|(n, k)| k.versions.last().map(|v| item(&b, n, v, false)))
+            .filter_map(|(n, k)| k.versions.last().map(|v| item(&b, n, v, false, k.managed)))
             .collect(),
     )
 }
@@ -135,14 +175,16 @@ async fn versions(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    // "Get Key Versions" answers 200 with an empty list for a name it
+    // doesn't have (REST reference, Keys, Get Key Versions).
     match s.keys.lock().unwrap().get(&name) {
         Some(k) => page(
             k.versions
                 .iter()
-                .map(|v| item(&b, &name, v, true))
+                .map(|v| item(&b, &name, v, true, k.managed))
                 .collect(),
         ),
-        None => err(404, "KeyNotFound"),
+        None => page(Vec::new()),
     }
 }
 
@@ -155,7 +197,7 @@ async fn get_current(
     match s.keys.lock().unwrap().get(&name) {
         Some(k) => json_response(
             StatusCode::OK,
-            bundle(&b, &name, k.versions.last().unwrap()),
+            bundle(&b, &name, k.versions.last().unwrap(), k.managed),
         ),
         None => err(404, "KeyNotFound"),
     }
@@ -168,13 +210,36 @@ async fn get_version(
 ) -> Response {
     let b = base(&headers, &vault);
     let keys = s.keys.lock().unwrap();
-    match keys
-        .get(&name)
-        .and_then(|k| k.versions.iter().find(|v| v.version == version))
-    {
-        Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v)),
+    let Some(k) = keys.get(&name) else {
+        return err(404, "KeyNotFound");
+    };
+    match k.versions.iter().find(|v| v.version == version) {
+        Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, k.managed)),
         None => err(404, "KeyNotFound"),
     }
+}
+
+/// "Update Key": only `attributes.enabled` is used here.
+async fn update_version(
+    State(s): State<Arc<KvState>>,
+    Path((vault, name, version)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let body: Value = serde_json::from_str(&body).unwrap();
+    let b = base(&headers, &vault);
+    let mut keys = s.keys.lock().unwrap();
+    let Some(k) = keys.get_mut(&name) else {
+        return err(404, "KeyNotFound");
+    };
+    let managed = k.managed;
+    let Some(v) = k.versions.iter_mut().find(|v| v.version == version) else {
+        return err(404, "KeyNotFound");
+    };
+    if let Some(e) = body["attributes"]["enabled"].as_bool() {
+        v.enabled = e;
+    }
+    json_response(StatusCode::OK, bundle(&b, &name, v, managed))
 }
 
 async fn create(
@@ -188,8 +253,14 @@ async fn create(
         return err(409, "Conflict");
     }
     let kty = body["kty"].as_str().unwrap_or("RSA").to_owned();
+    // A Standard vault refuses HSM keys with `400 BadParameter` and a
+    // message about the vault's SKU (REST reference, Keys, Create Key, as
+    // read by the review; to confirm on a real vault).
     if kty.ends_with("-HSM") && !*s.premium.lock().unwrap() {
-        return err(400, "BadParameter");
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"error": {"code": "BadParameter", "message": "Key type RSA-HSM is not supported by this vault's SKU. Premium SKU is required."}}),
+        );
     }
     s.key_creates.lock().unwrap().push(body.clone());
     let ops = body["key_ops"]
@@ -220,7 +291,7 @@ async fn create(
     let keys = s.keys.lock().unwrap();
     json_response(
         StatusCode::OK,
-        bundle(&b, &name, keys[&name].versions.last().unwrap()),
+        bundle(&b, &name, keys[&name].versions.last().unwrap(), false),
     )
 }
 
@@ -242,7 +313,7 @@ async fn rotate(
     let keys = s.keys.lock().unwrap();
     json_response(
         StatusCode::OK,
-        bundle(&b, &name, keys[&name].versions.last().unwrap()),
+        bundle(&b, &name, keys[&name].versions.last().unwrap(), false),
     )
 }
 
@@ -262,6 +333,12 @@ async fn put_policy(
     body: String,
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
+    if let Some(m) = rotation_policy_problem(&body) {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"error": {"code": "BadParameter", "message": m}}),
+        );
+    }
     match s.keys.lock().unwrap().get_mut(&name) {
         Some(k) => {
             k.rotation = body.clone();
@@ -269,6 +346,33 @@ async fn put_policy(
         }
         None => err(404, "KeyNotFound"),
     }
+}
+
+fn days(v: &Value) -> Option<u32> {
+    let s = v.as_str()?;
+    s.strip_prefix('P')?.strip_suffix('D')?.parse().ok()
+}
+
+/// "Update Key Rotation Policy" refuses out-of-range values with 400
+/// (REST reference and "Configure key auto-rotation"): expiry at least 28
+/// days, and a rotate trigger at least 7 days before expiry. The mock only
+/// checks day durations.
+fn rotation_policy_problem(p: &Value) -> Option<String> {
+    let expiry = days(&p["attributes"]["expiryTime"]);
+    if expiry.is_some_and(|e| e < 28) {
+        return Some("Expiry time should be at least 28 days.".into());
+    }
+    for a in p["lifetimeActions"].as_array().into_iter().flatten() {
+        if a["action"]["type"] == "Rotate"
+            && let (Some(r), Some(e)) = (days(&a["trigger"]["timeAfterCreate"]), expiry)
+            && r + 7 > e
+        {
+            return Some(
+                "The time after create must be at least 7 days less than the expiry time.".into(),
+            );
+        }
+    }
+    None
 }
 
 async fn delete(
@@ -339,5 +443,28 @@ async fn purge(
     match s.deleted_keys.lock().unwrap().remove(&name) {
         Some(_) => axum::response::IntoResponse::into_response(StatusCode::NO_CONTENT),
         None => err(404, "KeyNotFound"),
+    }
+}
+
+impl KvState {
+    /// The key Key Vault makes behind each certificate version, with the
+    /// same name and version, marked `managed: true` (REST reference, Keys,
+    /// Get Key: "managed: True if the key's lifetime is managed by key
+    /// vault. If this is a key backing a certificate, then managed will be
+    /// true.").
+    pub fn add_managed_key(&self, name: &str, version: &str) {
+        let mut keys = self.keys.lock().unwrap();
+        let k = keys.entry(name.into()).or_default();
+        k.managed = true;
+        k.versions.push(KeyVersion {
+            version: version.into(),
+            kty: "RSA".into(),
+            crv: None,
+            ops: vec!["sign".into(), "verify".into()],
+            enabled: true,
+            created: super::keyvault::BASE_TIME,
+            exp: None,
+            tags: BTreeMap::new(),
+        });
     }
 }

@@ -63,8 +63,20 @@ async fn load_versions(
 ) -> Result<(String, Shell, String, Vec<SecretItem>), Halt> {
     let (vault, shell) = current_vault(session, shell)?;
     let (name, shell) = checked_name(name, shell)?;
-    match api(state, session, &vault).versions(&name).await {
-        Ok(v) if !v.is_empty() => Ok((vault, shell, name, v)),
+    let (shell, v) = fetch_versions(state, session, shell, &vault, &name).await?;
+    Ok((vault, shell, name, v))
+}
+
+/// Every version, newest first. An empty list is "not found".
+async fn fetch_versions(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<(Shell, Vec<SecretItem>), Halt> {
+    match api(state, session, vault).versions(name).await {
+        Ok(v) if !v.is_empty() => Ok((shell, v)),
         Ok(_) => Err(PageError::new(shell, Problem::not_found()).into()),
         Err(err) => Err(azure_problem(
             shell,
@@ -106,6 +118,14 @@ struct RollbackPage {
     name: String,
     target: VersionRow,
     current: VersionRow,
+    /// The current expiry has passed, so the new version won't have one.
+    expiry_dropped: bool,
+}
+
+/// The current version's expiry, if it hasn't passed. A new version with
+/// an expiry in the past couldn't be read, so a passed one isn't copied.
+fn carried_expiry(current: &SecretItem, now: i64) -> Option<i64> {
+    current.attributes.expires.filter(|e| *e > now)
 }
 
 #[derive(Deserialize)]
@@ -138,6 +158,17 @@ fn pick<'a>(
             .returning_to(&format!("/secrets/{name}/versions")),
         )
         .into()),
+        // Key Vault won't hand out a disabled version's value.
+        Some(i) if !items[i].attributes.is_enabled() => Err(PageError::new(
+            shell,
+            Problem::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "That version is disabled",
+                "Key Vault won't read the value of a disabled version, so Keyring can't copy it. Pick an enabled version.",
+            )
+            .returning_to(&format!("/secrets/{name}/versions")),
+        )
+        .into()),
         Some(i) => Ok((shell, &items[i])),
         None => Err(PageError::new(shell, Problem::not_found()).into()),
     }
@@ -155,6 +186,8 @@ pub async fn confirm(
     Ok(render(&RollbackPage {
         target: VersionRow::from_item(target, false),
         current: VersionRow::from_item(&items[0], true),
+        expiry_dropped: items[0].attributes.expires.is_some()
+            && carried_expiry(&items[0], now_ts()).is_none(),
         shell,
         vault,
         name,
@@ -177,10 +210,12 @@ pub async fn rollback(
     Path(name): Path<String>,
     Form(f): Form<RollbackForm>,
 ) -> PageResult {
-    let (vault, shell, name, items) = load_versions(&state, &session, shell, &name).await?;
+    let (vault, shell) = current_vault(&session, shell)?;
+    let (name, shell) = checked_name(&name, shell)?;
     if !session.0.csrf_matches(&f.csrf) {
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
+    let (shell, items) = fetch_versions(&state, &session, shell, &vault, &name).await?;
     if items[0].managed.unwrap_or(false) {
         return Err(crate::routes::secrets::reveal::managed_problem(
             shell, &name,
@@ -193,16 +228,17 @@ pub async fn rollback(
         Ok(b) => b,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &back)),
     };
-    // The new version takes the old value and content type. Dates and tags
-    // come from the current version, so rolling back a value doesn't also
-    // bring back an old expiry date.
+    // The new version takes the old value and content type. Enabled,
+    // dates and tags come from the current version, so rolling back a
+    // value doesn't also turn a disabled secret back on or bring back an
+    // old expiry date. The confirm page says so.
     let current = &items[0].attributes;
     let body = SetSecret {
         value: old.value,
         content_type: old.item.content_type.clone(),
         attributes: crate::azure::secrets::Attributes {
-            enabled: Some(true),
-            expires: current.expires.filter(|e| *e > now_ts()),
+            enabled: Some(current.is_enabled()),
+            expires: carried_expiry(&items[0], now_ts()),
             not_before: current.not_before,
             ..Default::default()
         },
@@ -215,6 +251,7 @@ pub async fn rollback(
                 vault = %vault,
                 secret = %name,
                 from_version = %target.version(),
+                version = %new.version(),
                 "secret rolled back"
             );
             let short: String = target.version().chars().take(8).collect();
