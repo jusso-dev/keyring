@@ -9,10 +9,9 @@ use serde::Deserialize;
 use crate::auth::CurrentSession;
 use crate::generator::{self, KeyFormat, PasswordOptions};
 use crate::routes::assets::render;
-use crate::routes::error::PageResult;
+use crate::routes::error::{PageError, PageResult, Problem};
 use crate::routes::secrets::reveal::{CLEAR_AFTER_SECS, no_store};
 use crate::routes::shell::{Section, Shell};
-use crate::routes::vault_ctx::check_csrf;
 use crate::secret::Secret;
 
 #[derive(Deserialize, Clone)]
@@ -167,7 +166,11 @@ pub struct ForSecret {
 }
 
 pub async fn generate(session: CurrentSession, shell: Shell, Form(f): Form<GenForm>) -> PageResult {
-    let shell = check_csrf(&session, &f.csrf, shell.at(Section::Generator))?;
+    // Not tied to a vault, so a token from any vault is fine.
+    let shell = shell.at(Section::Generator);
+    if !session.0.csrf_matches_any(&f.csrf) {
+        return Err(PageError::new(shell, Problem::stale_form()).into());
+    }
     let (value, error) = match make(&f) {
         Ok(v) => (Some(v), None),
         Err(e) => (None, Some(e)),

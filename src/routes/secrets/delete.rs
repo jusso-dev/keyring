@@ -17,7 +17,7 @@ use crate::azure::secrets::{DeletedSecretItem, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::confirm::{ConfirmForm, ConfirmView};
-use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
+use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::lifecycle::{self, Kind, Recovery};
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
@@ -136,6 +136,7 @@ pub async fn delete(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = lifecycle::verify(
         &session,
+        &vault,
         &form,
         &name,
         shell,
@@ -244,9 +245,7 @@ pub async fn recover(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    if !session.0.csrf_matches(&form.csrf) {
-        return Err(PageError::new(shell, Problem::stale_form()).into());
-    }
+    let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
     match api(&state, &session, &vault).recover(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret recovered");
@@ -291,6 +290,7 @@ pub async fn purge(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = lifecycle::verify(
         &session,
+        &vault,
         &form,
         &name,
         shell,

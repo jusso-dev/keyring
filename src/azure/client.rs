@@ -137,7 +137,8 @@ impl AzureClient {
         url: &str,
     ) -> Result<T, AzureError> {
         let body = self.send(session, resource, Method::GET, url, None).await?;
-        serde_json::from_slice(&body).map_err(|_| AzureError::Unreadable)
+        serde_json::from_slice(&body)
+            .map_err(|_| unreadable(resource, &method_path(&Method::GET, url)))
     }
 
     /// Send a JSON body (POST, PUT, PATCH) and parse the JSON reply.
@@ -150,10 +151,11 @@ impl AzureClient {
         body: &impl serde::Serialize,
     ) -> Result<T, AzureError> {
         let body = serde_json::to_vec(body).map_err(|_| AzureError::Unreadable)?;
+        let what = method_path(&method, url);
         let reply = self
             .send(session, resource, method, url, Some(body))
             .await?;
-        serde_json::from_slice(&reply).map_err(|_| AzureError::Unreadable)
+        serde_json::from_slice(&reply).map_err(|_| unreadable(resource, &what))
     }
 
     /// Make a call as the user and return the raw body of a 2xx reply. If
@@ -181,7 +183,10 @@ impl AzureClient {
             if let Some(b) = &body {
                 req = req.header(CONTENT_TYPE, "application/json").body(b.clone());
             }
-            let res = req.send().await.map_err(HttpError::from)?;
+            let res = req
+                .send()
+                .await
+                .map_err(|e| network(resource, &method, url, e))?;
             let status = res.status();
             if status == reqwest::StatusCode::UNAUTHORIZED && !retried {
                 session.azure_tokens.forget(resource);
@@ -200,7 +205,11 @@ impl AzureClient {
                 tokio::time::sleep(wait).await;
                 continue;
             }
-            let bytes = res.bytes().await.map_err(HttpError::from)?.to_vec();
+            let bytes = res
+                .bytes()
+                .await
+                .map_err(|e| network(resource, &method, url, e))?
+                .to_vec();
             if status.is_success() {
                 return Ok(bytes);
             }
@@ -214,6 +223,27 @@ impl AzureClient {
             });
         }
     }
+}
+
+/// `GET /secrets/x`: the method and the URL's path, never its query string.
+fn method_path(method: &Method, url: &str) -> String {
+    let path = reqwest::Url::parse(url)
+        .map(|u| format!("{}{}", u.host_str().unwrap_or_default(), u.path()))
+        .unwrap_or_default();
+    format!("{method} {path}")
+}
+
+/// Log a failed connection with its cause, and turn it into an error.
+fn network(resource: Resource, method: &Method, url: &str, err: reqwest::Error) -> AzureError {
+    let err = HttpError::from(err);
+    tracing::warn!(resource = ?resource, request = %method_path(method, url), error = %err, "could not reach Azure");
+    AzureError::from(err)
+}
+
+/// Log an answer Keyring couldn't read, and turn it into an error.
+fn unreadable(resource: Resource, what: &str) -> AzureError {
+    tracing::warn!(resource = ?resource, request = %what, "unreadable answer from Azure");
+    AzureError::Unreadable
 }
 
 /// Throttled calls are tried again at most this many times.
@@ -243,7 +273,11 @@ pub fn quota_resets_after(header: Option<&reqwest::header::HeaderValue>) -> std:
         .and_then(|v| {
             let mut parts = v.trim().split(':').map(|p| p.parse::<u64>().ok());
             let (h, m, s) = (parts.next()??, parts.next()??, parts.next()??);
-            parts.next().is_none().then_some(h * 3600 + m * 60 + s)
+            let secs = h
+                .checked_mul(3600)?
+                .checked_add(m.checked_mul(60)?)?
+                .checked_add(s)?;
+            parts.next().is_none().then_some(secs)
         })
         .unwrap_or(0);
     std::time::Duration::from_secs(secs)
@@ -265,9 +299,23 @@ mod tests {
             quota_resets_after(Some(&h)),
             std::time::Duration::from_secs(3723)
         );
+        // Too big to add up: treated as unreadable, not a panic.
+        let huge = reqwest::header::HeaderValue::from_static("18446744073709551615:00:00");
+        assert_eq!(quota_resets_after(Some(&huge)), std::time::Duration::ZERO);
         let bad = reqwest::header::HeaderValue::from_static("soon");
         assert_eq!(quota_resets_after(Some(&bad)), std::time::Duration::ZERO);
         assert_eq!(quota_resets_after(None), std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn logged_requests_have_no_query_string() {
+        assert_eq!(
+            method_path(
+                &Method::GET,
+                "https://kv-prod.vault.azure.net/secrets/db?api-version=7.4&x=y"
+            ),
+            "GET kv-prod.vault.azure.net/secrets/db"
+        );
     }
 
     #[test]

@@ -26,10 +26,11 @@ pub fn csp(authority_host: &str) -> String {
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let (method, path) = (req.method().clone(), req.uri().path().to_owned());
     let mut res = match tokio::time::timeout(REQUEST_TIMEOUT, next.run(req)).await {
         Ok(res) => res,
         Err(_) => {
-            tracing::warn!("request timed out");
+            tracing::warn!(%method, %path, "request timed out");
             (
                 axum::http::StatusCode::GATEWAY_TIMEOUT,
                 crate::routes::assets::plain_page(

@@ -296,7 +296,7 @@ pub async fn create(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let f = CreateForm::from_pairs(pairs);
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match build(&f, now_ts()) {
         Ok(ok) => ok,
         Err(errors) => return Ok(create_page(shell, vault, f, errors)),
@@ -384,7 +384,7 @@ pub async fn rotate(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     match api(&state, &session, &vault).rotate(&name).await {
         Ok(b) => {
@@ -682,7 +682,7 @@ pub async fn save_rotation(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let keys = api(&state, &session, &vault);
     let path = format!("/keys/{name}/rotation");
