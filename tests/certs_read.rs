@@ -69,7 +69,7 @@ async fn empty_and_forbidden() {
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
     let (status, html) = w.page("/certificates").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(html.contains("Key Vault Certificate User role on this vault"));
+    assert!(html.contains("Key Vault Reader role on this vault"));
 }
 
 #[tokio::test]
