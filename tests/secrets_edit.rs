@@ -448,6 +448,25 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
 }
 
 #[tokio::test]
+async fn a_full_size_value_of_line_breaks_gets_the_form_not_a_413() {
+    let w = support::world().await;
+    // The browser sends each line break as CRLF, URL-encoded as %0D%0A:
+    // six bytes on the wire for each byte stored.
+    let value = "\r\n".repeat(25 * 1024);
+    let res = w
+        .post(
+            "/secrets/new",
+            &[("name", "breaks"), ("value", &value), ("enabled", "on")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        w.kv.state.current("breaks").unwrap().value,
+        "\n".repeat(25 * 1024)
+    );
+}
+
+#[tokio::test]
 async fn an_oversized_body_gets_the_error_page() {
     let w = support::world().await;
     let big = "\u{20ac}".repeat(64 * 1024);

@@ -34,10 +34,12 @@ use crate::routes::shell::Shell;
 pub const MAX_FORM_BYTES: usize = 64 * 1024;
 
 /// Largest body for the two forms that carry a secret value. Values are
-/// capped at 25 KB, but URL encoding turns each non-ASCII or reserved byte
-/// into three, and the tags can grow the same way. 128 KB leaves room for
-/// all of it, so a valid value gets the form's own message, not a 413.
-pub const MAX_VALUE_FORM_BYTES: usize = 128 * 1024;
+/// capped at 25 KB once line breaks are LF. The worst case on the wire is a
+/// value of line breaks: the browser sends each as CRLF, encoded `%0D%0A`,
+/// so six bytes for every byte stored (150 KB). Other bytes take at most
+/// three. 256 KB leaves room for that and the other fields, so a valid
+/// value always gets the form's own message, not a 413.
+pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 
 pub fn router(state: AppState) -> Router<AppState> {
     // Everything here needs a signed-in session. New pages go in this list.
