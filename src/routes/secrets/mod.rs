@@ -245,7 +245,8 @@ struct DetailPage {
     created: String,
     updated: String,
     not_before: String,
-    recovery_level: String,
+    /// What happens if it's deleted, in a sentence.
+    recovery: String,
 }
 
 pub async fn detail(
@@ -270,7 +271,11 @@ pub async fn detail(
         created: a.created.map(dates::format_datetime).unwrap_or_default(),
         updated: a.updated.map(dates::format_datetime).unwrap_or_default(),
         not_before: a.not_before.map(dates::format_datetime).unwrap_or_default(),
-        recovery_level: a.recovery_level.clone().unwrap_or_default(),
+        recovery: crate::routes::lifecycle::Recovery::new(
+            a.recovery_level.as_deref(),
+            a.recoverable_days,
+        )
+        .sentence(crate::routes::lifecycle::Kind::Secret),
         row: SecretRow::from_item(&item, now),
         shell,
         vault,

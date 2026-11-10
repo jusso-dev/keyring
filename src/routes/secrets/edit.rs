@@ -205,8 +205,11 @@ pub async fn create(
     let api = api(&state, &session, &vault);
 
     // Setting a value on an existing name would silently add a version.
-    // Check first so "Add" never overwrites.
+    // Check first so "Add" never overwrites. A name is taken when it has at
+    // least one version. Key Vault answers an unknown name with an empty
+    // list, and Keyring also takes a 404 to mean the name is free.
     match api.versions(&name).await {
+        Ok(v) if v.is_empty() => {}
         Ok(_) => {
             let errors = vec![FieldError {
                 field: "name",
