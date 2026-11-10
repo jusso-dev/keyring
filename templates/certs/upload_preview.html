@@ -44,14 +44,14 @@
     <dt>Private key can be downloaded later</dt><dd>{% if exportable %}Yes{% else %}No{% endif %}</dd>
     <dt>Tags</dt><dd>{{ ui::tags(tags) }}</dd>
   </dl>
-  <form method="post" action="/certificates/upload/confirm">
+  <form method="post" action="/certificates/-/upload/confirm">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <div class="actions">
       <button type="submit">{% if existing.is_some() %}Upload as a new version{% else %}Upload to {{ vault }}{% endif %}</button>
     </div>
   </form>
-  <form method="post" action="/certificates/upload/cancel">
+  <form method="post" action="/certificates/-/upload/cancel">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <button type="submit" class="button-secondary">Start again</button>
   </form>

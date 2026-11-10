@@ -421,9 +421,9 @@ async fn sign_in_page_states_the_time_limit() {
 #[tokio::test]
 async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     let h = Harness::new().await;
-    let req = Request::post("/secrets/new")
+    let req = Request::post("/secrets/-/new")
         .header("origin", "http://localhost:3000")
-        .header("referer", "http://localhost:3000/secrets/new?for=x")
+        .header("referer", "http://localhost:3000/secrets/-/new?for=x")
         .header(COOKIE, "keyring_session=gone")
         .header("content-type", "application/x-www-form-urlencoded")
         .body(Body::from("csrf=x&name=db&value=hunter2"))
@@ -433,7 +433,7 @@ async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     let to = location(&res).to_owned();
     assert_eq!(
         to,
-        "/auth/sign-in?return_to=%2Fsecrets%2Fnew%3Ffor%3Dx&reason=unsaved"
+        "/auth/sign-in?return_to=%2Fsecrets%2F-%2Fnew%3Ffor%3Dx&reason=unsaved"
     );
     // The value is never carried across sign-in.
     assert!(!to.contains("hunter2"));
@@ -461,7 +461,7 @@ async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     let res = h
         .get(&format!("/auth/callback?code=abc&state={state}"), &[login])
         .await;
-    assert_eq!(location(&res), "/secrets/new?for=x");
+    assert_eq!(location(&res), "/secrets/-/new?for=x");
     let cookies = set_cookies(&res);
     let session = cookie_pair(
         cookies
@@ -479,7 +479,7 @@ async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     assert!(html.contains("Nothing changed. Enter it again."), "{html}");
 
     // A cross-site referer is not followed.
-    let req = Request::post("/secrets/new")
+    let req = Request::post("/secrets/-/new")
         .header("origin", "http://localhost:3000")
         .header("referer", "https://evil.example/phish")
         .header(COOKIE, "keyring_session=gone")
@@ -764,12 +764,14 @@ async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
 async fn forms_using_the_shared_check_name_the_vault_they_were_for() {
     let mut w = support::world().await;
     seed_vaults(&w);
-    let (_, html) = w.page("/keys/new").await;
+    let (_, html) = w.page("/keys/-/new").await;
     let form_token = support::hidden_value(&html, "csrf").unwrap();
     let res = w.post("/vaults/select", &[("name", "kv-other")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     w.csrf = form_token;
-    let res = w.post("/keys/new", &[("name", "k1"), ("kty", "RSA")]).await;
+    let res = w
+        .post("/keys/-/new", &[("name", "k1"), ("kty", "RSA")])
+        .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     let html = support::body_text(res).await;
     assert!(html.contains("This page was for kv-test"), "{html}");

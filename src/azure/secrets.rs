@@ -10,12 +10,11 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::session::Session;
+use crate::azure::paging::{MAX_RESULTS, id_part};
 use crate::azure::{AzureClient, AzureError, Resource};
 use crate::secret::Secret;
 
 pub const API_VERSION: &str = "7.5";
-/// Page size for list calls. 25 is Key Vault's maximum.
-pub const MAX_RESULTS: u32 = 25;
 
 /// Unix seconds, as Key Vault sends them.
 pub type Timestamp = i64;
@@ -95,24 +94,17 @@ pub struct SecretItem {
 impl SecretItem {
     /// Secret name from its ID, `https://<vault>/secrets/<name>[/<version>]`.
     pub fn name(&self) -> &str {
-        id_part(&self.id, 0)
+        id_part(&self.id, "secrets", 0)
     }
 
     pub fn version(&self) -> &str {
-        id_part(&self.id, 1)
+        id_part(&self.id, "secrets", 1)
     }
 
     pub fn tags(&self) -> &BTreeMap<String, String> {
         static EMPTY: BTreeMap<String, String> = BTreeMap::new();
         self.tags.as_ref().unwrap_or(&EMPTY)
     }
-}
-
-fn id_part(id: &str, idx: usize) -> &str {
-    id.split_once("/secrets/")
-        .map(|(_, rest)| rest)
-        .and_then(|rest| rest.split('/').nth(idx))
-        .unwrap_or_default()
 }
 
 /// A secret with its value. Only built when the value was asked for.
@@ -179,7 +171,7 @@ pub struct DeletedSecretItem {
 
 impl DeletedSecretItem {
     pub fn name(&self) -> &str {
-        id_part(&self.id, 0)
+        id_part(&self.id, "secrets", 0)
     }
 }
 

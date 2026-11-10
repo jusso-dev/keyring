@@ -17,7 +17,7 @@
 {% endif %}
 {% call ui::optional_note() %}{% endcall %}
 
-<form method="post" action="/certificates/upload" enctype="multipart/form-data" class="stacked" novalidate>
+<form method="post" action="/certificates/-/upload" enctype="multipart/form-data" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
 
   {% let field_name = "file" %}

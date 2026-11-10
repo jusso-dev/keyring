@@ -10,7 +10,7 @@ use crate::auth::CurrentSession;
 use crate::generator::{self, KeyFormat, PasswordOptions};
 use crate::routes::assets::render;
 use crate::routes::error::{PageError, PageResult, Problem};
-use crate::routes::secrets::form::FieldError;
+use crate::routes::forms::FieldErrors;
 use crate::routes::secrets::reveal::{CLEAR_AFTER_SECS, no_store};
 use crate::routes::shell::{Section, Shell};
 use crate::secret::Secret;
@@ -72,7 +72,7 @@ struct GenPage {
     form: GenForm,
     value: Option<Secret>,
     /// What stopped a value being made, tied to the field at fault.
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
     clear_after: u32,
 }
 
@@ -84,21 +84,15 @@ impl GenPage {
         self.form.kind == kind
     }
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
 }
 
-fn field_err(field: &'static str, message: impl Into<String>) -> FieldError {
-    FieldError {
-        field,
-        message: message.into(),
-    }
+fn field_err(field: &'static str, message: impl Into<String>) -> FieldErrors {
+    FieldErrors::one(field, message)
 }
 
-fn make(f: &GenForm) -> Result<Secret, FieldError> {
+fn make(f: &GenForm) -> Result<Secret, FieldErrors> {
     match f.kind.as_str() {
         "guid" => Ok(Secret::new(generator::guid())),
         "api_key" => {
@@ -173,7 +167,7 @@ pub async fn page(
         shell: shell.at(Section::Generator),
         form,
         value: None,
-        errors: Vec::new(),
+        errors: FieldErrors::new(),
         clear_after: CLEAR_AFTER_SECS,
     })
     .into_response())
@@ -192,8 +186,8 @@ pub async fn generate(session: CurrentSession, shell: Shell, Form(f): Form<GenFo
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
     let (value, errors) = match make(&f) {
-        Ok(v) => (Some(v), Vec::new()),
-        Err(e) => (None, vec![e]),
+        Ok(v) => (Some(v), FieldErrors::new()),
+        Err(e) => (None, e),
     };
     Ok(no_store(
         render(&GenPage {

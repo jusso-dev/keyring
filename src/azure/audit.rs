@@ -190,10 +190,6 @@ pub struct AuditQuery {
 #[derive(Debug, PartialEq, Eq)]
 pub struct BadFilter(pub &'static str);
 
-fn is_object_name(s: &str) -> bool {
-    (1..=127).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-
 /// Letters, digits and `@ . _ -` only: enough for UPNs, emails and GUIDs.
 fn is_person(s: &str) -> bool {
     (1..=256).contains(&s.len())
@@ -213,7 +209,7 @@ impl AuditQuery {
             return Err(BadFilter("vault"));
         }
         let item = item.trim();
-        if !item.is_empty() && !is_object_name(item) {
+        if !item.is_empty() && !crate::routes::vault_ctx::is_valid_object_name(item) {
             return Err(BadFilter("item"));
         }
         let operation = operation.trim();

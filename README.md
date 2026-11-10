@@ -6,15 +6,15 @@ It's a thin layer. Keyring stores nothing. Every call to Key Vault is made as th
 
 Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
 
-> Status: early development. Every planned feature is built and tested against mock Azure services, but it hasn't yet been run against a real tenant. Work is tracked in [issues](https://github.com/yumaitau/keyring/issues).
+> Status: early development. Every planned feature is built and tested against mock Azure services, but it hasn't yet been run against a real tenant. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists what that first run has to confirm. Work is tracked in [issues](https://github.com/yumaitau/keyring/issues).
 
 ## What it does
 
 - **Sign in with Entra ID** (OpenID Connect).
 - **Find your vaults** across every subscription you can see, using Azure Resource Graph.
-- **Secrets**: list, search, reveal and copy (the clipboard clears itself), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
-- **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, see what's expiring.
-- **Keys**: list, create, rotate and view. Raw key material is never exported.
+- **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
+- **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
+- **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item.
@@ -98,15 +98,16 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | Permanently delete secrets (only if `KEYRING_ALLOW_PURGE=true`) | Key Vault Secrets Officer | Vault |
 | List and view certificates, download `.cer` | Key Vault Reader | Vault |
 | Download a certificate with its private key | Key Vault Certificate User (this can also read secret values, see below) | Vault, or just that certificate |
-| Upload, create, delete and recover certificates | Key Vault Certificates Officer | Vault |
+| Upload, create, enable or disable, delete and recover certificates | Key Vault Certificates Officer | Vault |
+| List the vault's certificate issuers (to offer them when creating a certificate) | Key Vault Certificates Officer (without it, only self-signed is offered) | Vault |
 | List and view keys, copy public keys | Key Vault Reader (or Key Vault Crypto User) | Vault |
-| Create, rotate, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
+| Create, rotate, enable or disable, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
 | See where a vault sends its logs (audit view) | Reader | Vault or resource group |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
 
 These roles apply to the whole vault unless you assign them on a single item. **Key Vault Certificate User and Key Vault Secrets User can both read secret values.** Certificate User needs to, because a certificate's private key is kept in its backing secret, but at vault scope it can read every secret in the vault. Where that matters, assign it on the one certificate (its scope is `<vault ID>/certificates/<name>`, or `<vault ID>/secrets/<name>` for the backing secret) instead of the vault.
 
-For access-policy vaults, the matching permissions are: secrets Get and List for reading, plus Set, Delete, Recover and Purge to change them; certificates Get and List, plus Create, Import, Update, Delete, Recover and Purge; keys Get and List, plus Create, Rotate, Update, Delete, Recover and Purge (and Get rotation policy, Set rotation policy).
+For access-policy vaults, the matching permissions are: secrets Get and List for reading, plus Set, Delete, Recover and Purge to change them; certificates Get and List, plus Create, Import, Update, Delete, Recover and Purge (and List Issuers); keys Get and List, plus Create, Rotate, Update, Delete, Recover and Purge (and Get rotation policy, Set rotation policy).
 
 Role changes can take a few minutes to apply.
 
@@ -120,15 +121,15 @@ Set these as environment variables. Don't commit them.
 | `ENTRA_CLIENT_ID` | Application (client) ID, a GUID |
 | `ENTRA_CLIENT_SECRET` | The client secret value from step 2 |
 | `APP_BASE_URL` | Public URL of this app, used for redirects and to check that form posts come from Keyring. Must be `https://` except for `http://localhost`. Scheme, host and port only: Keyring must be at the root of its host, not under a path like `/keyring` |
-| `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
+| `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. Keyring won't start if it's shorter, still the `replace-me` placeholder, or an unresolved Key Vault reference. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
 | `KEYRING_ALLOW_PURGE` | Optional. `true` to allow permanent deletes. Off by default |
 | `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
-| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace` |
+| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting |
 
 Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
-Sessions live in memory, so restarting Keyring signs everyone out. If you run more than one copy, use sticky sessions. A session ends after one hour without a request, or 12 hours after sign-in. With JavaScript on, the page warns a few minutes before the hour runs out and offers to keep you signed in.
+Sessions live in memory, so restarting Keyring signs everyone out. A request that hits a bug (a panic) gets an error page; other people's sessions carry on. If you run more than one copy, use sticky sessions. A session ends after one hour without a request, or 12 hours after sign-in. With JavaScript on, the page warns a few minutes before the hour runs out and offers to keep you signed in.
 
 ### Behind a proxy
 
@@ -204,7 +205,7 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 | What you see | What to do |
 | --- | --- |
 | `Keyring can't start: missing environment variables` | The variables weren't loaded. With `cargo run`, run `set -a; . ./.env; set +a` in the same shell first |
-| `SESSION_SECRET is not valid` | Use at least 32 characters, for example `openssl rand -base64 48` |
+| `SESSION_SECRET is not valid` | Use at least 32 random characters, for example `openssl rand -base64 48`. The `replace-me` placeholder is refused |
 | Entra says the redirect URI doesn't match (AADSTS50011) | Add exactly `APP_BASE_URL` + `/auth/callback` as a **Web** redirect URI. Check `http` vs `https`, the port and any trailing slash |
 | Entra says the client secret is wrong (AADSTS7000215) | Use the secret's **Value**, not its Secret ID, and check it hasn't expired |
 | Entra says the client secret has expired (AADSTS7000222) | Make a new one and update `ENTRA_CLIENT_SECRET`. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
@@ -220,12 +221,20 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 More, including other AADSTS codes, in [docs/troubleshooting.md](docs/troubleshooting.md).
 
+## Certificate issuers
+
+Keyring offers a short list of issuers when you create a certificate: **Self** (self-signed) and any issuer already set up on the vault, read from the vault's issuer list. Keyring refuses Key Vault's `Unknown` issuer (a request you have signed somewhere else, then merge back in), because it has no way to download the signing request or merge the signed certificate. Do those, and set up issuers, in the Azure portal or with the Azure CLI.
+
+While a request waits for its issuer, the certificate's page shows it as pending and offers **Cancel this request**, which asks Key Vault to cancel it and then deletes it, so the name can be used again.
+
 ## What Keyring doesn't support
 
 - **Sovereign clouds.** Keyring works with the Azure public cloud only. The Entra ID, Resource Manager, Key Vault (`vault.azure.net`) and Log Analytics hosts are fixed in the code, so Azure Government and Azure China won't work.
 - **Managed HSM** (`managedhsm.azure.net`). Only Key Vault vaults.
 - **More than one tenant.** One Keyring serves one Entra tenant.
 - **Hosting under a path.** Keyring must be at the root of its host.
+- **Certificates signed outside Key Vault.** No `Unknown` issuer, signing request download or merge. See [Certificate issuers](#certificate-issuers).
+- **Managing issuers.** Set them up in the Azure portal.
 
 ## Deploying to Azure
 
@@ -235,6 +244,7 @@ Bicep templates for App Service and Container Apps are in `infra/`, with optiona
 - [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
 - [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
+- [docs/real-vault-checklist.md](docs/real-vault-checklist.md): what to check on the first run against a real tenant and vault
 
 ## Accessibility
 

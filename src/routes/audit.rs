@@ -16,7 +16,7 @@ use crate::azure::vaults;
 use crate::expiry::csv_field;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
-use crate::routes::secrets::form::FieldError;
+use crate::routes::forms::{FieldError, FieldErrors};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx;
@@ -161,15 +161,12 @@ struct AuditPage {
     capped: bool,
     csv_url: String,
     /// A filter that isn't valid, tied to its field.
-    errors: Vec<FieldError>,
+    errors: FieldErrors,
 }
 
 impl AuditPage {
     fn error_for(&self, field: &str) -> Option<&str> {
-        self.errors
-            .iter()
-            .find(|e| e.field == field)
-            .map(|e| e.message.as_str())
+        self.errors.error_for(field)
     }
 
     /// Link back to the item this view is filtered to, if we know its kind.
@@ -320,7 +317,7 @@ fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
         unavailable: None,
         partial: None,
         capped: false,
-        errors: Vec::new(),
+        errors: FieldErrors::new(),
     }
 }
 
@@ -335,7 +332,7 @@ pub async fn page(
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
         Err(e) => {
-            page.errors.push(e);
+            page.errors.push(e.field, e.message);
             return Ok((StatusCode::UNPROCESSABLE_ENTITY, render(&page)).into_response());
         }
     };

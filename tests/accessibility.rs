@@ -206,7 +206,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/".to_owned(),
         "/vaults".into(),
         "/secrets".into(),
-        "/secrets/new".into(),
+        "/secrets/-/new".into(),
         "/secrets/db-password".into(),
         "/secrets/db-password/value".into(),
         "/secrets/db-password/edit".into(),
@@ -214,24 +214,24 @@ async fn pages_have_labels_headings_and_landmarks() {
         format!("/secrets/db-password/rollback?version={v1}"),
         "/secrets/db-password/delete".into(),
         "/secrets/db-password/disable".into(),
-        "/secrets/deleted".into(),
-        "/secrets/deleted/old-one".into(),
+        "/secrets/-/deleted".into(),
+        "/secrets/-/deleted/old-one".into(),
         "/certificates".into(),
-        "/certificates/new".into(),
-        "/certificates/upload".into(),
+        "/certificates/-/new".into(),
+        "/certificates/-/upload".into(),
         "/certificates/web-tls".into(),
         "/certificates/web-tls/download-key".into(),
         "/certificates/web-tls/delete".into(),
         "/certificates/web-tls/disable".into(),
-        "/certificates/deleted".into(),
+        "/certificates/-/deleted".into(),
         "/keys".into(),
-        "/keys/new".into(),
+        "/keys/-/new".into(),
         "/keys/app-key".into(),
         "/keys/app-key/rotate".into(),
         "/keys/app-key/rotation".into(),
         "/keys/app-key/delete".into(),
         "/keys/app-key/disable".into(),
-        "/keys/deleted".into(),
+        "/keys/-/deleted".into(),
         "/expiry".into(),
         "/generator".into(),
         "/audit".into(),
@@ -256,7 +256,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
     let w = support::world().await;
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
         (
-            "/secrets/new",
+            "/secrets/-/new",
             vec![
                 ("name", "bad name"),
                 ("value", ""),
@@ -264,13 +264,13 @@ async fn error_summaries_take_focus_and_link_to_fields() {
                 ("expires", "2020-01-01"),
             ],
         ),
-        ("/keys/new", vec![("name", "k"), ("expires", "nope")]),
+        ("/keys/-/new", vec![("name", "k"), ("expires", "nope")]),
         (
-            "/certificates/new",
+            "/certificates/-/new",
             vec![("name", "bad name"), ("validity_months", "0")],
         ),
         (
-            "/keys/new",
+            "/keys/-/new",
             vec![
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
@@ -278,7 +278,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
             ],
         ),
         (
-            "/certificates/new",
+            "/certificates/-/new",
             vec![
                 ("name", "c"),
                 ("common_name", "a.example.com"),
@@ -452,7 +452,7 @@ async fn disable_asks_first_and_says_what_breaks() {
 #[tokio::test]
 async fn pfx_password_isnt_filled_from_the_sign_in() {
     let w = support::world().await;
-    let (_, html) = w.page("/certificates/upload").await;
+    let (_, html) = w.page("/certificates/-/upload").await;
     let tag = tags(&html, "<input id=\"password\"")[0];
     assert!(tag.contains("type=\"password\""));
     assert!(tag.contains("autocomplete=\"new-password\""), "{tag}");

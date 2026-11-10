@@ -20,11 +20,11 @@
       <td>{% if row.purge.is_empty() %}<span class="muted">None</span>{% else %}{{ row.purge }} <span class="muted">({{ row.purge_note }})</span>{% endif %}</td>
       <td>
         <div class="row-actions">
-        <form method="post" action="{{ kind.base() }}/deleted/{{ row.name }}/recover">
+        <form method="post" action="{{ kind.deleted_url(row.name) }}/recover">
           <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
           <button type="submit" class="button-small">Recover<span class="visually-hidden"> {{ row.name }}</span></button>
         </form>
-        <a href="{{ kind.base() }}/deleted/{{ row.name }}">Details<span class="visually-hidden"> for {{ row.name }}</span></a>
+        <a href="{{ kind.deleted_url(row.name) }}">Details<span class="visually-hidden"> for {{ row.name }}</span></a>
         </div>
       </td>
     </tr>
@@ -32,5 +32,6 @@
   </tbody>
 </table>
 {% endcall %}
+{% include "_pager.html" %}
 {% endif %}
 {% endblock %}

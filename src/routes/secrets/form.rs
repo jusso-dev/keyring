@@ -7,9 +7,10 @@ use serde::Deserialize;
 
 use crate::azure::secrets::{
     Attributes, DateChange, SecretItem, SetSecret, UpdateAttributes, UpdateSecret,
-    is_valid_secret_name,
 };
 use crate::dates;
+use crate::routes::forms::{FieldError, FieldErrors, name_problem};
+use crate::routes::lifecycle::Kind;
 use crate::secret::Secret;
 
 /// Most tags Key Vault allows on one secret.
@@ -17,10 +18,6 @@ pub const MAX_TAGS: usize = 15;
 /// Key Vault's limit on a secret value (25 KB).
 pub const MAX_VALUE_BYTES: usize = 25 * 1024;
 pub const MAX_CONTENT_TYPE: usize = 255;
-/// Names that the create form refuses, because `/secrets/new` and
-/// `/secrets/deleted` are Keyring's own pages. A secret made elsewhere with
-/// one of these names can't be opened from the list.
-pub const RESERVED_NAMES: [&str; 2] = ["new", "deleted"];
 
 /// What the create and edit-properties forms post. Strings, because HTML
 /// forms send strings and a missing checkbox sends nothing.
@@ -62,69 +59,6 @@ impl std::fmt::Debug for SecretForm {
             .field("value", &self.value.as_ref().map(|_| "[redacted]"))
             .finish_non_exhaustive()
     }
-}
-
-/// One problem with one field, in words for the person filling it in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldError {
-    pub field: &'static str,
-    pub message: String,
-}
-
-fn err(field: &'static str, message: impl Into<String>) -> FieldError {
-    FieldError {
-        field,
-        message: message.into(),
-    }
-}
-
-/// Explain what's wrong with a name, or `None` if it's fine.
-pub fn name_problem(name: &str) -> Option<String> {
-    if name.is_empty() {
-        return Some("Give the secret a name.".into());
-    }
-    if name.len() > 127 {
-        return Some(format!(
-            "Names can be up to 127 characters. This one is {}.",
-            name.len()
-        ));
-    }
-    if !is_valid_secret_name(name) {
-        let bad: String = name
-            .chars()
-            .filter(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
-            .take(5)
-            .collect();
-        let shown: Vec<String> = bad
-            .chars()
-            .map(|c| {
-                if c == ' ' {
-                    "spaces".into()
-                } else {
-                    format!("\"{c}\"")
-                }
-            })
-            .collect();
-        return Some(format!(
-            "Names can only use letters, numbers and hyphens. Remove {}.",
-            shown.join(", ")
-        ));
-    }
-    None
-}
-
-/// Explain why a name can't be used on create, or `None` if it's free of
-/// Keyring's own page names.
-pub fn reserved_name_problem(name: &str) -> Option<String> {
-    RESERVED_NAMES
-        .iter()
-        .any(|r| r.eq_ignore_ascii_case(name))
-        .then(|| {
-            format!(
-                "Keyring uses /secrets/{} for its own page, so a secret called {name} couldn't be opened here. Pick another name.",
-                name.to_ascii_lowercase()
-            )
-        })
 }
 
 /// Can these tags go through the `name=value` textarea and come back the
@@ -185,12 +119,12 @@ fn parse_date(field: &'static str, raw: &str, label: &str) -> Result<Option<i64>
     if raw.is_empty() {
         return Ok(None);
     }
-    dates::parse_iso_date(raw).map(Some).ok_or_else(|| {
-        err(
+    dates::parse_iso_date(raw)
+        .map(Some)
+        .ok_or_else(|| FieldError {
             field,
-            format!("{label} isn't a real date. Use the date picker or type YYYY-MM-DD."),
-        )
-    })
+            message: format!("{label} isn't a real date. Use the date picker or type YYYY-MM-DD."),
+        })
 }
 
 /// Everything except the value, checked.
@@ -214,21 +148,18 @@ fn properties(
     form: &SecretForm,
     now: i64,
     current: Option<&Attributes>,
-    errors: &mut Vec<FieldError>,
+    errors: &mut FieldErrors,
 ) -> Properties {
     let content_type = form.content_type.trim();
     if content_type.len() > MAX_CONTENT_TYPE {
-        errors.push(err(
-            "content_type",
-            "Content type can be up to 255 characters.",
-        ));
+        errors.push("content_type", "Content type can be up to 255 characters.");
     }
     let expires = parse_date("expires", &form.expires, "Expiry date").unwrap_or_else(|e| {
-        errors.push(e);
+        errors.push(e.field, e.message);
         None
     });
     let not_before = parse_date("not_before", &form.not_before, "Start date").unwrap_or_else(|e| {
-        errors.push(e);
+        errors.push(e.field, e.message);
         None
     });
     // Expiry is end of the chosen day, so "expires 1 March" works all of
@@ -238,21 +169,21 @@ fn properties(
     if let Some(exp) = expires
         && exp <= now
     {
-        errors.push(err(
+        errors.push(
             "expires",
             "The expiry date has already passed. Pick a later date, or leave it blank.",
-        ));
+        );
     }
     if let (Some(exp), Some(nbf)) = (expires, not_before)
         && nbf >= exp
     {
-        errors.push(err(
+        errors.push(
             "not_before",
             "The start date needs to be before the expiry date.",
-        ));
+        );
     }
     let tags = parse_tags(&form.tags).unwrap_or_else(|m| {
-        errors.push(err("tags", m));
+        errors.push("tags", m);
         BTreeMap::new()
     });
     Properties {
@@ -267,22 +198,22 @@ fn properties(
     }
 }
 
-fn checked_value(form: &SecretForm, errors: &mut Vec<FieldError>) -> Option<Secret> {
+fn checked_value(form: &SecretForm, errors: &mut FieldErrors) -> Option<Secret> {
     // Keep the value as typed, spaces included, except line breaks.
     // Browsers send a textarea's line breaks as CRLF whatever was pasted,
     // so store LF, which is what PEM files and .env blocks expect.
     let value = form.value.as_deref().map(normalise_newlines);
     match value {
         None => {
-            errors.push(err("value", "Enter a value."));
+            errors.push("value", "Enter a value.");
             None
         }
         Some(v) if v.is_empty() => {
-            errors.push(err("value", "Enter a value."));
+            errors.push("value", "Enter a value.");
             None
         }
         Some(v) if v.len() > MAX_VALUE_BYTES => {
-            errors.push(err("value", "Values can be up to 25 KB."));
+            errors.push("value", "Values can be up to 25 KB.");
             None
         }
         Some(v) => Some(Secret::new(v)),
@@ -295,11 +226,11 @@ pub fn normalise_newlines(v: &str) -> String {
 }
 
 /// Check a create form. Gives the name and a body that sets a value.
-pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), Vec<FieldError>> {
-    let mut errors = Vec::new();
+pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), FieldErrors> {
+    let mut errors = FieldErrors::new();
     let name = form.name.trim().to_owned();
-    if let Some(m) = name_problem(&name).or_else(|| reserved_name_problem(&name)) {
-        errors.push(err("name", m));
+    if let Some(m) = name_problem(Kind::Secret, &name) {
+        errors.push("name", m);
     }
     let value = checked_value(form, &mut errors);
     let props = properties(form, now, None, &mut errors);
@@ -325,8 +256,8 @@ pub fn for_new_value(
     form: &SecretForm,
     current: &SecretItem,
     now: i64,
-) -> Result<SetSecret, Vec<FieldError>> {
-    let mut errors = Vec::new();
+) -> Result<SetSecret, FieldErrors> {
+    let mut errors = FieldErrors::new();
     let value = checked_value(form, &mut errors);
     let mut props = properties(form, now, Some(&current.attributes), &mut errors);
     if !tags_editable(current.tags()) {
@@ -352,12 +283,12 @@ pub fn for_update(
     form: &SecretForm,
     item: &SecretItem,
     now: i64,
-) -> Result<UpdateSecret, Vec<FieldError>> {
+) -> Result<UpdateSecret, FieldErrors> {
     let current = &item.attributes;
-    let mut errors = Vec::new();
+    let mut errors = FieldErrors::new();
     let editable = tags_editable(item.tags());
     // An expiry that's already passed but wasn't touched isn't an error.
-    let mut props = properties(form, now, Some(current), &mut errors);
+    let props = properties(form, now, Some(current), &mut errors);
     if !editable {
         errors.retain(|e| e.field != "tags");
     }
@@ -367,7 +298,6 @@ pub fn for_update(
         errors.retain(|e| e.field != "expires" || !e.message.contains("already passed"));
     }
     if errors.is_empty() {
-        props.attributes.enabled.get_or_insert(true);
         Ok(UpdateSecret {
             // Send an empty string to clear a content type that was removed.
             content_type: Some(props.content_type.unwrap_or_default()),
@@ -412,15 +342,6 @@ mod tests {
             enabled: Some("on".into()),
             ..SecretForm::default()
         }
-    }
-
-    #[test]
-    fn name_rules_explained() {
-        assert_eq!(name_problem("ok-name-1"), None);
-        assert_eq!(name_problem("").unwrap(), "Give the secret a name.");
-        assert!(name_problem("db_password").unwrap().contains("\"_\""));
-        assert!(name_problem("my secret").unwrap().contains("spaces"));
-        assert!(name_problem(&"a".repeat(128)).unwrap().contains("127"));
     }
 
     #[test]
@@ -541,20 +462,6 @@ mod tests {
         // A value right at 25 KB once CRLF is LF isn't refused for its CRs.
         let line = "x".repeat(1023);
         f.value = Some(vec![line.as_str(); 25].join("\r\n") + "\r\n");
-        assert!(for_create(&f, NOW).is_ok());
-    }
-
-    #[test]
-    fn reserved_names_are_refused_on_create() {
-        for name in ["new", "deleted", "New", "DELETED"] {
-            let mut f = form();
-            f.name = name.into();
-            let e = for_create(&f, NOW).err().unwrap();
-            assert_eq!(e[0].field, "name", "{name}");
-            assert!(e[0].message.contains("Keyring uses /secrets/"), "{name}");
-        }
-        let mut f = form();
-        f.name = "new-thing".into();
         assert!(for_create(&f, NOW).is_ok());
     }
 

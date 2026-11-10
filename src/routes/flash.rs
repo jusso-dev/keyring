@@ -76,7 +76,7 @@ impl Flash {
 /// Attach a flash message to a response (normally a redirect).
 pub fn set(state: &AppState, res: &mut Response, flash: &Flash) {
     let name = state.cookies.name(FLASH_COOKIE);
-    let sealed = state.sealer.seal(&name, &flash.encode());
+    let sealed = state.flash_sealer.seal(&name, &flash.encode());
     if let Ok(v) = HeaderValue::from_str(&state.cookies.set(
         &name,
         &sealed,
@@ -92,7 +92,7 @@ pub async fn layer(State(state): State<AppState>, mut req: Request, next: Next) 
     let present = cookies::get(req.headers(), &name).map(str::to_owned);
     if let Some(flash) = present
         .as_deref()
-        .and_then(|v| state.sealer.open_within(&name, v, FLASH_MAX_AGE))
+        .and_then(|v| state.flash_sealer.open_within(&name, v, FLASH_MAX_AGE))
         .and_then(|raw| Flash::decode(&raw))
     {
         req.extensions_mut().insert(flash);

@@ -24,7 +24,8 @@ pub enum AzureError {
         status: u16,
         /// Azure's error code, for example `Forbidden` or `SecretNotFound`.
         code: Option<String>,
-        /// Azure's own message. Shown under a form after a 400 on a write, never logged.
+        /// Azure's own message. Shown under a form after a 400 on a write,
+        /// and matched to spot purge protection. Never logged.
         message: Option<String>,
     },
     /// Couldn't reach Azure.

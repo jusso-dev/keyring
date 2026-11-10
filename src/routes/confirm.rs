@@ -49,13 +49,15 @@ impl ConfirmError {
         format!("Nothing was {nothing_was}. To confirm, type {expected} exactly as shown.")
     }
 
-    pub fn problem(&self, expected: &str) -> Problem {
+    /// The page for a refused confirmation. `nothing_was` names what the
+    /// form would have done, as in [`ConfirmError::mismatch`].
+    pub fn problem(&self, expected: &str, nothing_was: &str) -> Problem {
         match self {
             Self::StaleForm => Problem::stale_form(),
             Self::NameMismatch => Problem::new(
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 "The name didn't match",
-                Self::mismatch(expected, "deleted"),
+                Self::mismatch(expected, nothing_was),
             ),
         }
     }
@@ -179,8 +181,10 @@ mod tests {
     #[test]
     fn mismatch_message_says_nothing_happened() {
         // Used for deletes, purges and private key downloads alike.
-        let p = ConfirmError::NameMismatch.problem("db-password");
+        let p = ConfirmError::NameMismatch.problem("db-password", "deleted");
         assert!(p.message.starts_with("Nothing was deleted."));
+        let p = ConfirmError::NameMismatch.problem("db-password", "rolled back");
+        assert!(p.message.starts_with("Nothing was rolled back."));
         assert!(ConfirmError::mismatch("a", "downloaded").starts_with("Nothing was downloaded."));
     }
 }

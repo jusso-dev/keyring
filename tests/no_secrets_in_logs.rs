@@ -57,7 +57,7 @@ async fn values_never_reach_the_logs() {
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
     let res = w
         .post_multipart(
-            "/certificates/upload",
+            "/certificates/-/upload",
             &[
                 support::Part::File("file", "web.pfx", pfx),
                 support::Part::Text("name", "web-tls"),
@@ -69,7 +69,7 @@ async fn values_never_reach_the_logs() {
     *w.kv.state.fail.lock().unwrap() = None;
     let id = support::hidden_value(&html, "upload_id").unwrap();
     let _ = w
-        .post("/certificates/upload/confirm", &[("upload_id", &id)])
+        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
         .await;
     assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
 

@@ -3,7 +3,7 @@
 use askama::Template;
 use axum::Form;
 use axum::extract::{Query, State};
-use axum::http::header::{CACHE_CONTROL, SET_COOKIE};
+use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -81,7 +81,7 @@ pub async fn sign_in(Query(q): Query<SignInQuery>) -> Response {
         idle_minutes: IDLE_TIMEOUT.as_secs() / 60,
         absolute_hours: ABSOLUTE_TIMEOUT.as_secs() / 3600,
     };
-    no_store(render(&page).into_response())
+    render(&page).into_response()
 }
 
 #[derive(Deserialize)]
@@ -116,7 +116,7 @@ pub async fn start(
                 &mut res,
                 &state.cookies.set(&name, &sealed, Some(LOGIN_COOKIE_SECS)),
             );
-            no_store(res)
+            res
         }
         Err(err) => {
             tracing::warn!(error = ?err.to_string(), "could not start sign-in");
@@ -218,7 +218,7 @@ pub async fn callback(
     if consumed {
         append_cookie(&mut res, &state.cookies.clear(&login_name));
     }
-    no_store(res)
+    res
 }
 
 #[derive(Deserialize)]
@@ -252,23 +252,21 @@ pub async fn sign_out(
         .unwrap_or_else(|| "/auth/signed-out".to_owned());
     let mut res = Redirect::to(&target).into_response();
     append_cookie(&mut res, &state.cookies.clear(&session_name));
-    no_store(res)
+    res
 }
 
 /// Keep the session alive. The idle-warning script calls this when the
 /// person chooses to stay signed in. Behind the session guard, which marks
 /// the session as used.
 pub async fn keepalive(_session: CurrentSession) -> Response {
-    no_store(StatusCode::NO_CONTENT.into_response())
+    StatusCode::NO_CONTENT.into_response()
 }
 
 pub async fn signed_out() -> Response {
-    no_store(
-        render(&SignedOutPage {
-            shell: Shell::anonymous(),
-        })
-        .into_response(),
-    )
+    render(&SignedOutPage {
+        shell: Shell::anonymous(),
+    })
+    .into_response()
 }
 
 fn describe(err: &SignInError) -> (&'static str, &'static str, Option<String>) {
@@ -325,17 +323,11 @@ fn problem(
         detail,
         retry_url: format!("/auth/sign-in?return_to={}", return_to::encode(return_to)),
     };
-    no_store((status, render(&page)).into_response())
+    (status, render(&page)).into_response()
 }
 
 fn append_cookie(res: &mut Response, value: &str) {
     if let Ok(v) = HeaderValue::from_str(value) {
         res.headers_mut().append(SET_COOKIE, v);
     }
-}
-
-fn no_store(mut res: Response) -> Response {
-    res.headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    res
 }

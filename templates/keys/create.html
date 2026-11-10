@@ -14,7 +14,7 @@
 </div>
 {% endif %}
 {% call ui::optional_note() %}{% endcall %}
-<form method="post" action="/keys/new" class="stacked" novalidate>
+<form method="post" action="/keys/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   {% call ui::name_field(form.name, "key") %}{% endcall %}
 

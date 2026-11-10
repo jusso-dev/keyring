@@ -33,7 +33,11 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub sessions: Arc<SessionStore>,
     pub oidc: Arc<Oidc>,
+    /// Seals the short-lived login cookie (state, nonce and PKCE verifier).
     pub sealer: Arc<Sealer>,
+    /// Seals flash cookies. A separate key from login cookies, so neither
+    /// can be passed off as the other.
+    pub flash_sealer: Arc<Sealer>,
     pub cookies: CookieOptions,
     pub azure: AzureClient,
 }
@@ -56,6 +60,7 @@ impl AppState {
             oidc: Arc::new(oidc),
             azure: AzureClient::new(http, broker),
             sealer: Arc::new(Sealer::new(&config.session_secret, "login")),
+            flash_sealer: Arc::new(Sealer::new(&config.session_secret, "flash")),
             cookies: CookieOptions {
                 secure: config.is_https(),
             },
