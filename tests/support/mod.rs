@@ -353,6 +353,9 @@ pub struct ArmState {
     pub audit_rows: Mutex<Vec<[String; 6]>>,
     /// Make Log Analytics answer 403.
     pub audit_forbidden: Mutex<bool>,
+    /// Status to answer for one workspace, keyed by the end of its
+    /// resource ID (for example `/workspaces/logs-b`).
+    pub audit_fail_workspace: Mutex<Vec<(String, u16)>>,
     /// KQL queries received.
     pub audit_queries: Mutex<Vec<String>>,
     pub audit_bearers: Mutex<Vec<String>>,
@@ -389,6 +392,7 @@ pub async fn start_arm() -> MockArm {
         diagnostics: Mutex::new(Some(json!({"value": []}))),
         audit_rows: Mutex::new(Vec::new()),
         audit_forbidden: Mutex::new(false),
+        audit_fail_workspace: Mutex::new(Vec::new()),
         audit_queries: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
     });
@@ -484,6 +488,24 @@ async fn arm_fallback(
             .lock()
             .unwrap()
             .push(body["query"].as_str().unwrap_or_default().to_owned());
+        let one_fails = s
+            .audit_fail_workspace
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
+            .map(|(_, status)| *status);
+        if let Some(status) = one_fails {
+            let code = if status == 403 {
+                "InsufficientAccessError"
+            } else {
+                "ServiceError"
+            };
+            return json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": code, "message": "x"}}),
+            );
+        }
         if *s.audit_forbidden.lock().unwrap() {
             return json_response(
                 StatusCode::FORBIDDEN,

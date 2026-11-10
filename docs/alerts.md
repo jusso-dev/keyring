@@ -21,16 +21,27 @@ For keys, a rotation policy can send the near-expiry event earlier than 30 days.
 
 ## Set it up
 
-You need Contributor (or Event Grid Contributor and Monitoring Contributor) on the vault's resource group.
+You need Contributor (or EventGrid Contributor and Monitoring Contributor) on the vault's resource group.
+
+Azure allows one Event Grid system topic per vault. If the vault already has one (the portal makes one when you open the vault's **Events** page, and other tools may too), the template must use it. Check:
 
 ```sh
-cp infra/alerts/main.example.bicepparam alerts.bicepparam
-# Edit alerts.bicepparam: the vault name and email addresses.
+az eventgrid system-topic list --resource-group <vault's resource group> \
+  --query "[?source=='$(az keyvault show -n <vault> --query id -o tsv)'].name" -o tsv
+```
+
+If that prints a name, set `existingSystemTopicName` to it. If it prints nothing, leave it empty and the template makes one, in the vault's own region.
+
+Copy the example next to the template (its `using` path is relative to the file; `.gitignore` keeps the copy out of git) and deploy:
+
+```sh
+cp infra/alerts/main.example.bicepparam infra/alerts/main.bicepparam
+# Edit infra/alerts/main.bicepparam: the vault name, email addresses and existingSystemTopicName.
 
 az deployment group create \
   --resource-group <vault's resource group> \
   --template-file infra/alerts/main.bicep \
-  --parameters alerts.bicepparam
+  --parameters infra/alerts/main.bicepparam
 ```
 
 To add a webhook, pass it on the command line so it isn't saved in a file:
@@ -47,11 +58,18 @@ Small. Event Grid charges per million operations (a vault raises a handful of th
 
 ## Turn it off
 
-Delete the two resources the template made, in the vault's resource group:
+Delete what the template made, in the vault's resource group:
 
 ```sh
 az eventgrid system-topic delete --name <vault>-events --resource-group <rg>
 az monitor action-group delete --name <vault>-expiry --resource-group <rg>
 ```
 
-Deleting the system topic also removes its event subscription. Nothing in Keyring needs changing.
+Deleting the system topic also removes its event subscription. If you used `existingSystemTopicName`, keep that topic and delete only the subscription:
+
+```sh
+az eventgrid system-topic event-subscription delete --name expiry-to-action-group \
+  --system-topic-name <existing topic> --resource-group <rg>
+```
+
+Nothing in Keyring needs changing.

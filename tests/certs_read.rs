@@ -69,7 +69,7 @@ async fn empty_and_forbidden() {
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
     let (status, html) = w.page("/certificates").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(html.contains("Key Vault Certificate User role on this vault"));
+    assert!(html.contains("Key Vault Reader role on this vault"));
 }
 
 #[tokio::test]
@@ -257,8 +257,11 @@ async fn backing_secret_cannot_bypass_private_key_download() {
     ] {
         let res = w.post(path, &fields).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
+        let html = body_text(res).await;
+        assert!(html.contains("belongs to a certificate"), "{path}");
+        // The button names where it goes, not "Try again".
         assert!(
-            body_text(res).await.contains("belongs to a certificate"),
+            html.contains("href=\"/certificates/web-tls\">Open the certificate</a>"),
             "{path}"
         );
     }

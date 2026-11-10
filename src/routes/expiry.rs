@@ -1,9 +1,12 @@
 //! Expiry dashboard across vaults, and its CSV export.
 //!
 //! Vaults are read in parallel, a few at a time, each with its own time
-//! limit, so one slow or throttled vault doesn't hold up the rest. Vaults
-//! that can't be read are listed with the reason.
+//! limit, so one slow or throttled vault doesn't hold up the rest. The
+//! whole read also has a deadline, well inside the request limit, so the
+//! page always comes back with what it found. Vaults that can't be read,
+//! or weren't reached in time, are listed with the reason.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,11 +34,19 @@ use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 
 /// Vaults read at the same time.
-pub const CONCURRENCY: usize = 4;
+pub const CONCURRENCY: usize = 6;
 /// Most vaults read for one dashboard. More than this, and you pick.
 pub const MAX_VAULTS: usize = 100;
 /// Time limit for reading one vault.
 pub const VAULT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Time limit for the whole dashboard. Well under the 90 second request
+/// limit in `routes::headers`, so there is time left to build the page.
+pub const DEADLINE: Duration = Duration::from_secs(60);
+
+/// Why a vault not finished by [`DEADLINE`] is missing.
+const OUT_OF_TIME: &str = "Not read in time. The dashboard stops after a minute so it can show what it has. Pick this vault on its own to see it";
+/// Why a vault whose read failed inside Keyring is missing.
+const TASK_FAILED: &str = "Keyring hit a problem reading it";
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct ExpiryFilter {
@@ -232,6 +243,8 @@ struct Loaded {
     skipped: Vec<Skipped>,
     vault_names: Vec<String>,
     capped: bool,
+    /// The vault filter names a vault that isn't in the list.
+    unknown_vault: bool,
 }
 
 async fn load(
@@ -257,36 +270,87 @@ async fn load(
             .collect()
     };
     let capped = filter.vault.is_empty() && vault_names.len() > MAX_VAULTS;
+    let unknown_vault = !filter.vault.is_empty() && wanted.is_empty();
     let limit = Arc::new(Semaphore::new(CONCURRENCY));
-    let mut set = JoinSet::new();
-    for vault in wanted {
+    let reads = wanted.into_iter().map(|vault| {
         let limit = limit.clone();
         let azure = state.azure.clone();
         let sess = session.0.clone();
         let url = state.config.vault_url(&vault);
-        set.spawn(async move {
+        let name = vault.clone();
+        let read = async move {
             let _permit = limit.acquire_owned().await;
             read_vault(azure, sess, url, vault).await
-        });
-    }
-    let mut items = Vec::new();
-    let mut skipped = Vec::new();
-    while let Some(done) = set.join_next().await {
-        match done {
-            Ok((mut v, skip)) => {
-                items.append(&mut v);
-                skipped.extend(skip);
-            }
-            Err(e) => tracing::error!(error = ?e.to_string(), "expiry task failed"),
-        }
-    }
-    skipped.sort_by(|a, b| a.vault.cmp(&b.vault));
+        };
+        (name, read)
+    });
+    let (items, skipped) = gather(reads, DEADLINE).await;
     Ok(Loaded {
         items,
         skipped,
         vault_names,
         capped,
+        unknown_vault,
     })
+}
+
+/// Run each vault read as its own task and collect the results, giving up
+/// on whatever is left after `deadline`. A vault whose task panicked or
+/// didn't finish in time is listed as skipped, with the reason.
+async fn gather<F>(
+    reads: impl IntoIterator<Item = (String, F)>,
+    deadline: Duration,
+) -> (Vec<Item>, Vec<Skipped>)
+where
+    F: std::future::Future<Output = (Vec<Item>, Option<Skipped>)> + Send + 'static,
+{
+    let deadline = tokio::time::Instant::now() + deadline;
+    let mut set = JoinSet::new();
+    // Task ID to vault name, so a task that panics or runs out of time
+    // can still be reported by name.
+    let mut pending: HashMap<tokio::task::Id, String> = HashMap::new();
+    for (vault, read) in reads {
+        let handle = set.spawn(read);
+        pending.insert(handle.id(), vault);
+    }
+    let mut items = Vec::new();
+    let mut skipped = Vec::new();
+    loop {
+        let done = match tokio::time::timeout_at(deadline, set.join_next_with_id()).await {
+            Ok(Some(done)) => done,
+            Ok(None) => break,
+            Err(_) => {
+                tracing::warn!(
+                    unfinished = pending.len(),
+                    "expiry dashboard ran out of time"
+                );
+                set.abort_all();
+                skipped.extend(pending.drain().map(|(_, vault)| Skipped {
+                    vault,
+                    reason: OUT_OF_TIME.into(),
+                }));
+                break;
+            }
+        };
+        match done {
+            Ok((id, (mut v, skip))) => {
+                pending.remove(&id);
+                items.append(&mut v);
+                skipped.extend(skip);
+            }
+            Err(e) => {
+                tracing::error!(error = ?e.to_string(), "expiry task failed");
+                if let Some(vault) = pending.remove(&e.id()) {
+                    skipped.push(Skipped {
+                        vault,
+                        reason: TASK_FAILED.into(),
+                    });
+                }
+            }
+        }
+    }
+    skipped.sort_by(|a, b| a.vault.cmp(&b.vault));
+    (items, skipped)
 }
 
 pub struct GroupView {
@@ -314,6 +378,7 @@ struct ExpiryPage {
     skipped: Vec<Skipped>,
     vault_names: Vec<String>,
     capped: bool,
+    unknown_vault: bool,
     filter: ExpiryFilter,
     csv_url: String,
     max_vaults: usize,
@@ -374,6 +439,7 @@ pub async fn page(
         skipped: loaded.skipped,
         vault_names: loaded.vault_names,
         capped: loaded.capped,
+        unknown_vault: loaded.unknown_vault,
         filter,
         max_vaults: MAX_VAULTS,
     })
@@ -403,7 +469,27 @@ pub async fn csv(
         .filter(|i| filter.matches(i, now))
         .collect();
     expiry::sort(&mut items);
-    let mut res: Response = (StatusCode::OK, expiry::to_csv(&items, now)).into_response();
+    let mut body = expiry::to_csv(&items, now);
+    // The export says what it leaves out, so it can't pass for a full report.
+    if loaded.unknown_vault {
+        body.push_str(&expiry::not_read_row(
+            &filter.vault,
+            "Not in the list of vaults you can see",
+        ));
+    }
+    for s in &loaded.skipped {
+        body.push_str(&expiry::not_read_row(&s.vault, &s.reason));
+    }
+    if loaded.capped {
+        body.push_str(&expiry::not_read_row(
+            "",
+            &format!(
+                "Only the first {MAX_VAULTS} of {} vaults by name were read. Filter by vault to export others",
+                loaded.vault_names.len()
+            ),
+        ));
+    }
+    let mut res: Response = (StatusCode::OK, body).into_response();
     let h = res.headers_mut();
     h.insert(
         CONTENT_TYPE,
@@ -414,4 +500,64 @@ pub async fn csv(
         HeaderValue::from_static("attachment; filename=\"keyring-expiry.csv\""),
     );
     Ok(no_store(res))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one(vault: &str) -> (Vec<Item>, Option<Skipped>) {
+        let item = Item {
+            vault: vault.into(),
+            kind: ItemType::Secret,
+            name: "s".into(),
+            enabled: true,
+            expires: None,
+            tags: Vec::new(),
+            managed: false,
+        };
+        (vec![item], None)
+    }
+
+    #[test]
+    fn deadline_sits_well_inside_the_request_limit() {
+        assert!(DEADLINE + Duration::from_secs(20) <= crate::routes::headers::REQUEST_TIMEOUT);
+        assert!(VAULT_TIMEOUT < DEADLINE);
+    }
+
+    #[tokio::test]
+    async fn slow_vaults_past_the_deadline_are_skipped_not_lost() {
+        type Read = std::pin::Pin<Box<dyn Future<Output = (Vec<Item>, Option<Skipped>)> + Send>>;
+        let reads: Vec<(String, Read)> = vec![
+            ("kv-fast".into(), Box::pin(async { one("kv-fast") })),
+            (
+                "kv-slow".into(),
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    one("kv-slow")
+                }),
+            ),
+            (
+                "kv-broken".into(),
+                Box::pin(async { panic!("read failed inside the task") }),
+            ),
+        ];
+        let started = std::time::Instant::now();
+        let (items, skipped) = gather(reads, Duration::from_millis(300)).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "stopped at the deadline"
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].vault, "kv-fast");
+        let got: Vec<(&str, &str)> = skipped
+            .iter()
+            .map(|s| (s.vault.as_str(), s.reason.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("kv-broken", TASK_FAILED), ("kv-slow", OUT_OF_TIME)],
+            "a panic and a timeout both name the vault"
+        );
+    }
 }

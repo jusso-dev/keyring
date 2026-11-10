@@ -55,6 +55,8 @@ pub struct EventRow {
     pub operation: String,
     pub item: String,
     pub ok: bool,
+    /// The log row has no result, so it can't be called allowed or refused.
+    pub unknown: bool,
     pub result: String,
     pub client_ip: String,
 }
@@ -80,6 +82,7 @@ impl EventRow {
             operation: e.operation.clone(),
             item: e.item.clone(),
             ok: e.result.eq_ignore_ascii_case("OK") || e.result.starts_with('2'),
+            unknown: e.result.trim().is_empty(),
             result: e.result.clone(),
             client_ip: e.client_ip.clone(),
         }
@@ -93,6 +96,54 @@ pub enum Unavailable {
     SettingsAccess,
 }
 
+impl Unavailable {
+    /// Status for a CSV export that has nothing to export.
+    fn status(&self) -> StatusCode {
+        match self {
+            Self::Logging => StatusCode::NOT_FOUND,
+            Self::WorkspaceAccess | Self::SettingsAccess => StatusCode::FORBIDDEN,
+        }
+    }
+}
+
+/// Events from the workspaces that answered, and a count of those that
+/// didn't.
+pub struct Loaded {
+    pub events: Vec<Event>,
+    /// Workspaces the vault logs to.
+    pub workspaces: usize,
+    /// Workspaces that refused the user (403).
+    pub denied: usize,
+    /// Workspaces that failed some other way (throttling, a 5xx, no answer).
+    pub failed: usize,
+}
+
+impl Loaded {
+    fn unread(&self) -> usize {
+        self.denied + self.failed
+    }
+
+    /// Plain words for the workspaces left out, or `None` if every one
+    /// was read.
+    fn partial_notice(&self) -> Option<String> {
+        if self.unread() == 0 {
+            return None;
+        }
+        let why = match (self.denied, self.failed) {
+            (_, 0) => "you don't have the Log Analytics Reader role on it",
+            (0, _) => "Azure didn't answer in time or returned an error. Try again in a minute",
+            _ => {
+                "you don't have the Log Analytics Reader role on some, and others returned an error"
+            }
+        };
+        let (n, m) = (self.unread(), self.workspaces);
+        let noun = if m == 1 { "workspace" } else { "workspaces" };
+        Some(format!(
+            "{n} of {m} Log Analytics {noun} this vault logs to couldn't be read ({why}), so some events may be missing."
+        ))
+    }
+}
+
 #[derive(Template)]
 #[template(path = "audit.html")]
 struct AuditPage {
@@ -104,6 +155,8 @@ struct AuditPage {
     operations: &'static [(&'static str, &'static str)],
     rows: Vec<EventRow>,
     unavailable: Option<Unavailable>,
+    /// Some workspaces couldn't be read, in plain words.
+    partial: Option<String>,
     capped: bool,
     csv_url: String,
     error: Option<String>,
@@ -153,13 +206,15 @@ async fn vault_id(
     Ok(id)
 }
 
-/// Load events for the current vault and filter.
+/// Load events for the current vault and filter. A workspace that can't be
+/// read doesn't hide the others: the result says how many were left out.
+/// Only when none could be read is it an error or [`Unavailable`].
 pub async fn load(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
     q: &AuditQuery,
-) -> Result<Result<Vec<Event>, Unavailable>, AzureError> {
+) -> Result<Result<Loaded, Unavailable>, AzureError> {
     let Some(id) = vault_id(state, session, vault).await? else {
         return Err(AzureError::Status {
             status: 404,
@@ -186,6 +241,8 @@ pub async fn load(
     }
     let mut events = Vec::new();
     let mut denied = 0;
+    let mut failure = None;
+    let mut failed = 0;
     for ws in &workspaces {
         match audit::query(
             &state.azure,
@@ -198,15 +255,29 @@ pub async fn load(
         {
             Ok(mut e) => events.append(&mut e),
             Err(AzureError::Status { status: 403, .. }) => denied += 1,
-            Err(e) => return Err(e),
+            Err(e) => {
+                tracing::warn!(error = %e, "audit workspace query failed");
+                failed += 1;
+                failure.get_or_insert(e);
+            }
         }
     }
     if denied == workspaces.len() {
         return Ok(Err(Unavailable::WorkspaceAccess));
     }
+    if denied + failed == workspaces.len()
+        && let Some(e) = failure
+    {
+        return Err(e);
+    }
     events.sort_by(|a, b| b.time.cmp(&a.time));
     events.truncate(audit::MAX_ROWS as usize);
-    Ok(Ok(events))
+    Ok(Ok(Loaded {
+        events,
+        workspaces: workspaces.len(),
+        denied,
+        failed,
+    }))
 }
 
 fn build_query(vault: &str, f: &AuditFilter) -> Result<AuditQuery, &'static str> {
@@ -222,6 +293,23 @@ fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shel
     vault_ctx::current_vault(session, shell, Section::Audit)
 }
 
+fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
+    AuditPage {
+        csv_url: format!("/audit.csv?{}", filter.query_string()),
+        shell,
+        vault: vault.to_owned(),
+        filter: filter.clone(),
+        ranges: Range::ALL,
+        range: Range::parse(&filter.range),
+        operations: &OPERATIONS,
+        rows: Vec::new(),
+        unavailable: None,
+        partial: None,
+        capped: false,
+        error: None,
+    }
+}
+
 pub async fn page(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -229,20 +317,7 @@ pub async fn page(
     Query(filter): Query<AuditFilter>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
-    let range = Range::parse(&filter.range);
-    let mut page = AuditPage {
-        csv_url: format!("/audit.csv?{}", filter.query_string()),
-        shell,
-        vault: vault.clone(),
-        filter: filter.clone(),
-        ranges: Range::ALL,
-        range,
-        operations: &OPERATIONS,
-        rows: Vec::new(),
-        unavailable: None,
-        capped: false,
-        error: None,
-    };
+    let mut page = empty_page(shell, &vault, &filter);
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
         Err(m) => {
@@ -251,9 +326,10 @@ pub async fn page(
         }
     };
     match load(&state, &session, &vault, &q).await {
-        Ok(Ok(events)) => {
-            page.capped = events.len() >= audit::MAX_ROWS as usize;
-            page.rows = events.iter().map(EventRow::from).collect();
+        Ok(Ok(loaded)) => {
+            page.capped = loaded.events.len() >= audit::MAX_ROWS as usize;
+            page.rows = loaded.events.iter().map(EventRow::from).collect();
+            page.partial = loaded.partial_notice();
         }
         Ok(Err(u)) => page.unavailable = Some(u),
         Err(e) => {
@@ -308,14 +384,28 @@ pub async fn csv(
             .into());
         }
     };
-    let events = match load(&state, &session, &vault, &q).await {
-        Ok(Ok(e)) => e,
-        Ok(Err(_)) => Vec::new(),
+    let loaded = match load(&state, &session, &vault, &q).await {
+        Ok(Ok(l)) => l,
+        // Nothing to export. Show the same explanation as the page, with
+        // a status that says so, rather than an empty file that reads as
+        // "no events".
+        Ok(Err(u)) => {
+            let status = u.status();
+            let mut page = empty_page(shell, &vault, &filter);
+            page.unavailable = Some(u);
+            return Ok((status, render(&page)).into_response());
+        }
         Err(e) => {
             return Err(PageError::new(shell, Problem::from_azure(&e, Need::ReadAuditLogs)).into());
         }
     };
-    let mut res: Response = (StatusCode::OK, to_csv(&events)).into_response();
+    let mut body = to_csv(&loaded.events);
+    if let Some(note) = loaded.partial_notice() {
+        let row = ["NOT READ".to_owned(), csv_field(&note)];
+        body.push_str(&row.join(","));
+        body.push_str(",,,,,\r\n");
+    }
+    let mut res: Response = (StatusCode::OK, body).into_response();
     let h = res.headers_mut();
     h.insert(
         CONTENT_TYPE,

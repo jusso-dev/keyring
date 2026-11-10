@@ -68,7 +68,10 @@ pub fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
             "This secret belongs to a certificate",
             format!("{name} holds the certificate of the same name, including its private key. Use the certificate's page to download it, so you see the warning first."),
         )
-        .with_next(crate::routes::error::NextStep::Retry(format!("/certificates/{name}"))),
+        .with_next(crate::routes::error::NextStep::Go {
+            url: format!("/certificates/{name}"),
+            label: "Open the certificate",
+        }),
     )
     .into()
 }

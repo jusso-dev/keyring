@@ -1,4 +1,16 @@
 version: 2
+
+# The Rust version is written twice: rust-toolchain.toml (CI) and the
+# builder image in the Dockerfile (the shipped binary). One group moves both
+# in a single pull request. CI also checks the two match.
+multi-ecosystem-groups:
+  rust-toolchain-and-images:
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: deps
+
 updates:
   - package-ecosystem: cargo
     directory: /
@@ -14,14 +26,13 @@ updates:
 
   - package-ecosystem: docker
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      docker:
-        patterns: ["*"]
-    commit-message:
-      prefix: deps
+    patterns: ["*"]
+    multi-ecosystem-group: rust-toolchain-and-images
+
+  - package-ecosystem: rust-toolchain
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: rust-toolchain-and-images
 
   - package-ecosystem: github-actions
     directory: /
