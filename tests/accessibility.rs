@@ -64,6 +64,15 @@ fn page_basics(html: &str, path: &str) {
     controls_have_labels(html, path);
 }
 
+fn has_action_group_in_table_cell(html: &str) -> bool {
+    html.split("<td>").skip(1).any(|cell| {
+        cell.split("</td>")
+            .next()
+            .unwrap_or_default()
+            .contains("<div class=\"row-actions\">")
+    })
+}
+
 #[tokio::test]
 async fn pages_have_labels_headings_and_landmarks() {
     let w = support::world().await;
@@ -193,4 +202,41 @@ async fn confirm_mismatch_is_an_error_with_focus() {
     assert!(html.contains("aria-invalid=\"true\" aria-describedby=\"confirm_name-error\""));
     assert!(html.contains("Nothing was deleted."));
     describedby_targets_exist(&html, "delete mismatch");
+}
+
+#[tokio::test]
+async fn row_action_groups_stay_inside_table_cells() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "old");
+    w.kv.state.put("db-password", "current");
+    w.kv.state.put("deleted-secret", "deleted");
+    w.kv.state.soft_delete("deleted-secret");
+
+    w.kv.state.add_key_with("app-key", "RSA", |_| {});
+    w.post("/keys/app-key/delete", &[("confirm_name", "app-key")])
+        .await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    w.post(
+        "/certificates/web-tls/delete",
+        &[("confirm_name", "web-tls")],
+    )
+    .await;
+
+    for path in [
+        "/secrets/db-password/versions",
+        "/secrets/deleted",
+        "/keys/deleted",
+        "/certificates/deleted",
+    ] {
+        let (status, html) = w.page(path).await;
+        assert!(status.is_success(), "{path}: {status}");
+        assert!(
+            !html.contains("<td class=\"row-actions\">"),
+            "{path}: the table cell must keep its native display"
+        );
+        assert!(
+            has_action_group_in_table_cell(&html),
+            "{path}: action group must be inside the table cell"
+        );
+    }
 }
