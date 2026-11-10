@@ -76,7 +76,8 @@ async fn marks_expired_expiring_disabled_and_not_yet_active() {
     assert!(html.contains("1 expiring within 30 days"));
     assert!(html.contains("1 disabled"));
     assert!(html.contains("badge-error\">Expired"));
-    assert!(html.contains("badge-warn\">Expires within 30 days"));
+    // Red under 30 days, the same as certificates and keys.
+    assert!(html.contains("badge-error\">Expires within 30 days"));
     assert!(html.contains(">Disabled<"));
     assert!(html.contains("Not active yet"));
     assert!(html.contains("in 3 days") || html.contains("in 2 days"));
@@ -243,7 +244,7 @@ async fn keyrings_own_pages_win_over_secrets_with_their_names() {
     w.kv.state.put("new", "x");
     let (status, html) = w.page("/secrets/new").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Add a secret"));
+    assert!(html.contains("Create a secret"));
     assert!(w.kv.state.value_reads().is_empty());
     let (status, html) = w.page("/secrets/deleted").await;
     assert_eq!(status, StatusCode::OK);

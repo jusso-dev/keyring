@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Deleted {{ kind.noun() }} {{ row.name }} - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Deleted {{ kind.noun() }} {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p><a href="{{ kind.base() }}/deleted">Back to deleted {{ kind.plural() }}</a></p>
 <h1><span class="mono">{{ row.name }}</span> <span class="muted">is deleted</span></h1>
 <dl class="props">
   <dt>Vault</dt><dd>{{ vault }}</dd>
-  <dt>Deleted</dt><dd>{{ row.deleted }}</dd>
-  <dt>Gone for good on</dt><dd>{% if row.purge.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.purge }} ({{ row.purge_note }}){% endif %}</dd>
+  <dt>Deleted</dt><dd>{{ ui::or_none(row.deleted) }}</dd>
+  <dt>Permanently deleted on</dt><dd>{% if row.purge.is_empty() %}<span class="muted">None</span>{% else %}{{ row.purge }} ({{ row.purge_note }}){% endif %}</dd>
 </dl>
-<p>Recovering brings back the {{ kind.noun() }} with every version.{% if row.purge_protected %} The vault has purge protection, so it can't be deleted for good before its purge date.{% endif %}</p>
+<p>Recovering brings back the {{ kind.noun() }} with every version.{% if row.purge_protected %} The vault has purge protection, so it can't be permanently deleted before that date.{% endif %}</p>
 <div class="actions">
   <form method="post" action="{{ kind.base() }}/deleted/{{ row.name }}/recover">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">

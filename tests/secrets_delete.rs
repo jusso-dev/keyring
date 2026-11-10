@@ -84,7 +84,7 @@ async fn deleted_list_shows_purge_dates_and_recover_restores() {
     let (status, html) = w.page("/secrets/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(">db-password<"));
-    assert!(html.contains("Gone for good on"));
+    assert!(html.contains("Permanently deleted on"));
     let purge = w.kv.state.deleted.lock().unwrap()["db-password"].purge;
     assert!(html.contains(&keyring::dates::format_date(purge)));
 
@@ -188,7 +188,7 @@ async fn purge_is_off_by_default_everywhere() {
     w.kv.state.put("db-password", "x");
     w.kv.state.soft_delete("db-password");
     let (_, html) = w.page("/secrets/deleted/db-password").await;
-    assert!(!html.contains("Permanently delete"), "no purge button");
+    assert!(!html.contains("/purge\""), "no purge button");
     assert!(html.contains("Recover db-password"));
 
     let (status, _) = w.page("/secrets/deleted/db-password/purge").await;
@@ -228,7 +228,7 @@ async fn purge_when_enabled_needs_typed_name_and_warns_twice() {
     assert!(html.contains("href=\"/secrets/deleted/db-password/purge\""));
     let (status, html) = w.page("/secrets/deleted/db-password/purge").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("for good"));
+    assert!(html.contains("permanently deletes"));
     assert!(html.contains("notice-error"), "second warning");
 
     let res = w

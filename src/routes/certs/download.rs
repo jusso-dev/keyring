@@ -107,7 +107,7 @@ pub async fn cer(
 }
 
 #[derive(Template)]
-#[template(path = "certs/confirm.html")]
+#[template(path = "confirm.html")]
 struct ConfirmPage {
     shell: Shell,
     confirm: ConfirmView,

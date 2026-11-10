@@ -20,7 +20,7 @@ async fn create_adds_a_secret_with_its_properties() {
     let w = support::world().await;
     let (status, html) = w.page("/secrets/new").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Letters, numbers and hyphens only"));
+    assert!(html.contains("Letters, numbers and hyphens, up to 127 characters."));
     assert!(html.contains("Generate a value"), "generator hook is there");
 
     let res = w

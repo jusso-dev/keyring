@@ -380,12 +380,32 @@
     document.addEventListener("visibilitychange", check);
   }
 
-  // After a failed form, move focus to the list of problems so keyboard
-  // and screen reader users start there.
-  var summary = document.querySelector("[data-error-summary]");
+  // After a failed form, focus the list of problems; otherwise a flash
+  // such as "Saved". Both are there at load, so neither has a live role.
+  var summary = document.querySelector("[data-error-summary]") ||
+    document.querySelector("[data-flash]");
   if (summary) {
     summary.focus();
   }
+
+  // A table wrapper is a tab stop, for keyboard scrolling, only while its
+  // table is wider than the box. Without this script every one is a stop.
+  var wraps = document.querySelectorAll("[data-table-wrap]");
+  var resizing = null;
+  function fit() {
+    wraps.forEach(function (w) {
+      if (w.scrollWidth > w.clientWidth) {
+        w.setAttribute("tabindex", "0");
+      } else {
+        w.removeAttribute("tabindex");
+      }
+    });
+  }
+  fit();
+  window.addEventListener("resize", function () {
+    clearTimeout(resizing);
+    resizing = setTimeout(fit, 150);
+  });
 
   document.querySelectorAll("form[data-live-filter]").forEach(liveFilter);
   document.querySelectorAll("[data-copy-plain]").forEach(copyPlain);

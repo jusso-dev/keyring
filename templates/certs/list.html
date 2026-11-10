@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Certificates in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <h1>Certificates <span class="muted">in {{ vault }}</span></h1>
@@ -19,7 +20,7 @@
 <form class="filters" method="get" action="/certificates" role="search" data-live-filter="cert-table">
   <div>
     <label for="q">Search by name, tag or thumbprint</label>
-    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+    <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
   </div>
   <div>
     <label for="show">Show</label>
@@ -35,9 +36,9 @@
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No certificates match. Try a shorter search or clear the filters.</p></div>
 {% else %}
-<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+{% call ui::table_wrap("cert-table-caption") %}
 <table id="cert-table">
-  <caption class="visually-hidden">Certificates in {{ vault }}</caption>
+  <caption class="visually-hidden" id="cert-table-caption">Certificates in {{ vault }}</caption>
   <thead><tr>
     <th scope="col">Name</th><th scope="col">Status</th><th scope="col">Expires</th><th scope="col">Thumbprint</th><th scope="col">Tags</th>
   </tr></thead>
@@ -45,15 +46,15 @@
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <th scope="row"><a class="mono" href="/certificates/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{% include "certs/_status.html" %}</td>
-      <td>{% if row.expires.is_empty() %}<span class="muted">Not set</span>{% else %}{{ row.expires }} <span class="muted">({{ row.expires_note }})</span>{% endif %}</td>
-      <td class="mono small">{{ row.thumbprint }}</td>
-      <td>{% for (k, v) in row.tags %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}</td>
+      <td>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</td>
+      <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
+      <td class="mono small">{{ ui::or_none(row.thumbprint) }}</td>
+      <td>{{ ui::tags(row.tags) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 <p class="muted" data-live-filter-empty role="status" hidden>No certificates on this page match.</p>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">

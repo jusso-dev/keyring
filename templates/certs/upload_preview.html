@@ -1,24 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Check and upload {{ name }} - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Check and upload certificate {{ name }} to {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <div class="panel narrow">
   <h1>Upload <span class="mono">{{ name }}</span> to {{ vault }}?</h1>
   <p>Here's what's in the {{ kind }} file. Nothing has been saved yet.</p>
   {% if let Some(x) = existing %}
-  <div class="notice notice-warn" role="status">
+  <div class="notice notice-warn">
     <p><strong>There's already a certificate called {{ name }}.</strong> Uploading makes this file its new current version. Anything that reads {{ name }} gets the new one from its next read. The older versions stay.</p>
     <dl class="props">
       <dt>Current subject</dt><dd class="mono">{% if x.subject.is_empty() %}<span class="muted">Not issued yet</span>{% else %}{{ x.subject }}{% endif %}</dd>
-      <dt>Current thumbprint</dt><dd class="mono">{{ x.thumbprint }}</dd>
-      <dt>Current expiry</dt><dd>{% if x.expires.is_empty() %}<span class="muted">Not set</span>{% else %}{{ x.expires }}{% endif %}</dd>
+      <dt>Current thumbprint</dt><dd class="mono">{{ ui::or_none(x.thumbprint) }}</dd>
+      <dt>Current expiry</dt><dd>{{ ui::expires(x.expires) }}</dd>
     </dl>
   </div>
   {% endif %}
   {% if existing_unknown %}
-  <p class="notice notice-warn" role="status">Keyring couldn't check whether there's already a certificate called {{ name }}. If there is, uploading makes this file its new current version.</p>
+  <p class="notice notice-warn">Keyring couldn't check whether there's already a certificate called {{ name }}. If there is, uploading makes this file its new current version.</p>
   {% endif %}
   {% if let Some(c) = cert %}
-  {% if c.expired %}<p class="notice notice-error" role="alert">This certificate has already expired.</p>{% endif %}
+  {% if c.expired %}<p class="notice notice-error">This certificate has already expired.</p>{% endif %}
   {% if !leaf_sure %}<p class="muted">Keyring couldn't tell which certificate in the file is the main one, so this is the first certificate in the file.</p>{% endif %}
   <dl class="props">
     <dt>Subject</dt><dd class="mono">{{ c.subject }}</dd>
@@ -41,7 +42,7 @@
   <dl class="props">
     <dt>Enabled</dt><dd>{% if enabled %}Yes{% else %}No{% endif %}</dd>
     <dt>Private key can be downloaded later</dt><dd>{% if exportable %}Yes{% else %}No{% endif %}</dd>
-    <dt>Tags</dt><dd>{% if tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+    <dt>Tags</dt><dd>{{ ui::tags(tags) }}</dd>
   </dl>
   <form method="post" action="/certificates/upload/confirm">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">

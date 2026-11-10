@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Keys in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <h1>Keys <span class="muted">in {{ vault }}</span></h1>
@@ -13,30 +14,30 @@
 <form class="filters" method="get" action="/keys" role="search" data-live-filter="key-table">
   <div>
     <label for="q">Search by name or tag</label>
-    <input id="q" name="q" type="search" value="{{ filter.q }}" autocomplete="off">
+    <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
   </div>
   <div class="filters-submit"><button type="submit">Filter</button>{% if !filter.q.is_empty() %} <a href="/keys">Clear</a>{% endif %}</div>
 </form>
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No keys match. Try a shorter search.</p></div>
 {% else %}
-<div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+{% call ui::table_wrap("key-table-caption") %}
 <table id="key-table">
-  <caption class="visually-hidden">Keys in {{ vault }}</caption>
+  <caption class="visually-hidden" id="key-table-caption">Keys in {{ vault }}</caption>
   <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <th scope="row"><a class="mono" href="/keys/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{% include "keys/_status.html" %}</td>
-      <td>{{ row.created }}</td>
-      <td>{% if row.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ row.expires }} <span class="muted">({{ row.expires_note }})</span>{% endif %}</td>
-      <td>{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}</td>
+      <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</td>
+      <td>{{ ui::or_none(row.created) }}</td>
+      <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
+      <td>{{ ui::tags(row.tags) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-</div>
+{% endcall %}
 <p class="muted" data-live-filter-empty role="status" hidden>No keys on this page match.</p>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">

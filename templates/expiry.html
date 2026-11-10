@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Expiry - Keyring{% endblock %}
 {% block content %}
 <h1>Expiry</h1>
@@ -24,7 +25,8 @@
   </div>
   <div>
     <label for="tag">Tag</label>
-    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" placeholder="env or env=prod" autocomplete="off">
+    <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>
@@ -35,7 +37,7 @@
 {% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
 
 {% if !skipped.is_empty() %}
-<div class="notice notice-warn" role="status">
+<div class="notice notice-warn">
   <p><strong>Some of what you can see couldn't be read</strong>, so it isn't included:</p>
   <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
 </div>
@@ -50,7 +52,7 @@
 </nav>
 
 {% if unknown_vault %}
-<div class="empty-state" role="status"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry">Show all vaults</a></p></div>
+<div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry">Show all vaults</a></p></div>
 {% elif total == 0 %}
 <div class="empty-state"><p>Nothing to show. Either nothing matches the filters, or these vaults are empty.</p></div>
 {% endif %}
@@ -59,9 +61,9 @@
 {% if g.count > 0 %}
 <section aria-labelledby="group-{{ g.group.slug() }}">
   <h2 id="group-{{ g.group.slug() }}">{{ g.group.label() }} <span class="muted">({{ g.count }})</span></h2>
-  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+  {% call ui::table_wrap("group-{}-caption"|format(g.group.slug())) %}
   <table>
-    <caption class="visually-hidden">{{ g.group.label() }}</caption>
+    <caption class="visually-hidden" id="group-{{ g.group.slug() }}-caption">{{ g.group.label() }}</caption>
     <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in g.rows %}
@@ -69,8 +71,8 @@
         <th scope="row" class="mono">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
         <td>{{ r.kind.label() }}</td>
         <td class="mono">{{ r.vault }}</td>
-        <td>{% if r.expires.is_empty() %}<span class="muted">Never</span>{% else %}{{ r.expires }} <span class="muted">({{ r.note }})</span>{% endif %}</td>
-        <td>{{ r.tags }}</td>
+        <td>{{ ui::expires(r.expires, r.note) }}</td>
+        <td>{{ ui::or_none(r.tags) }}</td>
         <td>
           <form method="post" action="/vaults/select">
             <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
@@ -83,7 +85,7 @@
       {% endfor %}
     </tbody>
   </table>
-  </div>
+  {% endcall %}
 </section>
 {% endif %}
 {% endfor %}

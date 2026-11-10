@@ -153,7 +153,7 @@ fn pick<'a>(
             Problem::new(
                 axum::http::StatusCode::BAD_REQUEST,
                 "That's already the current version",
-                "There's nothing to roll back to. Pick an older version from the history.",
+                "There's nothing to roll back to. Pick an older version from the list of versions.",
             )
             .returning_to(&format!("/secrets/{name}/versions")),
         )

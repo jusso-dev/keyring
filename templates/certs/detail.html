@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% block title %}{{ row.name }} - Keyring{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Certificate {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p><a href="/certificates">Back to certificates in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
-<p>{% include "certs/_status.html" %}</p>
+<p>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</p>
 
 {% if let Some(p) = pending %}
-<div class="notice {% if p.failed %}notice-error{% else %}notice-warn{% endif %}" role="status">
+<div class="notice {% if p.failed %}notice-error{% else %}notice-warn{% endif %}">
   <p><strong>Certificate request: {{ p.status }}.</strong> {{ p.details }}</p>
   {% if p.creating %}
   <p>Key Vault is making this self-signed certificate. It usually takes a few seconds. <a href="/certificates/{{ row.name }}">Check again</a></p>
@@ -20,7 +21,7 @@
 </div>
 {% endif %}
 {% if let Some(note) = pending_note %}
-<p class="notice notice-warn" role="status">{{ note }}</p>
+<p class="notice notice-warn">{{ note }}</p>
 {% endif %}
 
 <div class="actions">
@@ -31,16 +32,15 @@
   {% endif %}{% endif %}
   <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
   <a class="button button-danger" href="/certificates/{{ row.name }}/delete">Delete</a>
+  {% if row.enabled %}
+  <a class="button button-secondary" href="/certificates/{{ row.name }}/disable">Disable</a>
+  {% else %}
   <form method="post" action="/certificates/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-    {% if row.enabled %}
-    <input type="hidden" name="state" value="off">
-    <button type="submit" class="button-secondary">Disable</button>
-    {% else %}
     <input type="hidden" name="state" value="on">
     <button type="submit" class="button-secondary">Enable</button>
-    {% endif %}
   </form>
+  {% endif %}
 </div>
 
 <section aria-labelledby="cert-heading">
@@ -52,10 +52,10 @@
     <dt>Issued by</dt><dd class="mono">{{ c.issuer }}{% if c.self_signed %} <span class="muted">(self-signed)</span>{% endif %}</dd>
     <dt>Valid from</dt><dd>{{ c.valid_from }}</dd>
     <dt>Valid until</dt><dd>{{ c.valid_to }}{% if !row.expires_note.is_empty() %} ({{ row.expires_note }}){% endif %}</dd>
-    <dt>Thumbprint</dt><dd class="mono">{{ row.thumbprint }}</dd>
+    <dt>Thumbprint</dt><dd class="mono">{{ ui::or_none(row.thumbprint) }}</dd>
     <dt>Serial number</dt><dd class="mono">{{ c.serial }}</dd>
     <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
-    <dt>Tags</dt><dd>{% if row.tags.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in row.tags %}<span class="tag">{{ k }}={{ v }}</span> {% endfor %}{% endif %}</dd>
+    <dt>Tags</dt><dd>{{ ui::tags(row.tags) }}</dd>
   </dl>
   {% else %}
   <p class="muted">There's no issued certificate in this version yet.</p>
@@ -80,27 +80,27 @@
 <section aria-labelledby="versions-heading">
   <h2 id="versions-heading">Versions</h2>
   {% if let Some(note) = versions_note %}
-  <p class="notice notice-warn" role="status">{{ note }}</p>
+  <p class="notice notice-warn">{{ note }}</p>
   {% elif versions.is_empty() %}
   <p class="muted">No versions listed.</p>
   {% else %}
-  <div class="table-wrap" tabindex="0" role="region" aria-label="Table, scrolls sideways on small screens">
+  {% call ui::table_wrap("versions-caption") %}
   <table>
-    <caption class="visually-hidden">Versions of {{ row.name }}</caption>
+    <caption class="visually-hidden" id="versions-caption">Versions of {{ row.name }}</caption>
     <thead><tr><th scope="col">Version</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Thumbprint</th><th scope="col"><span class="visually-hidden">Download</span></th></tr></thead>
     <tbody>
       {% for v in versions %}
       <tr>
-        <th scope="row" class="mono" title="{{ v.version }}">{{ v.short_version() }}{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
-        <td>{{ v.created }}</td>
-        <td>{{ v.expires }}</td>
-        <td class="mono small">{{ v.thumbprint }}</td>
+        <th scope="row"><span class="mono version-id">{{ v.version }}</span>{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
+        <td>{{ ui::or_none(v.created) }}</td>
+        <td>{{ ui::expires(v.expires) }}</td>
+        <td class="mono small">{{ ui::or_none(v.thumbprint) }}</td>
         <td><a href="/certificates/{{ row.name }}/cer?version={{ v.version }}">.cer<span class="visually-hidden"> for version {{ v.short_version() }}</span></a></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  </div>
+  {% endcall %}
   {% endif %}
 </section>
 {% endblock %}
