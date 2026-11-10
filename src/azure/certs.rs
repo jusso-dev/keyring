@@ -231,16 +231,12 @@ pub struct Operation {
 pub struct OperationError {
     #[serde(default)]
     pub code: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
 }
 
 /// An issuer set up on the vault, from `GET /certificates/issuers`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct IssuerItem {
     pub id: String,
-    #[serde(default)]
-    pub provider: Option<String>,
 }
 
 impl IssuerItem {
@@ -263,8 +259,6 @@ pub struct DeletedCertItem {
     pub scheduled_purge_date: Option<Timestamp>,
     #[serde(default)]
     pub attributes: Attributes,
-    #[serde(default)]
-    pub x5t: Option<String>,
 }
 
 impl DeletedCertItem {

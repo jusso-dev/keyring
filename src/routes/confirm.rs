@@ -9,7 +9,7 @@ use crate::routes::error::Problem;
 
 /// Fields every confirm form posts.
 #[derive(Debug, Deserialize)]
-pub struct ConfirmForm {
+pub(crate) struct ConfirmForm {
     #[serde(default)]
     pub csrf: String,
     #[serde(default)]
@@ -18,7 +18,7 @@ pub struct ConfirmForm {
 
 /// Why a confirmation was refused.
 #[derive(Debug, PartialEq, Eq)]
-pub enum ConfirmError {
+pub(crate) enum ConfirmError {
     /// The form token didn't match: an old page, or one rendered for
     /// another vault.
     StaleForm,
@@ -27,7 +27,7 @@ pub enum ConfirmError {
 
 /// Check the form token and that the typed name matches exactly. Surrounding
 /// spaces are ignored; case is not, because Key Vault names are shown as-is.
-pub fn verify(
+pub(crate) fn verify(
     session: &Session,
     vault: &str,
     form: &ConfirmForm,
@@ -45,13 +45,13 @@ pub fn verify(
 impl ConfirmError {
     /// The message to show when the typed name didn't match, for an action
     /// such as "deleted" or "downloaded".
-    pub fn mismatch(expected: &str, nothing_was: &str) -> String {
+    pub(crate) fn mismatch(expected: &str, nothing_was: &str) -> String {
         format!("Nothing was {nothing_was}. To confirm, type {expected} exactly as shown.")
     }
 
     /// The page for a refused confirmation. `nothing_was` names what the
     /// form would have done, as in [`ConfirmError::mismatch`].
-    pub fn problem(&self, expected: &str, nothing_was: &str) -> Problem {
+    pub(crate) fn problem(&self, expected: &str, nothing_was: &str) -> Problem {
         match self {
             Self::StaleForm => Problem::stale_form(),
             Self::NameMismatch => Problem::new(
@@ -64,7 +64,7 @@ impl ConfirmError {
 }
 
 /// Fields for the shared confirm template.
-pub struct ConfirmView {
+pub(crate) struct ConfirmView {
     pub heading: String,
     /// One or two sentences on what will happen.
     pub warning: String,

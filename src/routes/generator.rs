@@ -16,7 +16,7 @@ use crate::routes::shell::{Section, Shell};
 use crate::secret::Secret;
 
 #[derive(Deserialize, Clone)]
-pub struct GenForm {
+pub(super) struct GenForm {
     #[serde(default)]
     pub csrf: String,
     /// `password`, `guid` or `api_key`.
@@ -155,7 +155,7 @@ fn make(f: &GenForm) -> Result<Secret, FieldErrors> {
     }
 }
 
-pub async fn page(
+pub(super) async fn page(
     shell: Shell,
     axum::extract::Query(q): axum::extract::Query<ForSecret>,
 ) -> PageResult {
@@ -174,12 +174,16 @@ pub async fn page(
 }
 
 #[derive(Deserialize)]
-pub struct ForSecret {
+pub(super) struct ForSecret {
     #[serde(default)]
     for_secret: String,
 }
 
-pub async fn generate(session: CurrentSession, shell: Shell, Form(f): Form<GenForm>) -> PageResult {
+pub(super) async fn generate(
+    session: CurrentSession,
+    shell: Shell,
+    Form(f): Form<GenForm>,
+) -> PageResult {
     // Not tied to a vault, so a token from any vault is fine.
     let shell = shell.at(Section::Generator);
     if !session.0.csrf_matches_any(&f.csrf) {

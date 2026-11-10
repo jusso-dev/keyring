@@ -14,7 +14,7 @@ struct HomePage {
     sections: [Section; 7],
 }
 
-pub async fn index(State(state): State<AppState>, shell: Shell) -> Html<String> {
+pub(super) async fn index(State(state): State<AppState>, shell: Shell) -> Html<String> {
     render(&HomePage {
         shell: shell.at(Section::Home),
         allow_purge: state.config.allow_purge,

@@ -24,10 +24,10 @@ use crate::secret::Secret;
 
 /// Seconds before the page hides a revealed value and the clipboard is
 /// cleared. Only enforced by the browser script.
-pub const CLEAR_AFTER_SECS: u32 = 30;
+pub(crate) const CLEAR_AFTER_SECS: u32 = 30;
 
 #[derive(Deserialize)]
-pub struct RevealForm {
+pub(crate) struct RevealForm {
     #[serde(default)]
     csrf: String,
     /// A specific version, or empty for the current one.
@@ -60,7 +60,7 @@ impl RevealedPage {
 
 /// The page shown when someone tries to read or change a certificate's
 /// backing secret directly.
-pub fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
+pub(crate) fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
     PageError::new(
         shell,
         Problem::new(
@@ -77,7 +77,7 @@ pub fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
 }
 
 /// Mark a response so browsers and proxies keep no copy.
-pub fn no_store(mut res: Response) -> Response {
+pub(crate) fn no_store(mut res: Response) -> Response {
     let h = res.headers_mut();
     h.insert(
         CACHE_CONTROL,
@@ -87,7 +87,7 @@ pub fn no_store(mut res: Response) -> Response {
     res
 }
 
-pub async fn reveal(
+pub(crate) async fn reveal(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

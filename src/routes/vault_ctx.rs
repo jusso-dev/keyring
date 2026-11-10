@@ -20,7 +20,7 @@ struct NoVaultPage {
 }
 
 /// The chosen vault for `section`, or a "choose a vault first" page.
-pub fn current_vault(
+pub(crate) fn current_vault(
     session: &CurrentSession,
     shell: Shell,
     section: Section,
@@ -45,7 +45,7 @@ pub fn current_vault(
 }
 
 /// Turn a failed Azure call into an error page that offers to retry `path`.
-pub fn azure_problem(shell: Shell, err: &AzureError, need: Need, path: &str) -> Halt {
+pub(crate) fn azure_problem(shell: Shell, err: &AzureError, need: Need, path: &str) -> Halt {
     PageError::new(shell, Problem::from_azure(err, need).returning_to(path)).into()
 }
 
@@ -57,7 +57,7 @@ pub fn azure_problem(shell: Shell, err: &AzureError, need: Need, path: &str) -> 
 /// through, and an item made elsewhere with one can still be opened. A
 /// leading hyphen is refused, so `-` is never a name and the fixed pages
 /// under `/secrets/-/` can't collide with an item.
-pub fn is_valid_object_name(name: &str) -> bool {
+pub(crate) fn is_valid_object_name(name: &str) -> bool {
     (1..=127).contains(&name.len())
         && !name.starts_with('-')
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
@@ -65,7 +65,7 @@ pub fn is_valid_object_name(name: &str) -> bool {
 
 /// Validate a name from the URL. Anything that couldn't be a Key Vault
 /// name is "not found", so nothing odd reaches a request URL.
-pub fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
+pub(crate) fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
     if is_valid_object_name(name) {
         Ok((name.to_owned(), shell))
     } else {
@@ -75,7 +75,7 @@ pub fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
 
 /// Check the form token: this session's, and rendered for the vault chosen
 /// now. A form from another vault gets a page saying so.
-pub fn check_csrf(
+pub(crate) fn check_csrf(
     session: &CurrentSession,
     vault: &str,
     presented: &str,
@@ -90,7 +90,7 @@ pub fn check_csrf(
 
 /// The "stale form" problem for a refused token, naming the vault the form
 /// was for when that is why it was refused.
-pub fn stale_form_for(session: &crate::auth::session::Session, presented: &str) -> Problem {
+pub(crate) fn stale_form_for(session: &crate::auth::session::Session, presented: &str) -> Problem {
     match session.csrf_other_vault(presented) {
         Some(vault) => Problem::vault_changed(&vault),
         None => Problem::stale_form(),

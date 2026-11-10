@@ -20,7 +20,7 @@ use crate::routes::flash::{self, Flash};
 use crate::routes::secrets::{SecretRow, api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
 
-pub struct VersionRow {
+pub(crate) struct VersionRow {
     pub version: String,
     pub short: String,
     pub created: String,
@@ -87,7 +87,7 @@ async fn fetch_versions(
     }
 }
 
-pub async fn list(
+pub(crate) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -129,7 +129,7 @@ fn carried_expiry(current: &SecretItem, now: i64) -> Option<i64> {
 }
 
 #[derive(Deserialize)]
-pub struct RollbackQuery {
+pub(crate) struct RollbackQuery {
     #[serde(default)]
     version: String,
 }
@@ -174,7 +174,7 @@ fn pick<'a>(
     }
 }
 
-pub async fn confirm(
+pub(crate) async fn confirm(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -196,14 +196,14 @@ pub async fn confirm(
 }
 
 #[derive(Deserialize)]
-pub struct RollbackForm {
+pub(crate) struct RollbackForm {
     #[serde(default)]
     csrf: String,
     #[serde(default)]
     version: String,
 }
 
-pub async fn rollback(
+pub(crate) async fn rollback(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

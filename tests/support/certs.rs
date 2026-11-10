@@ -16,7 +16,7 @@ use super::json_response;
 use super::keyvault::KvState;
 
 #[derive(Clone, Debug)]
-pub struct CertVersion {
+pub(crate) struct CertVersion {
     pub version: String,
     pub der: Option<Vec<u8>>,
     pub enabled: bool,
@@ -27,7 +27,7 @@ pub struct CertVersion {
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredCert {
+pub(crate) struct StoredCert {
     pub versions: Vec<CertVersion>,
     pub policy: Value,
     pub pending: Option<Value>,
@@ -35,7 +35,7 @@ pub struct StoredCert {
 
 /// Certificate state the mock keeps beside the shared stores.
 #[derive(Default)]
-pub struct Extra {
+pub(crate) struct Extra {
     /// Issuer names `GET /certificates/issuers` lists.
     pub issuers: Mutex<Vec<String>>,
     /// Keep a self-signed create `inProgress` until a test clears this.
@@ -48,13 +48,13 @@ pub struct Extra {
 }
 
 #[derive(Clone, Debug)]
-pub struct DeletedCert {
+pub(crate) struct DeletedCert {
     pub cert: StoredCert,
     pub deleted: i64,
     pub purge: i64,
 }
 
-pub fn thumb(der: &[u8]) -> String {
+pub(crate) fn thumb(der: &[u8]) -> String {
     // Not SHA-1, just a stable stand-in for tests.
     let mut h = [0u8; 20];
     for (i, b) in der.iter().enumerate() {
@@ -63,7 +63,7 @@ pub fn thumb(der: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(h)
 }
 
-pub fn default_policy(exportable: bool, pem: bool) -> Value {
+pub(crate) fn default_policy(exportable: bool, pem: bool) -> Value {
     json!({
         "key_props": {"exportable": exportable, "kty": "RSA", "key_size": 2048, "reuse_key": false},
         "secret_props": {"contentType": if pem { "application/x-pem-file" } else { "application/x-pkcs12" }},
@@ -73,7 +73,7 @@ pub fn default_policy(exportable: bool, pem: bool) -> Value {
     })
 }
 
-pub fn router(state: Arc<KvState>) -> Router<Arc<KvState>> {
+pub(crate) fn router(state: Arc<KvState>) -> Router<Arc<KvState>> {
     let _ = state;
     Router::new()
         .route("/{vault}/certificates", axum::routing::get(list))
@@ -412,7 +412,7 @@ async fn pending(
 
 /// What an import looked like, so tests can check it.
 #[derive(Clone, Debug)]
-pub struct ImportRecord {
+pub(crate) struct ImportRecord {
     pub name: String,
     pub body: Value,
 }

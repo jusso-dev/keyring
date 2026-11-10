@@ -15,9 +15,9 @@ use crate::routes::flash::{self, Flash};
 use crate::routes::shell::{Section, Shell};
 
 /// Vaults shown per page of the list.
-pub const PER_PAGE: usize = 200;
+pub(super) const PER_PAGE: usize = 200;
 
-pub struct SubscriptionOption {
+pub(super) struct SubscriptionOption {
     pub id: String,
     pub name: String,
     pub selected: bool,
@@ -40,7 +40,7 @@ struct VaultList {
 }
 
 #[derive(Deserialize, Default)]
-pub struct ListQuery {
+pub(super) struct ListQuery {
     #[serde(flatten)]
     #[serde(default)]
     filter: VaultFilter,
@@ -58,7 +58,7 @@ fn page_url(filter: &VaultFilter, page: usize) -> String {
     )
 }
 
-pub async fn list(
+pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -122,7 +122,7 @@ pub async fn list(
 }
 
 #[derive(Deserialize)]
-pub struct SelectForm {
+pub(super) struct SelectForm {
     #[serde(default)]
     csrf: String,
     #[serde(default)]
@@ -133,7 +133,7 @@ pub struct SelectForm {
 }
 
 /// Pick a vault. Only remembered in this session.
-pub async fn select(
+pub(super) async fn select(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

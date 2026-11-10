@@ -14,15 +14,15 @@ use crate::routes::lifecycle::Kind;
 use crate::secret::Secret;
 
 /// Most tags Key Vault allows on one secret.
-pub const MAX_TAGS: usize = 15;
+pub(crate) const MAX_TAGS: usize = 15;
 /// Key Vault's limit on a secret value (25 KB).
-pub const MAX_VALUE_BYTES: usize = 25 * 1024;
-pub const MAX_CONTENT_TYPE: usize = 255;
+pub(crate) const MAX_VALUE_BYTES: usize = 25 * 1024;
+pub(crate) const MAX_CONTENT_TYPE: usize = 255;
 
 /// What the create and edit-properties forms post. Strings, because HTML
 /// forms send strings and a missing checkbox sends nothing.
 #[derive(Deserialize, Default)]
-pub struct SecretForm {
+pub(crate) struct SecretForm {
     #[serde(default)]
     pub csrf: String,
     #[serde(default)]
@@ -64,7 +64,7 @@ impl std::fmt::Debug for SecretForm {
 /// Can these tags go through the `name=value` textarea and come back the
 /// same? Not if a name has an `=`, either side has a line break, or either
 /// side starts or ends with a space, because parsing trims and splits.
-pub fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
+pub(crate) fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
     let clean = |s: &str| s == s.trim() && !s.contains(['\n', '\r']);
     tags.iter()
         .all(|(k, v)| !k.is_empty() && !k.contains('=') && clean(k) && clean(v))
@@ -72,7 +72,7 @@ pub fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
 
 /// Parse tag lines. Blank lines are skipped. A name given twice is an
 /// error, so nothing is dropped without a word.
-pub fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
+pub(crate) fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
     let mut tags = BTreeMap::new();
     for (i, line) in raw.lines().enumerate() {
         let line = line.trim();
@@ -107,7 +107,7 @@ pub fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
 }
 
 /// Tags back into the textarea format.
-pub fn format_tags(tags: &BTreeMap<String, String>) -> String {
+pub(crate) fn format_tags(tags: &BTreeMap<String, String>) -> String {
     tags.iter()
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
@@ -128,7 +128,7 @@ fn parse_date(field: &'static str, raw: &str, label: &str) -> Result<Option<i64>
 }
 
 /// Everything except the value, checked.
-pub struct Properties {
+pub(crate) struct Properties {
     pub content_type: Option<String>,
     pub attributes: Attributes,
     pub tags: BTreeMap<String, String>,
@@ -221,12 +221,12 @@ fn checked_value(form: &SecretForm, errors: &mut FieldErrors) -> Option<Secret> 
 }
 
 /// CRLF to LF. A lone CR is left alone.
-pub fn normalise_newlines(v: &str) -> String {
+pub(crate) fn normalise_newlines(v: &str) -> String {
     v.replace("\r\n", "\n")
 }
 
 /// Check a create form. Gives the name and a body that sets a value.
-pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), FieldErrors> {
+pub(crate) fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), FieldErrors> {
     let mut errors = FieldErrors::new();
     let name = form.name.trim().to_owned();
     if let Some(m) = name_problem(Kind::Secret, &name) {
@@ -252,7 +252,7 @@ pub fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecret), Fi
 /// always makes a new version. Dates on the same day as the current ones
 /// keep their exact times, and tags the form can't show are carried over
 /// as they are.
-pub fn for_new_value(
+pub(crate) fn for_new_value(
     form: &SecretForm,
     current: &SecretItem,
     now: i64,
@@ -279,7 +279,7 @@ pub fn for_new_value(
 /// has no value, so this can never create a new version. Dates that didn't
 /// change are left out; removed dates are sent as `null`. Tags are only
 /// sent when they changed, and never when the form can't show them.
-pub fn for_update(
+pub(crate) fn for_update(
     form: &SecretForm,
     item: &SecretItem,
     now: i64,

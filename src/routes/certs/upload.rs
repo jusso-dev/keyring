@@ -41,15 +41,15 @@ use super::{api, current_vault, new_name_problem};
 
 /// Largest file we accept. Real certificate files are a few KB; chains a
 /// little more.
-pub const MAX_FILE_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_FILE_BYTES: usize = 256 * 1024;
 /// Request size limit for the upload route (file plus form fields).
-pub const MAX_BODY_BYTES: usize = MAX_FILE_BYTES + 16 * 1024;
+pub(crate) const MAX_BODY_BYTES: usize = MAX_FILE_BYTES + 16 * 1024;
 
-pub const PFX: &str = "application/x-pkcs12";
-pub const PEM: &str = "application/x-pem-file";
+pub(crate) const PFX: &str = "application/x-pkcs12";
+pub(crate) const PEM: &str = "application/x-pem-file";
 
 /// Fields put back into the form after an error. Never the file or password.
-pub struct UploadView {
+pub(crate) struct UploadView {
     pub name: String,
     pub tags: String,
     pub enabled: bool,
@@ -86,7 +86,7 @@ impl UploadPage {
     }
 }
 
-pub struct PreviewCert {
+pub(crate) struct PreviewCert {
     pub subject: String,
     pub issuer: String,
     pub sans: Vec<String>,
@@ -109,13 +109,13 @@ impl PreviewCert {
 }
 
 /// The rest of the chain in the file, under the main certificate.
-pub struct ChainCert {
+pub(crate) struct ChainCert {
     pub subject: String,
     pub valid_to: String,
 }
 
 /// The certificate already in Key Vault under the name being uploaded to.
-pub struct ExistingCert {
+pub(crate) struct ExistingCert {
     pub subject: String,
     pub thumbprint: String,
     pub expires: String,
@@ -186,7 +186,7 @@ fn too_big_message() -> String {
     )
 }
 
-pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
+pub(crate) async fn form(session: CurrentSession, shell: Shell) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     // A fresh form means any file waiting from before isn't wanted.
     forget_pending_upload(&session);
@@ -200,13 +200,13 @@ pub async fn form(session: CurrentSession, shell: Shell) -> PageResult {
 }
 
 #[derive(Deserialize)]
-pub struct CancelForm {
+pub(crate) struct CancelForm {
     #[serde(default)]
     csrf: String,
 }
 
 /// "Start again" on the preview: drop the waiting file and go back.
-pub async fn cancel(
+pub(crate) async fn cancel(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -296,7 +296,7 @@ async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadErr
 }
 
 /// What the file turned out to be.
-pub enum Parsed {
+pub(crate) enum Parsed {
     Pfx {
         /// Certificates readable without the password (often none).
         certs: Vec<Vec<u8>>,
@@ -314,7 +314,7 @@ pub enum Parsed {
 const TOPK8: &str = "openssl pkcs8 -topk8 -nocrypt -in key.pem -out key.pk8.pem";
 
 /// Check a file is a usable PFX or PEM. Errors are written for people.
-pub fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
+pub(crate) fn parse_file(bytes: &[u8], file_name: &str) -> Result<Parsed, String> {
     let lower = file_name.to_ascii_lowercase();
     let looks_pem = bytes.starts_with(b"-----")
         || std::str::from_utf8(bytes).is_ok_and(|s| s.contains("-----BEGIN"));
@@ -404,7 +404,7 @@ fn describe(
     (main, sure, chain)
 }
 
-pub async fn preview(
+pub(crate) async fn preview(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -582,14 +582,14 @@ pub async fn preview(
 }
 
 #[derive(Deserialize)]
-pub struct ConfirmForm {
+pub(crate) struct ConfirmForm {
     #[serde(default)]
     csrf: String,
     #[serde(default)]
     upload_id: String,
 }
 
-pub async fn confirm(
+pub(crate) async fn confirm(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

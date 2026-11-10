@@ -26,7 +26,7 @@ use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
 
 use super::{api, current_vault, unmanaged_key};
 
-pub const KEY_TYPES: [(&str, &str); 7] = [
+pub(crate) const KEY_TYPES: [(&str, &str); 7] = [
     ("RSA-3072", "RSA 3072 (recommended)"),
     ("RSA-2048", "RSA 2048"),
     ("RSA-4096", "RSA 4096"),
@@ -36,7 +36,7 @@ pub const KEY_TYPES: [(&str, &str); 7] = [
     ("EC-P-256K", "EC P-256K (secp256k1)"),
 ];
 
-pub const OPERATIONS: [(&str, &str); 6] = [
+pub(crate) const OPERATIONS: [(&str, &str); 6] = [
     ("encrypt", "Encrypt"),
     ("decrypt", "Decrypt"),
     ("sign", "Sign"),
@@ -47,7 +47,7 @@ pub const OPERATIONS: [(&str, &str); 6] = [
 
 /// HTML forms send repeated checkboxes as repeated fields, so read the
 /// raw pairs.
-pub struct CreateForm {
+pub(crate) struct CreateForm {
     pub csrf: String,
     pub name: String,
     pub key_type: String,
@@ -58,7 +58,7 @@ pub struct CreateForm {
 }
 
 impl CreateForm {
-    pub fn from_pairs(pairs: Vec<(String, String)>) -> Self {
+    pub(crate) fn from_pairs(pairs: Vec<(String, String)>) -> Self {
         let mut f = Self {
             csrf: String::new(),
             name: String::new(),
@@ -98,7 +98,7 @@ impl CreateForm {
 
 /// Default operations for a key type: RSA can encrypt, sign and wrap; EC
 /// can only sign.
-pub fn default_ops(kty: &str) -> Vec<String> {
+pub(crate) fn default_ops(kty: &str) -> Vec<String> {
     if kty.starts_with("EC") {
         vec!["sign".into(), "verify".into()]
     } else {
@@ -106,7 +106,7 @@ pub fn default_ops(kty: &str) -> Vec<String> {
     }
 }
 
-pub fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), FieldErrors> {
+pub(crate) fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), FieldErrors> {
     let mut errors = FieldErrors::new();
     if let Some(m) = name_problem(Kind::Key, &f.name) {
         errors.push("name", m);
@@ -267,7 +267,7 @@ fn is_hsm_refusal(err: &AzureError) -> bool {
     }
 }
 
-pub async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
+pub(crate) async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     Ok(create_page(
         shell,
@@ -277,7 +277,7 @@ pub async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
     ))
 }
 
-pub async fn create(
+pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -352,7 +352,7 @@ struct RotatePage {
     name: String,
 }
 
-pub async fn rotate_form(
+pub(crate) async fn rotate_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -364,7 +364,7 @@ pub async fn rotate_form(
     Ok(render(&RotatePage { shell, vault, name }).into_response())
 }
 
-pub async fn rotate(
+pub(crate) async fn rotate(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -420,7 +420,7 @@ impl RotationPage {
 }
 
 #[derive(Deserialize, Default)]
-pub struct RotationForm {
+pub(crate) struct RotationForm {
     #[serde(default)]
     pub csrf: String,
     /// `create` (count from when each version is made) or `expiry` (count
@@ -440,7 +440,7 @@ pub struct RotationForm {
 
 impl RotationForm {
     /// The form as it would be filled in from `p`.
-    pub fn from_policy(p: &RotationPolicy) -> Self {
+    pub(crate) fn from_policy(p: &RotationPolicy) -> Self {
         let show = |d: Option<u32>| d.map(|d| d.to_string()).unwrap_or_default();
         if p.is_key_vault_default() {
             return Self {
@@ -500,15 +500,15 @@ fn keep_or_days(original: Option<&str>, typed: Option<u32>) -> Option<String> {
 /// Key Vault's rotation policy limits, from "Configure cryptographic key
 /// auto-rotation in Azure Key Vault": expiry at least 28 days, triggers at
 /// least 7 days, and a rotate trigger at least 7 days before expiry.
-pub const MIN_EXPIRY_DAYS: u32 = 28;
-pub const MIN_TRIGGER_DAYS: u32 = 7;
-pub const MIN_GAP_DAYS: u32 = 7;
+pub(crate) const MIN_EXPIRY_DAYS: u32 = 28;
+pub(crate) const MIN_TRIGGER_DAYS: u32 = 7;
+pub(crate) const MIN_GAP_DAYS: u32 = 7;
 
 /// Check the rotation form against Key Vault's rules and build the policy
 /// to save. `current` is the policy as Key Vault has it now: fields left
 /// as they were keep its original durations, and a policy with parts the
 /// form can't show is only replaced when the person ticks the box.
-pub fn build_rotation(
+pub(crate) fn build_rotation(
     f: &RotationForm,
     current: &RotationPolicy,
 ) -> Result<RotationPolicy, FieldErrors> {
@@ -615,7 +615,7 @@ fn rotation_page(
         .into_response()
 }
 
-pub async fn rotation_form(
+pub(crate) async fn rotation_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -647,7 +647,7 @@ pub async fn rotation_form(
     ))
 }
 
-pub async fn save_rotation(
+pub(crate) async fn save_rotation(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,

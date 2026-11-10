@@ -6,7 +6,7 @@ use crate::dates;
 const DAY: i64 = 86_400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Group {
+pub(crate) enum Group {
     Expired,
     Within7,
     Within30,
@@ -16,7 +16,7 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [
+    pub(crate) const ALL: [Group; 6] = [
         Group::Expired,
         Group::Within7,
         Group::Within30,
@@ -25,7 +25,7 @@ impl Group {
         Group::NoExpiry,
     ];
 
-    pub fn of(expires: Option<i64>, now: i64) -> Self {
+    pub(crate) fn of(expires: Option<i64>, now: i64) -> Self {
         match expires {
             None => Self::NoExpiry,
             Some(e) if e <= now => Self::Expired,
@@ -36,7 +36,7 @@ impl Group {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Expired => "Expired",
             Self::Within7 => "Next 7 days",
@@ -47,7 +47,7 @@ impl Group {
         }
     }
 
-    pub fn slug(self) -> &'static str {
+    pub(crate) fn slug(self) -> &'static str {
         match self {
             Self::Expired => "expired",
             Self::Within7 => "7",
@@ -58,7 +58,7 @@ impl Group {
         }
     }
 
-    pub fn css(self) -> &'static str {
+    pub(crate) fn css(self) -> &'static str {
         match self {
             Self::Expired | Self::Within7 => "badge-error",
             Self::Within30 => "badge-warn",
@@ -68,28 +68,28 @@ impl Group {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ItemType {
+pub(crate) enum ItemType {
     Secret,
     Certificate,
     Key,
 }
 
 impl ItemType {
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Secret => "Secret",
             Self::Certificate => "Certificate",
             Self::Key => "Key",
         }
     }
-    pub fn slug(self) -> &'static str {
+    pub(crate) fn slug(self) -> &'static str {
         match self {
             Self::Secret => "secret",
             Self::Certificate => "certificate",
             Self::Key => "key",
         }
     }
-    pub fn path(self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             Self::Secret => "/secrets",
             Self::Certificate => "/certificates",
@@ -100,7 +100,7 @@ impl ItemType {
 
 /// One item with a date, from any vault. Properties only, never values.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Item {
+pub(crate) struct Item {
     pub vault: String,
     pub kind: ItemType,
     pub name: String,
@@ -110,18 +110,18 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn group(&self, now: i64) -> Group {
+    pub(crate) fn group(&self, now: i64) -> Group {
         Group::of(self.expires, now)
     }
-    pub fn expires_text(&self) -> String {
+    pub(crate) fn expires_text(&self) -> String {
         self.expires.map(dates::format_date).unwrap_or_default()
     }
-    pub fn expires_note(&self, now: i64) -> String {
+    pub(crate) fn expires_note(&self, now: i64) -> String {
         self.expires
             .map(|e| dates::relative_days(e, now))
             .unwrap_or_default()
     }
-    pub fn tags_text(&self) -> String {
+    pub(crate) fn tags_text(&self) -> String {
         self.tags
             .iter()
             .map(|(k, v)| format!("{k}={v}"))
@@ -132,7 +132,7 @@ impl Item {
 
 /// Sort for display: soonest first, items with no expiry last, then by
 /// vault and name.
-pub fn sort(items: &mut [Item]) {
+pub(crate) fn sort(items: &mut [Item]) {
     items.sort_by(|a, b| {
         (a.expires.is_none(), a.expires, &a.vault, a.kind, &a.name).cmp(&(
             b.expires.is_none(),
@@ -145,7 +145,7 @@ pub fn sort(items: &mut [Item]) {
 }
 
 /// Count items in each group, in [`Group::ALL`] order.
-pub fn counts(items: &[Item], now: i64) -> [usize; 6] {
+pub(crate) fn counts(items: &[Item], now: i64) -> [usize; 6] {
     let mut out = [0; 6];
     for i in items {
         let g = i.group(now);
@@ -157,7 +157,7 @@ pub fn counts(items: &[Item], now: i64) -> [usize; 6] {
 
 /// One CSV field. Quotes when needed, and stops spreadsheets treating a
 /// value as a formula (CSV injection) by prefixing `'`.
-pub fn csv_field(v: &str) -> String {
+pub(crate) fn csv_field(v: &str) -> String {
     let v = if v.starts_with(['=', '+', '-', '@', '\t', '\r']) {
         format!("'{v}")
     } else {
@@ -172,7 +172,7 @@ pub fn csv_field(v: &str) -> String {
 
 /// CSV of items. Columns: vault, type, name, status, expires (ISO), group,
 /// tags. No values.
-pub fn to_csv(items: &[Item], now: i64) -> String {
+pub(crate) fn to_csv(items: &[Item], now: i64) -> String {
     let mut out = String::from("Vault,Type,Name,Enabled,Expires (UTC),Group,Tags\r\n");
     for i in items {
         let row = [
@@ -193,7 +193,7 @@ pub fn to_csv(items: &[Item], now: i64) -> String {
 /// A CSV row for a vault that isn't in the export, so the file can't be
 /// taken for a complete report. The columns line up with [`to_csv`]: the
 /// vault, `NOT READ` in the Type column and the reason in the Name column.
-pub fn not_read_row(vault: &str, reason: &str) -> String {
+pub(crate) fn not_read_row(vault: &str, reason: &str) -> String {
     let row = [
         csv_field(vault),
         "NOT READ".to_owned(),

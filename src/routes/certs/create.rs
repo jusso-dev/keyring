@@ -31,23 +31,23 @@ use super::{api, current_vault, new_name_problem};
 /// validity in months. From the REST reference for "Create Certificate",
 /// `LifetimeAction.trigger.days_before_expiry`: "Value should be between 1
 /// and validity_in_months multiplied by 27."
-pub const DAYS_PER_MONTH_LIMIT: u32 = 27;
+pub(crate) const DAYS_PER_MONTH_LIMIT: u32 = 27;
 
 /// The default renewal point: 30 days before expiry, or less for a short
 /// certificate.
-pub fn default_renew_days(months: u32) -> u32 {
+pub(crate) fn default_renew_days(months: u32) -> u32 {
     30.min(months * DAYS_PER_MONTH_LIMIT)
 }
 
 /// The issuer choices for the form: always `Self`, then the vault's own.
-pub struct Issuers {
+pub(crate) struct Issuers {
     pub names: Vec<String>,
     /// Why only `Self` is offered, when the vault's list couldn't be read.
     pub note: Option<String>,
 }
 
 impl Issuers {
-    pub fn self_only(note: Option<String>) -> Self {
+    pub(crate) fn self_only(note: Option<String>) -> Self {
         Self {
             names: Vec::new(),
             note,
@@ -78,7 +78,7 @@ async fn load_issuers(certs: &crate::azure::certs::CertsApi<'_>) -> Issuers {
 }
 
 /// Key choices offered. The first is the default.
-pub const KEY_CHOICES: [(&str, &str); 5] = [
+pub(crate) const KEY_CHOICES: [(&str, &str); 5] = [
     ("RSA-2048", "RSA 2048 (works everywhere)"),
     ("RSA-3072", "RSA 3072"),
     ("RSA-4096", "RSA 4096"),
@@ -90,7 +90,7 @@ pub const KEY_CHOICES: [(&str, &str); 5] = [
 ];
 
 #[derive(Deserialize, Default, Clone)]
-pub struct CreateForm {
+pub(crate) struct CreateForm {
     #[serde(default)]
     pub csrf: String,
     #[serde(default)]
@@ -139,7 +139,10 @@ fn is_dns_name(s: &str) -> bool {
 
 /// Check the form and build the create request. `issuers` are the names
 /// set up on the vault; `Self` is always allowed.
-pub fn build(f: &CreateForm, issuers: &[String]) -> Result<(String, CreateCert), FieldErrors> {
+pub(crate) fn build(
+    f: &CreateForm,
+    issuers: &[String],
+) -> Result<(String, CreateCert), FieldErrors> {
     let mut errors = FieldErrors::new();
     let name = f.name.trim().to_owned();
     if let Some(m) = new_name_problem(&name) {
@@ -358,7 +361,7 @@ fn page(
         .into_response()
 }
 
-pub async fn form(
+pub(crate) async fn form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -384,7 +387,7 @@ pub async fn form(
     ))
 }
 
-pub async fn create(
+pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
@@ -464,7 +467,7 @@ pub async fn create(
 
 /// Stop a pending create or renewal: ask Key Vault to cancel it, then
 /// delete the request.
-pub async fn cancel_pending(
+pub(crate) async fn cancel_pending(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
