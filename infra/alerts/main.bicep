@@ -3,7 +3,8 @@
 // Key Vault raises near-expiry events by itself (about 30 days before an
 // item's expiry date). This subscribes to them with Event Grid and sends
 // them to an Azure Monitor action group (email and, optionally, a webhook).
-// Keyring stores nothing and runs nothing for this.
+// Keyring stores nothing and runs nothing for this. The topic and
+// subscription are in modules/expiry-events.bicep.
 //
 // Off by default: deploy it per vault only if you want it. Remove it by
 // deleting the resources it made (see docs/alerts.md).
@@ -15,8 +16,8 @@ targetScope = 'resourceGroup'
 @description('Name of an existing vault in this resource group to watch.')
 param vaultName string
 
-@description('Azure region of the vault.')
-param location string = resourceGroup().location
+@description('Name of an Event Grid system topic the vault already has, if any. Azure allows one per vault. Leave empty to create one. Check with: az eventgrid system-topic list -g <rg> --query "[?source==\'<vault ID>\'].name"')
+param existingSystemTopicName string = ''
 
 @description('Email addresses to notify.')
 param emails array = []
@@ -67,36 +68,21 @@ resource actions 'Microsoft.Insights/actionGroups@2023-01-01' = {
   }
 }
 
-resource topic 'Microsoft.EventGrid/systemTopics@2025-02-15' = {
-  name: '${vaultName}-events'
-  location: location
-  tags: tags
-  properties: {
-    source: vault.id
-    topicType: 'Microsoft.KeyVault.vaults'
-  }
-}
-
-resource subscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2025-02-15' = {
-  parent: topic
-  name: 'expiry-to-action-group'
-  properties: {
-    destination: {
-      endpointType: 'MonitorAlert'
-      properties: {
-        severity: 'Sev3'
-        actionGroups: [
-          actions.id
-        ]
-        description: 'Key Vault item near or past expiry'
-      }
-    }
-    filter: {
-      includedEventTypes: eventTypes
-    }
-    eventDeliverySchema: 'CloudEventSchemaV1_0'
+// A Key Vault system topic must be in the vault's own region, which may not
+// be the resource group's. The vault's region is only known once it's read,
+// so the topic and subscription go in a module that takes it as a parameter.
+module events '../modules/expiry-events.bicep' = {
+  name: '${vaultName}-expiry-events'
+  params: {
+    location: vault.location
+    vaultId: vault.id
+    topicName: empty(existingSystemTopicName) ? '${vaultName}-events' : existingSystemTopicName
+    createTopic: empty(existingSystemTopicName)
+    actionGroupId: actions.id
+    eventTypes: eventTypes
+    tags: tags
   }
 }
 
 output actionGroupId string = actions.id
-output systemTopicName string = topic.name
+output systemTopicName string = events.outputs.topicName
