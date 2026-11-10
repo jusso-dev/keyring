@@ -67,8 +67,13 @@ pub fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
 
 /// Check the form token: this session's, and rendered for the vault chosen
 /// now. A form from another vault gets a page saying so.
-pub fn check_csrf(session: &CurrentSession, presented: &str, shell: Shell) -> Result<Shell, Halt> {
-    if session.0.csrf_matches(presented) {
+pub fn check_csrf(
+    session: &CurrentSession,
+    vault: &str,
+    presented: &str,
+    shell: Shell,
+) -> Result<Shell, Halt> {
+    if session.0.csrf_matches_vault(presented, vault) {
         Ok(shell)
     } else {
         Err(PageError::new(shell, stale_form_for(&session.0, presented)).into())

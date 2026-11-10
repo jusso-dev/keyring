@@ -41,3 +41,16 @@ pub async fn request_log(req: Request, next: Next) -> Response {
     }
     res
 }
+
+/// Replace the default panic hook, which prints the panic message to
+/// stderr. The message can hold request data (an `expect` with a formatted
+/// value, a serde error quoting input), so log only where it happened.
+pub fn quiet_panics() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        tracing::error!(%location, "panicked");
+    }));
+}

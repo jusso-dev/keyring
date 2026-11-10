@@ -19,6 +19,7 @@ use crate::routes::secrets::form::{self, FieldError, SecretForm};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::vault_ctx::check_csrf;
 
 /// Which form is being shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,14 +182,6 @@ fn form_page(
     )
 }
 
-fn check_csrf(session: &CurrentSession, csrf: &str, shell: Shell) -> Result<Shell, Halt> {
-    if session.0.csrf_matches(csrf) {
-        Ok(shell)
-    } else {
-        Err(PageError::new(shell, Problem::stale_form()).into())
-    }
-}
-
 fn saved(state: &AppState, to: &str, message: String) -> Response {
     let mut res = Redirect::to(to).into_response();
     flash::set(state, &mut res, &Flash::success(message));
@@ -223,7 +216,7 @@ pub async fn create(
     Form(f): Form<SecretForm>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match form::for_create(&f, now_ts()) {
         Ok(ok) => ok,
         Err(errors) => {
@@ -363,7 +356,7 @@ pub async fn set_value(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     // Refuse a certificate's backing secret, and refuse if we can't tell.
     let item = match api(&state, &session, &vault).properties(&name).await {
         Ok(item) if item.managed.unwrap_or(false) => {
@@ -435,7 +428,7 @@ pub async fn update(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
     // The whole form is written back, so refuse if someone else saved a
     // new version or changed this one since the form was opened.
@@ -534,7 +527,7 @@ pub async fn toggle(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let enable = match f.state.as_str() {
         "on" => true,
         "off" => false,

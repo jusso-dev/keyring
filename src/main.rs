@@ -13,6 +13,7 @@ async fn main() -> ExitCode {
     };
 
     keyring::telemetry::init(&config.log_level);
+    keyring::telemetry::quiet_panics();
 
     for name in config.test_overrides() {
         tracing::warn!(

@@ -44,6 +44,7 @@ pub async fn delete(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = lifecycle::verify(
         &session,
+        &vault,
         &form,
         &name,
         shell,
@@ -121,7 +122,7 @@ pub async fn recover(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &form.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     match api(&state, &session, &vault).recover(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key recovered");
@@ -164,6 +165,7 @@ pub async fn purge(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = lifecycle::verify(
         &session,
+        &vault,
         &form,
         &name,
         shell,

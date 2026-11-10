@@ -399,7 +399,7 @@ pub async fn create(
     Form(f): Form<CreateForm>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let certs = api(&state, &session, &vault);
     let issuers = load_issuers(&certs).await;
     let (name, body) = match build(&f, &issuers.names) {
@@ -487,7 +487,7 @@ pub async fn cancel_pending(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = check_csrf(&session, &f.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let path = format!("/certificates/{name}");
     match api(&state, &session, &vault).cancel_pending(&name).await {
         Ok(()) => {

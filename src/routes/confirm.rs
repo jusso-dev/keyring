@@ -27,8 +27,13 @@ pub enum ConfirmError {
 
 /// Check the form token and that the typed name matches exactly. Surrounding
 /// spaces are ignored; case is not, because Key Vault names are shown as-is.
-pub fn verify(session: &Session, form: &ConfirmForm, expected: &str) -> Result<(), ConfirmError> {
-    if !session.csrf_matches(&form.csrf) {
+pub fn verify(
+    session: &Session,
+    vault: &str,
+    form: &ConfirmForm,
+    expected: &str,
+) -> Result<(), ConfirmError> {
+    if !session.csrf_matches_vault(&form.csrf, vault) {
         return Err(ConfirmError::StaleForm);
     }
     if expected.is_empty() || form.confirm_name.trim() != expected {
@@ -95,11 +100,21 @@ mod tests {
     fn accepts_exact_name_with_valid_token() {
         let s = session();
         assert_eq!(
-            verify(&s, &form(&s.csrf_token(), "db-password"), "db-password"),
+            verify(
+                &s,
+                &s.selected_vault().unwrap_or_default(),
+                &form(&s.csrf_token(), "db-password"),
+                "db-password"
+            ),
             Ok(())
         );
         assert_eq!(
-            verify(&s, &form(&s.csrf_token(), "  db-password "), "db-password"),
+            verify(
+                &s,
+                &s.selected_vault().unwrap_or_default(),
+                &form(&s.csrf_token(), "  db-password "),
+                "db-password"
+            ),
             Ok(())
         );
     }
@@ -109,13 +124,23 @@ mod tests {
         let s = session();
         for typed in ["", "db-passwor", "DB-PASSWORD", "db-password2"] {
             assert_eq!(
-                verify(&s, &form(&s.csrf_token(), typed), "db-password"),
+                verify(
+                    &s,
+                    &s.selected_vault().unwrap_or_default(),
+                    &form(&s.csrf_token(), typed),
+                    "db-password"
+                ),
                 Err(ConfirmError::NameMismatch),
                 "{typed:?}"
             );
         }
         assert_eq!(
-            verify(&s, &form(&s.csrf_token(), ""), ""),
+            verify(
+                &s,
+                &s.selected_vault().unwrap_or_default(),
+                &form(&s.csrf_token(), ""),
+                ""
+            ),
             Err(ConfirmError::NameMismatch)
         );
     }
@@ -124,7 +149,12 @@ mod tests {
     fn rejects_bad_token_before_checking_name() {
         let s = session();
         assert_eq!(
-            verify(&s, &form("forged", "db-password"), "db-password"),
+            verify(
+                &s,
+                &s.selected_vault().unwrap_or_default(),
+                &form("forged", "db-password"),
+                "db-password"
+            ),
             Err(ConfirmError::StaleForm)
         );
     }
@@ -136,7 +166,12 @@ mod tests {
         let token = s.csrf_token();
         s.select_vault("kv-dev".into());
         assert_eq!(
-            verify(&s, &form(&token, "db-password"), "db-password"),
+            verify(
+                &s,
+                &s.selected_vault().unwrap_or_default(),
+                &form(&token, "db-password"),
+                "db-password"
+            ),
             Err(ConfirmError::StaleForm)
         );
     }

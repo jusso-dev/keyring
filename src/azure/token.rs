@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 
@@ -111,6 +111,10 @@ impl fmt::Display for AccessToken {
     }
 }
 
+/// Upper bound on how long a failed exchange is shared with callers that
+/// were queued behind it.
+const FAILURE_MEMORY: Duration = Duration::from_secs(5);
+
 /// Per-session cache of exchanged tokens. Memory only.
 ///
 /// Concurrent requests that miss the cache wait for one exchange per
@@ -123,6 +127,9 @@ pub struct TokenCache {
     exchanging: [tokio::sync::Mutex<()>; Resource::ALL.len()],
     /// Held while refreshing the user's own token.
     refreshing: tokio::sync::Mutex<()>,
+    /// The last failed exchange per resource, so callers that were waiting
+    /// on it get the same answer instead of each trying again in turn.
+    failed: Mutex<HashMap<Resource, (Instant, TokenError)>>,
 }
 
 impl TokenCache {
@@ -134,6 +141,26 @@ impl TokenCache {
     fn put(&self, resource: Resource, token: AccessToken) {
         let mut map = self.tokens.lock().unwrap_or_else(|e| e.into_inner());
         map.insert(resource, token);
+    }
+
+    /// The failure of a call that finished after `since`, if there was one.
+    fn failure_since(&self, resource: Resource, since: Instant) -> Option<TokenError> {
+        let map = self.failed.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(&resource)
+            .filter(|(at, _)| *at >= since && at.elapsed() < FAILURE_MEMORY)
+            .map(|(_, e)| e.clone())
+    }
+
+    fn set_failure(&self, resource: Resource, err: Option<&TokenError>) {
+        let mut map = self.failed.lock().unwrap_or_else(|e| e.into_inner());
+        match err {
+            Some(e) => {
+                map.insert(resource, (Instant::now(), e.clone()));
+            }
+            None => {
+                map.remove(&resource);
+            }
+        }
     }
 
     /// Forget a token, for example after Azure rejected it.
@@ -245,12 +272,23 @@ impl TokenBroker {
         }
         // One exchange per resource at a time. Whoever waited checks the
         // cache again, since the one before may have filled it.
+        let started = Instant::now();
         let _guard = cache.exchanging[resource.index()].lock().await;
         if let Some(t) = cache.get(resource, SystemTime::now()) {
             return Ok(t);
         }
-        let user = self.fresh_user_token(session).await?;
-        let token = self.exchange(session, &user.access_token, resource).await?;
+        // If the call ahead of us failed while we waited, share its answer.
+        // Otherwise each queued request would wait out its own timeout in
+        // turn. A request that arrives later still tries again.
+        if let Some(err) = cache.failure_since(resource, started) {
+            return Err(err);
+        }
+        let result = match self.fresh_user_token(session).await {
+            Ok(user) => self.exchange(session, &user.access_token, resource).await,
+            Err(e) => Err(e),
+        };
+        cache.set_failure(resource, result.as_ref().err());
+        let token = result?;
         cache.put(resource, token.clone());
         Ok(token)
     }

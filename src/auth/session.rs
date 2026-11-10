@@ -236,7 +236,15 @@ impl Session {
     /// tab is refused, so it can't act on the wrong vault.
     pub fn csrf_matches(&self, presented: &str) -> bool {
         let now = self.selected_vault().unwrap_or_default();
-        self.csrf_vault(presented).is_some_and(|v| v == now)
+        self.csrf_matches_vault(presented, &now)
+    }
+
+    /// True when the form's token is this session's and was rendered for
+    /// `vault`. Handlers pass the vault they are about to act on, read
+    /// once, so a vault switch in another tab between reading it and
+    /// checking the token can't pair one vault's form with another vault.
+    pub fn csrf_matches_vault(&self, presented: &str, vault: &str) -> bool {
+        self.csrf_vault(presented).is_some_and(|v| v == vault)
     }
 
     /// True when the form's token is this session's, whichever vault it
@@ -515,6 +523,20 @@ pub(crate) mod tests {
         assert!(!s.csrf_matches_any(&other.csrf_token()));
         assert!(!s.csrf_matches_any("kv-b.forged"));
         assert_eq!(s.csrf_other_vault("kv-a.forged"), None);
+    }
+
+    #[test]
+    fn csrf_is_checked_against_the_vault_the_handler_holds() {
+        let store = SessionStore::default();
+        let s = store.get(&store.create(user(), tokens())).unwrap();
+        s.select_vault("kv-a".into());
+        let a = s.csrf_token();
+        // A handler read kv-a, then another tab switched to kv-b before
+        // the token was checked. The check uses the handler's vault.
+        s.select_vault("kv-b".into());
+        assert!(s.csrf_matches_vault(&a, "kv-a"));
+        assert!(!s.csrf_matches_vault(&a, "kv-b"));
+        assert!(!s.csrf_matches_vault(&s.csrf_token(), "kv-a"));
     }
 
     #[test]

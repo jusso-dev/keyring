@@ -475,3 +475,38 @@ async fn wrong_api_scope_is_reported_as_a_setting_not_a_sign_in() {
         }
     );
 }
+
+#[tokio::test]
+async fn callers_queued_behind_a_failed_exchange_share_its_error() {
+    let h = harness().await;
+    *h.idp.state.grant_error.lock().unwrap() = Some(("invalid_grant", 50013));
+    *h.idp.state.token_delay.lock().unwrap() = Duration::from_millis(200);
+    let mut tasks = Vec::new();
+    for _ in 0..6 {
+        let state = h.state.clone();
+        let session = h.session.clone();
+        tasks.push(tokio::spawn(async move {
+            state
+                .azure_broker()
+                .token_for(&session, Resource::KeyVault)
+                .await
+        }));
+    }
+    for t in tasks {
+        assert!(t.await.unwrap().is_err());
+    }
+    assert_eq!(
+        h.idp.state.requests_of(OBO_GRANT).len(),
+        1,
+        "the callers waiting behind the failed exchange didn't each retry"
+    );
+    // A request made afterwards tries again.
+    *h.idp.state.grant_error.lock().unwrap() = None;
+    *h.idp.state.token_delay.lock().unwrap() = Duration::ZERO;
+    h.state
+        .azure_broker()
+        .token_for(&h.session, Resource::KeyVault)
+        .await
+        .unwrap();
+    assert_eq!(h.idp.state.requests_of(OBO_GRANT).len(), 2);
+}

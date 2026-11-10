@@ -197,16 +197,19 @@ pub fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
 /// page again saying nothing was done.
 pub fn verify(
     session: &CurrentSession,
+    vault: &str,
     form: &ConfirmForm,
     expected: &str,
     shell: Shell,
     view: ConfirmView,
 ) -> Result<Shell, Halt> {
-    match confirm::verify(&session.0, form, expected) {
+    match confirm::verify(&session.0, vault, form, expected) {
         Ok(()) => Ok(shell),
-        Err(confirm::ConfirmError::StaleForm) => {
-            Err(PageError::new(shell, Problem::stale_form()).into())
-        }
+        Err(confirm::ConfirmError::StaleForm) => Err(PageError::new(
+            shell,
+            crate::routes::vault_ctx::stale_form_for(&session.0, &form.csrf),
+        )
+        .into()),
         Err(e) => {
             let mut view = view;
             view.error = Some(e.problem(expected).message);

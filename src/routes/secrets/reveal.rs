@@ -96,9 +96,7 @@ pub async fn reveal(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
-    if !session.0.csrf_matches(&form.csrf) {
-        return Err(PageError::new(shell, Problem::stale_form()).into());
-    }
+    let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
     let version = form.version.trim();
     if !version.is_empty() && !is_valid_version(version) {
         return Err(PageError::new(shell, Problem::not_found()).into());

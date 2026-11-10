@@ -230,13 +230,13 @@ pub async fn pfx(
     let (vault, shell) = current_vault(&session, shell)?;
     let (name, shell) = checked_name(&name, shell)?;
     // The form token first, so a forged post reaches nothing in Key Vault.
-    let shell = check_csrf(&session, &form.csrf, shell)?;
+    let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
         .policy
         .as_ref()
         .is_some_and(|p| p.content_type() == "application/x-pem-file");
-    match confirm::verify(&session.0, &form, &name) {
+    match confirm::verify(&session.0, &vault, &form, &name) {
         Ok(()) => {}
         Err(confirm::ConfirmError::StaleForm) => {
             return Err(PageError::new(shell, Problem::stale_form()).into());

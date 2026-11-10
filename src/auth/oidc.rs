@@ -158,6 +158,8 @@ type EntraClient = openidconnect::Client<
 struct MetadataCache {
     good: Option<(Instant, Arc<ProviderMetadataWithLogout>)>,
     failed_at: Option<Instant>,
+    /// Set when the signing keys are known to be out of date.
+    stale: bool,
 }
 
 pub struct Oidc {
@@ -211,7 +213,7 @@ impl Oidc {
         let c = self.metadata.read().await;
         let (fetched, doc) = c.good.as_ref()?;
         let backing_off = c.failed_at.is_some_and(|t| t.elapsed() < self.retry_after);
-        (fetched.elapsed() < self.ttl || backing_off).then(|| doc.clone())
+        ((fetched.elapsed() < self.ttl && !c.stale) || backing_off).then(|| doc.clone())
     }
 
     async fn metadata(&self) -> Result<Arc<ProviderMetadataWithLogout>, SignInError> {
@@ -239,6 +241,7 @@ impl Oidc {
                 *self.metadata.write().await = MetadataCache {
                     good: Some((Instant::now(), doc.clone())),
                     failed_at: None,
+                    stale: false,
                 };
                 Ok(doc)
             }
@@ -260,9 +263,13 @@ impl Oidc {
         }
     }
 
-    /// Forget cached metadata so the next fetch gets fresh signing keys.
+    /// Mark cached metadata as out of date so the next call fetches fresh
+    /// signing keys. The last good copy is kept as a fallback in case that
+    /// fetch fails, and any back-off is cleared so the fetch happens now.
     pub async fn forget_metadata(&self) {
-        *self.metadata.write().await = MetadataCache::default();
+        let mut c = self.metadata.write().await;
+        c.stale = true;
+        c.failed_at = None;
     }
 
     fn client(&self, metadata: &ProviderMetadataWithLogout) -> Result<EntraClient, SignInError> {
@@ -333,7 +340,9 @@ impl Oidc {
             .map_err(|e| match e {
                 openidconnect::RequestTokenError::ServerResponse(r) => SignInError::Provider {
                     code: safe_code(r.error().as_ref()),
-                    codes: Vec::new(),
+                    codes: aadsts_code(r.error_description().map(String::as_str))
+                        .into_iter()
+                        .collect(),
                 },
                 other => SignInError::Unreachable(error_chain(&other)),
             })?;
@@ -402,6 +411,19 @@ impl Oidc {
     }
 }
 
+/// Entra's error number from an `error_description` such as
+/// `AADSTS54005: OAuth2 Authorization code was already redeemed...`. Only
+/// the number is kept; the rest of the text is never stored or logged.
+fn aadsts_code(description: Option<&str>) -> Option<u64> {
+    let digits: String = description?
+        .strip_prefix("AADSTS")?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .take(9)
+        .collect();
+    digits.parse().ok()
+}
+
 /// True when an ID token failed because no cached key could check it.
 fn is_key_miss(e: &ClaimsVerificationError) -> bool {
     matches!(
@@ -427,6 +449,20 @@ impl From<HttpError> for SignInError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aadsts_code_reads_only_the_number() {
+        assert_eq!(
+            aadsts_code(Some(
+                "AADSTS54005: OAuth2 Authorization code was already redeemed."
+            )),
+            Some(54005)
+        );
+        assert_eq!(aadsts_code(Some("AADSTS70008")), Some(70008));
+        assert_eq!(aadsts_code(Some("something else")), None);
+        assert_eq!(aadsts_code(Some("AADSTS: no number")), None);
+        assert_eq!(aadsts_code(None), None);
+    }
 
     #[test]
     fn debug_hides_login_state() {
