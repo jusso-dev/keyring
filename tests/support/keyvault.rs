@@ -639,16 +639,17 @@ async fn update(
     let Some(v) = sec.versions.iter_mut().find(|v| v.version == version) else {
         return err(404, "SecretNotFound");
     };
-    // Like real Key Vault: fields left out are kept, `null` clears.
+    // Like real Key Vault: fields left out are kept, and so is a date sent
+    // as `null` (checked on a real vault). A date can only be changed.
     let a = &body["attributes"];
     if let Some(e) = a["enabled"].as_bool() {
         v.enabled = e;
     }
-    if let Some(exp) = a.get("exp") {
-        v.exp = exp.as_i64();
+    if let Some(exp) = a["exp"].as_i64() {
+        v.exp = Some(exp);
     }
-    if let Some(nbf) = a.get("nbf") {
-        v.nbf = nbf.as_i64();
+    if let Some(nbf) = a["nbf"].as_i64() {
+        v.nbf = Some(nbf);
     }
     if body.get("contentType").is_some() {
         v.content_type = body["contentType"]

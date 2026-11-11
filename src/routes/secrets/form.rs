@@ -275,10 +275,15 @@ pub(crate) fn for_new_value(
     }
 }
 
+pub(crate) const REMOVE_EXPIRY: &str = "Key Vault can't remove the expiry date from a version. To have no expiry, set a new value and leave Expires blank. Or pick a later date.";
+pub(crate) const REMOVE_START: &str = "Key Vault can't remove the start date from a version. To have none, set a new value and leave Active from blank.";
+
 /// Check an edit-properties form against the current version. The body
 /// has no value, so this can never create a new version. Dates that didn't
-/// change are left out; removed dates are sent as `null`. Tags are only
-/// sent when they changed, and never when the form can't show them.
+/// change are left out. A removed date is refused: Key Vault keeps a
+/// version's dates even when sent `null`, so only a new value can drop
+/// one. Tags are only sent when they changed, and never when the form
+/// can't show them.
 pub(crate) fn for_update(
     form: &SecretForm,
     item: &SecretItem,
@@ -292,24 +297,29 @@ pub(crate) fn for_update(
     if !editable {
         errors.retain(|e| e.field != "tags");
     }
-    let wanted_exp = props.attributes.expires;
-    let expires = DateChange::between(current.expires, wanted_exp);
-    if expires == DateChange::Keep {
+    let expires = DateChange::between(current.expires, props.attributes.expires);
+    if expires == Some(DateChange::Keep) {
         errors.retain(|e| e.field != "expires" || !e.message.contains("already passed"));
     }
-    if errors.is_empty() {
-        Ok(UpdateSecret {
+    if expires.is_none() {
+        errors.push("expires", REMOVE_EXPIRY);
+    }
+    let not_before = DateChange::between(current.not_before, props.attributes.not_before);
+    if not_before.is_none() {
+        errors.push("not_before", REMOVE_START);
+    }
+    match (expires, not_before) {
+        (Some(expires), Some(not_before)) if errors.is_empty() => Ok(UpdateSecret {
             // Send an empty string to clear a content type that was removed.
             content_type: Some(props.content_type.unwrap_or_default()),
             attributes: UpdateAttributes {
                 enabled: props.attributes.enabled,
-                not_before: DateChange::between(current.not_before, props.attributes.not_before),
+                not_before,
                 expires,
             },
             tags: (editable && props.tags != *item.tags()).then_some(props.tags),
-        })
-    } else {
-        Err(errors)
+        }),
+        _ => Err(errors),
     }
 }
 
@@ -420,11 +430,16 @@ mod tests {
             "unchanged expiry not sent"
         );
         f.expires = String::new();
-        let j = serde_json::to_value(for_update(&f, &current, NOW).unwrap()).unwrap();
-        assert!(
-            j["attributes"]["exp"].is_null(),
-            "cleared expiry sent as null"
+        let errors = for_update(&f, &current, NOW).unwrap_err();
+        assert_eq!(
+            errors.error_for("expires"),
+            Some(REMOVE_EXPIRY),
+            "can't remove"
         );
+        // A new value without the date drops it.
+        f.value = Some("new".into());
+        let body = for_new_value(&f, &current, NOW).unwrap();
+        assert_eq!(body.attributes.expires, None);
         // An expiry that passed earlier today, left alone, doesn't block other edits.
         let past = Attributes {
             expires: Some(NOW - 60),
