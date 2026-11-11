@@ -246,25 +246,14 @@ fn create_page_with(
         .into_response()
 }
 
-/// Key Vault's refusal of an HSM key on a Standard vault. The reviewer's
-/// reading of the REST reference is `400 BadParameter` with a message that
-/// names the vault's SKU, so match that narrowly rather than blaming every
-/// 400 on HSM. Needs confirming on a real vault.
+/// Key Vault's refusal of an HSM key on a Standard vault: `403 Forbidden`
+/// with inner code `HardwareKeysNotSupported` (checked on a real vault).
+/// Matched on the code alone, so other 400s and 403s aren't blamed on HSM.
 fn is_hsm_refusal(err: &AzureError) -> bool {
-    match err {
-        AzureError::Status {
-            status: 400,
-            code,
-            message,
-        } => {
-            let code = code.as_deref().unwrap_or_default();
-            let msg = message.as_deref().unwrap_or_default().to_ascii_lowercase();
-            code.to_ascii_lowercase().contains("hsm")
-                || msg.contains("sku")
-                || msg.contains("premium")
-        }
-        _ => false,
-    }
+    matches!(
+        err,
+        AzureError::Status { code: Some(c), .. } if c.eq_ignore_ascii_case("HardwareKeysNotSupported")
+    )
 }
 
 pub(crate) async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
@@ -895,19 +884,13 @@ mod tests {
 
     #[test]
     fn hsm_refusal_is_matched_narrowly() {
-        let e = |code: &str, msg: &str| AzureError::Status {
-            status: 400,
+        let e = |status: u16, code: &str| AzureError::Status {
+            status,
             code: Some(code.into()),
-            message: Some(msg.into()),
+            message: Some("Hardware key operation not allowed on standard vault".into()),
         };
-        assert!(is_hsm_refusal(&e(
-            "BadParameter",
-            "The vault SKU does not support HSM keys."
-        )));
-        assert!(!is_hsm_refusal(&e("BadParameter", "Invalid curve name.")));
-        assert!(!is_hsm_refusal(&e(
-            "BadParameter",
-            "Key size not supported for RSA-HSM."
-        )));
+        assert!(is_hsm_refusal(&e(403, "HardwareKeysNotSupported")));
+        assert!(!is_hsm_refusal(&e(403, "Forbidden")), "a missing role");
+        assert!(!is_hsm_refusal(&e(400, "BadParameter")));
     }
 }
