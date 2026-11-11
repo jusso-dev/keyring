@@ -282,7 +282,7 @@ async fn success_flash_is_shown() {
 }
 
 #[tokio::test]
-async fn editing_tags_keeps_the_exact_expiry_and_clearing_works() {
+async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
     let w = support::world().await;
     // Expires at 10:00 UTC, 100 days out.
     let day = 86_400;
@@ -322,12 +322,30 @@ async fn editing_tags_keeps_the_exact_expiry_and_clearing_works() {
             ],
         )
         .await;
-    assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        w.kv.state.current("db-password").unwrap().exp,
-        None,
-        "cleared"
+    // Key Vault keeps a version's expiry even when sent null, so the form
+    // says so instead of reporting a change that didn't happen.
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(
+        html.contains("can&#39;t remove the expiry date from a version"),
+        "{html}"
     );
+    assert_eq!(w.kv.state.current("db-password").unwrap().exp, Some(exp));
+
+    // A new value with Expires blank makes a version with no expiry.
+    let res = w
+        .post(
+            "/secrets/db-password/value",
+            &[
+                ("value", "y"),
+                ("expires", ""),
+                ("tags", "env=prod"),
+                ("enabled", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(w.kv.state.current("db-password").unwrap().exp, None);
 }
 
 #[tokio::test]

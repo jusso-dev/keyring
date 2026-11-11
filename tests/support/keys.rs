@@ -253,13 +253,12 @@ async fn create(
         return err(409, "Conflict");
     }
     let kty = body["kty"].as_str().unwrap_or("RSA").to_owned();
-    // A Standard vault refuses HSM keys with `400 BadParameter` and a
-    // message about the vault's SKU (REST reference, Keys, Create Key, as
-    // read by the review; to confirm on a real vault).
+    // A Standard vault refuses HSM keys with 403 and inner code
+    // `HardwareKeysNotSupported` (checked on a real vault).
     if kty.ends_with("-HSM") && !*s.premium.lock().unwrap() {
         return json_response(
-            StatusCode::BAD_REQUEST,
-            json!({"error": {"code": "BadParameter", "message": "Key type RSA-HSM is not supported by this vault's SKU. Premium SKU is required."}}),
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "Forbidden", "message": "Hardware key operation not allowed on standard vault", "innererror": {"code": "HardwareKeysNotSupported"}}}),
         );
     }
     s.key_creates.lock().unwrap().push(body.clone());

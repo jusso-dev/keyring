@@ -371,13 +371,14 @@ fn expose_secret<S: serde::Serializer>(v: &Secret, s: S) -> Result<S::Ok, S::Err
 }
 
 /// One date in a PATCH. Key Vault merges attributes, so leaving a field
-/// out keeps it, and only an explicit `null` clears it.
+/// out keeps it. It also keeps the date when sent `null` (checked on a real
+/// vault, API versions 7.0 to 7.6), so a date can't be removed from a
+/// version, only from a new one.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DateChange {
     #[default]
     Keep,
     Set(Timestamp),
-    Clear,
 }
 
 impl DateChange {
@@ -387,13 +388,14 @@ impl DateChange {
 
     /// Compare what the form says with what's there now. An unchanged
     /// calendar day is kept as it is, so editing tags doesn't move an
-    /// expiry from 10:00 to the end of the day.
-    pub fn between(current: Option<Timestamp>, wanted: Option<Timestamp>) -> Self {
+    /// expiry from 10:00 to the end of the day. `None` when the form
+    /// removes a date, which Key Vault can't do on an existing version.
+    pub fn between(current: Option<Timestamp>, wanted: Option<Timestamp>) -> Option<Self> {
         match (current, wanted) {
-            (None, None) => Self::Keep,
-            (Some(_), None) => Self::Clear,
-            (Some(c), Some(w)) if c.div_euclid(86_400) == w.div_euclid(86_400) => Self::Keep,
-            (_, Some(w)) => Self::Set(w),
+            (None, None) => Some(Self::Keep),
+            (Some(_), None) => None,
+            (Some(c), Some(w)) if c.div_euclid(86_400) == w.div_euclid(86_400) => Some(Self::Keep),
+            (_, Some(w)) => Some(Self::Set(w)),
         }
     }
 }
@@ -402,7 +404,7 @@ impl Serialize for DateChange {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Set(t) => s.serialize_i64(*t),
-            Self::Clear | Self::Keep => s.serialize_none(),
+            Self::Keep => s.serialize_none(),
         }
     }
 }
@@ -506,26 +508,23 @@ mod tests {
         let t = midnight + 10 * 3600; // 10:00
         assert_eq!(
             DateChange::between(Some(t), Some(midnight + day - 1)),
-            DateChange::Keep,
+            Some(DateChange::Keep),
             "same day kept"
         );
-        assert_eq!(DateChange::between(Some(t), None), DateChange::Clear);
-        assert_eq!(DateChange::between(None, None), DateChange::Keep);
+        assert_eq!(DateChange::between(Some(t), None), None, "can't remove");
+        assert_eq!(DateChange::between(None, None), Some(DateChange::Keep));
         assert_eq!(
             DateChange::between(Some(t), Some(t + 2 * day)),
-            DateChange::Set(t + 2 * day)
+            Some(DateChange::Set(t + 2 * day))
         );
         let a = UpdateAttributes {
             enabled: Some(true),
             not_before: DateChange::Keep,
-            expires: DateChange::Clear,
+            expires: DateChange::Set(t),
         };
         let j = serde_json::to_value(&a).unwrap();
         assert!(j.get("nbf").is_none(), "kept fields are left out");
-        assert!(
-            j.get("exp").unwrap().is_null(),
-            "cleared fields are sent as null"
-        );
+        assert_eq!(j["exp"], t);
     }
 
     #[test]

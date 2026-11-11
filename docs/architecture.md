@@ -184,6 +184,7 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 - Values are only read by the reveal action, and by rollback, which copies an older version's value into a new version on the server without showing it.
 - Names from URLs are checked against Key Vault's rules (letters, digits and hyphens, up to 127) and versions must be 32 hex characters, before they go into a request.
 - "Expiring soon" means within 30 days. Dates are shown in UTC.
+- Editing properties changes the current version. Key Vault can change a version's start and expiry dates but never remove them: it keeps a date sent as `null`. So the edit form refuses a removed date and says to set a new value with the date left blank, which makes a new version without it.
 - Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
 
 ## Certificates
@@ -203,7 +204,7 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 - Keyring only ever reads keys with `GET /keys/{name}` and the list and versions calls, which return the public part. There is no export, backup, release, decrypt, unwrap or sign call anywhere; a test checks the keys client source for them.
 - The JWK type only has public fields (`n`, `e`, `crv`, `x`, `y`). Any private field Key Vault might send is dropped while parsing.
 - Public keys are shown as JWK and as PEM (SubjectPublicKeyInfo). The PEM is built with a few lines of DER encoding and tested byte for byte against openssl output for RSA and EC.
-- Create defaults to RSA 3072 with every RSA operation, or sign and verify for EC. An HSM key on a Standard vault is refused by Key Vault (400 `BadParameter`), and the form says the vault needs the Premium tier.
+- Create defaults to RSA 3072 with every RSA operation, or sign and verify for EC. An HSM key on a Standard vault is refused by Key Vault (403, inner code `HardwareKeysNotSupported`), and the form says the vault needs the Premium tier.
 - The list is read 25 at a time from Key Vault and shown 100 to a page.
 - Rotate now and the rotation policy use Key Vault's own rotation API. The policy form rotates either a number of days after each version is made or a number of days before it expires, with an expiry and a near-expiry event. Durations Key Vault already holds (for example `P18M`) are sent back unchanged if the field wasn't changed. A policy with parts the form can't show, such as a time in hours, is listed on the page, and saving needs "Replace the whole policy" ticked. Key Vault's default policy (one Notify 30 days before expiry, no expiry) is shown as no policy set.
 - **Enable and disable** set `attributes.enabled` on the current version.
