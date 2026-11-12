@@ -421,7 +421,7 @@ async fn sign_in_page_states_the_time_limit() {
 #[tokio::test]
 async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     let h = Harness::new().await;
-    let req = Request::post("/secrets/-/new")
+    let req = Request::post("/v/kv-test/secrets/-/new")
         .header("origin", "http://localhost:3000")
         .header("referer", "http://localhost:3000/secrets/-/new?for=x")
         .header(COOKIE, "keyring_session=gone")
@@ -479,7 +479,7 @@ async fn timed_out_post_returns_to_the_form_and_says_nothing_was_saved() {
     assert!(html.contains("Nothing changed. Enter it again."), "{html}");
 
     // A cross-site referer is not followed.
-    let req = Request::post("/secrets/-/new")
+    let req = Request::post("/v/kv-test/secrets/-/new")
         .header("origin", "http://localhost:3000")
         .header("referer", "https://evil.example/phish")
         .header(COOKIE, "keyring_session=gone")
@@ -721,26 +721,22 @@ fn seed_vaults(w: &support::World) {
 }
 
 #[tokio::test]
-async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
+async fn a_form_rendered_for_one_vault_is_refused_at_another_vaults_address() {
     let w = support::world().await;
     seed_vaults(&w);
     w.kv.state.put("db-password", "x");
-    // The delete form is rendered while kv-test is chosen.
-    let (_, html) = w.page("/secrets/db-password/delete").await;
+    // The delete form is rendered for kv-test.
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
     let form_token = support::hidden_value(&html, "csrf").unwrap();
     assert!(form_token.starts_with("kv-test."));
 
-    // Another tab switches to kv-other. The switch form accepts a token
-    // from any vault.
-    let res = w.post("/vaults/select", &[("name", "kv-other")]).await;
-    assert_eq!(res.status(), StatusCode::SEE_OTHER);
-
-    // The first tab's form is posted with the right name typed.
+    // The same form posted to kv-other's address is refused, with the
+    // right name typed. The vault in the address is the one acted on.
     let mut w = w;
-    w.csrf = form_token;
+    w.csrf = form_token.clone();
     let res = w
         .post(
-            "/secrets/db-password/delete",
+            "/v/kv-other/secrets/db-password/delete",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -751,13 +747,17 @@ async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
         "nothing deleted"
     );
 
-    // A form rendered for kv-other works.
-    let (_, html) = w.page("/secrets/db-password/delete").await;
-    w.csrf = support::hidden_value(&html, "csrf").unwrap();
-    assert!(w.csrf.starts_with("kv-other."));
+    // Opening another vault in a second tab doesn't spoil the first tab's
+    // form: it still works at its own address.
+    let (_, other) = w.page("/v/kv-other/secrets/-/new").await;
+    assert!(
+        support::hidden_value(&other, "csrf")
+            .unwrap()
+            .starts_with("kv-other.")
+    );
     let res = w
         .post(
-            "/secrets/db-password/delete",
+            "/v/kv-test/secrets/db-password/delete",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -768,13 +768,11 @@ async fn a_form_rendered_for_one_vault_is_refused_after_switching() {
 async fn forms_using_the_shared_check_name_the_vault_they_were_for() {
     let mut w = support::world().await;
     seed_vaults(&w);
-    let (_, html) = w.page("/keys/-/new").await;
+    let (_, html) = w.page("/v/kv-test/keys/-/new").await;
     let form_token = support::hidden_value(&html, "csrf").unwrap();
-    let res = w.post("/vaults/select", &[("name", "kv-other")]).await;
-    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     w.csrf = form_token;
     let res = w
-        .post("/keys/-/new", &[("name", "k1"), ("kty", "RSA")])
+        .post("/v/kv-other/keys/-/new", &[("name", "k1"), ("kty", "RSA")])
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     let html = support::body_text(res).await;

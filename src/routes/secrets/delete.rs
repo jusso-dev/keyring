@@ -45,12 +45,12 @@ async fn current(
     name: &str,
 ) -> Result<(Shell, Recovery), Halt> {
     match api(state, session, vault).properties(name).await {
-        Ok(item) if item.managed.unwrap_or(false) => {
-            Err(crate::routes::secrets::reveal::managed_problem(shell, name))
-        }
+        Ok(item) if item.managed.unwrap_or(false) => Err(
+            crate::routes::secrets::reveal::managed_problem(shell, vault, name),
+        ),
         Ok(item) => Ok((shell, recovery_of(&item.attributes))),
         Err(err) => {
-            let path = format!("/secrets/{name}");
+            let path = KIND.item_url(vault, name);
             Err(azure_problem(shell, &err, Need::ManageSecrets, &path))
         }
     }
@@ -69,7 +69,7 @@ async fn load_deleted(
             shell,
             &err,
             Need::ManageSecrets,
-            "/secrets/-/deleted",
+            &KIND.deleted_list_url(vault),
         )),
     }
 }
@@ -132,7 +132,7 @@ impl Lifecycle for Secrets {
         shell: Shell,
     ) -> Result<Shell, Halt> {
         let (shell, item) = load_deleted(state, session, shell, vault, name).await?;
-        lifecycle::purge_not_protected(shell, KIND, name, recovery_of(&item.attributes))
+        lifecycle::purge_not_protected(shell, KIND, vault, name, recovery_of(&item.attributes))
     }
 
     fn deleted_message(name: &str, recovery: Recovery) -> String {
@@ -142,8 +142,8 @@ impl Lifecycle for Secrets {
         )
     }
 
-    fn purge_error(shell: Shell, err: &AzureError, name: &str) -> Halt {
-        lifecycle::purge_problem(shell, err, KIND, name, Need::ManageSecrets)
+    fn purge_error(shell: Shell, err: &AzureError, vault: &str, name: &str) -> Halt {
+        lifecycle::purge_problem(shell, err, KIND, vault, name, Need::ManageSecrets)
     }
 }
 

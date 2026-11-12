@@ -175,7 +175,9 @@ Results are fetched in pages of 1000 (the Resource Graph maximum), following `$s
 
 The list is filtered on the server (name or resource group, subscription, tag as `key` or `key=value`) and shown 200 to a page. The one JavaScript file, `static/app.js`, also filters the visible rows as you type; without it the form submits and the server filters.
 
-The chosen vault is kept in the session only. Its name is checked against Key Vault naming rules before it's stored or put into a URL. Seeing a vault in Resource Graph only needs the ARM Reader role, so opening it can still fail with 403 on the data plane; the secrets pages handle that with the role to ask for.
+The vault is in the address: every secrets, certificates, keys and audit page lives under `/v/{vault}/` (for example `/v/kv-prod/secrets/db-password`), and the vault in the address is the one that request acts on. So a link can be sent to a colleague, and two tabs can hold two vaults. Its name is checked against Key Vault naming rules before it's used or put into a URL, and a name that fails is "not found" without a request leaving Keyring. Keyring doesn't check Resource Graph for that name: Key Vault's own 403 or 404 on the first call covers a vault the person can't see, and the pages handle that with the role to ask for. Seeing a vault in Resource Graph only needs the ARM Reader role, so opening it can still fail with 403 on the data plane.
+
+The session also remembers the vault last used. That is only for the side navigation links, and for the old addresses without a vault (`/secrets/db-password`), which answer with a 308 to the same page under that vault, or ask for a vault if none has been used. Handlers never read it to decide which vault to act on. The audit view keeps the vault's ARM resource ID with it, and only uses that copy when the address names the same vault.
 
 ## Secrets
 
@@ -263,7 +265,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | --- | --- |
 | Keyring used to reach vaults a person can't | Every Azure call carries the person's own OBO token. Keyring has no managed identity, service principal or app-only token with vault access. Its deployment identity can only read its own two config secrets |
 | Stolen session cookie | Random 256-bit ID, http-only, `SameSite=Lax`, `Secure` and `__Host-` prefixed over HTTPS. One hour idle and 12 hour absolute timeouts. Sign-out removes the session server-side |
-| Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route. The token is bound to the vault the form was rendered for, so a form from before a vault switch in another tab is refused ("You switched vaults") instead of acting on the new vault |
+| Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route. The token is bound to the vault in the address of the page the form was rendered on, and checked against the vault in the address it is posted to. A form posted to another vault's address is refused ("You switched vaults") instead of acting on that vault |
 | Open redirects after sign-in | Return paths must be local paths; absolute URLs, `//host`, backslashes and control characters fall back to `/` |
 | Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
 | Cross-site scripting | Askama escapes all output. CSP `default-src 'none'` with scripts and styles from this site only, no inline code, no `eval`. The one script uses no `innerHTML` (tested) |

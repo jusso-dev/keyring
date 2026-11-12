@@ -23,7 +23,7 @@ fn create_fields<'a>(name: &'a str, issuer: &'a str) -> Vec<(&'a str, &'a str)> 
 #[tokio::test]
 async fn create_form_has_plain_help_and_defaults() {
     let w = support::world().await;
-    let (status, html) = w.page("/certificates/-/new").await;
+    let (status, html) = w.page("/v/kv-test/certificates/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("RSA 2048 works with almost everything"));
     assert!(html.contains("Self for self-signed"));
@@ -38,10 +38,13 @@ async fn create_form_has_plain_help_and_defaults() {
 async fn self_signed_creates_and_shows_in_list() {
     let w = support::world().await;
     let res = w
-        .post("/certificates/-/new", &create_fields("web-tls", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("web-tls", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/certificates/web-tls");
+    assert_eq!(location(&res), "/v/kv-test/certificates/web-tls");
     let body = w.kv.state.creates.lock().unwrap()[0].body.clone();
     assert_eq!(body["policy"]["issuer"]["name"], "Self");
     assert_eq!(
@@ -53,7 +56,7 @@ async fn self_signed_creates_and_shows_in_list() {
         .unwrap()
         .clone();
     assert!(sans.contains(&"app.example.com".into()) && sans.contains(&"www.example.com".into()));
-    let (_, html) = w.page("/certificates").await;
+    let (_, html) = w.page("/v/kv-test/certificates").await;
     assert!(html.contains(">web-tls<"));
 }
 
@@ -68,12 +71,12 @@ async fn ca_issued_shows_pending_status() {
         .push("DigiCert-OV".into());
     let res = w
         .post(
-            "/certificates/-/new",
+            "/v/kv-test/certificates/-/new",
             &create_fields("public-tls", "DigiCert-OV"),
         )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let (status, html) = w.page("/certificates/public-tls").await;
+    let (status, html) = w.page("/v/kv-test/certificates/public-tls").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("Certificate request: Waiting for the issuer"),
@@ -88,7 +91,7 @@ async fn create_validation_and_existing_names() {
     let w = support::world().await;
     let mut f = create_fields("web tls", "Self");
     f[1] = ("common_name", "");
-    let res = w.post("/certificates/-/new", &f).await;
+    let res = w.post("/v/kv-test/certificates/-/new", &f).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("spaces"));
@@ -97,7 +100,10 @@ async fn create_validation_and_existing_names() {
 
     w.kv.state.add_cert("taken", false, "x");
     let res = w
-        .post("/certificates/-/new", &create_fields("taken", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("taken", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(
@@ -111,28 +117,33 @@ async fn create_validation_and_existing_names() {
 async fn delete_needs_typed_name_then_recover() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
-    let (_, html) = w.page("/certificates/web-tls/delete").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/delete").await;
     assert!(html.contains("Type <strong class=\"mono\">web-tls</strong> to confirm"));
     let res = w
-        .post("/certificates/web-tls/delete", &[("confirm_name", "web")])
+        .post(
+            "/v/kv-test/certificates/web-tls/delete",
+            &[("confirm_name", "web")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
 
     let res = w
         .post(
-            "/certificates/web-tls/delete",
+            "/v/kv-test/certificates/web-tls/delete",
             &[("confirm_name", "web-tls")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(!w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
-    let (_, html) = w.page("/certificates/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/certificates/-/deleted").await;
     assert!(html.contains(">web-tls<") && html.contains("Permanently deleted on"));
 
-    let res = w.post("/certificates/-/deleted/web-tls/recover", &[]).await;
+    let res = w
+        .post("/v/kv-test/certificates/-/deleted/web-tls/recover", &[])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(support::location(&res), "/certificates/-/deleted");
+    assert_eq!(support::location(&res), "/v/kv-test/certificates/-/deleted");
     assert!(w.kv.state.certs.lock().unwrap().contains_key("web-tls"));
 }
 
@@ -141,22 +152,24 @@ async fn purge_off_by_default() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
     w.post(
-        "/certificates/web-tls/delete",
+        "/v/kv-test/certificates/web-tls/delete",
         &[("confirm_name", "web-tls")],
     )
     .await;
-    let (_, html) = w.page("/certificates/-/deleted/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/-/deleted/web-tls").await;
     assert!(!html.contains("/purge\""), "no purge link");
     assert!(html.contains("Deleted certificates in this vault can be recovered for 90 days."));
     assert!(
         !html.contains("its value"),
         "only secrets bring back a value"
     );
-    let (status, _) = w.page("/certificates/-/deleted/web-tls/purge").await;
+    let (status, _) = w
+        .page("/v/kv-test/certificates/-/deleted/web-tls/purge")
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let res = w
         .post(
-            "/certificates/-/deleted/web-tls/purge",
+            "/v/kv-test/certificates/-/deleted/web-tls/purge",
             &[("confirm_name", "web-tls")],
         )
         .await;
@@ -175,15 +188,15 @@ async fn purge_when_enabled() {
     let w = support::world_with(&[("KEYRING_ALLOW_PURGE", "true")]).await;
     w.kv.state.add_cert("web-tls", false, "x");
     w.post(
-        "/certificates/web-tls/delete",
+        "/v/kv-test/certificates/web-tls/delete",
         &[("confirm_name", "web-tls")],
     )
     .await;
-    let (_, html) = w.page("/certificates/-/deleted/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/-/deleted/web-tls").await;
     assert!(html.contains("Permanently delete"));
     let res = w
         .post(
-            "/certificates/-/deleted/web-tls/purge",
+            "/v/kv-test/certificates/-/deleted/web-tls/purge",
             &[("confirm_name", "web-tls")],
         )
         .await;
@@ -204,12 +217,15 @@ async fn forged_tokens_refused() {
     w.kv.state.add_cert("web-tls", false, "x");
     w.csrf = "forged".into();
     let res = w
-        .post("/certificates/-/new", &create_fields("new-one", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("new-one", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     let res = w
         .post(
-            "/certificates/web-tls/delete",
+            "/v/kv-test/certificates/web-tls/delete",
             &[("confirm_name", "web-tls")],
         )
         .await;
@@ -222,7 +238,10 @@ async fn self_signed_is_created_in_progress_then_completes() {
     let w = support::world().await;
     *w.kv.state.cert_extra.hold_self_signed.lock().unwrap() = true;
     let res = w
-        .post("/certificates/-/new", &create_fields("web-tls", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("web-tls", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let flash = res
@@ -234,7 +253,7 @@ async fn self_signed_is_created_in_progress_then_completes() {
         .join(";");
     assert!(!flash.is_empty());
     // Key Vault is still making it: the page says so, not "waiting for the issuer".
-    let (status, html) = w.page("/certificates/web-tls").await;
+    let (status, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("Certificate request: Being created"),
@@ -245,7 +264,7 @@ async fn self_signed_is_created_in_progress_then_completes() {
     assert!(!html.contains("Waiting for the issuer"));
     // A few seconds later it's done.
     *w.kv.state.cert_extra.hold_self_signed.lock().unwrap() = false;
-    let (_, html) = w.page("/certificates/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert!(!html.contains("Certificate request:"), "{html}");
     assert!(html.contains("CN=keyring.test"));
 }
@@ -259,14 +278,17 @@ async fn issuer_is_a_list_from_the_vault() {
         .lock()
         .unwrap()
         .push("DigiCert-OV".into());
-    let (_, html) = w.page("/certificates/-/new").await;
+    let (_, html) = w.page("/v/kv-test/certificates/-/new").await;
     assert!(html.contains("<select id=\"issuer\" name=\"issuer\""));
     assert!(html.contains("<option value=\"Self\" selected>"));
     assert!(html.contains("<option value=\"DigiCert-OV\">DigiCert-OV</option>"));
     // Unknown, or a name not on the vault, is refused before Key Vault.
     for issuer in ["Unknown", "Typo-CA"] {
         let res = w
-            .post("/certificates/-/new", &create_fields("pub-tls", issuer))
+            .post(
+                "/v/kv-test/certificates/-/new",
+                &create_fields("pub-tls", issuer),
+            )
             .await;
         assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{issuer}");
         let html = body_text(res).await;
@@ -280,7 +302,7 @@ async fn issuer_list_refused_offers_self_only() {
     let w = support::world().await;
     *w.kv.state.fail_path.lock().unwrap() = Some("/certificates/issuers".into());
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let (status, html) = w.page("/certificates/-/new").await;
+    let (status, html) = w.page("/v/kv-test/certificates/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("<option value=\"Self\" selected>"));
     assert!(
@@ -288,7 +310,10 @@ async fn issuer_list_refused_offers_self_only() {
         "{html}"
     );
     let res = w
-        .post("/certificates/-/new", &create_fields("web-tls", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("web-tls", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
@@ -303,13 +328,15 @@ async fn pending_request_can_be_cancelled() {
         .unwrap()
         .push("DigiCert-OV".into());
     w.post(
-        "/certificates/-/new",
+        "/v/kv-test/certificates/-/new",
         &create_fields("pub-tls", "DigiCert-OV"),
     )
     .await;
-    let (_, html) = w.page("/certificates/pub-tls").await;
-    assert!(html.contains("action=\"/certificates/pub-tls/pending/cancel\""));
-    let res = w.post("/certificates/pub-tls/pending/cancel", &[]).await;
+    let (_, html) = w.page("/v/kv-test/certificates/pub-tls").await;
+    assert!(html.contains("action=\"/v/kv-test/certificates/pub-tls/pending/cancel\""));
+    let res = w
+        .post("/v/kv-test/certificates/pub-tls/pending/cancel", &[])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let log = w.kv.state.log.lock().unwrap().clone();
     let patch = log
@@ -326,7 +353,7 @@ async fn pending_request_can_be_cancelled() {
             .pending
             .is_none()
     );
-    let (_, html) = w.page("/certificates/pub-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/pub-tls").await;
     assert!(!html.contains("Certificate request:"));
 }
 
@@ -335,14 +362,20 @@ async fn existing_name_check_reads_both_key_vault_replies() {
     // Real Key Vault: 200 with an empty list for an unknown name.
     let w = support::world().await;
     let res = w
-        .post("/certificates/-/new", &create_fields("fresh", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("fresh", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     // Some replies are 404. Both mean the name is free.
     let w = support::world().await;
     *w.kv.state.cert_extra.versions_404.lock().unwrap() = true;
     let res = w
-        .post("/certificates/-/new", &create_fields("fresh", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("fresh", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
@@ -352,11 +385,14 @@ async fn names_that_were_fixed_pages_can_be_created_and_opened() {
     let w = support::world().await;
     for name in ["new", "deleted", "upload"] {
         let res = w
-            .post("/certificates/-/new", &create_fields(name, "Self"))
+            .post(
+                "/v/kv-test/certificates/-/new",
+                &create_fields(name, "Self"),
+            )
             .await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER, "{name}");
-        assert_eq!(location(&res), format!("/certificates/{name}"));
-        let (status, html) = w.page(&format!("/certificates/{name}")).await;
+        assert_eq!(location(&res), format!("/v/kv-test/certificates/{name}"));
+        let (status, html) = w.page(&format!("/v/kv-test/certificates/{name}")).await;
         assert_eq!(status, StatusCode::OK, "{name}");
         assert!(
             html.contains(&format!("<h1 class=\"mono\">{name}</h1>")),
@@ -371,7 +407,10 @@ async fn key_vault_400_keeps_the_form_and_shows_its_reason() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/create".into());
     *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
     let res = w
-        .post("/certificates/-/new", &create_fields("web-tls", "Self"))
+        .post(
+            "/v/kv-test/certificates/-/new",
+            &create_fields("web-tls", "Self"),
+        )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
@@ -387,7 +426,7 @@ async fn one_month_certificate_with_blank_renewal_is_accepted() {
     let mut f = create_fields("short", "Self");
     f[3] = ("validity_months", "1");
     f[9] = ("renew_days", "");
-    let res = w.post("/certificates/-/new", &f).await;
+    let res = w.post("/v/kv-test/certificates/-/new", &f).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let body = w.kv.state.creates.lock().unwrap()[0].body.clone();
     assert_eq!(
@@ -399,7 +438,7 @@ async fn one_month_certificate_with_blank_renewal_is_accepted() {
 #[tokio::test]
 async fn delete_form_needs_the_certificate_to_exist() {
     let w = support::world().await;
-    let (status, html) = w.page("/certificates/no-such-thing/delete").await;
+    let (status, html) = w.page("/v/kv-test/certificates/no-such-thing/delete").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!html.contains("to confirm"));
 }
@@ -408,25 +447,34 @@ async fn delete_form_needs_the_certificate_to_exist() {
 async fn enable_and_disable() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
-    let (_, html) = w.page("/certificates/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
     // Disable goes through a confirmation page that posts here.
-    assert!(html.contains("href=\"/certificates/web-tls/disable\">Disable<"));
-    let (_, html) = w.page("/certificates/web-tls/disable").await;
-    assert!(html.contains("action=\"/certificates/web-tls/enabled\""));
+    assert!(html.contains("href=\"/v/kv-test/certificates/web-tls/disable\">Disable<"));
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/disable").await;
+    assert!(html.contains("action=\"/v/kv-test/certificates/web-tls/enabled\""));
     let res = w
-        .post("/certificates/web-tls/enabled", &[("state", "off")])
+        .post(
+            "/v/kv-test/certificates/web-tls/enabled",
+            &[("state", "off")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(!w.kv.state.certs.lock().unwrap()["web-tls"].versions[0].enabled);
-    let (_, html) = w.page("/certificates/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert!(html.contains(">Enable<"));
     let res = w
-        .post("/certificates/web-tls/enabled", &[("state", "on")])
+        .post(
+            "/v/kv-test/certificates/web-tls/enabled",
+            &[("state", "on")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(w.kv.state.certs.lock().unwrap()["web-tls"].versions[0].enabled);
     let res = w
-        .post("/certificates/web-tls/enabled", &[("state", "maybe")])
+        .post(
+            "/v/kv-test/certificates/web-tls/enabled",
+            &[("state", "maybe")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

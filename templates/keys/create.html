@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Create a key in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="/keys">Back to keys</a></p>
+<p><a href="{{ shell.vault_prefix() }}/keys">Back to keys</a></p>
 <h1>Create a key <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault makes the key and keeps the private part. The defaults suit most uses: an RSA 3072 key that can encrypt, sign and wrap other keys.</p>
 {% call ui::error_summary(errors) %}{% endcall %}
@@ -14,7 +14,7 @@
 </div>
 {% endif %}
 {% call ui::optional_note() %}{% endcall %}
-<form method="post" action="/keys/-/new" class="stacked" novalidate>
+<form method="post" action="{{ shell.vault_prefix() }}/keys/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   {% call ui::name_field(form.name, "key") %}{% endcall %}
 
@@ -52,6 +52,6 @@
     <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
     {% include "_field_error.html" %}
   </details>
-  <div class="actions"><button type="submit">Create key</button><a href="/keys">Cancel</a></div>
+  <div class="actions"><button type="submit">Create key</button><a href="{{ shell.vault_prefix() }}/keys">Cancel</a></div>
 </form>
 {% endblock %}

@@ -35,7 +35,7 @@ async fn lists_properties_without_reading_values() {
         v.tags.insert("env".into(), "prod".into());
     });
     w.kv.state.put("api-key", "s3cret-api");
-    let (status, html) = w.page("/secrets").await;
+    let (status, html) = w.page("/v/kv-test/secrets").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(">api-key<") && html.contains(">db-password<"));
     assert!(html.contains("text/plain"));
@@ -71,7 +71,7 @@ async fn marks_expired_expiring_disabled_and_not_yet_active() {
     w.kv.state.put_with("off-one", "x", |v| v.enabled = false);
     w.kv.state
         .put_with("future-one", "x", |v| v.nbf = Some(n + 5 * DAY));
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("1 expired"));
     assert!(html.contains("1 expiring within 30 days"));
     assert!(html.contains("1 disabled"));
@@ -93,20 +93,20 @@ async fn search_and_filters() {
     w.kv.state
         .put_with("api-key", "x", |v| v.exp = Some(n + DAY));
     w.kv.state.put_with("old-token", "x", |v| v.enabled = false);
-    let (_, html) = w.page("/secrets?q=DB").await;
+    let (_, html) = w.page("/v/kv-test/secrets?q=DB").await;
     assert!(html.contains(">db-password<") && !html.contains(">api-key<"));
-    let (_, html) = w.page("/secrets?tag=team%3Ddata").await;
+    let (_, html) = w.page("/v/kv-test/secrets?tag=team%3Ddata").await;
     assert!(html.contains(">db-password<") && !html.contains(">old-token<"));
-    let (_, html) = w.page("/secrets?show=expiring").await;
+    let (_, html) = w.page("/v/kv-test/secrets?show=expiring").await;
     assert!(html.contains(">api-key<") && !html.contains(">db-password<"));
     // The search box matches tags on the server too, as the label says.
-    let (_, html) = w.page("/secrets?q=data").await;
+    let (_, html) = w.page("/v/kv-test/secrets?q=data").await;
     assert!(html.contains(">db-password<") && !html.contains(">api-key<"));
-    let (_, html) = w.page("/secrets?show=disabled").await;
+    let (_, html) = w.page("/v/kv-test/secrets?show=disabled").await;
     assert!(html.contains(">old-token<") && !html.contains(">api-key<"));
     // Live filtering text includes tags.
     assert!(html.contains("data-live-filter=\"secret-table\""));
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("data-filter-text=\"db-password team=data\""));
 }
 
@@ -116,7 +116,7 @@ async fn pages_through_many_secrets() {
     for i in 0..260 {
         w.kv.state.put(&format!("s{i:04}"), "x");
     }
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("260 secrets"));
     // Key Vault pages of 25 were all followed.
     let lists =
@@ -130,18 +130,18 @@ async fn pages_through_many_secrets() {
     assert_eq!(lists, 11);
     assert!(html.contains("Page 1 of 3"));
     assert!(html.contains(">s0000<") && !html.contains(">s0100<"));
-    let (_, html) = w.page("/secrets?page=3").await;
+    let (_, html) = w.page("/v/kv-test/secrets?page=3").await;
     assert!(html.contains(">s0259<"));
 }
 
 #[tokio::test]
 async fn empty_vault_and_errors() {
     let w = support::world().await;
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("This vault has no secrets yet"));
 
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let (status, html) = w.page("/secrets").await;
+    let (status, html) = w.page("/v/kv-test/secrets").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("Key Vault Secrets User role on this vault"));
     assert!(!html.contains("private detail"));
@@ -157,7 +157,7 @@ async fn detail_shows_current_version_without_value() {
         v.exp = Some(n + 100 * DAY);
         v.tags.insert("env".into(), "prod".into());
     });
-    let (status, html) = w.page("/secrets/db-password").await;
+    let (status, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(&v2), "shows the newest version");
     assert!(html.contains("text/plain") && html.contains("env=prod"));
@@ -170,10 +170,10 @@ async fn detail_shows_current_version_without_value() {
 #[tokio::test]
 async fn detail_handles_missing_and_bad_names() {
     let w = support::world().await;
-    let (status, html) = w.page("/secrets/nope").await;
+    let (status, html) = w.page("/v/kv-test/secrets/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(html.contains("It may have been deleted"));
-    let (status, _) = w.page("/secrets/bad_name").await;
+    let (status, _) = w.page("/v/kv-test/secrets/bad_name").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // Nothing odd reached Key Vault.
     assert!(
@@ -190,7 +190,7 @@ async fn detail_handles_missing_and_bad_names() {
 async fn unreachable_vault_explains_private_networks() {
     // Point Key Vault at a closed port, as if the vault were private.
     let w = support::world_with(&[("KEYRING_TEST_KEYVAULT_URL", "http://127.0.0.1:9")]).await;
-    let (status, html) = w.page("/secrets").await;
+    let (status, html) = w.page("/v/kv-test/secrets").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(html.contains("Can&#39;t reach this vault"));
     assert!(html.contains("private network"));
@@ -200,7 +200,7 @@ async fn unreachable_vault_explains_private_networks() {
 async fn firewall_blocks_use_key_vaults_inner_code() {
     let w = support::world().await;
     *w.kv.state.fail.lock().unwrap() = Some((403, "ForbiddenByFirewall"));
-    let (status, html) = w.page("/secrets").await;
+    let (status, html) = w.page("/v/kv-test/secrets").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(
         html.contains("This vault is blocked from here"),
@@ -216,10 +216,10 @@ async fn expiring_count_and_link_agree() {
     for name in ["gone-1", "gone-2"] {
         w.kv.state.put_with(name, "x", |v| v.exp = Some(n - DAY));
     }
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("1 expiring within 30 days"));
     assert!(html.contains("2 expired"));
-    let (_, html) = w.page("/secrets?show=expiring").await;
+    let (_, html) = w.page("/v/kv-test/secrets?show=expiring").await;
     assert!(html.contains(">soon<"));
     assert!(!html.contains(">gone-1<") && !html.contains(">gone-2<"));
     assert!(html.contains(">Expiring within 30 days</option>"));
@@ -228,7 +228,7 @@ async fn expiring_count_and_link_agree() {
 #[tokio::test]
 async fn a_bad_query_string_gets_the_error_page() {
     let w = support::world().await;
-    let (status, html) = w.page("/secrets?page=abc").await;
+    let (status, html) = w.page("/v/kv-test/secrets?page=abc").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(html.contains("Keyring couldn&#39;t read that"), "{html}");
     assert!(html.contains("<nav"), "the normal page layout");
@@ -241,11 +241,11 @@ async fn fixed_pages_answer_beside_a_secret_called_new() {
     // under `/-/`, so they still answer and don't read the secret's value.
     let w = support::world().await;
     w.kv.state.put("new", "x");
-    let (status, html) = w.page("/secrets/-/new").await;
+    let (status, html) = w.page("/v/kv-test/secrets/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Create a secret"));
     assert!(w.kv.state.value_reads().is_empty());
-    let (status, html) = w.page("/secrets/-/deleted").await;
+    let (status, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Deleted secrets"));
 }

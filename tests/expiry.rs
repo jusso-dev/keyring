@@ -177,22 +177,25 @@ async fn partly_readable_vaults_say_what_is_missing() {
 }
 
 #[tokio::test]
-async fn open_switches_vault_and_goes_to_the_item() {
+async fn open_is_a_plain_link_to_the_item_in_its_vault() {
     let w = support::world().await;
     seed_vaults(&w, &["kv-other"]);
     w.kv.state
         .put_with("db-password", "x", |v| v.exp = Some(now() + DAY));
     let (_, html) = w.page("/expiry").await;
-    assert!(html.contains("name=\"return_to\" value=\"/secrets/db-password\""));
+    assert!(html.contains("href=\"/v/kv-other/secrets/db-password\""));
+    assert!(
+        !html.contains("name=\"return_to\""),
+        "no form to switch vault"
+    );
+    // A bare return_to from the vault list still lands in the chosen vault.
     let res = w
         .post(
             "/vaults/select",
             &[("name", "kv-other"), ("return_to", "/secrets/db-password")],
         )
         .await;
-    assert_eq!(support::location(&res), "/secrets/db-password");
-    let (_, html) = w.page("/secrets/db-password").await;
-    assert!(html.contains("<strong>kv-other</strong>"));
+    assert_eq!(support::location(&res), "/v/kv-other/secrets/db-password");
     // An outside address is never followed.
     let res = w
         .post(

@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Certificate {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="/certificates">Back to certificates in {{ vault }}</a></p>
+<p><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
 <p>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</p>
 
@@ -10,11 +10,11 @@
 <div class="notice {% if p.failed %}notice-error{% else %}notice-warn{% endif %}">
   <p><strong>Certificate request: {{ p.status }}.</strong> {{ p.details }}</p>
   {% if p.creating %}
-  <p>Key Vault is making this self-signed certificate. It usually takes a few seconds. <a href="/certificates/{{ row.name }}">Check again</a></p>
+  <p>Key Vault is making this self-signed certificate. It usually takes a few seconds. <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">Check again</a></p>
   {% elif !p.failed %}
-  <p>The certificate appears here once the issuer signs it. <a href="/certificates/{{ row.name }}">Check again</a></p>
+  <p>The certificate appears here once the issuer signs it. <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">Check again</a></p>
   {% endif %}
-  <form method="post" action="/certificates/{{ row.name }}/pending/cancel">
+  <form method="post" action="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/pending/cancel">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <button type="submit" class="button-secondary">Cancel this request</button>
   </form>
@@ -25,17 +25,17 @@
 {% endif %}
 
 <div class="actions">
-  <a class="button" href="/certificates/{{ row.name }}/cer">Download .cer</a>
-  <a class="button button-secondary" href="/certificates/{{ row.name }}/cer?format=pem">Download PEM (public)</a>
+  <a class="button" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/cer">Download .cer</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/cer?format=pem">Download PEM (public)</a>
   {% if let Some(pol) = policy %}{% if pol.exportable %}
-  <a class="button button-secondary" href="/certificates/{{ row.name }}/download-key">Download with private key</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/download-key">Download with private key</a>
   {% endif %}{% endif %}
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
-  <a class="button button-danger" href="/certificates/{{ row.name }}/delete">Delete</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
+  <a class="button button-danger" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/delete">Delete</a>
   {% if row.enabled %}
-  <a class="button button-secondary" href="/certificates/{{ row.name }}/disable">Disable</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/disable">Disable</a>
   {% else %}
-  <form method="post" action="/certificates/{{ row.name }}/enabled">
+  <form method="post" action="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="state" value="on">
     <button type="submit" class="button-secondary">Enable</button>
@@ -95,7 +95,7 @@
         <td>{{ ui::or_none(v.created) }}</td>
         <td>{{ ui::expires(v.expires) }}</td>
         <td class="mono small">{{ ui::or_none(v.thumbprint) }}</td>
-        <td><a href="/certificates/{{ row.name }}/cer?version={{ v.version }}">.cer<span class="visually-hidden"> for version {{ v.short_version() }}</span></a></td>
+        <td><a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/cer?version={{ v.version }}">.cer<span class="visually-hidden"> for version {{ v.short_version() }}</span></a></td>
       </tr>
       {% endfor %}
     </tbody>

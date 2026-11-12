@@ -19,6 +19,7 @@ use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::secrets::{SecretRow, api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::vault_ctx::vault_path;
 
 pub(crate) struct VersionRow {
     pub version: String,
@@ -59,9 +60,10 @@ async fn load_versions(
     state: &AppState,
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
     name: &str,
 ) -> Result<(String, Shell, String, Vec<SecretItem>), Halt> {
-    let (vault, shell) = current_vault(session, shell)?;
+    let (vault, shell) = current_vault(session, shell, vault)?;
     let (name, shell) = checked_name(name, shell)?;
     let (shell, v) = fetch_versions(state, session, shell, &vault, &name).await?;
     Ok((vault, shell, name, v))
@@ -82,7 +84,7 @@ async fn fetch_versions(
             shell,
             &err,
             Need::ReadSecrets,
-            &format!("/secrets/{name}/versions"),
+            &vault_path(vault, &format!("/secrets/{name}/versions")),
         )),
     }
 }
@@ -91,9 +93,9 @@ pub(crate) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, _, items) = load_versions(&state, &session, shell, &name).await?;
+    let (vault, shell, _, items) = load_versions(&state, &session, shell, &vault, &name).await?;
     let now = now_ts();
     let row = SecretRow::from_item(&items[0], now);
     let versions = items
@@ -139,6 +141,7 @@ fn pick<'a>(
     items: &'a [SecretItem],
     version: &str,
     shell: Shell,
+    vault: &str,
     name: &str,
 ) -> Result<(Shell, &'a SecretItem), Halt> {
     if !is_valid_version(version) {
@@ -155,7 +158,7 @@ fn pick<'a>(
                 "That's already the current version",
                 "There's nothing to roll back to. Pick an older version from the list of versions.",
             )
-            .returning_to(&format!("/secrets/{name}/versions")),
+            .returning_to(&vault_path(vault, &format!("/secrets/{name}/versions"))),
         )
         .into()),
         // Key Vault won't hand out a disabled version's value.
@@ -166,7 +169,7 @@ fn pick<'a>(
                 "That version is disabled",
                 "Key Vault won't read the value of a disabled version, so Keyring can't copy it. Pick an enabled version.",
             )
-            .returning_to(&format!("/secrets/{name}/versions")),
+            .returning_to(&vault_path(vault, &format!("/secrets/{name}/versions"))),
         )
         .into()),
         Some(i) => Ok((shell, &items[i])),
@@ -178,11 +181,11 @@ pub(crate) async fn confirm(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Query(q): Query<RollbackQuery>,
 ) -> PageResult {
-    let (vault, shell, name, items) = load_versions(&state, &session, shell, &name).await?;
-    let (shell, target) = pick(&items, &q.version, shell, &name)?;
+    let (vault, shell, name, items) = load_versions(&state, &session, shell, &vault, &name).await?;
+    let (shell, target) = pick(&items, &q.version, shell, &vault, &name)?;
     Ok(render(&RollbackPage {
         target: VersionRow::from_item(target, false),
         current: VersionRow::from_item(&items[0], true),
@@ -207,20 +210,20 @@ pub(crate) async fn rollback(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<RollbackForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &f.csrf, shell)?;
     let (shell, items) = fetch_versions(&state, &session, shell, &vault, &name).await?;
     if items[0].managed.unwrap_or(false) {
         return Err(crate::routes::secrets::reveal::managed_problem(
-            shell, &name,
+            shell, &vault, &name,
         ));
     }
-    let (shell, target) = pick(&items, &f.version, shell, &name)?;
-    let back = format!("/secrets/{name}/versions");
+    let (shell, target) = pick(&items, &f.version, shell, &vault, &name)?;
+    let back = vault_path(&vault, &format!("/secrets/{name}/versions"));
     let secrets = api(&state, &session, &vault);
     let old = match secrets.get_value(&name, Some(target.version())).await {
         Ok(b) => b,

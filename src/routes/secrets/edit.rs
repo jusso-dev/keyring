@@ -20,6 +20,7 @@ use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::check_csrf;
+use crate::routes::vault_ctx::vault_path;
 
 /// Which form is being shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,9 +128,13 @@ impl FormPage {
 
     fn action(&self) -> String {
         match self.mode {
-            Mode::Create => "/secrets/-/new".into(),
-            Mode::NewValue => format!("/secrets/{}/value", self.form.name),
-            Mode::Properties => format!("/secrets/{}/edit", self.form.name),
+            Mode::Create => vault_path(&self.vault, "/secrets/-/new"),
+            Mode::NewValue => {
+                vault_path(&self.vault, &format!("/secrets/{}/value", self.form.name))
+            }
+            Mode::Properties => {
+                vault_path(&self.vault, &format!("/secrets/{}/edit", self.form.name))
+            }
         }
     }
 
@@ -143,8 +148,8 @@ impl FormPage {
 
     fn cancel_url(&self) -> String {
         match self.mode {
-            Mode::Create => "/secrets".into(),
-            _ => format!("/secrets/{}", self.form.name),
+            Mode::Create => vault_path(&self.vault, "/secrets"),
+            _ => vault_path(&self.vault, &format!("/secrets/{}", self.form.name)),
         }
     }
 }
@@ -185,8 +190,12 @@ fn saved(state: &AppState, to: &str, message: String) -> Response {
     res
 }
 
-pub(crate) async fn new_form(session: CurrentSession, shell: Shell) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+pub(crate) async fn new_form(
+    session: CurrentSession,
+    shell: Shell,
+    Path(vault): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let view = FormView {
         enabled: true,
         ..FormView::default()
@@ -210,9 +219,10 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Form(f): Form<SecretForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match form::for_create(&f, now_ts()) {
         Ok(ok) => ok,
@@ -257,7 +267,7 @@ pub(crate) async fn create(
                 shell,
                 &err,
                 Need::ManageSecrets,
-                "/secrets/-/new",
+                &vault_path(&vault, "/secrets/-/new"),
             ));
         }
     }
@@ -267,7 +277,7 @@ pub(crate) async fn create(
             tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret created");
             Ok(saved(
                 &state,
-                &format!("/secrets/{name}"),
+                &vault_path(&vault, &format!("/secrets/{name}")),
                 format!("Created {name}."),
             ))
         }
@@ -285,7 +295,7 @@ pub(crate) async fn create(
             shell,
             &err,
             Need::ManageSecrets,
-            "/secrets/-/new",
+            &vault_path(&vault, "/secrets/-/new"),
         )),
     }
 }
@@ -294,9 +304,10 @@ async fn load(
     state: &AppState,
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
     name: &str,
 ) -> Result<(String, Shell, SecretItem), Halt> {
-    let (vault, shell) = current_vault(session, shell)?;
+    let (vault, shell) = current_vault(session, shell, vault)?;
     let (name, shell) = checked_name(name, shell)?;
     let (shell, item) = fetch(state, session, shell, &vault, &name).await?;
     Ok((vault, shell, item))
@@ -314,15 +325,15 @@ async fn fetch(
     match api(state, session, vault).properties(name).await {
         // Key Vault refuses changes to a certificate's backing secret;
         // say why instead of showing a confusing 403.
-        Ok(item) if item.managed.unwrap_or(false) => {
-            Err(crate::routes::secrets::reveal::managed_problem(shell, name))
-        }
+        Ok(item) if item.managed.unwrap_or(false) => Err(
+            crate::routes::secrets::reveal::managed_problem(shell, vault, name),
+        ),
         Ok(item) => Ok((shell, item)),
         Err(err) => Err(azure_problem(
             shell,
             &err,
             Need::ReadSecrets,
-            &format!("/secrets/{name}"),
+            &vault_path(vault, &format!("/secrets/{name}")),
         )),
     }
 }
@@ -331,9 +342,9 @@ pub(crate) async fn value_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &name).await?;
+    let (vault, shell, item) = load(&state, &session, shell, &vault, &name).await?;
     Ok(form_page(
         shell,
         vault,
@@ -348,22 +359,22 @@ pub(crate) async fn set_value(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(mut f): Form<SecretForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     // Refuse a certificate's backing secret, and refuse if we can't tell.
     let item = match api(&state, &session, &vault).properties(&name).await {
         Ok(item) if item.managed.unwrap_or(false) => {
             return Err(crate::routes::secrets::reveal::managed_problem(
-                shell, &name,
+                shell, &vault, &name,
             ));
         }
         Ok(item) => item,
         Err(err) => {
-            let path = format!("/secrets/{name}");
+            let path = vault_path(&vault, &format!("/secrets/{name}"));
             return Err(azure_problem(shell, &err, Need::ManageSecrets, &path));
         }
     };
@@ -386,7 +397,7 @@ pub(crate) async fn set_value(
             tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret value changed");
             Ok(saved(
                 &state,
-                &format!("/secrets/{name}"),
+                &vault_path(&vault, &format!("/secrets/{name}")),
                 format!("Saved a new version of {name}. The old value is still in its versions."),
             ))
         }
@@ -394,7 +405,7 @@ pub(crate) async fn set_value(
             shell,
             &err,
             Need::ManageSecrets,
-            &format!("/secrets/{name}/value"),
+            &vault_path(&vault, &format!("/secrets/{name}/value")),
         )),
     }
 }
@@ -403,9 +414,9 @@ pub(crate) async fn edit_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &name).await?;
+    let (vault, shell, item) = load(&state, &session, shell, &vault, &name).await?;
     Ok(form_page(
         shell,
         vault,
@@ -420,17 +431,17 @@ pub(crate) async fn update(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(mut f): Form<SecretForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
     // The whole form is written back, so refuse if someone else saved a
     // new version or changed this one since the form was opened.
     if f.version != item.version() || f.updated != updated_stamp(&item) {
-        return Err(changed_problem(shell, &name));
+        return Err(changed_problem(shell, &vault, &name));
     }
     f.name = item.name().to_owned();
     f.value = None;
@@ -452,13 +463,13 @@ pub(crate) async fn update(
     tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret properties changed");
     Ok(saved(
         &state,
-        &format!("/secrets/{name}"),
+        &vault_path(&vault, &format!("/secrets/{name}")),
         format!("Saved changes to {name}."),
     ))
 }
 
 /// The page for an edit form that is out of date.
-fn changed_problem(shell: Shell, name: &str) -> Halt {
+fn changed_problem(shell: Shell, vault: &str, name: &str) -> Halt {
     PageError::new(
         shell,
         Problem::new(
@@ -468,7 +479,7 @@ fn changed_problem(shell: Shell, name: &str) -> Halt {
                 "Someone saved a change to {name} after you opened the form, so nothing was saved. Open the form again to see the latest details, then make your change."
             ),
         )
-        .returning_to(&format!("/secrets/{name}/edit")),
+        .returning_to(&vault_path(vault, &format!("/secrets/{name}/edit"))),
     )
     .into()
 }
@@ -492,7 +503,7 @@ async fn update_current(
                 shell,
                 &err,
                 Need::ManageSecrets,
-                &format!("/secrets/{name}"),
+                &vault_path(vault, &format!("/secrets/{name}")),
             )
         })
 }
@@ -503,9 +514,9 @@ pub(crate) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
     Ok(crate::routes::lifecycle::disable_page(
@@ -520,10 +531,10 @@ pub(crate) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<ToggleForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let Some(enable) = f.enable() else {
@@ -545,7 +556,7 @@ pub(crate) async fn toggle(
     let done = if enable { "Enabled" } else { "Disabled" };
     Ok(saved(
         &state,
-        &format!("/secrets/{name}"),
+        &vault_path(&vault, &format!("/secrets/{name}")),
         format!("{done} {name}."),
     ))
 }

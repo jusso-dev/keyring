@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Upload a certificate to {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="/certificates">Back to certificates</a></p>
+<p><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
 <h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1>
 <p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, until you upload it, start again, or 10 minutes pass.</p>
 
@@ -17,7 +17,7 @@
 {% endif %}
 {% call ui::optional_note() %}{% endcall %}
 
-<form method="post" action="/certificates/-/upload" enctype="multipart/form-data" class="stacked" novalidate>
+<form method="post" action="{{ shell.vault_prefix() }}/certificates/-/upload" enctype="multipart/form-data" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
 
   {% let field_name = "file" %}
@@ -52,7 +52,7 @@
 
   <div class="actions">
     <button type="submit">Check the file</button>
-    <a href="/certificates">Cancel</a>
+    <a href="{{ shell.vault_prefix() }}/certificates">Cancel</a>
   </div>
 </form>
 {% endblock %}
