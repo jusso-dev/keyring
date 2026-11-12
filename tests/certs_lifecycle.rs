@@ -610,6 +610,38 @@ async fn renewal_can_be_turned_off() {
 }
 
 #[tokio::test]
+async fn renewal_kept_by_key_vault_is_not_reported_as_saved() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    *w.kv.state.cert_extra.keep_lifetime_actions.lock().unwrap() = true;
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "none"), ("renew_days", "")],
+        )
+        .await;
+    // Key Vault answered 200 but kept the old action: no redirect, no
+    // "Saved" message, and the form says nothing changed.
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(flash_cookie(&res).is_none());
+    let html = String::from_utf8(
+        http_body_util::BodyExt::collect(res.into_body())
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        html.contains("kept the old setting, so nothing changed"),
+        "{html}"
+    );
+    assert_eq!(patches(&w), 1);
+    assert_eq!(policy_of(&w, "web-tls")["lifetime_actions"], auto_30());
+}
+
+#[tokio::test]
 async fn renewal_days_above_the_limit_are_refused_before_key_vault() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");

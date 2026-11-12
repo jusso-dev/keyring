@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
-use crate::azure::certs::Policy;
+use crate::azure::certs::{LifetimeAction, Policy};
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::forms::FieldErrors;
@@ -226,6 +226,18 @@ pub(crate) async fn save(
         ));
     }
     match certs.update_lifetime_actions(&name, &actions).await {
+        // Key Vault answered, but its policy doesn't show what was sent. It
+        // isn't documented what an empty list does, and Key Vault has kept
+        // values it was asked to clear before (dates sent as null, #187), so
+        // say nothing changed rather than report a change that didn't happen.
+        Ok(policy) if !applied(&actions, &policy.lifetime_actions) => {
+            let mut errors = FieldErrors::new();
+            errors.push(
+                "renewal",
+                "Key Vault answered, but it kept the old setting, so nothing changed. Change it in the Azure portal.",
+            );
+            Ok(renewal_page(shell, vault, name, f, current, errors, None))
+        }
         Ok(_) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate renewal changed");
             Ok(redirect_with(
@@ -249,12 +261,24 @@ pub(crate) async fn save(
     }
 }
 
+/// True when Key Vault's policy shows the actions that were sent: the same
+/// number, each with the same type and day count. Other fields Key Vault may
+/// fill in are ignored.
+fn applied(sent: &[LifetimeAction], got: &[LifetimeAction]) -> bool {
+    let key = |a: &LifetimeAction| {
+        (
+            a.action.action_type.clone(),
+            a.trigger.days_before_expiry,
+            a.trigger.lifetime_percentage,
+        )
+    };
+    sent.len() == got.len() && sent.iter().zip(got).all(|(s, g)| key(s) == key(g))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::azure::certs::{
-        IssuerProps, LifetimeAction, LifetimeActionType, LifetimeTrigger, X509Props,
-    };
+    use crate::azure::certs::{IssuerProps, LifetimeActionType, LifetimeTrigger, X509Props};
 
     fn action(kind: &str, days: Option<u32>, pct: Option<u32>) -> LifetimeAction {
         LifetimeAction {
@@ -308,6 +332,23 @@ mod tests {
             ],
         ));
         assert_eq!(c.unsupported.len(), 1);
+    }
+
+    #[test]
+    fn a_change_counts_only_when_key_vault_shows_it() {
+        let email = action("EmailContacts", Some(14), None);
+        assert!(applied(&[], &[]));
+        assert!(applied(
+            std::slice::from_ref(&email),
+            std::slice::from_ref(&email)
+        ));
+        // "Do nothing" sent, the old action kept.
+        assert!(!applied(&[], &[action("AutoRenew", Some(30), None)]));
+        // Same type, different day count.
+        assert!(!applied(
+            &[email],
+            &[action("EmailContacts", Some(30), None)]
+        ));
     }
 
     #[test]

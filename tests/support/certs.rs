@@ -47,6 +47,9 @@ pub(crate) struct Extra {
     pub pfx_password: Mutex<Option<String>>,
     /// The body of every "Update Certificate Policy" call, in order.
     pub policy_patches: Mutex<Vec<Value>>,
+    /// Answer a policy update with 200 but keep the old lifetime actions, as
+    /// Key Vault might for a change it ignores.
+    pub keep_lifetime_actions: Mutex<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -434,7 +437,9 @@ async fn update_policy(
                 );
             }
         }
-        c.policy["lifetime_actions"] = actions.clone();
+        if !*s.cert_extra.keep_lifetime_actions.lock().unwrap() {
+            c.policy["lifetime_actions"] = actions.clone();
+        }
     }
     json_response(StatusCode::OK, c.policy.clone())
 }

@@ -410,7 +410,9 @@ impl CertsApi<'_> {
     /// "Update Certificate Policy" says to "set specified members in the
     /// certificate policy". It doesn't say what an empty list does: "do
     /// nothing" is sent as one, and that is still to be confirmed against a
-    /// real vault (see `docs/real-vault-checklist.md`).
+    /// real vault (see `docs/real-vault-checklist.md`). The renewal page
+    /// checks the policy Key Vault sends back, so a change that didn't take
+    /// isn't reported as saved.
     pub async fn update_lifetime_actions(
         &self,
         name: &str,
