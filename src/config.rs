@@ -680,7 +680,7 @@ pub(crate) mod tests {
             ..
         } = &config.credential
         else {
-            panic!("expected a managed identity: {:?}", config.credential);
+            panic!("expected a managed identity credential");
         };
         assert_eq!(identity_client_id, IDENTITY);
         assert_eq!(endpoint, "http://169.254.129.1:8081/msi/token");
