@@ -567,7 +567,13 @@ async fn recover_then_read(t: &Target) -> Recover {
     // A delete takes a moment to show as deleted, and recover needs that.
     let (shown, _) = retry(t.pace, &[404], async || api.get_deleted(&name).await).await;
     ok("wait for the deleted secret to show", shown);
-    let recover_answered = api.recover(&name).await.is_ok();
+    // Key Vault can refuse a recover for a moment after the delete shows,
+    // with 409 while the delete is still settling. Try again on that.
+    let (recovered, _) = retry(t.pace, &[409], async || api.recover(&name).await).await;
+    if let Err(e) = &recovered {
+        eprintln!("recover then read: recover refused: {e}");
+    }
+    let recover_answered = recovered.is_ok();
     let (read, took) = retry(t.pace, &[404], async || api.get_value(&name, None).await).await;
     let readable_afterwards = read.is_ok();
     // Record how long the read took to work, for the checklist's Result column.
@@ -601,8 +607,7 @@ struct Conflict {
     detail: ConflictDetail,
 }
 
-/// The code and message. Only the real vault's are checked in full (see the
-/// test for this row): the mock's differ today.
+/// The code and whether the message names the deleted state.
 #[derive(Debug, PartialEq, Eq)]
 struct ConflictDetail {
     code: Option<String>,
@@ -889,19 +894,9 @@ async fn real_409_for_a_soft_deleted_name() {
         "the real vault's code or message changed, checklist row '{ROW_CONFLICT}'"
     );
     assert_eq!(
-        real.status, mocked.status,
+        real, mocked,
         "the mock and the real vault disagree on checklist row '{ROW_CONFLICT}': fix tests/support/keyvault.rs"
     );
-    // Known difference: the mock answers `Conflict` with a generic message,
-    // not the inner `ObjectIsDeletedButRecoverable` code and the message
-    // naming the deleted state. Keyring matches either, but the real one
-    // is the only one that reaches the "A deleted item has this name" page.
-    if real.detail != mocked.detail {
-        eprintln!(
-            "KNOWN DRIFT, row '{ROW_CONFLICT}': real {:?}, mock {:?} (tests/support/keyvault.rs, set)",
-            real.detail, mocked.detail
-        );
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
