@@ -2,6 +2,8 @@
 
 Notable changes to Keyring. Keyring has no releases yet, so everything is under Unreleased. Each entry names the pull request it came from. To see which commit an image was built from, read its `org.opencontainers.image.revision` label.
 
+Releases are tagged `vX.Y.Z`, and each tag's image is built by `.github/workflows/release.yml`. The tag must match the version in `Cargo.toml`, and this file must have a `## X.Y.Z` heading for it.
+
 ## Unreleased
 
 - **Managed identity credential**: Keyring can prove itself to Entra with the app's managed identity (`KEYRING_FEDERATED_IDENTITY_CLIENT_ID`) instead of a client secret, so there is no secret to rotate. `ENTRA_CLIENT_SECRET` is now optional, and the Bicep templates have `useFederatedCredential`. The app registration must stay delegated-only (see the threat model).

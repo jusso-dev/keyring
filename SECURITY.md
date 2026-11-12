@@ -20,6 +20,16 @@ You'll get an acknowledgement within five working days. We'll agree a fix and a 
 
 Keyring is in early development and has no releases yet. Only the latest commit on `main` gets security fixes. To check whether a running copy has a fix, compare its image's `org.opencontainers.image.revision` label with the fix's commit (see the README, "Which version am I running?").
 
+## Verifying an image
+
+This applies once Keyring's releases are published. Each version tag's image is built by [`.github/workflows/release.yml`](.github/workflows/release.yml) and carries a signed build provenance attestation. To check that an image came from this repository's workflow, run:
+
+```sh
+gh attestation verify oci://ghcr.io/jusso-dev/keyring@sha256:<digest> --repo jusso-dev/keyring
+```
+
+If the command fails, don't deploy that image.
+
 ## What's in scope
 
 - The Keyring application in `src/`, `templates/` and `static/`
