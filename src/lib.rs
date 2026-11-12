@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
+use crate::auth::assertion::Credential;
 use crate::auth::cookies::CookieOptions;
 use crate::auth::crypto::Sealer;
 use crate::auth::oidc::Oidc;
@@ -53,8 +54,10 @@ impl AppState {
     /// for example because the TLS trust store can't be read.
     pub fn try_new(config: Config) -> Result<Self, http::HttpError> {
         let http = http::client(config.outbound_https_only())?;
-        let oidc = Oidc::new(&config, http.clone());
-        let broker = Arc::new(TokenBroker::new(&config, http.clone()));
+        // One credential, so the managed identity's assertion is cached once.
+        let credential = Credential::new(&config)?;
+        let oidc = Oidc::new(&config, http.clone(), credential.clone());
+        let broker = Arc::new(TokenBroker::new(&config, http.clone(), credential));
         Ok(Self {
             sessions: Arc::new(SessionStore::default()),
             oidc: Arc::new(oidc),

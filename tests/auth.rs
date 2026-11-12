@@ -636,11 +636,15 @@ async fn crafted_error_codes_cannot_forge_log_lines() {
 /// An `Oidc` against the mock with short cache timings.
 fn oidc(idp: &MockIdp, ttl_ms: u64, retry_ms: u64) -> keyring::auth::oidc::Oidc {
     let config = support::config_with(&idp.authority(), "http://localhost:3000");
-    keyring::auth::oidc::Oidc::new(&config, keyring::http::client(false).unwrap())
-        .with_metadata_timings(
-            std::time::Duration::from_millis(ttl_ms),
-            std::time::Duration::from_millis(retry_ms),
-        )
+    keyring::auth::oidc::Oidc::new(
+        &config,
+        keyring::http::client(false).unwrap(),
+        keyring::auth::assertion::Credential::new(&config).unwrap(),
+    )
+    .with_metadata_timings(
+        std::time::Duration::from_millis(ttl_ms),
+        std::time::Duration::from_millis(retry_ms),
+    )
 }
 
 fn hits(idp: &MockIdp) -> usize {

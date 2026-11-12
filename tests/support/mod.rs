@@ -38,6 +38,12 @@ pub(crate) const TENANT: &str = "00000000-0000-0000-0000-000000000000";
 pub(crate) const CLIENT_ID: &str = "11111111-1111-1111-1111-111111111111";
 pub(crate) const CLIENT_SECRET: &str = "test-client-secret";
 
+/// The managed identity's client ID, and what its mock token service hands out.
+pub(crate) const IDENTITY_CLIENT_ID: &str = "33333333-3333-3333-3333-333333333333";
+pub(crate) const IDENTITY_HEADER: &str = "mock-identity-header";
+pub(crate) const MI_ASSERTION: &str = "mi-assertion";
+pub(crate) const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
 pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
     let authority = authority.to_owned();
     let base_url = base_url.to_owned();
@@ -57,6 +63,108 @@ pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
 
 pub(crate) fn config() -> Config {
     config_with("http://127.0.0.1:9", "http://localhost:3000")
+}
+
+/// Like [`config_with`], but Keyring proves itself with the managed
+/// identity whose token service is at `identity_endpoint`.
+pub(crate) fn config_with_identity(
+    authority: &str,
+    base_url: &str,
+    identity_endpoint: &str,
+) -> Config {
+    let authority = authority.to_owned();
+    let base_url = base_url.to_owned();
+    let identity_endpoint = identity_endpoint.to_owned();
+    Config::from_lookup(move |k| {
+        Some(match k {
+            "ENTRA_TENANT_ID" => TENANT.to_owned(),
+            "ENTRA_CLIENT_ID" => CLIENT_ID.to_owned(),
+            "KEYRING_FEDERATED_IDENTITY_CLIENT_ID" => IDENTITY_CLIENT_ID.to_owned(),
+            "IDENTITY_ENDPOINT" => identity_endpoint.clone(),
+            "IDENTITY_HEADER" => IDENTITY_HEADER.to_owned(),
+            "ENTRA_AUTHORITY_HOST" => authority.clone(),
+            "APP_BASE_URL" => base_url.clone(),
+            "SESSION_SECRET" => "0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            _ => return None,
+        })
+    })
+    .expect("test config")
+}
+
+/// A mock of the managed identity's local token service, as App Service and
+/// Container Apps provide it.
+pub(crate) struct MockIdentity {
+    pub addr: SocketAddr,
+    pub state: Arc<IdentityState>,
+}
+
+pub(crate) struct IdentityState {
+    /// Requests that passed the header and query checks.
+    pub calls: Mutex<usize>,
+    /// Delay before answering, so tests can overlap requests.
+    pub delay: Mutex<Duration>,
+    /// Lifetime in seconds of the token handed out.
+    pub expires_in: Mutex<u64>,
+}
+
+impl MockIdentity {
+    pub(crate) fn endpoint(&self) -> String {
+        format!("http://{}/msi/token", self.addr)
+    }
+}
+
+pub(crate) async fn start_identity() -> MockIdentity {
+    let state = Arc::new(IdentityState {
+        calls: Mutex::new(0),
+        delay: Mutex::new(Duration::ZERO),
+        expires_in: Mutex::new(3600),
+    });
+    let app = Router::new()
+        .route("/msi/token", get(identity_token))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    MockIdentity { addr, state }
+}
+
+async fn identity_token(
+    State(s): State<Arc<IdentityState>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let header_ok = headers
+        .get("x-identity-header")
+        .and_then(|v| v.to_str().ok())
+        == Some(IDENTITY_HEADER);
+    if !header_ok {
+        return json_response(StatusCode::UNAUTHORIZED, json!({}));
+    }
+    let query_ok = q.get("resource").map(String::as_str) == Some("api://AzureADTokenExchange")
+        && q.get("api-version").map(String::as_str) == Some("2019-08-01")
+        && q.get("client_id").map(String::as_str) == Some(IDENTITY_CLIENT_ID);
+    if !query_ok {
+        return json_response(StatusCode::BAD_REQUEST, json!({}));
+    }
+    *s.calls.lock().unwrap() += 1;
+    let delay = *s.delay.lock().unwrap();
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let expires_on = (SystemTime::now() + Duration::from_secs(*s.expires_in.lock().unwrap()))
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    json_response(
+        StatusCode::OK,
+        json!({
+            "access_token": MI_ASSERTION,
+            "expires_on": expires_on.to_string(),
+            "resource": "api://AzureADTokenExchange",
+            "token_type": "Bearer",
+            "client_id": IDENTITY_CLIENT_ID,
+        }),
+    )
 }
 
 /// What the mock should do on the next token request.
@@ -246,6 +354,12 @@ async fn token(
         tokio::time::sleep(delay).await;
     }
     let grant = field(&form, "grant_type").unwrap_or_default().to_owned();
+    if !client_authenticated(&form) {
+        return json_response(
+            StatusCode::UNAUTHORIZED,
+            json!({ "error": "invalid_client" }),
+        );
+    }
     if grant == OBO_GRANT || grant == "refresh_token" {
         return other_grant(&s, &form, &grant);
     }
@@ -307,15 +421,23 @@ async fn token(
     )
 }
 
+/// How the app proves who it is: the client secret, or the managed
+/// identity's assertion with its type. A request that carries both, or a
+/// half of the assertion, is refused, as Entra does.
+fn client_authenticated(form: &[(String, String)]) -> bool {
+    let secret = field(form, "client_secret");
+    let assertion = field(form, "client_assertion");
+    let assertion_type = field(form, "client_assertion_type");
+    match (secret, assertion) {
+        (Some(s), None) => s == CLIENT_SECRET && assertion_type.is_none(),
+        (None, Some(a)) => a == MI_ASSERTION && assertion_type == Some(ASSERTION_TYPE),
+        _ => false,
+    }
+}
+
 /// On-behalf-of and refresh grants. Tokens encode what they were issued for,
 /// so tests can see which token reached the mock Azure API.
 fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response {
-    if field(form, "client_secret") != Some(CLIENT_SECRET) {
-        return json_response(
-            StatusCode::UNAUTHORIZED,
-            json!({ "error": "invalid_client" }),
-        );
-    }
     if let Some((error, code)) = *s.grant_error.lock().unwrap() {
         let mut body =
             json!({ "error": error, "error_codes": [code], "error_description": "test" });
