@@ -15,3 +15,4 @@ param ingress = 'external'
 param apiScope = '' // only if your app registration's scope isn't api://<clientId>/access_as_user
 param logLevel = '' // error, warn, info (default), debug or trace
 param useFederatedCredential = false // true: sign in to Entra with the app's managed identity, no client secret; see the README, step 2 option B
+param keepClientSecretEntry = false // only while moving an existing app to useFederatedCredential; see docs/deploy.md

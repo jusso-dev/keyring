@@ -179,7 +179,7 @@ If you deployed with `useFederatedCredential` set to `true`, there is no client 
 
 Run these from a shell that doesn't save history, or clear it afterwards. If you made the config vault private, run them from a machine inside the VNet (its public access is off).
 
-App Service: restart so it reads the secrets.
+App Service: restart so it reads the secrets. If you're using the managed identity, first add the federated credential (README step 2, option B), then run the App Service deployment from step 3 again with `useFederatedCredential` set to `true`. A restart alone keeps the old settings, which still point at an `entra-client-secret` you never set, so Keyring wouldn't start.
 
 ```sh
 az webapp restart -g <rg> -n <name>
@@ -242,7 +242,18 @@ Keyring's tests run against mock Azure services. Some behaviour only a real Entr
 
 ### The Entra client secret
 
-With the managed identity (`useFederatedCredential`, or `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` set), there is no client secret to rotate, and nothing here applies. The identity's tokens are short-lived and the platform renews them. The federated credential on the app registration has no expiry. If you replace the managed identity, add a federated credential for the new one.
+With the managed identity (`useFederatedCredential`, or `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` set), there is no client secret to rotate, and nothing here applies. The identity's tokens are short-lived and the platform renews them. The federated credential on the app registration has no expiry. If you replace the managed identity, add a federated credential for the new one, deploy, and check that sign-in works. Then delete the old identity's federated credential from the app registration (**Certificates & secrets > Federated credentials**, or `az ad app federated-credential delete`). Until you do, the old identity can still act as the Keyring app.
+
+### Moving an existing deployment to the managed identity
+
+App Service: add the federated credential (README step 2, option B), then redeploy with `useFederatedCredential` set to `true`. Once sign-in works, delete the client secret from the app registration and `entra-client-secret` from the config vault.
+
+Container Apps refuses to remove a secret that the running revision still uses, so this takes two deployments:
+
+1. Add the federated credential, then deploy with `useFederatedCredential=true` and `keepClientSecretEntry=true`. The new revision signs in with the identity and no longer reads the client secret, but the secret entry stays defined.
+2. Once the new revision is running and the old one is inactive (`az containerapp revision list -g <rg> -n <name> -o table`), deploy again with `keepClientSecretEntry=false`.
+
+Then delete the client secret from the app registration and `entra-client-secret` from the config vault. A new deployment that starts with `useFederatedCredential=true` needs none of this.
 
 With a client secret, Entra client secrets expire. When one does, nobody can sign in (AADSTS7000222). Replace it before then:
 
