@@ -16,11 +16,31 @@ static INSTALL_PROVIDER: Once = Once::new();
 /// `SSL_CERT_FILE` points at a file with no certificates in it. Called
 /// before Keyring starts listening, so the error stops start-up.
 pub fn client(https_only: bool) -> Result<reqwest::Client, HttpError> {
+    build(https_only, false)
+}
+
+/// A second client for the managed identity's token service, which listens
+/// on plain HTTP at a local address. Same timeouts and no redirects. Only
+/// ever pointed at an address that [`crate::auth::assertion::checked_endpoint`]
+/// has accepted.
+pub fn local_client() -> Result<reqwest::Client, HttpError> {
+    // Never through a proxy: HTTP_PROXY would otherwise send the identity
+    // header to the proxy instead of the local token service.
+    build(false, true)
+}
+
+fn build(https_only: bool, no_proxy: bool) -> Result<reqwest::Client, HttpError> {
     INSTALL_PROVIDER.call_once(|| {
         // Fails only if another provider was installed first, which is fine.
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder();
+    let builder = if no_proxy {
+        builder.no_proxy()
+    } else {
+        builder
+    };
+    builder
         .https_only(https_only)
         // Token endpoints must not redirect; following one could leak codes.
         .redirect(reqwest::redirect::Policy::none())

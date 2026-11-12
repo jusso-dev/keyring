@@ -21,6 +21,7 @@ use openidconnect::{
 };
 use tokio::sync::{Mutex, RwLock};
 
+use crate::auth::assertion::{ASSERTION_TYPE, Credential};
 use crate::auth::entra::{self, EntraAdvice};
 use crate::auth::session::{User, UserId, UserTokens};
 use crate::azure::token::expiry_from;
@@ -165,7 +166,7 @@ struct MetadataCache {
 pub struct Oidc {
     issuer: String,
     client_id: String,
-    client_secret: Secret,
+    credential: Credential,
     redirect_url: String,
     signed_out_url: String,
     api_scope: String,
@@ -178,11 +179,11 @@ pub struct Oidc {
 }
 
 impl Oidc {
-    pub fn new(config: &Config, http: reqwest::Client) -> Self {
+    pub fn new(config: &Config, http: reqwest::Client, credential: Credential) -> Self {
         Self {
             issuer: config.issuer(),
             client_id: config.client_id.clone(),
-            client_secret: config.client_secret.clone(),
+            credential,
             redirect_url: config.redirect_url(),
             signed_out_url: config.signed_out_url(),
             api_scope: config.api_scope.clone(),
@@ -273,7 +274,11 @@ impl Oidc {
         Ok(EntraClient::from_provider_metadata(
             metadata.clone(),
             ClientId::new(self.client_id.clone()),
-            Some(ClientSecret::new(self.client_secret.expose().to_owned())),
+            // With a managed identity there is no secret: `finish` adds the
+            // assertion to the code exchange instead.
+            self.credential
+                .secret()
+                .map(|s| ClientSecret::new(s.expose().to_owned())),
         )
         .set_redirect_uri(redirect)
         // Entra ID expects the client secret in the form body.
@@ -326,10 +331,22 @@ impl Oidc {
     ) -> Result<(User, UserTokens), SignInError> {
         let metadata = self.metadata().await?;
         let client = self.client(&metadata)?;
-        let token = client
+        // In managed identity mode, the assertion takes the secret's place.
+        let assertion = self
+            .credential
+            .assertion()
+            .await
+            .map_err(|e| SignInError::Unreachable(e.to_string()))?;
+        let mut request = client
             .exchange_code(AuthorizationCode::new(code))
             .map_err(|e| SignInError::Rejected(e.to_string()))?
-            .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier))
+            .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier));
+        if let Some(assertion) = assertion.as_ref() {
+            request = request
+                .add_extra_param("client_assertion_type", ASSERTION_TYPE)
+                .add_extra_param("client_assertion", assertion.expose());
+        }
+        let token = request
             .request_async(&self.http)
             .await
             .map_err(|e| match e {

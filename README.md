@@ -32,7 +32,7 @@ Browser ──OIDC──> Keyring ──on-behalf-of──> Entra ID ──token
 
 1. You sign in with Entra ID. Keyring gets an access token for its own API.
 2. Keyring swaps that token for Key Vault and Azure Resource Manager tokens using the [on-behalf-of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow).
-3. Each request goes to Azure as you. Keyring has no managed identity or service principal with vault access of its own.
+3. Each request goes to Azure as you. Keyring has no managed identity or service principal with vault access of its own. (A deployment can use its managed identity to prove to Entra that it is the Keyring app, in place of a client secret. That identity still has no access to any vault. See [step 2](#2-choose-how-keyring-proves-it-is-this-app).)
 
 That's why Keyring uses OIDC and not SAML. A SAML assertion can't be exchanged for a downstream token.
 
@@ -53,15 +53,55 @@ Keyring needs one app registration in your tenant. It acts as both the app peopl
 
 For a real deployment, add `https://<your-host>/auth/callback` and `https://<your-host>/auth/signed-out` as well.
 
-### 2. Add a client secret
+### 2. Choose how Keyring proves it is this app
+
+Keyring sends this proof to Entra when you sign in, when it refreshes your token and for the on-behalf-of exchange. Pick one option. Setting both stops Keyring starting.
+
+#### Option A: client secret (local use)
 
 1. Go to **Certificates & secrets > Client secrets > New client secret**.
 2. Pick an expiry and select **Add**.
 3. Copy the **Value** (not the Secret ID) straight away. It's only shown once.
 
-Keyring uses this secret for the on-behalf-of exchange. Keep it in your host's secret store or a Key Vault, never in this repo. Certificate credentials aren't supported yet.
+Set it as `ENTRA_CLIENT_SECRET`. Keep it in your host's secret store or a Key Vault, never in this repo.
 
 Client secrets expire (after two years at most, often sooner by policy). When one runs out, nobody can sign in and Entra reports AADSTS7000222. Note the expiry date, and see [Rotating secrets](docs/deploy.md#rotating-secrets) for replacing it without downtime.
+
+#### Option B: managed identity (Azure deployments, nothing to rotate)
+
+On App Service or Container Apps, the app registration can trust the user-assigned managed identity that Keyring runs as. Keyring then sends a short-lived token from that identity instead of a secret. There is no secret to store, rotate or leak.
+
+1. Deploy Keyring with a user-assigned managed identity. The Bicep templates in `infra/` already create one (`<name>-id`). Note its **client ID** and its **principal (object) ID**:
+
+   ```sh
+   az identity show -g <rg> -n <name>-id --query "{clientId:clientId, principalId:principalId}"
+   ```
+
+2. Save this as `credential.json`. Use your tenant ID, and the identity's principal ID as the `subject`:
+
+   ```json
+   {
+     "name": "keyring-managed-identity",
+     "issuer": "https://login.microsoftonline.com/<tenant ID>/v2.0",
+     "subject": "<identity principal (object) ID>",
+     "description": "Trust Keyring's managed identity as this app",
+     "audiences": ["api://AzureADTokenExchange"]
+   }
+   ```
+
+3. Add it to the app registration:
+
+   ```sh
+   az ad app federated-credential create --id <app client ID> --parameters credential.json
+   ```
+
+4. Set `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` to the identity's client ID, and leave `ENTRA_CLIENT_SECRET` unset. With the Bicep templates, set `useFederatedCredential` to `true`. Keyring also needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set themselves once a managed identity is assigned.
+
+Entra accepts a wrong issuer, subject or audience when you create the credential and only fails later, at sign-in. If sign-in fails after this, check those three values first. The audience above is for the global Entra cloud.
+
+**What this changes:** the managed identity can now act as the Keyring app registration. Today that grants nothing on its own. The registration holds only delegated permissions, and the on-behalf-of exchange needs a signed-in person's token, so the identity cannot reach any vault. That stays true only while the app registration has **no application permissions**. Don't add any, or the identity could use them with nobody signed in.
+
+Certificate credentials (a `client_assertion` signed with a certificate) aren't supported yet.
 
 ### 3. Expose an API
 
@@ -123,7 +163,8 @@ Set these as environment variables. Don't commit them.
 | --- | --- |
 | `ENTRA_TENANT_ID` | Directory (tenant) ID, a GUID |
 | `ENTRA_CLIENT_ID` | Application (client) ID, a GUID |
-| `ENTRA_CLIENT_SECRET` | The client secret value from step 2 |
+| `ENTRA_CLIENT_SECRET` | The client secret value from step 2, option A. Required unless `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` is set. Setting both stops Keyring starting |
+| `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` | Optional. The client ID (a GUID) of the user-assigned managed identity that the app registration trusts, from step 2, option B. Replaces `ENTRA_CLIENT_SECRET`. Needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set for you. Keyring won't start if they're missing, or if `IDENTITY_ENDPOINT` isn't a plain `http://` address on `localhost`, `127.0.0.1` or `169.254.0.0/16` |
 | `APP_BASE_URL` | Public URL of this app, used for redirects and to check that form posts come from Keyring. Must be `https://` except for `http://localhost`. Scheme, host and port only: Keyring must be at the root of its host, not under a path like `/keyring` |
 | `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. Keyring won't start if it's shorter, still the `replace-me` placeholder, or an unresolved Key Vault reference. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
@@ -131,7 +172,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
 | `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting |
 
-Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
+Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
 Sessions live in memory, so restarting Keyring signs everyone out. A request that hits a bug (a panic) gets an error page; other people's sessions carry on. If you run more than one copy, use sticky sessions. A session ends after one hour without a request, or 12 hours after sign-in. With JavaScript on, the page warns a few minutes before the hour runs out and offers to keep you signed in.
 

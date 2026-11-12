@@ -88,6 +88,9 @@ param logLevel string = ''
 @maxValue(10)
 param replicas int = 1
 
+@description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
+param useFederatedCredential bool = false
+
 param tags object = {}
 
 var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infrastructureSubnetId) && !empty(vaultPrivateDnsZoneId))
@@ -99,6 +102,13 @@ var dnsCheck = empty(privateDnsVnetId) || ingress == 'internal' ? 'ok' : fail('p
 
 var identityName = '${name}-id'
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
+
+// How Keyring proves itself to Entra: the client secret, or (with
+// useFederatedCredential) the app's managed identity. Never both: Keyring
+// refuses to start with both set.
+var credentialEnv = useFederatedCredential
+  ? [{ name: 'KEYRING_FEDERATED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
+  : [{ name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }]
 
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
@@ -190,18 +200,24 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
         }
       }
       // Key Vault references, resolved with the identity.
-      secrets: [
-        {
-          name: 'entra-client-secret'
-          keyVaultUrl: '${config.outputs.vaultUri}secrets/entra-client-secret'
-          identity: identityId
-        }
-        {
-          name: 'session-secret'
-          keyVaultUrl: '${config.outputs.vaultUri}secrets/session-secret'
-          identity: identityId
-        }
-      ]
+      secrets: concat(
+        useFederatedCredential
+          ? []
+          : [
+              {
+                name: 'entra-client-secret'
+                keyVaultUrl: '${config.outputs.vaultUri}secrets/entra-client-secret'
+                identity: identityId
+              }
+            ],
+        [
+          {
+            name: 'session-secret'
+            keyVaultUrl: '${config.outputs.vaultUri}secrets/session-secret'
+            identity: identityId
+          }
+        ]
+      )
     }
     template: {
       containers: [
@@ -220,7 +236,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
               { name: 'ENTRA_TENANT_ID', value: tenantId }
               { name: 'ENTRA_CLIENT_ID', value: clientId }
               { name: 'APP_BASE_URL', value: appBaseUrl }
-              { name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }
+            ],
+            credentialEnv,
+            [
               { name: 'SESSION_SECRET', secretRef: 'session-secret' }
               { name: 'KEYRING_ALLOW_PURGE', value: string(allowPurge) }
             ],
