@@ -1,0 +1,224 @@
+name: Release image
+
+# A version tag (vX.Y.Z) builds the image, runs the same checks as CI and
+# attests where it came from. Pushing to ghcr.io stays off until the owner
+# sets the repository variable KEYRING_PUBLISH_IMAGE to "true". While it is
+# off, the image is kept as a workflow artifact and nothing is published.
+#
+# workflow_dispatch is a dry run: it builds and attests an archive of the
+# image under a "-dryrun" version and never publishes.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: build, check and attest the image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push the image to ghcr.io (only when publishing is on)
+      id-token: write # sign the provenance with the workflow's identity
+      attestations: write # store the provenance attestation
+    env:
+      # The one place the publishing decision is made. Only a tag push can
+      # publish, so a dry run never does, even with the variable on.
+      PUBLISH: ${{ vars.KEYRING_PUBLISH_IMAGE == 'true' && github.ref_type == 'tag' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A tag must name the version in Cargo.toml, and CHANGELOG.md must have
+      # an entry for it. Values come in through env, never straight into the
+      # script, so a tag name can't inject commands.
+      - name: Image version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test -n "$cargo_version"
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag_version="${REF_NAME#v}"
+            if [ "$tag_version" != "$cargo_version" ]; then
+              echo "::error::Tag ${REF_NAME} doesn't match the version in Cargo.toml (${cargo_version}). Bump Cargo.toml first, or tag v${cargo_version}."
+              exit 1
+            fi
+            if ! grep -qE "^## \[?${cargo_version//./\\.}\]?( .*)?$" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no '## ${cargo_version}' heading. Add the release entry before tagging."
+              exit 1
+            fi
+            version="$cargo_version"
+          else
+            version="${cargo_version}-dryrun.${COMMIT_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Dependabot moves rust-toolchain.toml and the builder image in one
+      # pull request; this catches the two drifting apart anyway.
+      - name: Builder image matches rust-toolchain.toml
+        run: |
+          want=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          grep -q "FROM rust:${want}-" Dockerfile || { echo "Dockerfile builder isn't Rust ${want}" >&2; exit 1; }
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The image the checks below run against. It is built once for the
+      # checks and once more (cached) for the archive or the push.
+      - name: Build image (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: keyring:ci
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Non-root, numeric user.
+          test "$(docker inspect keyring:ci --format '{{.Config.User}}')" = "65532:65532"
+          # Tied to the commit it was built from.
+          test "$(docker inspect keyring:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          test "$(docker inspect keyring:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+          # No shell in the runtime image.
+          if docker run --rm --entrypoint /bin/sh keyring:ci -c true 2>/dev/null; then
+            echo "runtime image has a shell" >&2; exit 1
+          fi
+          # Size, for the README (target under 30 MB).
+          size=$(docker image inspect keyring:ci --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MB"
+          test "$size" -lt $((30 * 1024 * 1024))
+
+      - name: Smoke test the image
+        run: |
+          docker run -d --name keyring --read-only --cap-drop ALL --security-opt no-new-privileges -p 3000:3000 \
+            -e ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
+            -e ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
+            -e ENTRA_CLIENT_SECRET=ci-placeholder \
+            -e APP_BASE_URL=http://localhost:3000 \
+            -e SESSION_SECRET=ci-placeholder-ci-placeholder-ci-placeholder \
+            keyring:ci
+          for _ in $(seq 1 20); do
+            if curl -fsS http://localhost:3000/healthz; then
+              # Health needs no sign-in and says nothing else.
+              test "$(curl -fsS http://localhost:3000/healthz)" = "ok"
+              # Other pages do need sign-in.
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/)" = "303"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs keyring
+          exit 1
+
+      # Base image packages (CA certificates, tzdata). Crates are in the
+      # keyring-crates-sbom artifact from the supply-chain job in CI.
+      - name: SBOM for the image
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: keyring:ci
+          format: cyclonedx-json
+          output-file: keyring-sbom.cdx.json
+          upload-artifact: false
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/jusso-dev/keyring
+          # No "latest" tag: the deploy docs say to deploy by digest.
+          flavor: latest=false
+          tags: type=raw,value=${{ steps.version.outputs.version }}
+
+      - name: Sign in to ghcr.io
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushes when PUBLISH is true. Otherwise writes an OCI archive for the
+      # workflow artifact and pushes nothing.
+      - name: Build image (push or archive)
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ env.PUBLISH == 'true' }}
+          outputs: ${{ env.PUBLISH != 'true' && 'type=oci,dest=keyring-image.tar' || '' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+
+      - name: Attest the published image
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/jusso-dev/keyring
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the image archive (dry run)
+        if: env.PUBLISH != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: keyring-image.tar
+
+      - name: Digest in the job summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "### Keyring ${VERSION}"
+            echo
+            if [ "$PUBLISH" = "true" ]; then
+              echo "Published \`ghcr.io/jusso-dev/keyring@${DIGEST}\`"
+              echo
+              echo "Verify with: \`gh attestation verify oci://ghcr.io/jusso-dev/keyring@${DIGEST} --repo ${GITHUB_REPOSITORY}\`"
+            else
+              echo "Not published (publishing is off, or this is a dry run). The image archive is in the \`keyring-image\` artifact."
+              echo
+              echo "Archive SHA-256: \`$(sha256sum keyring-image.tar | cut -d' ' -f1)\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: keyring-sbom
+          path: keyring-sbom.cdx.json
+          if-no-files-found: error
+
+      - name: Keep the image archive
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: keyring-image
+          path: keyring-image.tar
+          if-no-files-found: error
