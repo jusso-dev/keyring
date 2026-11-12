@@ -32,6 +32,22 @@ docker buildx imagetools inspect <registry>/keyring:<version>   # note the sha25
 
 Use the image by digest (`<registry>/keyring@sha256:...`) in the templates, so a deployment always runs exactly what you tested.
 
+### Or use a published image
+
+This applies once Keyring's releases are published. Until then, build your own as above. Each version tag (`vX.Y.Z`) is built by [`.github/workflows/release.yml`](../.github/workflows/release.yml), which runs the same checks as CI and attests where the image came from. The image is `ghcr.io/yumaitau/keyring`. Take the digest from the release's workflow run summary and use the image by digest:
+
+```
+ghcr.io/yumaitau/keyring@sha256:<digest>
+```
+
+Before you deploy it, check the attestation. This proves the image was built by that workflow from the repository's source:
+
+```sh
+gh attestation verify oci://ghcr.io/yumaitau/keyring@sha256:<digest> --repo yumaitau/keyring
+```
+
+There is no `latest` tag. If the package is public, Azure Container Apps and App Service can pull it without registry credentials. If you use a private registry, copy the image into it by digest, then run the check above against the original.
+
 **Private Azure Container Registry:** the app pulls with its managed identity. Set `useManagedIdentityForRegistry = true` (App Service) or `registryServer = '<name>.azurecr.io'` (Container Apps), and give the identity `AcrPull` on the registry. The identity exists after the config-only deploy in step 3, so grant AcrPull between the two runs:
 
 ```sh
