@@ -45,6 +45,8 @@ pub(crate) struct Extra {
     pub versions_404: Mutex<bool>,
     /// When set, a PFX import with any other password gets Key Vault's 400.
     pub pfx_password: Mutex<Option<String>>,
+    /// The body of every "Update Certificate Policy" call, in order.
+    pub policy_patches: Mutex<Vec<Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,7 +89,7 @@ pub(crate) fn router(state: Arc<KvState>) -> Router<Arc<KvState>> {
         )
         .route(
             "/{vault}/certificates/{name}/policy",
-            axum::routing::get(policy),
+            axum::routing::get(policy).patch(update_policy),
         )
         .route("/{vault}/certificates/issuers", axum::routing::get(issuers))
         .route(
@@ -391,6 +393,50 @@ async fn policy(
         Some(c) => json_response(StatusCode::OK, c.policy.clone()),
         None => err(404, "CertificateNotFound"),
     }
+}
+
+/// "Update Certificate Policy": the members sent replace the stored ones,
+/// the rest are left alone. Only `lifetime_actions` is used here. Refuses
+/// what Key Vault documents: `days_before_expiry` above 27 times the
+/// validity in months, and `AutoRenew` for an issuer of `Unknown`.
+async fn update_policy(
+    State(s): State<Arc<KvState>>,
+    Path((_vault, name)): Path<(String, String)>,
+    body: String,
+) -> Response {
+    let body: Value = serde_json::from_str(&body).unwrap();
+    s.cert_extra
+        .policy_patches
+        .lock()
+        .unwrap()
+        .push(body.clone());
+    let mut certs = s.certs.lock().unwrap();
+    let Some(c) = certs.get_mut(&name) else {
+        return err(404, "CertificateNotFound");
+    };
+    if let Some(actions) = body.get("lifetime_actions") {
+        let months = c.policy["x509_props"]["validity_months"]
+            .as_u64()
+            .unwrap_or(12);
+        let unknown_issuer = c.policy["issuer"]["name"] == "Unknown";
+        for a in actions.as_array().cloned().unwrap_or_default() {
+            if let Some(d) = a["trigger"]["days_before_expiry"].as_u64()
+                && (d < 1 || d > months * 27)
+            {
+                return bad_request(&format!(
+                    "days_before_expiry must be between 1 and {}",
+                    months * 27
+                ));
+            }
+            if unknown_issuer && a["action"]["action_type"] == "AutoRenew" {
+                return bad_request(
+                    "AutoRenew isn't allowed for a certificate with issuer Unknown",
+                );
+            }
+        }
+        c.policy["lifetime_actions"] = actions.clone();
+    }
+    json_response(StatusCode::OK, c.policy.clone())
 }
 
 async fn pending(

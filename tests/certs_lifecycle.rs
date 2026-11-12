@@ -478,3 +478,273 @@ async fn enable_and_disable() {
         .await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// Put a lifetime action list and issuer on a certificate the mock holds.
+fn set_policy(w: &support::World, name: &str, actions: serde_json::Value, issuer: &str) {
+    let mut certs = w.kv.state.certs.lock().unwrap();
+    let p = &mut certs.get_mut(name).unwrap().policy;
+    p["lifetime_actions"] = actions;
+    p["issuer"] = serde_json::json!({ "name": issuer });
+}
+
+fn auto_30() -> serde_json::Value {
+    serde_json::json!([{"trigger": {"days_before_expiry": 30}, "action": {"action_type": "AutoRenew"}}])
+}
+
+fn policy_of(w: &support::World, name: &str) -> serde_json::Value {
+    w.kv.state.certs.lock().unwrap()[name].policy.clone()
+}
+
+fn patches(w: &support::World) -> usize {
+    w.kv.state.cert_extra.policy_patches.lock().unwrap().len()
+}
+
+fn flash_cookie(res: &axum::http::Response<axum::body::Body>) -> Option<String> {
+    res.headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_owned())
+        .find(|c| c.starts_with("keyring_flash="))
+}
+
+#[tokio::test]
+async fn renewal_form_is_prefilled_from_the_policy() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
+    assert!(
+        html.contains("href=\"/v/kv-test/certificates/web-tls/renewal\">Change<"),
+        "{html}"
+    );
+    let (status, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("action=\"/v/kv-test/certificates/web-tls/renewal\""));
+    assert!(
+        html.contains("id=\"renew-auto\" name=\"renewal\" type=\"radio\" value=\"auto\" checked")
+    );
+    assert!(
+        html.contains("name=\"renew_days\" type=\"number\" min=\"1\" max=\"324\" value=\"30\"")
+    );
+    assert!(
+        !html.contains("can't show"),
+        "no warning for a plain policy"
+    );
+    // A percentage trigger is shown with a warning that saving replaces it.
+    set_policy(
+        &w,
+        "web-tls",
+        serde_json::json!([{"trigger": {"lifetime_percentage": 80}, "action": {"action_type": "AutoRenew"}}]),
+        "Self",
+    );
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert!(html.contains("80% of the certificate"), "{html}");
+    assert!(html.contains("Saving replaces it"));
+}
+
+#[tokio::test]
+async fn renewal_can_be_changed_to_email() {
+    let mut w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    let before = policy_of(&w, "web-tls");
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "email"), ("renew_days", "14")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&res), "/v/kv-test/certificates/web-tls");
+    let flash = flash_cookie(&res).unwrap();
+    let after = policy_of(&w, "web-tls");
+    assert_eq!(
+        after["lifetime_actions"][0]["action"]["action_type"],
+        "EmailContacts"
+    );
+    assert_eq!(
+        after["lifetime_actions"][0]["trigger"]["days_before_expiry"],
+        14
+    );
+    assert_eq!(after["lifetime_actions"].as_array().unwrap().len(), 1);
+    // Only the lifetime actions were sent, and nothing else changed.
+    let sent = w.kv.state.cert_extra.policy_patches.lock().unwrap()[0].clone();
+    assert_eq!(sent.as_object().unwrap().len(), 1, "{sent}");
+    let mut expected = before;
+    expected["lifetime_actions"] = after["lifetime_actions"].clone();
+    assert_eq!(after, expected);
+    w.cookie = format!("{}; {flash}", w.cookie);
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
+    assert!(
+        html.contains("Saved what happens near expiry for web-tls."),
+        "{html}"
+    );
+    assert!(
+        html.contains("Emails the vault&#39;s contacts 14 days before it expires"),
+        "{html}"
+    );
+}
+
+#[tokio::test]
+async fn renewal_can_be_turned_off() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "none"), ("renew_days", "")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        policy_of(&w, "web-tls")["lifetime_actions"],
+        serde_json::json!([])
+    );
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
+    assert!(html.contains("Nothing happens automatically"), "{html}");
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert!(
+        html.contains("id=\"renew-none\" name=\"renewal\" type=\"radio\" value=\"none\" checked")
+    );
+}
+
+#[tokio::test]
+async fn renewal_days_above_the_limit_are_refused_before_key_vault() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    // The mock policy is valid for 12 months: 12 x 27 = 324.
+    for days in ["325", "0", "-1", "abc"] {
+        let res = w
+            .post(
+                "/v/kv-test/certificates/web-tls/renewal",
+                &[("renewal", "auto"), ("renew_days", days)],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{days}");
+        let html = body_text(res).await;
+        assert!(
+            html.contains("Pick a number of days from 1 to 324"),
+            "{days}"
+        );
+        assert!(html.contains("id=\"renew_days-error\""), "{days}");
+    }
+    assert_eq!(patches(&w), 0, "nothing reached Key Vault");
+    assert_eq!(policy_of(&w, "web-tls")["lifetime_actions"], auto_30());
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "auto"), ("renew_days", "324")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn imported_certificates_cannot_be_set_to_renew() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Unknown");
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert!(html.contains("signed outside Key Vault"), "{html}");
+    assert!(
+        html.contains("id=\"renew-auto\" name=\"renewal\" type=\"radio\" value=\"auto\" disabled")
+    );
+    assert!(
+        html.contains("id=\"renew-email\" name=\"renewal\" type=\"radio\" value=\"email\" checked")
+    );
+    // The server refuses it too, whatever the form says.
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "auto"), ("renew_days", "30")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(html.contains("id=\"renewal-error\""), "{html}");
+    assert_eq!(patches(&w), 0);
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "email"), ("renew_days", "30")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn renewal_needs_a_good_token_and_a_real_choice() {
+    let mut w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    w.csrf = "forged".into();
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "none")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    w.csrf = String::new();
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "none")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert_eq!(patches(&w), 0);
+    assert_eq!(policy_of(&w, "web-tls")["lifetime_actions"], auto_30());
+    // With a good token, an unknown choice is a field error.
+    let w2 = support::world().await;
+    w2.kv.state.add_cert("web-tls", false, "x");
+    let res = w2
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "sometimes")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(patches(&w2), 0);
+}
+
+#[tokio::test]
+async fn renewal_key_vault_400_shows_its_reason() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", auto_30(), "Self");
+    *w.kv.state.fail_path.lock().unwrap() = Some("/policy".into());
+    *w.kv.state.fail_method.lock().unwrap() = Some(axum::http::Method::PATCH);
+    *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "email"), ("renew_days", "14")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(html.contains("Key Vault said:"), "{html}");
+    assert!(html.contains("mock Key Vault error with private detail"));
+    assert!(
+        html.contains("id=\"renew-email\" name=\"renewal\" type=\"radio\" value=\"email\" checked")
+    );
+    assert!(html.contains("value=\"14\""), "form kept");
+    assert_eq!(policy_of(&w, "web-tls")["lifetime_actions"], auto_30());
+}
+
+#[tokio::test]
+async fn renewal_for_a_missing_certificate_is_not_found() {
+    let w = support::world().await;
+    let (status, _) = w.page("/v/kv-test/certificates/nope/renewal").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let res = w
+        .post(
+            "/v/kv-test/certificates/nope/renewal",
+            &[("renewal", "none")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

@@ -39,6 +39,47 @@ pub(crate) fn default_renew_days(months: u32) -> u32 {
     30.min(months * DAYS_PER_MONTH_LIMIT)
 }
 
+/// What Key Vault does near expiry, from the form's `renewal` (`auto`,
+/// `email` or `none`) and `renew_days`. A blank number of days means the
+/// default. On a bad number, the field name and the message to show.
+pub(crate) fn lifetime_actions(
+    renewal: &str,
+    renew_days: &str,
+    months: u32,
+) -> Result<Vec<LifetimeAction>, (&'static str, String)> {
+    if renewal == "none" {
+        return Ok(Vec::new());
+    }
+    let max_days = months * DAYS_PER_MONTH_LIMIT;
+    let days = match renew_days.trim() {
+        "" => default_renew_days(months),
+        d => match d.parse::<u32>() {
+            Ok(n) if (1..=max_days).contains(&n) => n,
+            _ => {
+                return Err((
+                    "renew_days",
+                    format!(
+                        "Pick a number of days from 1 to {max_days}. Key Vault allows up to 27 days for each month the certificate is valid."
+                    ),
+                ));
+            }
+        },
+    };
+    Ok(vec![LifetimeAction {
+        trigger: LifetimeTrigger {
+            days_before_expiry: Some(days),
+            lifetime_percentage: None,
+        },
+        action: LifetimeActionType {
+            action_type: if renewal == "email" {
+                "EmailContacts".into()
+            } else {
+                "AutoRenew".into()
+            },
+        },
+    }])
+}
+
 /// The issuer choices for the form: always `Self`, then the vault's own.
 pub(crate) struct Issuers {
     pub names: Vec<String>,
@@ -235,38 +276,11 @@ pub(crate) fn build(
         "pem" => "application/x-pem-file",
         _ => "application/x-pkcs12",
     };
-    let max_days = months * DAYS_PER_MONTH_LIMIT;
-    let renew_days: Option<u32> = match f.renewal.as_str() {
-        "none" => None,
-        _ => match f.renew_days.trim() {
-            "" => Some(default_renew_days(months)),
-            d => match d.parse::<u32>() {
-                Ok(n) if (1..=max_days).contains(&n) => Some(n),
-                _ => {
-                    errors.push("renew_days", format!(
-                            "Pick a number of days from 1 to {max_days}. Key Vault allows up to 27 days for each month the certificate is valid."
-                        ));
-                    None
-                }
-            },
-        },
-    };
-    let lifetime_actions = match (f.renewal.as_str(), renew_days) {
-        ("none", _) | (_, None) => Vec::new(),
-        (kind, Some(days)) => vec![LifetimeAction {
-            trigger: LifetimeTrigger {
-                days_before_expiry: Some(days),
-                lifetime_percentage: None,
-            },
-            action: LifetimeActionType {
-                action_type: if kind == "email" {
-                    "EmailContacts".into()
-                } else {
-                    "AutoRenew".into()
-                },
-            },
-        }],
-    };
+    let lifetime_actions =
+        lifetime_actions(&f.renewal, &f.renew_days, months).unwrap_or_else(|(field, message)| {
+            errors.push(field, message);
+            Vec::new()
+        });
     let tags = parse_tags(&f.tags).unwrap_or_else(|m| {
         errors.push("tags", m);
         Default::default()

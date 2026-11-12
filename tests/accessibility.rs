@@ -223,6 +223,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/v/kv-test/certificates/web-tls/download-key".into(),
         "/v/kv-test/certificates/web-tls/delete".into(),
         "/v/kv-test/certificates/web-tls/disable".into(),
+        "/v/kv-test/certificates/web-tls/renewal".into(),
         "/v/kv-test/certificates/-/deleted".into(),
         "/v/kv-test/keys".into(),
         "/v/kv-test/keys/-/new".into(),

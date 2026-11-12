@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Renewal for certificate {{ name }} in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<p><a href="{{ shell.vault_prefix() }}/certificates/{{ name }}">Back to {{ name }}</a></p>
+<h1>Renewal for <span class="mono">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
+<p>Choose what Key Vault does as this certificate gets close to expiring. Only this setting changes. The rest of the policy stays as it is.</p>
+{% call ui::error_summary(errors) %}{% endcall %}
+{% if let Some(m) = azure_message %}
+<div class="notice notice-error" tabindex="-1" data-error-summary>
+  <p><strong>Key Vault didn't save the change. Nothing was changed.</strong></p>
+  <p>Key Vault said:</p>
+  <p class="mono">{{ m }}</p>
+</div>
+{% endif %}
+{% if !unsupported.is_empty() %}
+<div class="notice notice-warn">
+  <p><strong>The current setting has parts this form can't show:</strong></p>
+  <ul>{% for u in unsupported %}<li>{{ u }}</li>{% endfor %}</ul>
+  <p>Saving replaces it with what's on this page. Change it in the Azure portal to keep those parts.</p>
+</div>
+{% endif %}
+{% if imported %}
+<p class="notice notice-warn">This certificate was signed outside Key Vault, so Key Vault can only remind the vault's contacts. It can't renew it.</p>
+{% endif %}
+<form method="post" action="{{ shell.vault_prefix() }}/certificates/{{ name }}/renewal" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  {% let field_name = "renewal" %}
+  <fieldset id="renewal"{% if error_for("renewal").is_some() %} aria-describedby="renewal-error"{% endif %}>
+    <legend>Near expiry</legend>
+    <div class="checkbox"><input id="renew-auto" name="renewal" type="radio" value="auto"{% if form.renewal == "auto" %} checked{% endif %}{% if imported %} disabled{% endif %}><label for="renew-auto">Renew automatically{% if imported %} <span class="muted">(not available for this certificate)</span>{% endif %}</label></div>
+    <div class="checkbox"><input id="renew-email" name="renewal" type="radio" value="email"{% if form.renewal == "email" %} checked{% endif %}><label for="renew-email">Email the vault's certificate contacts</label></div>
+    <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
+    {% include "_field_error.html" %}
+  </fieldset>
+  {% let field_name = "renew_days" %}
+  <label for="renew_days">Days before expiry <span class="muted">(optional)</span></label>
+  <p class="field-help" id="renew_days-help">From 1 up to {{ max_days }}, which is 27 days for each of the {{ months }} months this certificate is valid. Left blank, Keyring uses {{ default_days }}. Ignored for "Do nothing".</p>
+  <input id="renew_days" name="renew_days" type="number" min="1" max="{{ max_days }}" value="{{ form.renew_days }}"{% call ui::aria("renew_days", "renew_days-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+  <div class="actions"><button type="submit">Save</button><a href="{{ shell.vault_prefix() }}/certificates/{{ name }}">Cancel</a></div>
+</form>
+{% endblock %}

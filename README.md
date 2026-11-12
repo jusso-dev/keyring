@@ -17,7 +17,7 @@ Keyring is written in Rust (Axum and Askama) and ships as a single Docker image.
 - **Sign in with Entra ID** (OpenID Connect).
 - **Find your vaults** across every subscription you can see, using Azure Resource Graph.
 - **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
-- **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
+- **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, change what happens near expiry, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Generator** for passwords, GUIDs and API keys.

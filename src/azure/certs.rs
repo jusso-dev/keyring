@@ -405,6 +405,25 @@ impl CertsApi<'_> {
         .await
     }
 
+    /// Change what Key Vault does near expiry. Only `lifetime_actions` is sent,
+    /// so the rest of the policy is left as it is. Key Vault's reference for
+    /// "Update Certificate Policy" says to "set specified members in the
+    /// certificate policy". It doesn't say what an empty list does: "do
+    /// nothing" is sent as one, and that is still to be confirmed against a
+    /// real vault (see `docs/real-vault-checklist.md`).
+    pub async fn update_lifetime_actions(
+        &self,
+        name: &str,
+        actions: &[LifetimeAction],
+    ) -> Result<Policy, AzureError> {
+        self.send(
+            Method::PATCH,
+            &format!("/certificates/{name}/policy"),
+            &lifetime_actions_body(actions),
+        )
+        .await
+    }
+
     pub async fn import(&self, name: &str, body: &ImportCert) -> Result<CertBundle, AzureError> {
         self.send(Method::POST, &format!("/certificates/{name}/import"), body)
             .await
@@ -446,6 +465,11 @@ impl CertsApi<'_> {
         self.call(Method::DELETE, &format!("/deletedcertificates/{name}"))
             .await
     }
+}
+
+/// The body of a policy update that changes only the lifetime actions.
+fn lifetime_actions_body(actions: &[LifetimeAction]) -> serde_json::Value {
+    serde_json::json!({ "lifetime_actions": actions })
 }
 
 /// Body for importing a `.pfx` or `.pem`.
@@ -586,6 +610,35 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(op.status_details.as_deref(), Some("Pending"));
+    }
+
+    #[test]
+    fn lifetime_action_update_sends_only_lifetime_actions() {
+        let action = LifetimeAction {
+            trigger: LifetimeTrigger {
+                days_before_expiry: Some(14),
+                lifetime_percentage: None,
+            },
+            action: LifetimeActionType {
+                action_type: "EmailContacts".into(),
+            },
+        };
+        let j = lifetime_actions_body(&[action]);
+        assert_eq!(j.as_object().unwrap().len(), 1, "{j}");
+        assert_eq!(
+            j["lifetime_actions"][0]["trigger"]["days_before_expiry"],
+            14
+        );
+        assert!(j["lifetime_actions"][0]["trigger"]["lifetime_percentage"].is_null());
+        assert_eq!(
+            j["lifetime_actions"][0]["action"]["action_type"],
+            "EmailContacts"
+        );
+        // "Do nothing" is an empty list, still sent so Key Vault clears it.
+        assert_eq!(
+            lifetime_actions_body(&[]),
+            serde_json::json!({ "lifetime_actions": [] })
+        );
     }
 
     #[test]
