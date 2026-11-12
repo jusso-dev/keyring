@@ -10,7 +10,7 @@ It's a thin layer. Keyring stores nothing. Every call to Key Vault is made as th
 
 Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
 
-> Status: early development. Every planned feature is built and tested against mock Azure services, but it hasn't yet been run against a real tenant. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists what that first run has to confirm. Work is tracked in [issues](https://github.com/jusso-dev/keyring/issues).
+> Status: early development. Every planned feature is built and tested against mock Azure services. The Key Vault calls have also been checked against real vaults; sign-in, on-behalf-of and the browser haven't been tried against a real tenant yet. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists what has been confirmed and what hasn't. Work is tracked in [issues](https://github.com/jusso-dev/keyring/issues).
 
 ## What it does
 

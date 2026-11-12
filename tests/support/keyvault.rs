@@ -362,6 +362,15 @@ async fn record(
             .unwrap_or_default()
             .to_owned(),
     );
+    // Real Key Vault refuses a POST with no Content-Length (found by the
+    // real-vault run on 12-11-2026: recover was answered 411).
+    if req.method() == axum::http::Method::POST
+        && !req
+            .headers()
+            .contains_key(axum::http::header::CONTENT_LENGTH)
+    {
+        return err(411, "LengthRequired");
+    }
     let fail = *s.fail.lock().unwrap();
     let method_ok = s
         .fail_method
@@ -401,6 +410,19 @@ fn err(status: u16, code: &str) -> Response {
         } else {
             json!({"error": {"code": code, "message": "mock Key Vault error with private detail"}})
         },
+    )
+}
+
+/// A 409 in real Key Vault's shape. `state` ends the message, after the
+/// item's name, as Key Vault words it.
+fn conflict(inner: &str, state: &str) -> Response {
+    json_response(
+        StatusCode::CONFLICT,
+        json!({"error": {
+            "code": "Conflict",
+            "message": format!("Secret {state}"),
+            "innererror": {"code": inner}
+        }}),
     )
 }
 
@@ -593,10 +615,19 @@ async fn set(
     body: String,
 ) -> Response {
     s.settle(Some(&name));
-    if s.deleted.lock().unwrap().contains_key(&name)
-        || s.recovering.lock().unwrap().contains_key(&name)
-    {
-        return err(409, "Conflict");
+    // Real Key Vault's 409s, from the real-vault runs: outer `Conflict`, the
+    // reason as the inner code, and a message that names the state.
+    if s.deleted.lock().unwrap().contains_key(&name) {
+        return conflict(
+            "ObjectIsDeletedButRecoverable",
+            "is currently in a deleted but recoverable state",
+        );
+    }
+    if s.recovering.lock().unwrap().contains_key(&name) {
+        return conflict(
+            "ObjectIsBeingRecovered",
+            "is currently being recovered and cannot be re-created; retry later.",
+        );
     }
     let body: Value = serde_json::from_str(&body).unwrap();
     let Some(value) = body["value"].as_str() else {

@@ -1,6 +1,6 @@
 # Real tenant and vault checklist
 
-Every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault and Log Analytics servers (`tests/support/`). The mocks follow Microsoft's REST reference, but nothing has been run against a real tenant yet. This page lists what only a real Entra tenant, a real Key Vault or a real browser can confirm.
+Every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault and Log Analytics servers (`tests/support/`). The mocks follow Microsoft's REST reference. The Key Vault REST rows have been run against real vaults, by hand and with the opt-in `tests/real_vault.rs` (see "Record of runs" below). Sign-in, on-behalf-of, RBAC role, browser and deployment rows haven't been run against a real tenant yet. This page lists what only a real Entra tenant, a real Key Vault or a real browser can confirm.
 
 Use a test tenant or a test resource group, and test vaults that hold nothing that matters. Some checks delete, purge or disable things.
 
@@ -13,6 +13,8 @@ Use a test tenant or a test resource group, and test vaults that hold nothing th
 5. Where the result differs, open an issue naming the row, and change the mock in `tests/support/` to match what Key Vault really did, with a test.
 
 The "Code" column names where Keyring depends on the behaviour, so you know what to change if it differs.
+
+Six of the Key Vault REST rows (four secrets rows, the HSM key row and the self-signed create row) can be re-run by a test against a throwaway vault. See [real-vault-automation.md](real-vault-automation.md).
 
 ## Sign-in and tokens
 
@@ -107,4 +109,5 @@ These need an Azure subscription you can deploy to. `az deployment group what-if
 
 | Date (DD-MM-YYYY) | Who | Keyring commit | Notes |
 | --- | --- | --- | --- |
-| 11-11-2026 | Claude, for Justin | `75595ae` | Key Vault REST rows only, as an app (client credentials) against two Standard access-policy vaults with 7-day retention, one with purge protection. Sign-in, on-behalf-of, RBAC role, browser and deployment rows other than the guards weren't run. Two differences found and fixed (clearing a date, HSM refusal) |
+| 11-11-2026 | Claude, for Justin | `607b9b7` | Key Vault REST rows only, as an app (client credentials) against two Standard access-policy vaults with 7-day retention, one with purge protection. Sign-in, on-behalf-of, RBAC role, browser and deployment rows other than the guards weren't run. Two differences found and fixed (clearing a date, HSM refusal) |
+| 12-11-2026 | Claude, for Justin | this change | The six automated rows in `tests/real_vault.rs` (see [real-vault-automation.md](real-vault-automation.md)), as an app against a throwaway Standard access-policy vault with 7-day retention, deleted and purged afterwards. All six pass. Found and fixed: Key Vault answers 411 Length Required to a POST with no `Content-Length`, so recovering a deleted secret, key or certificate failed against a real vault; Keyring now sends `Content-Length: 0`. The mock's 409s now carry the inner code and message Key Vault sends. Recover then read: readable after about 1 second |

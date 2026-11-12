@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use reqwest::Method;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -183,6 +183,11 @@ impl AzureClient {
                 .header(ACCEPT, "application/json");
             if let Some(b) = &body {
                 req = req.header(CONTENT_TYPE, "application/json").body(b.clone());
+            } else if method == Method::POST {
+                // Key Vault answers 411 Length Required to a POST with no
+                // Content-Length, such as recover. hyper leaves the header
+                // off an empty body, so set it.
+                req = req.header(CONTENT_LENGTH, "0");
             }
             let res = req
                 .send()
