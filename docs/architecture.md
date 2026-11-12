@@ -109,7 +109,7 @@ Azure's own message is shown in one case only: a 400 on a write, under the form 
 All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc; `deny.toml` bans both). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
 
 - **Trust store.** Server certificates are checked against the operating system's roots (`rustls-platform-verifier`, which on Linux reads them with `rustls-native-certs`). Setting `SSL_CERT_FILE` (or `SSL_CERT_DIR`) replaces the system roots with that file or folder, which is how a private CA is trusted.
-- **Proxies.** `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (and their lower-case forms) are read from the environment, as reqwest does by default.
+- **Proxies.** `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (and their lower-case forms) are read from the environment, as reqwest does by default. The managed identity's local token service is never reached through a proxy.
 - **Inbound proxies.** `X-Forwarded-*` headers are ignored. `APP_BASE_URL` is the only source of Keyring's own origin.
 
 ## Supply chain
