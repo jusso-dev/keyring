@@ -91,7 +91,9 @@ Static files are served from `/static/` with a version in the query string, take
 - Exchanged tokens are cached in the session, in memory, per resource, and reused until five minutes before expiry. Sessions never share tokens.
 - Concurrent requests in one session, such as the expiry dashboard reading several vaults at once, share one refresh and one exchange per resource. If that call fails, the requests waiting on it get the same answer instead of each trying in turn. A request that arrives later tries again.
 - Entra errors are mapped: `interaction_required` and `login_required` mean sign in again, and so does `invalid_grant` with an Entra error number a fresh sign-in fixes (MFA, conditional access, an expired or revoked refresh token). Any other `invalid_grant`, such as a wrong `ENTRA_API_SCOPE`, is shown as a setting for the admin. `consent_required` and AADSTS 65001, 65004 and 650057 mean an admin must consent. Only the error code is logged, never the description.
-- There is no client-credentials grant, managed identity or app-only token in the Azure data path. The client secret is only used to authenticate the OBO and refresh requests.
+- There is no client-credentials grant, managed identity or app-only token in the Azure data path. Keyring's credential is only used to authenticate the sign-in code exchange, the refresh and the OBO request.
+- That credential is either the client secret (`ENTRA_CLIENT_SECRET`) or, when `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` is set, a short-lived token from a user-assigned managed identity that the app registration trusts as a federated credential. Keyring gets the token from the platform's local token service (`IDENTITY_ENDPOINT`, audience `api://AzureADTokenExchange`) and sends it as `client_assertion`, with `client_assertion_type` `urn:ietf:params:oauth:client-assertion-type:jwt-bearer`, in place of `client_secret`. It never sends both. The token is cached until five minutes before it expires, one fetch at a time, and is held in a `Secret`.
+- The local token service speaks plain HTTP, so it has its own HTTP client, separate from the HTTPS-only one. Keyring refuses to start unless `IDENTITY_ENDPOINT` is on `localhost`, `127.0.0.1` or `169.254.0.0/16`, so that client can't be pointed at the network.
 - Tokens live in `AccessToken` and `Secret` wrappers whose `Debug` and `Display` print `[redacted]`.
 
 ### Plain REST, not the `azure_*` crates
@@ -107,7 +109,7 @@ Azure's own message is shown in one case only: a 400 on a write, under the form 
 All outbound calls use one `reqwest` client on rustls with the `ring` crypto provider (no OpenSSL, no aws-lc; `deny.toml` bans both). It has connect and total timeouts, does not follow redirects and refuses plain HTTP except to localhost. Errors from the client are logged without URLs or bodies.
 
 - **Trust store.** Server certificates are checked against the operating system's roots (`rustls-platform-verifier`, which on Linux reads them with `rustls-native-certs`). Setting `SSL_CERT_FILE` (or `SSL_CERT_DIR`) replaces the system roots with that file or folder, which is how a private CA is trusted.
-- **Proxies.** `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (and their lower-case forms) are read from the environment, as reqwest does by default.
+- **Proxies.** `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` (and their lower-case forms) are read from the environment, as reqwest does by default. The managed identity's local token service is never reached through a proxy.
 - **Inbound proxies.** `X-Forwarded-*` headers are ignored. `APP_BASE_URL` is the only source of Keyring's own origin.
 
 ## Supply chain
@@ -232,7 +234,7 @@ Expiry alerts are optional. Since Keyring stores nothing and has no identity of 
 ## Deploy
 
 - The Docker image described above.
-- `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references. It has no role on any other vault, so it can't be used to reach user data.
+- `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references. It has no role on any other vault, so it can't be used to reach user data. With `useFederatedCredential`, the app registration also trusts this identity as a federated credential, so there is no client secret to read.
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
 - `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events (`docs/alerts.md`).
 - CI runs `az bicep build` on every template and example parameter file, and on each example copied next to its template the way the docs say. Nothing is deployed from this repository.
@@ -246,12 +248,14 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 - **Secret values, private keys and certificates** in people's vaults.
 - **People's Entra tokens**: their access token for Keyring's API, refresh tokens, and the Key Vault, ARM and Log Analytics tokens exchanged from them.
 - **Keyring's own secrets**: the Entra client secret and the session secret.
+- **The managed identity**, when Keyring uses it in place of a client secret. Whoever controls it can act as the Keyring app registration.
 
 ### Trust boundaries
 
 - **The browser** is trusted only with a random session ID in an http-only cookie. It never sees tokens.
 - **Keyring's server** holds tokens in memory for each session and passes secret values through memory on the way to the browser. It has **no access of its own** to any vault.
 - **Azure** (Entra ID, Key Vault, ARM, Log Analytics) makes every authorisation decision, as the signed-in person.
+- **The managed identity** (when used as the credential) can act as the Keyring app registration. That gives it no vault access today: the registration has only delegated permissions, and the on-behalf-of exchange needs a signed-in person's token. This holds only while the app registration has **no application permissions**. If one is ever added, the identity could use it with nobody signed in, so keep the registration delegated-only and treat a new application permission as a security change.
 
 ### Threats and what stops them
 

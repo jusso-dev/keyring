@@ -79,6 +79,9 @@ param logLevel string = ''
 @description('Resource ID of a Log Analytics workspace to send the container\'s output and HTTP logs to. Leave empty to keep a short local log on the app instead (7 days, see docs/deploy.md).')
 param logAnalyticsWorkspaceId string = ''
 
+@description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
+param useFederatedCredential bool = false
+
 param tags object = {}
 
 // A private config vault is only reachable from inside the VNet, so the
@@ -124,6 +127,13 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
 var clientSecretRef = '@Microsoft.KeyVault(VaultName=${config.outputs.vaultName};SecretName=entra-client-secret)'
 var sessionSecretRef = '@Microsoft.KeyVault(VaultName=${config.outputs.vaultName};SecretName=session-secret)'
 
+// How Keyring proves itself to Entra: the client secret, or (with
+// useFederatedCredential) the app's managed identity. Never both: Keyring
+// refuses to start with both set.
+var credentialSettings = useFederatedCredential
+  ? [{ name: 'KEYRING_FEDERATED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
+  : [{ name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }]
+
 resource site 'Microsoft.Web/sites@2024-04-01' = {
   name: name
   location: location
@@ -163,7 +173,9 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
           { name: 'ENTRA_TENANT_ID', value: tenantId }
           { name: 'ENTRA_CLIENT_ID', value: clientId }
           { name: 'APP_BASE_URL', value: appBaseUrl }
-          { name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }
+        ],
+        credentialSettings,
+        [
           { name: 'SESSION_SECRET', value: sessionSecretRef }
           { name: 'KEYRING_ALLOW_PURGE', value: string(allowPurge) }
         ],
