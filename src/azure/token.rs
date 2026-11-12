@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 
+use crate::auth::assertion::Credential;
 use crate::auth::entra::{EntraAdvice, classify};
 use crate::auth::session::{Session, UserTokens};
 use crate::config::Config;
@@ -239,20 +240,20 @@ fn token_error(failure: &TokenFailure) -> TokenError {
 pub struct TokenBroker {
     token_url: String,
     client_id: String,
-    client_secret: Secret,
+    credential: Credential,
     api_scope: String,
     http: reqwest::Client,
 }
 
 impl TokenBroker {
-    pub fn new(config: &Config, http: reqwest::Client) -> Self {
+    pub fn new(config: &Config, http: reqwest::Client, credential: Credential) -> Self {
         Self {
             token_url: format!(
                 "{}/{}/oauth2/v2.0/token",
                 config.authority_host, config.tenant_id
             ),
             client_id: config.client_id.clone(),
-            client_secret: config.client_secret.clone(),
+            credential,
             api_scope: config.api_scope.clone(),
             http,
         }
@@ -316,14 +317,16 @@ impl TokenBroker {
             return Err(TokenError::SignInAgain);
         };
         let scope = format!("{} offline_access", self.api_scope);
-        let form = [
-            ("grant_type", "refresh_token"),
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.expose()),
-            ("refresh_token", refresh.expose()),
-            ("scope", scope.as_str()),
-        ];
-        let ok = self.post(session, &form).await?;
+        let ok = self
+            .post(
+                session,
+                &[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh.expose()),
+                    ("scope", scope.as_str()),
+                ],
+            )
+            .await?;
         let refreshed = UserTokens {
             access_token: Secret::new(ok.access_token),
             expires_at: expiry_from(ok.expires_in.map(Duration::from_secs), SystemTime::now()),
@@ -341,15 +344,17 @@ impl TokenBroker {
         user_token: &Secret,
         resource: Resource,
     ) -> Result<AccessToken, TokenError> {
-        let form = [
-            ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
-            ("client_id", self.client_id.as_str()),
-            ("client_secret", self.client_secret.expose()),
-            ("assertion", user_token.expose()),
-            ("scope", resource.scope()),
-            ("requested_token_use", "on_behalf_of"),
-        ];
-        let ok = self.post(session, &form).await?;
+        let ok = self
+            .post(
+                session,
+                &[
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer"),
+                    ("assertion", user_token.expose()),
+                    ("scope", resource.scope()),
+                    ("requested_token_use", "on_behalf_of"),
+                ],
+            )
+            .await?;
         tracing::debug!(resource = ?resource, "exchanged token on behalf of user");
         Ok(AccessToken::new(
             ok.access_token,
@@ -357,20 +362,27 @@ impl TokenBroker {
         ))
     }
 
+    /// Send a token request. The client ID and the credential (the client
+    /// secret, or the managed identity's assertion) are added here, so every
+    /// request authenticates the same way.
     async fn post(
         &self,
         session: &Session,
-        form: &[(&str, &str)],
+        fields: &[(&str, &str)],
     ) -> Result<TokenSuccess, TokenError> {
         let unreachable = |e: reqwest::Error| {
             let e = HttpError::from(e);
             tracing::warn!(error = %e, "token endpoint unreachable");
             TokenError::from(e)
         };
+        let credential = self.credential.form_fields().await?;
+        let mut form: Vec<(&str, &str)> = vec![("client_id", self.client_id.as_str())];
+        form.extend(credential.iter().map(|(k, v)| (*k, v.expose())));
+        form.extend_from_slice(fields);
         let res = self
             .http
             .post(&self.token_url)
-            .form(form)
+            .form(&form)
             .send()
             .await
             .map_err(unreachable)?;

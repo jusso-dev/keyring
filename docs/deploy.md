@@ -47,7 +47,7 @@ Follow [Entra app registration in the README](../README.md#entra-app-registratio
 - `https://<your-host>/auth/callback`, for sign-in
 - `https://<your-host>/auth/signed-out`, so Entra sends people back to Keyring after they sign out
 
-Note the tenant ID, client ID and client secret value.
+Note the tenant ID and client ID. For the proof of identity, choose between a client secret and the app's managed identity (step 2 of the README, options A and B). With a client secret, note its value too. With the managed identity, the federated credential needs the identity's principal ID, which exists only after the first deployment (step 3), so add it then and set `useFederatedCredential` for the final deployment.
 
 ## 3. Deploy
 
@@ -159,6 +159,8 @@ az keyvault secret set --vault-name <configVaultName> --name entra-client-secret
 az keyvault secret set --vault-name <configVaultName> --name session-secret --value "$(openssl rand -base64 48)"
 ```
 
+If you deployed with `useFederatedCredential` set to `true`, there is no client secret. Set only `session-secret`, and make sure the federated credential from the README (step 2, option B) is on the app registration.
+
 Run these from a shell that doesn't save history, or clear it afterwards. If you made the config vault private, run them from a machine inside the VNet (its public access is off).
 
 App Service: restart so it reads the secrets.
@@ -224,7 +226,9 @@ Keyring's tests run against mock Azure services. Some behaviour only a real Entr
 
 ### The Entra client secret
 
-Entra client secrets expire. When one does, nobody can sign in (AADSTS7000222). Replace it before then:
+With the managed identity (`useFederatedCredential`, or `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` set), there is no client secret to rotate, and nothing here applies. The identity's tokens are short-lived and the platform renews them. The federated credential on the app registration has no expiry. If you replace the managed identity, add a federated credential for the new one.
+
+With a client secret, Entra client secrets expire. When one does, nobody can sign in (AADSTS7000222). Replace it before then:
 
 1. In the app registration, **Certificates & secrets > New client secret**. The old one keeps working meanwhile.
 2. Put the new value in the config vault, with its expiry date:

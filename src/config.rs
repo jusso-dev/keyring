@@ -18,7 +18,8 @@ pub struct Config {
     /// Scope for Keyring's own API, requested at sign-in so the access token
     /// can be exchanged on behalf of the user.
     pub api_scope: String,
-    pub client_secret: Secret,
+    /// How Keyring proves to Entra that it is the app registration.
+    pub credential: ClientCredential,
     /// Public base URL with no trailing slash, for example `https://keyring.example.com`.
     pub base_url: String,
     pub session_secret: Secret,
@@ -32,6 +33,24 @@ pub struct Config {
     /// Replaces `https://<vault>.vault.azure.net` with `<base>/<vault>`.
     /// Only set by tests, to point at a mock Key Vault.
     pub keyvault_test_base: Option<String>,
+}
+
+/// How Keyring proves it is the app registration.
+#[derive(Debug, Clone)]
+pub enum ClientCredential {
+    /// A client secret from the app registration. For local use.
+    Secret(Secret),
+    /// A user-assigned managed identity that the app registration trusts as
+    /// a federated credential. Keyring sends a short-lived token from the
+    /// identity as `client_assertion`, so there is no secret to rotate.
+    ManagedIdentity {
+        /// The identity's client ID.
+        identity_client_id: String,
+        /// `IDENTITY_ENDPOINT`: the local token service, set by the platform.
+        endpoint: String,
+        /// `IDENTITY_HEADER`: sent with each request to that service.
+        header: Secret,
+    },
 }
 
 /// Why the configuration couldn't be loaded. Messages are written for the
@@ -71,6 +90,8 @@ impl Config {
                 .filter(|v| !v.is_empty())
         };
 
+        // The client secret is only needed without a managed identity.
+        let uses_identity = get("KEYRING_FEDERATED_IDENTITY_CLIENT_ID").is_some();
         let required = [
             "ENTRA_TENANT_ID",
             "ENTRA_CLIENT_ID",
@@ -82,6 +103,7 @@ impl Config {
             .iter()
             .copied()
             .filter(|name| get(name).is_none())
+            .filter(|name| !(uses_identity && *name == "ENTRA_CLIENT_SECRET"))
             .collect();
         if !missing.is_empty() {
             return Err(ConfigError::Missing(missing));
@@ -92,7 +114,7 @@ impl Config {
         // when it can't resolve it. Starting with that as a secret would
         // mean a well-known session key, so refuse to start.
         for name in ["ENTRA_CLIENT_SECRET", "SESSION_SECRET"] {
-            if take(name).starts_with("@Microsoft.KeyVault(") {
+            if get(name).is_some_and(|v| v.starts_with("@Microsoft.KeyVault(")) {
                 return Err(ConfigError::Invalid {
                     name,
                     reason: "is still a Key Vault reference, so App Service couldn't read it. Check the secret exists in the config vault and the app's identity can read it".into(),
@@ -117,6 +139,45 @@ impl Config {
                 reason: "expected the app registration's client ID, a GUID".into(),
             });
         }
+
+        let credential = match get("KEYRING_FEDERATED_IDENTITY_CLIENT_ID") {
+            None => ClientCredential::Secret(Secret::new(take("ENTRA_CLIENT_SECRET"))),
+            Some(identity) => {
+                if get("ENTRA_CLIENT_SECRET").is_some() {
+                    return Err(ConfigError::Invalid {
+                        name: "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+                        reason: "Set ENTRA_CLIENT_SECRET or KEYRING_FEDERATED_IDENTITY_CLIENT_ID, not both".into(),
+                    });
+                }
+                let identity_client_id = identity.to_ascii_lowercase();
+                if !is_guid(&identity_client_id) {
+                    return Err(ConfigError::Invalid {
+                        name: "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+                        reason: "expected the managed identity's client ID, a GUID".into(),
+                    });
+                }
+                let (Some(endpoint), Some(header)) =
+                    (get("IDENTITY_ENDPOINT"), get("IDENTITY_HEADER"))
+                else {
+                    return Err(ConfigError::Invalid {
+                        name: "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+                        reason: "needs IDENTITY_ENDPOINT and IDENTITY_HEADER, which App Service and Container Apps set when a managed identity is assigned to the app".into(),
+                    });
+                };
+                let endpoint =
+                    crate::auth::assertion::checked_endpoint(&endpoint).map_err(|reason| {
+                        ConfigError::Invalid {
+                            name: "IDENTITY_ENDPOINT",
+                            reason,
+                        }
+                    })?;
+                ClientCredential::ManagedIdentity {
+                    identity_client_id,
+                    endpoint,
+                    header: Secret::new(header),
+                }
+            }
+        };
 
         let base_url = checked_origin("APP_BASE_URL", &take("APP_BASE_URL"))?;
         let authority_host = checked_origin(
@@ -194,7 +255,7 @@ impl Config {
             client_id,
             authority_host,
             api_scope,
-            client_secret: Secret::new(take("ENTRA_CLIENT_SECRET")),
+            credential,
             base_url,
             session_secret: Secret::new(session_secret),
             allow_purge,
@@ -581,6 +642,116 @@ pub(crate) mod tests {
         assert!(load(&env).unwrap().allow_purge);
         env.insert("KEYRING_ALLOW_PURGE", "maybe".into());
         assert!(load(&env).is_err());
+    }
+
+    const IDENTITY: &str = "33333333-3333-3333-3333-333333333333";
+
+    /// Settings for managed identity mode: no client secret, plus what App
+    /// Service sets for an app with an identity.
+    fn identity_env() -> HashMap<&'static str, String> {
+        let mut env = sample_env();
+        env.remove("ENTRA_CLIENT_SECRET");
+        env.insert("KEYRING_FEDERATED_IDENTITY_CLIENT_ID", IDENTITY.into());
+        env.insert(
+            "IDENTITY_ENDPOINT",
+            "http://169.254.129.1:8081/msi/token".into(),
+        );
+        env.insert("IDENTITY_HEADER", "header-value-from-platform".into());
+        env
+    }
+
+    #[test]
+    fn a_client_secret_alone_is_the_credential() {
+        let config = load(&sample_env()).unwrap();
+        assert!(matches!(config.credential, ClientCredential::Secret(_)));
+    }
+
+    #[test]
+    fn a_managed_identity_alone_is_the_credential() {
+        let mut env = identity_env();
+        env.insert(
+            "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+            IDENTITY.to_ascii_uppercase(),
+        );
+        let config = load(&env).unwrap();
+        let ClientCredential::ManagedIdentity {
+            identity_client_id,
+            endpoint,
+            ..
+        } = &config.credential
+        else {
+            panic!("expected a managed identity: {:?}", config.credential);
+        };
+        assert_eq!(identity_client_id, IDENTITY);
+        assert_eq!(endpoint, "http://169.254.129.1:8081/msi/token");
+        let out = format!("{config:?}");
+        assert!(!out.contains("header-value-from-platform"));
+    }
+
+    #[test]
+    fn a_secret_and_an_identity_together_are_refused() {
+        let mut env = identity_env();
+        env.insert("ENTRA_CLIENT_SECRET", "client-secret-value".into());
+        let err = load(&env).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::Invalid {
+                name: "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+                ..
+            }
+        ));
+        assert!(
+            err.to_string().contains(
+                "Set ENTRA_CLIENT_SECRET or KEYRING_FEDERATED_IDENTITY_CLIENT_ID, not both"
+            )
+        );
+    }
+
+    #[test]
+    fn neither_a_secret_nor_an_identity_reports_the_secret_missing() {
+        let mut env = sample_env();
+        env.remove("ENTRA_CLIENT_SECRET");
+        assert_eq!(
+            load(&env).unwrap_err(),
+            ConfigError::Missing(vec!["ENTRA_CLIENT_SECRET"])
+        );
+    }
+
+    #[test]
+    fn the_identity_client_id_must_be_a_guid() {
+        let mut env = identity_env();
+        env.insert("KEYRING_FEDERATED_IDENTITY_CLIENT_ID", "my-identity".into());
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "KEYRING_FEDERATED_IDENTITY_CLIENT_ID",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn identity_mode_needs_the_platform_variables_and_a_local_endpoint() {
+        for missing in ["IDENTITY_ENDPOINT", "IDENTITY_HEADER"] {
+            let mut env = identity_env();
+            env.remove(missing);
+            let err = load(&env).unwrap_err();
+            assert!(matches!(err, ConfigError::Invalid { .. }), "{missing}");
+            let text = err.to_string();
+            assert!(
+                text.contains("IDENTITY_ENDPOINT") && text.contains("IDENTITY_HEADER"),
+                "{text}"
+            );
+        }
+        let mut env = identity_env();
+        env.insert("IDENTITY_ENDPOINT", "http://evil.example/msi/token".into());
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "IDENTITY_ENDPOINT",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Sign-in with Entra ID and session handling.
 
+pub mod assertion;
 pub mod cookies;
 pub mod crypto;
 pub mod entra;
