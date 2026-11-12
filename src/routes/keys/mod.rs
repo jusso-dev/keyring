@@ -23,11 +23,11 @@ use crate::routes::forms::ToggleForm;
 use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
-use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
+use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name, vault_path};
 
 /// The page for a key that belongs to a certificate. Key Vault makes and
 /// changes these keys itself, so Keyring won't change them directly.
-pub(super) fn managed_problem(shell: Shell, name: &str) -> Halt {
+pub(super) fn managed_problem(shell: Shell, vault: &str, name: &str) -> Halt {
     PageError::new(
         shell,
         Problem::new(
@@ -35,7 +35,10 @@ pub(super) fn managed_problem(shell: Shell, name: &str) -> Halt {
             "This key belongs to a certificate",
             format!("This key belongs to the certificate {name}. Change it from the certificate."),
         )
-        .with_next(NextStep::Retry(format!("/certificates/{name}"))),
+        .with_next(NextStep::Retry(vault_path(
+            vault,
+            &format!("/certificates/{name}"),
+        ))),
     )
     .into()
 }
@@ -50,13 +53,13 @@ pub(super) async fn unmanaged_key(
     shell: Shell,
 ) -> Result<(KeyBundle, Shell), Halt> {
     match api(state, session, vault).get(name, None).await {
-        Ok(b) if b.managed.unwrap_or(false) => Err(managed_problem(shell, name)),
+        Ok(b) if b.managed.unwrap_or(false) => Err(managed_problem(shell, vault, name)),
         Ok(b) => Ok((b, shell)),
         Err(e) => Err(azure_problem(
             shell,
             &e,
             Need::ReadKeys,
-            &format!("/keys/{name}"),
+            &vault_path(vault, &format!("/keys/{name}")),
         )),
     }
 }
@@ -74,8 +77,9 @@ pub(super) fn section_note(err: &AzureError, what: &str, role: &str) -> String {
 pub(super) fn current_vault(
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
 ) -> Result<(String, Shell), Halt> {
-    vault_ctx::current_vault(session, shell, Section::Keys)
+    vault_ctx::path_vault(session, shell, Section::Keys, vault)
 }
 
 pub(super) fn api<'a>(
@@ -149,9 +153,9 @@ pub(super) struct KeyFilter {
 }
 
 impl KeyFilter {
-    fn page_url(&self, page: usize) -> String {
+    fn page_url(&self, vault: &str, page: usize) -> String {
         let enc = crate::auth::return_to::encode;
-        format!("/keys?q={}&page={page}", enc(&self.q))
+        vault_path(vault, &format!("/keys?q={}&page={page}", enc(&self.q)))
     }
 }
 
@@ -170,12 +174,20 @@ pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(filter): Query<KeyFilter>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let items = match api(&state, &session, &vault).list().await {
         Ok(i) => i,
-        Err(e) => return Err(azure_problem(shell, &e, Need::ReadKeys, "/keys")),
+        Err(e) => {
+            return Err(azure_problem(
+                shell,
+                &e,
+                Need::ReadKeys,
+                &vault_path(&vault, "/keys"),
+            ));
+        }
     };
     let now = now_ts();
     let all: Vec<KeyRow> = items.iter().map(|k| KeyRow::from_item(k, now)).collect();
@@ -185,7 +197,9 @@ pub(super) async fn list(
         .into_iter()
         .filter(|r| q.is_empty() || r.filter_text.contains(&q))
         .collect();
-    let (rows, pager) = paginate(matching, filter.page, "keys", |p| filter.page_url(p));
+    let (rows, pager) = paginate(matching, filter.page, "keys", |p| {
+        filter.page_url(&vault, p)
+    });
     Ok(render(&ListPage {
         pager,
         shell,
@@ -272,10 +286,10 @@ pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     uri: axum::http::Uri,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let keys = api(&state, &session, &vault);
     let (bundle, versions, rotation) = tokio::join!(
@@ -286,14 +300,16 @@ pub(super) async fn detail(
     let bundle = match bundle {
         Ok(b) => b,
         Err(e) => {
-            if let Some(res) = crate::routes::moved::missing_item(Kind::Key, &name, &e, &uri) {
+            if let Some(res) =
+                crate::routes::moved::missing_item(&vault, Kind::Key, &name, &e, &uri)
+            {
                 return Ok(res);
             }
             return Err(azure_problem(
                 shell,
                 &e,
                 Need::ReadKeys,
-                &format!("/keys/{name}"),
+                &vault_path(&vault, &format!("/keys/{name}")),
             ));
         }
     };
@@ -352,9 +368,9 @@ pub(super) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     Ok(crate::routes::lifecycle::disable_page(
@@ -370,17 +386,17 @@ pub(super) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<ToggleForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let Some(enable) = f.enable() else {
         return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let (bundle, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
-    let path = format!("/keys/{name}");
+    let path = vault_path(&vault, &format!("/keys/{name}"));
     match api(&state, &session, &vault)
         .set_enabled(&name, bundle.version(), enable)
         .await

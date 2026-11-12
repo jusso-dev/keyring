@@ -8,7 +8,7 @@ use support::{body_text, hidden_value, location};
 /// The hidden fields the edit form carries: the version it was opened on
 /// and that version's `updated` time.
 async fn edit_stamp(w: &support::World, name: &str) -> (String, String) {
-    let (_, html) = w.page(&format!("/secrets/{name}/edit")).await;
+    let (_, html) = w.page(&format!("/v/kv-test/secrets/{name}/edit")).await;
     (
         hidden_value(&html, "version").expect("version field"),
         hidden_value(&html, "updated").expect("updated field"),
@@ -18,14 +18,14 @@ async fn edit_stamp(w: &support::World, name: &str) -> (String, String) {
 #[tokio::test]
 async fn create_adds_a_secret_with_its_properties() {
     let w = support::world().await;
-    let (status, html) = w.page("/secrets/-/new").await;
+    let (status, html) = w.page("/v/kv-test/secrets/-/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Letters, numbers and hyphens, up to 127 characters."));
     assert!(html.contains("Generate a value"), "generator hook is there");
 
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[
                 ("name", "db-password"),
                 ("value", "  hunter2 "),
@@ -37,7 +37,7 @@ async fn create_adds_a_secret_with_its_properties() {
         )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/secrets/db-password");
+    assert_eq!(location(&res), "/v/kv-test/secrets/db-password");
     let v = w.kv.state.current("db-password").unwrap();
     assert_eq!(v.value, "  hunter2 ");
     assert_eq!(v.content_type.as_deref(), Some("text/plain"));
@@ -45,7 +45,7 @@ async fn create_adds_a_secret_with_its_properties() {
     assert!(v.enabled);
     assert_eq!(keyring::dates::iso_date(v.exp.unwrap()), "2099-01-31");
     // Shown in the list.
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains(">db-password<"));
 }
 
@@ -54,7 +54,7 @@ async fn create_explains_bad_names_and_keeps_other_fields() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[
                 ("name", "db_password"),
                 ("value", "x"),
@@ -87,7 +87,7 @@ async fn create_does_not_overwrite_an_existing_secret() {
     w.kv.state.put("db-password", "original");
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "db-password"), ("value", "new"), ("enabled", "on")],
         )
         .await;
@@ -105,7 +105,10 @@ async fn create_offers_recovery_when_name_is_soft_deleted() {
     let w = support::world().await;
     w.kv.state.put("old-key", "x");
     let res = w
-        .post("/secrets/old-key/delete", &[("confirm_name", "old-key")])
+        .post(
+            "/v/kv-test/secrets/old-key/delete",
+            &[("confirm_name", "old-key")],
+        )
         .await;
     // Delete arrives in a later change; put the secret in the bin directly if needed.
     if res.status() != StatusCode::SEE_OTHER {
@@ -127,14 +130,14 @@ async fn create_offers_recovery_when_name_is_soft_deleted() {
     }
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "old-key"), ("value", "x"), ("enabled", "on")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("A deleted secret called old-key is still being kept"));
-    assert!(html.contains("href=\"/secrets/-/deleted/old-key\""));
+    assert!(html.contains("href=\"/v/kv-test/secrets/-/deleted/old-key\""));
 }
 
 #[tokio::test]
@@ -143,13 +146,13 @@ async fn new_value_makes_a_new_version() {
     w.kv.state.put_with("db-password", "v1", |v| {
         v.tags.insert("env".into(), "prod".into());
     });
-    let (_, html) = w.page("/secrets/db-password/value").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/value").await;
     assert!(html.contains("Saving makes a new version"));
     assert!(html.contains("env=prod"), "properties carried over");
     assert!(!html.contains(">v1<"), "old value not shown");
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[("value", "v2"), ("tags", "env=prod"), ("enabled", "on")],
         )
         .await;
@@ -162,14 +165,14 @@ async fn new_value_makes_a_new_version() {
 async fn editing_properties_does_not_make_a_new_version() {
     let w = support::world().await;
     let ver = w.kv.state.put("db-password", "keep-me");
-    let (_, html) = w.page("/secrets/db-password/edit").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/edit").await;
     assert!(html.contains("no new version is made"));
     assert!(!html.contains("name=\"value\""), "no value field");
     let (version, updated) = edit_stamp(&w, "db-password").await;
     assert_eq!(version, ver);
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -202,7 +205,10 @@ async fn enable_and_disable() {
         v.tags.insert("env".into(), "prod".into());
     });
     let res = w
-        .post("/secrets/db-password/enabled", &[("state", "off")])
+        .post(
+            "/v/kv-test/secrets/db-password/enabled",
+            &[("state", "off")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let v = w.kv.state.current("db-password").unwrap();
@@ -213,12 +219,12 @@ async fn enable_and_disable() {
         Some("prod"),
         "other properties kept"
     );
-    let (_, html) = w.page("/secrets").await;
+    let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains(">Disabled<"));
-    let (_, html) = w.page("/secrets/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("value=\"on\""), "offers Enable");
 
-    w.post("/secrets/db-password/enabled", &[("state", "on")])
+    w.post("/v/kv-test/secrets/db-password/enabled", &[("state", "on")])
         .await;
     assert!(w.kv.state.current("db-password").unwrap().enabled);
 }
@@ -229,10 +235,16 @@ async fn forms_need_the_token() {
     w.kv.state.put("db-password", "x");
     w.csrf = "forged".into();
     for (path, fields) in [
-        ("/secrets/-/new", vec![("name", "a"), ("value", "b")]),
-        ("/secrets/db-password/value", vec![("value", "b")]),
-        ("/secrets/db-password/edit", vec![]),
-        ("/secrets/db-password/enabled", vec![("state", "off")]),
+        (
+            "/v/kv-test/secrets/-/new",
+            vec![("name", "a"), ("value", "b")],
+        ),
+        ("/v/kv-test/secrets/db-password/value", vec![("value", "b")]),
+        ("/v/kv-test/secrets/db-password/edit", vec![]),
+        (
+            "/v/kv-test/secrets/db-password/enabled",
+            vec![("state", "off")],
+        ),
     ] {
         let res = w.post(path, &fields).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
@@ -249,7 +261,7 @@ async fn forbidden_writes_name_the_officer_role() {
     *w.kv.state.fail_method.lock().unwrap() = Some(axum::http::Method::PUT);
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[("value", "y"), ("enabled", "on")],
         )
         .await;
@@ -264,7 +276,7 @@ async fn success_flash_is_shown() {
     w.kv.state.put("db-password", "x");
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[("value", "y"), ("enabled", "on")],
         )
         .await;
@@ -277,7 +289,7 @@ async fn success_flash_is_shown() {
         .unwrap();
     let mut w = w;
     w.cookie = format!("{}; {flash}", w.cookie);
-    let (_, html) = w.page("/secrets/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("Saved a new version of db-password"));
 }
 
@@ -294,7 +306,7 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
     let (version, updated) = edit_stamp(&w, "db-password").await;
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -312,7 +324,7 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
     let (version, updated) = edit_stamp(&w, "db-password").await;
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -335,7 +347,7 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
     // A new value with Expires blank makes a version with no expiry.
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[
                 ("value", "y"),
                 ("expires", ""),
@@ -354,7 +366,7 @@ async fn create_checks_for_a_name_that_is_taken_by_its_versions() {
     // Key Vault answers an unknown name with 200 and an empty list.
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "fresh"), ("value", "x"), ("enabled", "on")],
         )
         .await;
@@ -372,7 +384,7 @@ async fn create_checks_for_a_name_that_is_taken_by_its_versions() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/other/versions".into());
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "other"), ("value", "x"), ("enabled", "on")],
         )
         .await;
@@ -386,13 +398,16 @@ async fn names_that_were_fixed_pages_can_be_created_and_opened() {
     for name in ["new", "deleted"] {
         let res = w
             .post(
-                "/secrets/-/new",
+                "/v/kv-test/secrets/-/new",
                 &[("name", name), ("value", "x"), ("enabled", "on")],
             )
             .await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER, "{name}");
-        assert_eq!(support::location(&res), format!("/secrets/{name}"));
-        let (status, html) = w.page(&format!("/secrets/{name}")).await;
+        assert_eq!(
+            support::location(&res),
+            format!("/v/kv-test/secrets/{name}")
+        );
+        let (status, html) = w.page(&format!("/v/kv-test/secrets/{name}")).await;
         assert_eq!(status, StatusCode::OK, "{name}");
         assert!(
             html.contains(&format!("<h1 class=\"mono\">{name}</h1>")),
@@ -401,7 +416,7 @@ async fn names_that_were_fixed_pages_can_be_created_and_opened() {
     }
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "-"), ("value", "x"), ("enabled", "on")],
         )
         .await;
@@ -414,7 +429,7 @@ async fn line_breaks_are_saved_as_lf_and_shown_as_saved() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "pem"), ("value", "\r\na\r\nb"), ("enabled", "on")],
         )
         .await;
@@ -422,7 +437,7 @@ async fn line_breaks_are_saved_as_lf_and_shown_as_saved() {
     assert_eq!(w.kv.state.current("pem").unwrap().value, "\na\nb");
     let res = w
         .post(
-            "/secrets/pem/value",
+            "/v/kv-test/secrets/pem/value",
             &[("value", "c\r\nd\r\n"), ("enabled", "on")],
         )
         .await;
@@ -432,7 +447,7 @@ async fn line_breaks_are_saved_as_lf_and_shown_as_saved() {
     // On reveal, the one line break the HTML parser drops after
     // <textarea> is Keyring's, so a leading line break in the value stays.
     w.kv.state.put("lead", "\nkey");
-    let res = w.post("/secrets/lead/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/lead/reveal", &[]).await;
     let html = body_text(res).await;
     assert!(
         html.contains("data-secret-value>\n\nkey</textarea>"),
@@ -449,7 +464,7 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     assert!(value.len() <= 25 * 1024);
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "euro"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -459,7 +474,7 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     let value = "\u{20ac}".repeat(9 * 1024);
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "euro-2"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -475,7 +490,7 @@ async fn a_full_size_value_of_line_breaks_gets_the_form_not_a_413() {
     let value = "\r\n".repeat(25 * 1024);
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[("name", "breaks"), ("value", &value), ("enabled", "on")],
         )
         .await;
@@ -491,7 +506,10 @@ async fn an_oversized_body_gets_the_error_page() {
     let w = support::world().await;
     let big = "\u{20ac}".repeat(64 * 1024);
     let res = w
-        .post("/secrets/-/new", &[("name", "x"), ("value", &big)])
+        .post(
+            "/v/kv-test/secrets/-/new",
+            &[("name", "x"), ("value", &big)],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let html = body_text(res).await;
@@ -505,11 +523,14 @@ async fn editing_refuses_a_form_opened_on_an_older_state() {
     w.kv.state.put("db-password", "x");
     let (version, updated) = edit_stamp(&w, "db-password").await;
     // Someone else disables it after the form was opened.
-    w.post("/secrets/db-password/enabled", &[("state", "off")])
-        .await;
+    w.post(
+        "/v/kv-test/secrets/db-password/enabled",
+        &[("state", "off")],
+    )
+    .await;
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -533,7 +554,7 @@ async fn editing_refuses_a_form_opened_on_an_older_state() {
     w.kv.state.put("db-password", "y");
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -544,7 +565,7 @@ async fn editing_refuses_a_form_opened_on_an_older_state() {
     assert_eq!(res.status(), StatusCode::CONFLICT);
     // A form without the fields, as from an old page, is refused too.
     let res = w
-        .post("/secrets/db-password/edit", &[("enabled", "on")])
+        .post("/v/kv-test/secrets/db-password/edit", &[("enabled", "on")])
         .await;
     assert_eq!(res.status(), StatusCode::CONFLICT);
 }
@@ -556,13 +577,13 @@ async fn tags_the_form_cant_show_are_listed_and_kept() {
         v.tags.insert("a=b".into(), " padded ".into());
         v.tags.insert("env".into(), "prod".into());
     });
-    let (_, html) = w.page("/secrets/db-password/edit").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/edit").await;
     assert!(html.contains("can't show them without changing them"));
     assert!(!html.contains("id=\"tags\""), "no tag textarea");
     let (version, updated) = edit_stamp(&w, "db-password").await;
     let res = w
         .post(
-            "/secrets/db-password/edit",
+            "/v/kv-test/secrets/db-password/edit",
             &[
                 ("version", &version),
                 ("updated", &updated),
@@ -580,7 +601,7 @@ async fn tags_the_form_cant_show_are_listed_and_kept() {
     // A new value keeps them too.
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[("value", "y"), ("enabled", "on")],
         )
         .await;
@@ -594,7 +615,7 @@ async fn repeated_tag_names_are_reported() {
     let w = support::world().await;
     let res = w
         .post(
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             &[
                 ("name", "dup"),
                 ("value", "x"),
@@ -618,13 +639,13 @@ async fn a_new_value_keeps_the_exact_expiry_and_start_times() {
         v.exp = Some(exp);
         v.nbf = Some(nbf);
     });
-    let (_, html) = w.page("/secrets/db-password/value").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/value").await;
     let shown_exp = keyring::dates::iso_date(exp);
     let shown_nbf = keyring::dates::iso_date(nbf);
     assert!(html.contains(&shown_exp) && html.contains(&shown_nbf));
     let res = w
         .post(
-            "/secrets/db-password/value",
+            "/v/kv-test/secrets/db-password/value",
             &[
                 ("value", "y"),
                 ("expires", &shown_exp),
@@ -647,15 +668,18 @@ async fn a_bad_token_is_refused_before_azure_is_asked() {
     // A name that doesn't exist: if Azure were asked first, this would be
     // a 404, not the uniform 403.
     for (path, fields) in [
-        ("/secrets/no-such/value", vec![("value", "b")]),
-        ("/secrets/no-such/edit", vec![]),
-        ("/secrets/no-such/enabled", vec![("state", "off")]),
+        ("/v/kv-test/secrets/no-such/value", vec![("value", "b")]),
+        ("/v/kv-test/secrets/no-such/edit", vec![]),
+        ("/v/kv-test/secrets/no-such/enabled", vec![("state", "off")]),
         (
-            "/secrets/no-such/rollback",
+            "/v/kv-test/secrets/no-such/rollback",
             vec![("version", "0123456789abcdef0123456789abcdef")],
         ),
-        ("/secrets/no-such/reveal", vec![]),
-        ("/secrets/no-such/delete", vec![("confirm_name", "no-such")]),
+        ("/v/kv-test/secrets/no-such/reveal", vec![]),
+        (
+            "/v/kv-test/secrets/no-such/delete",
+            vec![("confirm_name", "no-such")],
+        ),
     ] {
         let res = w.post(path, &fields).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");

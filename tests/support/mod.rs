@@ -517,6 +517,8 @@ pub(crate) struct ArmState {
     pub bearers: Mutex<Vec<String>>,
     /// Diagnostic settings returned for any vault. `None` means 403.
     pub diagnostics: Mutex<Option<serde_json::Value>>,
+    /// The path of each diagnostic settings request, which names the vault.
+    pub diagnostics_paths: Mutex<Vec<String>>,
     /// Log Analytics rows returned: (time, who, operation, item, result, ip).
     pub audit_rows: Mutex<Vec<[String; 6]>>,
     /// Make Log Analytics answer 403.
@@ -558,6 +560,7 @@ pub(crate) async fn start_arm() -> MockArm {
         requests: Mutex::new(Vec::new()),
         bearers: Mutex::new(Vec::new()),
         diagnostics: Mutex::new(Some(json!({"value": []}))),
+        diagnostics_paths: Mutex::new(Vec::new()),
         audit_rows: Mutex::new(Vec::new()),
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
@@ -641,6 +644,7 @@ async fn arm_fallback(
         && path.ends_with("/providers/Microsoft.Insights/diagnosticSettings")
     {
         s.bearers.lock().unwrap().push(bearer);
+        s.diagnostics_paths.lock().unwrap().push(path.clone());
         return match s.diagnostics.lock().unwrap().clone() {
             Some(v) => json_response(StatusCode::OK, v),
             None => json_response(

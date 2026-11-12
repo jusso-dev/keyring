@@ -22,7 +22,7 @@ use crate::routes::lifecycle::Kind;
 use crate::routes::lifecycle::redirect_with;
 use crate::routes::secrets::form::parse_tags;
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
 use super::{api, current_vault, unmanaged_key};
 
@@ -256,8 +256,12 @@ fn is_hsm_refusal(err: &AzureError) -> bool {
     )
 }
 
-pub(crate) async fn create_form(session: CurrentSession, shell: Shell) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+pub(crate) async fn create_form(
+    session: CurrentSession,
+    shell: Shell,
+    Path(vault): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     Ok(create_page(
         shell,
         vault,
@@ -270,9 +274,10 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Form(pairs): Form<Vec<(String, String)>>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let f = CreateForm::from_pairs(pairs);
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match build(&f, now_ts()) {
@@ -293,14 +298,21 @@ pub(crate) async fn create(
             return Ok(create_page(shell, vault, f, errors));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
-        Err(e) => return Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/-/new")),
+        Err(e) => {
+            return Err(azure_problem(
+                shell,
+                &e,
+                Need::ManageKeys,
+                &vault_path(&vault, "/keys/-/new"),
+            ));
+        }
     }
     match keys.create(&name, &body).await {
         Ok(_) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key created");
             Ok(redirect_with(
                 &state,
-                &format!("/keys/{name}"),
+                &vault_path(&vault, &format!("/keys/{name}")),
                 format!("Created {name}."),
             ))
         }
@@ -328,7 +340,12 @@ pub(crate) async fn create(
                 FieldErrors::new(),
                 Some(m),
             )),
-            None => Err(azure_problem(shell, &e, Need::ManageKeys, "/keys/-/new")),
+            None => Err(azure_problem(
+                shell,
+                &e,
+                Need::ManageKeys,
+                &vault_path(&vault, "/keys/-/new"),
+            )),
         },
     }
 }
@@ -345,9 +362,9 @@ pub(crate) async fn rotate_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     Ok(render(&RotatePage { shell, vault, name }).into_response())
@@ -357,10 +374,10 @@ pub(crate) async fn rotate(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<CsrfForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
@@ -370,7 +387,7 @@ pub(crate) async fn rotate(
             let short: String = b.version().chars().take(8).collect();
             Ok(redirect_with(
                 &state,
-                &format!("/keys/{name}"),
+                &vault_path(&vault, &format!("/keys/{name}")),
                 format!(
                     "Rotated {name}. Version {short} is now current. Older versions still work for decrypting and verifying."
                 ),
@@ -380,7 +397,7 @@ pub(crate) async fn rotate(
             shell,
             &e,
             Need::ManageKeys,
-            &format!("/keys/{name}"),
+            &vault_path(&vault, &format!("/keys/{name}")),
         )),
     }
 }
@@ -608,9 +625,9 @@ pub(crate) async fn rotation_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let p = match api(&state, &session, &vault).rotation_policy(&name).await {
@@ -620,7 +637,7 @@ pub(crate) async fn rotation_form(
                 shell,
                 &e,
                 Need::ManageKeys,
-                &format!("/keys/{name}"),
+                &vault_path(&vault, &format!("/keys/{name}")),
             ));
         }
     };
@@ -640,15 +657,15 @@ pub(crate) async fn save_rotation(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<RotationForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     let keys = api(&state, &session, &vault);
-    let path = format!("/keys/{name}/rotation");
+    let path = vault_path(&vault, &format!("/keys/{name}/rotation"));
     // Read the policy as it is now, so unchanged fields keep Key Vault's
     // own durations.
     let current = match keys.rotation_policy(&name).await {
@@ -675,7 +692,7 @@ pub(crate) async fn save_rotation(
             tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key rotation policy changed");
             Ok(redirect_with(
                 &state,
-                &format!("/keys/{name}"),
+                &vault_path(&vault, &format!("/keys/{name}")),
                 format!("Saved the rotation policy for {name}."),
             ))
         }

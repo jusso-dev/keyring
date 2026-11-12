@@ -45,13 +45,19 @@ async fn reveal_and_rollback_log_the_version() {
     let old = w.kv.state.put("db-password", "Old-Value-Here");
     let cur = w.kv.state.put("db-password", "New-Value-Here");
     let res = w
-        .post("/secrets/db-password/reveal", &[("version", &old)])
+        .post(
+            "/v/kv-test/secrets/db-password/reveal",
+            &[("version", &old)],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::OK);
-    let res = w.post("/secrets/db-password/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::OK);
     let res = w
-        .post("/secrets/db-password/rollback", &[("version", &old)])
+        .post(
+            "/v/kv-test/secrets/db-password/rollback",
+            &[("version", &old)],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let new = w.kv.state.current("db-password").unwrap().version;

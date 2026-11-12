@@ -2,27 +2,27 @@
 {% import "_ui.html" as ui %}
 {% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="/keys">Back to keys in {{ vault }}</a></p>
+<p><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
 <p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</p>
 <div class="actions">
   {% if !row.managed %}
-  <a class="button" href="/keys/{{ row.name }}/rotate">Rotate now</a>
-  <a class="button button-secondary" href="/keys/{{ row.name }}/rotation">Rotation policy</a>
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
-  <a class="button button-danger" href="/keys/{{ row.name }}/delete">Delete</a>
+  <a class="button" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotate">Rotate now</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotation">Rotation policy</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
+  <a class="button button-danger" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/delete">Delete</a>
   {% if row.enabled %}
-  <a class="button button-secondary" href="/keys/{{ row.name }}/disable">Disable</a>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/disable">Disable</a>
   {% else %}
-  <form method="post" action="/keys/{{ row.name }}/enabled">
+  <form method="post" action="{{ shell.vault_prefix() }}/keys/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="state" value="on">
     <button type="submit" class="button-secondary">Enable</button>
   </form>
   {% endif %}
   {% else %}
-  <p class="muted">This key belongs to the certificate <a href="/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
-  <a class="button button-secondary" href="/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
+  <p class="muted">This key belongs to the certificate <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
+  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
   {% endif %}
 </div>
 

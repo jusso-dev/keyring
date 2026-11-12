@@ -30,19 +30,19 @@ fn assert_no_private_material(w: &support::World) {
 #[tokio::test]
 async fn list_and_empty_and_forbidden() {
     let w = support::world().await;
-    let (_, html) = w.page("/keys").await;
+    let (_, html) = w.page("/v/kv-test/keys").await;
     assert!(html.contains("This vault has no keys yet"));
     w.kv.state.add_key_with("app-key", "RSA", |v| {
         v.tags.insert("env".into(), "prod".into());
     });
     w.kv.state
         .add_key_with("old-key", "EC", |v| v.enabled = false);
-    let (status, html) = w.page("/keys").await;
+    let (status, html) = w.page("/v/kv-test/keys").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(">app-key<") && html.contains(">old-key<"));
     assert!(html.contains("env=prod") && html.contains(">Disabled<"));
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let (status, html) = w.page("/keys").await;
+    let (status, html) = w.page("/v/kv-test/keys").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("Key Vault Reader role on this vault"));
 }
@@ -52,7 +52,7 @@ async fn detail_shows_public_key_as_pem_and_jwk() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (status, html) = w.page("/keys/app-key").await;
+    let (status, html) = w.page("/v/kv-test/keys/app-key").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("RSA 2048"));
     assert!(html.contains("Encrypt, Decrypt, Sign, Verify signatures"));
@@ -68,7 +68,7 @@ async fn detail_shows_public_key_as_pem_and_jwk() {
 
     w.kv.state
         .add_key_with("signer", "EC", |v| v.crv = Some("P-256".into()));
-    let (_, html) = w.page("/keys/signer").await;
+    let (_, html) = w.page("/v/kv-test/keys/signer").await;
     assert!(html.contains("EC P-256"));
     assert!(html.contains(EC_PEM.lines().nth(1).unwrap()));
 }
@@ -76,14 +76,16 @@ async fn detail_shows_public_key_as_pem_and_jwk() {
 #[tokio::test]
 async fn create_with_defaults_in_one_step() {
     let w = support::world().await;
-    let (_, html) = w.page("/keys/-/new").await;
+    let (_, html) = w.page("/v/kv-test/keys/-/new").await;
     assert!(
         html.contains("<details class=\"advanced\">"),
         "advanced options tucked away"
     );
-    let res = w.post("/keys/-/new", &[("name", "app-key")]).await;
+    let res = w
+        .post("/v/kv-test/keys/-/new", &[("name", "app-key")])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/keys/app-key");
+    assert_eq!(location(&res), "/v/kv-test/keys/app-key");
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
     assert_eq!(body["kty"], "RSA");
     assert_eq!(body["key_size"], 3072);
@@ -94,7 +96,10 @@ async fn create_with_defaults_in_one_step() {
 async fn create_options_and_errors() {
     let w = support::world().await;
     let res = w
-        .post("/keys/-/new", &[("name", "sig"), ("key_type", "EC-P-384")])
+        .post(
+            "/v/kv-test/keys/-/new",
+            &[("name", "sig"), ("key_type", "EC-P-384")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
@@ -103,7 +108,7 @@ async fn create_options_and_errors() {
 
     let res = w
         .post(
-            "/keys/-/new",
+            "/v/kv-test/keys/-/new",
             &[
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
@@ -116,13 +121,16 @@ async fn create_options_and_errors() {
     assert!(html.contains("spaces") && html.contains("EC keys can only sign"));
 
     let res = w
-        .post("/keys/-/new", &[("name", "hsm-key"), ("hsm", "on")])
+        .post(
+            "/v/kv-test/keys/-/new",
+            &[("name", "hsm-key"), ("hsm", "on")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("needs the Premium tier"));
 
     w.kv.state.add_key_with("taken", "RSA", |_| {});
-    let res = w.post("/keys/-/new", &[("name", "taken")]).await;
+    let res = w.post("/v/kv-test/keys/-/new", &[("name", "taken")]).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("already a key called taken"));
 }
@@ -131,14 +139,14 @@ async fn create_options_and_errors() {
 async fn rotate_now_makes_a_new_version() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (_, html) = w.page("/keys/app-key/rotate").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/rotate").await;
     assert!(html.contains("<strong>new version</strong>"));
     assert_eq!(
         w.kv.state.key_versions("app-key"),
         1,
         "confirm page changes nothing"
     );
-    let res = w.post("/keys/app-key/rotate", &[]).await;
+    let res = w.post("/v/kv-test/keys/app-key/rotate", &[]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert_eq!(w.kv.state.key_versions("app-key"), 2);
 }
@@ -147,11 +155,11 @@ async fn rotate_now_makes_a_new_version() {
 async fn rotation_policy_read_and_save() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains("No rotation policy"));
     let res = w
         .post(
-            "/keys/app-key/rotation",
+            "/v/kv-test/keys/app-key/rotation",
             &[
                 ("rotate_when", "create"),
                 ("rotate_days", "90"),
@@ -167,15 +175,15 @@ async fn rotation_policy_read_and_save() {
         "P90D"
     );
     assert_eq!(saved["attributes"]["expiryTime"], "P365D");
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains("90 days after each version is made"));
     assert!(html.contains("30 days before expiry"));
-    let (_, html) = w.page("/keys/app-key/rotation").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/rotation").await;
     assert!(html.contains("value=\"90\"") && html.contains("value=\"365\""));
 
     let res = w
         .post(
-            "/keys/app-key/rotation",
+            "/v/kv-test/keys/app-key/rotation",
             &[("rotate_days", "400"), ("expiry", "365")],
         )
         .await;
@@ -191,20 +199,23 @@ async fn rotation_policy_read_and_save() {
 async fn delete_recover_and_purge_flag() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (_, html) = w.page("/keys/app-key/delete").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/delete").await;
     assert!(html.contains("Type <strong class=\"mono\">app-key</strong> to confirm"));
     assert!(html.contains("stop working straight away"));
     let res = w
-        .post("/keys/app-key/delete", &[("confirm_name", "app")])
+        .post("/v/kv-test/keys/app-key/delete", &[("confirm_name", "app")])
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let res = w
-        .post("/keys/app-key/delete", &[("confirm_name", "app-key")])
+        .post(
+            "/v/kv-test/keys/app-key/delete",
+            &[("confirm_name", "app-key")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let (_, html) = w.page("/keys/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/keys/-/deleted").await;
     assert!(html.contains(">app-key<"));
-    let (_, html) = w.page("/keys/-/deleted/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/-/deleted/app-key").await;
     assert!(!html.contains("/purge\""), "no purge link");
     assert!(
         html.contains("Deleted keys in this vault can be recovered for 90 days."),
@@ -212,14 +223,16 @@ async fn delete_recover_and_purge_flag() {
     );
     let res = w
         .post(
-            "/keys/-/deleted/app-key/purge",
+            "/v/kv-test/keys/-/deleted/app-key/purge",
             &[("confirm_name", "app-key")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    let res = w.post("/keys/-/deleted/app-key/recover", &[]).await;
+    let res = w
+        .post("/v/kv-test/keys/-/deleted/app-key/recover", &[])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(support::location(&res), "/keys/-/deleted");
+    assert_eq!(support::location(&res), "/v/kv-test/keys/-/deleted");
     assert_eq!(w.kv.state.key_versions("app-key"), 1);
 }
 
@@ -227,13 +240,16 @@ async fn delete_recover_and_purge_flag() {
 async fn purge_when_enabled() {
     let w = support::world_with(&[("KEYRING_ALLOW_PURGE", "true")]).await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    w.post("/keys/app-key/delete", &[("confirm_name", "app-key")])
-        .await;
-    let (_, html) = w.page("/keys/-/deleted/app-key/purge").await;
+    w.post(
+        "/v/kv-test/keys/app-key/delete",
+        &[("confirm_name", "app-key")],
+    )
+    .await;
+    let (_, html) = w.page("/v/kv-test/keys/-/deleted/app-key/purge").await;
     assert!(html.contains("can never be decrypted again"));
     let res = w
         .post(
-            "/keys/-/deleted/app-key/purge",
+            "/v/kv-test/keys/-/deleted/app-key/purge",
             &[("confirm_name", "app-key")],
         )
         .await;
@@ -247,11 +263,17 @@ async fn forged_tokens_refused() {
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     w.csrf = "forged".into();
     for (path, fields) in [
-        ("/keys/-/new", vec![("name", "x")]),
-        ("/keys/app-key/rotate", vec![]),
-        ("/keys/app-key/rotation", vec![("rotate_days", "90")]),
-        ("/keys/app-key/enabled", vec![("state", "off")]),
-        ("/keys/app-key/delete", vec![("confirm_name", "app-key")]),
+        ("/v/kv-test/keys/-/new", vec![("name", "x")]),
+        ("/v/kv-test/keys/app-key/rotate", vec![]),
+        (
+            "/v/kv-test/keys/app-key/rotation",
+            vec![("rotate_days", "90")],
+        ),
+        ("/v/kv-test/keys/app-key/enabled", vec![("state", "off")]),
+        (
+            "/v/kv-test/keys/app-key/delete",
+            vec![("confirm_name", "app-key")],
+        ),
     ] {
         assert_eq!(
             w.post(path, &fields).await.status(),
@@ -287,28 +309,31 @@ async fn managed_keys_are_refused_on_the_server() {
     let w = support::world().await;
     // Every certificate has a key of the same name that Key Vault manages.
     w.kv.state.add_cert("web-tls", true, "x");
-    let (_, html) = w.page("/keys/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/keys/web-tls").await;
     assert!(html.contains("Managed by a certificate"));
-    assert!(!html.contains("/keys/web-tls/delete"));
-    assert!(!html.contains("/keys/web-tls/rotate\""));
-    assert!(!html.contains("action=\"/keys/web-tls/enabled\""));
+    assert!(!html.contains("/v/kv-test/keys/web-tls/delete"));
+    assert!(!html.contains("/v/kv-test/keys/web-tls/rotate\""));
+    assert!(!html.contains("action=\"/v/kv-test/keys/web-tls/enabled\""));
     for path in [
-        "/keys/web-tls/delete",
-        "/keys/web-tls/rotate",
-        "/keys/web-tls/rotation",
+        "/v/kv-test/keys/web-tls/delete",
+        "/v/kv-test/keys/web-tls/rotate",
+        "/v/kv-test/keys/web-tls/rotation",
     ] {
         let (status, html) = w.page(path).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "GET {path}");
         assert!(html.contains("Change it from the certificate"), "{path}");
     }
     for (path, fields) in [
-        ("/keys/web-tls/delete", vec![("confirm_name", "web-tls")]),
-        ("/keys/web-tls/rotate", vec![]),
         (
-            "/keys/web-tls/rotation",
+            "/v/kv-test/keys/web-tls/delete",
+            vec![("confirm_name", "web-tls")],
+        ),
+        ("/v/kv-test/keys/web-tls/rotate", vec![]),
+        (
+            "/v/kv-test/keys/web-tls/rotation",
             vec![("rotate_days", "90"), ("expiry", "365")],
         ),
-        ("/keys/web-tls/enabled", vec![("state", "off")]),
+        ("/v/kv-test/keys/web-tls/enabled", vec![("state", "off")]),
     ] {
         let res = w.post(path, &fields).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN, "POST {path}");
@@ -322,9 +347,9 @@ async fn managed_keys_are_refused_on_the_server() {
 async fn forms_for_missing_keys_are_not_found() {
     let w = support::world().await;
     for path in [
-        "/keys/nope/delete",
-        "/keys/nope/rotate",
-        "/keys/nope/rotation",
+        "/v/kv-test/keys/nope/delete",
+        "/v/kv-test/keys/nope/rotate",
+        "/v/kv-test/keys/nope/rotation",
     ] {
         let (status, html) = w.page(path).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
@@ -337,16 +362,16 @@ async fn key_vault_default_policy_shows_as_none_and_saves_untouched() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     // The mock returns Key Vault's default: Notify P30D, no expiry.
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains("No rotation policy"), "{html}");
-    let (_, html) = w.page("/keys/app-key/rotation").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/rotation").await;
     assert!(
         html.contains("name=\"notify_before\" type=\"number\" min=\"7\" max=\"36500\" value=\"\"")
     );
     // Pressing Save on the untouched form works.
     let res = w
         .post(
-            "/keys/app-key/rotation",
+            "/v/kv-test/keys/app-key/rotation",
             &[
                 ("rotate_when", "create"),
                 ("rotate_days", ""),
@@ -375,7 +400,7 @@ async fn before_expiry_policy_survives_a_notify_change() {
         ],
         "attributes": {"expiryTime": "P18M"}
     });
-    let (_, html) = w.page("/keys/app-key/rotation").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/rotation").await;
     assert!(html.contains("value=\"expiry\" checked"), "{html}");
     assert!(
         html.contains("name=\"rotate_days\" type=\"number\" min=\"7\" max=\"36500\" value=\"30\"")
@@ -383,7 +408,7 @@ async fn before_expiry_policy_survives_a_notify_change() {
     assert!(html.contains("value=\"540\""));
     let res = w
         .post(
-            "/keys/app-key/rotation",
+            "/v/kv-test/keys/app-key/rotation",
             &[
                 ("rotate_when", "expiry"),
                 ("rotate_days", "30"),
@@ -422,16 +447,18 @@ async fn policy_with_a_time_part_needs_replace() {
         .rotation = serde_json::json!({
         "lifetimeActions": [{"trigger": {"timeAfterCreate": "PT48H"}, "action": {"type": "Rotate"}}]
     });
-    let (_, html) = w.page("/keys/app-key/rotation").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key/rotation").await;
     assert!(html.contains("parts this form can't show"), "{html}");
     assert!(html.contains("PT48H"));
     let fields = [("rotate_days", "90"), ("expiry", "365")];
-    let res = w.post("/keys/app-key/rotation", &fields).await;
+    let res = w.post("/v/kv-test/keys/app-key/rotation", &fields).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("Tick the box to replace"));
     let mut with_replace = fields.to_vec();
     with_replace.push(("replace", "on"));
-    let res = w.post("/keys/app-key/rotation", &with_replace).await;
+    let res = w
+        .post("/v/kv-test/keys/app-key/rotation", &with_replace)
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
 
@@ -444,7 +471,7 @@ async fn rotation_policy_400_keeps_the_form() {
     *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
     let res = w
         .post(
-            "/keys/app-key/rotation",
+            "/v/kv-test/keys/app-key/rotation",
             &[
                 ("rotate_days", "90"),
                 ("expiry", "365"),
@@ -464,7 +491,10 @@ async fn create_400s_are_not_all_blamed_on_hsm() {
     *w.kv.state.fail_path.lock().unwrap() = Some("/create".into());
     *w.kv.state.fail.lock().unwrap() = Some((400, "BadParameter"));
     let res = w
-        .post("/keys/-/new", &[("name", "hsm-key"), ("hsm", "on")])
+        .post(
+            "/v/kv-test/keys/-/new",
+            &[("name", "hsm-key"), ("hsm", "on")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
@@ -477,12 +507,12 @@ async fn create_400s_are_not_all_blamed_on_hsm() {
 async fn existing_key_check_reads_an_empty_list_as_free() {
     // Key Vault answers versions of an unknown name with an empty list.
     let w = support::world().await;
-    let res = w.post("/keys/-/new", &[("name", "fresh")]).await;
+    let res = w.post("/v/kv-test/keys/-/new", &[("name", "fresh")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let res = w.post("/keys/-/new", &[("name", "new")]).await;
+    let res = w.post("/v/kv-test/keys/-/new", &[("name", "new")]).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(support::location(&res), "/keys/new");
-    let (status, _) = w.page("/keys/new").await;
+    assert_eq!(support::location(&res), "/v/kv-test/keys/new");
+    let (status, _) = w.page("/v/kv-test/keys/new").await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -492,7 +522,7 @@ async fn detail_says_when_a_section_couldnt_load() {
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     *w.kv.state.fail_path.lock().unwrap() = Some("/rotationpolicy".into());
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
-    let (status, html) = w.page("/keys/app-key").await;
+    let (status, html) = w.page("/v/kv-test/keys/app-key").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("Couldn&#39;t load the rotation policy just now"),
@@ -500,13 +530,13 @@ async fn detail_says_when_a_section_couldnt_load() {
     );
     assert!(!html.contains("No rotation policy"));
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains(
         "You can&#39;t see the rotation policy. That needs the Key Vault Crypto Officer role."
     ));
     *w.kv.state.fail_path.lock().unwrap() = Some("/versions".into());
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains("Couldn&#39;t load this key&#39;s versions just now"));
 }
 
@@ -514,15 +544,19 @@ async fn detail_says_when_a_section_couldnt_load() {
 async fn enable_and_disable() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     // Disable goes through a confirmation page that posts here.
-    assert!(html.contains("href=\"/keys/app-key/disable\">Disable<"));
-    let (_, html) = w.page("/keys/app-key/disable").await;
-    assert!(html.contains("action=\"/keys/app-key/enabled\""));
-    let res = w.post("/keys/app-key/enabled", &[("state", "off")]).await;
+    assert!(html.contains("href=\"/v/kv-test/keys/app-key/disable\">Disable<"));
+    let (_, html) = w.page("/v/kv-test/keys/app-key/disable").await;
+    assert!(html.contains("action=\"/v/kv-test/keys/app-key/enabled\""));
+    let res = w
+        .post("/v/kv-test/keys/app-key/enabled", &[("state", "off")])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(!w.kv.state.keys.lock().unwrap()["app-key"].versions[0].enabled);
-    let res = w.post("/keys/app-key/enabled", &[("state", "on")]).await;
+    let res = w
+        .post("/v/kv-test/keys/app-key/enabled", &[("state", "on")])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(w.kv.state.keys.lock().unwrap()["app-key"].versions[0].enabled);
 }
@@ -534,11 +568,11 @@ async fn list_pages_like_secrets() {
         w.kv.state
             .add_key_with(&format!("key-{i:03}"), "RSA", |_| {});
     }
-    let (_, html) = w.page("/keys").await;
+    let (_, html) = w.page("/v/kv-test/keys").await;
     assert_eq!(html.matches("<th scope=\"row\">").count(), 100);
     assert!(html.contains("Page 1 of 2, keys 1 to 100"));
     assert!(html.contains(">Next</a>"), "{html}");
-    let (_, html) = w.page("/keys?page=2").await;
+    let (_, html) = w.page("/v/kv-test/keys?page=2").await;
     assert_eq!(html.matches("<th scope=\"row\">").count(), 5);
     assert!(html.contains(">key-104<"));
 }
@@ -559,14 +593,17 @@ async fn deleted_list_pages_too() {
             },
         );
     }
-    let (_, html) = w.page("/keys/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/keys/-/deleted").await;
     assert_eq!(html.matches("<th scope=\"row\"").count(), 100);
     assert!(
         html.contains("Page 1 of 2, deleted keys 1 to 100"),
         "{html}"
     );
-    assert!(html.contains("href=\"/keys/-/deleted?page=2\""), "{html}");
-    let (_, html) = w.page("/keys/-/deleted?page=2").await;
+    assert!(
+        html.contains("href=\"/v/kv-test/keys/-/deleted?page=2\""),
+        "{html}"
+    );
+    let (_, html) = w.page("/v/kv-test/keys/-/deleted?page=2").await;
     assert_eq!(html.matches("<th scope=\"row\"").count(), 5);
     assert!(html.contains(">gone-104<"));
 }

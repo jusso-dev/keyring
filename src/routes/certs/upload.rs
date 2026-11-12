@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect};
 use base64::Engine;
@@ -33,7 +33,7 @@ use crate::routes::forms::FieldErrors;
 use crate::routes::secrets::form::parse_tags;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, vault_path};
 use crate::secret::Secret;
 use crate::x509;
 
@@ -186,8 +186,12 @@ fn too_big_message() -> String {
     )
 }
 
-pub(crate) async fn form(session: CurrentSession, shell: Shell) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+pub(crate) async fn form(
+    session: CurrentSession,
+    shell: Shell,
+    Path(vault): Path<String>,
+) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     // A fresh form means any file waiting from before isn't wanted.
     forget_pending_upload(&session);
     Ok(upload_page(
@@ -210,14 +214,16 @@ pub(crate) async fn cancel(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Form(f): Form<CancelForm>,
 ) -> PageResult {
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     // Dropping the waiting file is safe whichever vault the form was for.
     if !session.0.csrf_matches_any(&f.csrf) {
         return Err(PageError::new(shell, Problem::stale_form()).into());
     }
     forget_pending_upload(&session);
-    let mut res = Redirect::to("/certificates/-/upload").into_response();
+    let mut res = Redirect::to(&vault_path(&vault, "/certificates/-/upload")).into_response();
     flash::set(
         &state,
         &mut res,
@@ -408,9 +414,10 @@ pub(crate) async fn preview(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     multipart: Multipart,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let mut p = Posted::default();
     let read = read_multipart(multipart, &mut p).await;
     // A body cut off at the size limit may end before the form token
@@ -593,9 +600,10 @@ pub(crate) async fn confirm(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Form(f): Form<ConfirmForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     // The token is checked before the upload is taken, so a forged post
     // can't throw away someone's waiting file.
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
@@ -611,7 +619,7 @@ pub(crate) async fn confirm(
                 "That upload has expired",
                 "Keyring only holds an uploaded file for 10 minutes, and only for one import. Upload it again.",
             )
-            .returning_to("/certificates/-/upload"),
+            .returning_to(&vault_path(&vault, "/certificates/-/upload")),
         )
         .into());
     };
@@ -650,7 +658,7 @@ pub(crate) async fn confirm(
     match api(&state, &session, &vault).import(&name, &body).await {
         Ok(_) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate uploaded");
-            let mut res = Redirect::to(&format!("/certificates/{name}")).into_response();
+            let mut res = Redirect::to(&vault_path(&vault, &format!("/certificates/{name}"))).into_response();
             flash::set(&state, &mut res, &Flash::success(format!("Uploaded {name}.")));
             Ok(res)
         }
@@ -675,10 +683,10 @@ pub(crate) async fn confirm(
                 "That name is taken",
                 format!("A deleted certificate called {name} can still be recovered. Recover it from deleted certificates, or pick another name."),
             )
-            .returning_to("/certificates/-/upload"),
+            .returning_to(&vault_path(&vault, "/certificates/-/upload")),
         )
         .into()),
-        Err(err) => Err(azure_problem(shell, &err, Need::ManageCertificates, "/certificates/-/upload")),
+        Err(err) => Err(azure_problem(shell, &err, Need::ManageCertificates, &vault_path(&vault, "/certificates/-/upload"))),
     }
 }
 

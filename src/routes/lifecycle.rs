@@ -21,7 +21,7 @@ use crate::routes::error::{Halt, PageError, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::azure_problem;
+use crate::routes::vault_ctx::{azure_problem, vault_path};
 
 /// What kind of item, for wording and URLs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl Kind {
         }
     }
 
-    /// URL prefix, `/secrets`, `/certificates` or `/keys`.
+    /// URL prefix below the vault, `/secrets`, `/certificates` or `/keys`.
     pub(crate) fn base(self) -> &'static str {
         match self {
             Self::Secret => "/secrets",
@@ -67,26 +67,31 @@ impl Kind {
         }
     }
 
-    /// The item's own page.
-    pub(crate) fn item_url(self, name: &str) -> String {
-        format!("{}/{name}", self.base())
+    /// The list of this kind in `vault`, `/v/<vault>/secrets`.
+    pub(crate) fn list_url(self, vault: &str) -> String {
+        vault_path(vault, self.base())
     }
 
-    /// A fixed page of this kind, such as `/secrets/-/new`. Fixed pages sit
-    /// under `/-/`, which can't be an item: Key Vault names start with a
-    /// letter.
-    pub(crate) fn page_url(self, page: &str) -> String {
-        format!("{}/-/{page}", self.base())
+    /// The item's own page.
+    pub(crate) fn item_url(self, vault: &str, name: &str) -> String {
+        vault_path(vault, &format!("{}/{name}", self.base()))
+    }
+
+    /// A fixed page of this kind, such as `/v/<vault>/secrets/-/new`. Fixed
+    /// pages sit under `/-/`, which can't be an item: Key Vault names start
+    /// with a letter.
+    pub(crate) fn page_url(self, vault: &str, page: &str) -> String {
+        vault_path(vault, &format!("{}/-/{page}", self.base()))
     }
 
     /// The deleted list.
-    pub(crate) fn deleted_list_url(self) -> String {
-        self.page_url("deleted")
+    pub(crate) fn deleted_list_url(self, vault: &str) -> String {
+        self.page_url(vault, "deleted")
     }
 
     /// One deleted item's page.
-    pub(crate) fn deleted_url(self, name: &str) -> String {
-        format!("{}/{name}", self.deleted_list_url())
+    pub(crate) fn deleted_url(self, vault: &str, name: &str) -> String {
+        format!("{}/{name}", self.deleted_list_url(vault))
     }
 
     /// The role that allows delete, recover and purge.
@@ -245,9 +250,9 @@ pub(crate) fn delete_view_for(
             recovery.period()
         ),
         expected: name.to_owned(),
-        action: format!("{}/delete", kind.item_url(name)),
+        action: format!("{}/delete", kind.item_url(vault, name)),
         button: format!("Delete {}", kind.noun()),
-        cancel_url: kind.item_url(name),
+        cancel_url: kind.item_url(vault, name),
         second_warning: None,
         error: None,
     }
@@ -260,9 +265,9 @@ pub(crate) fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             "This permanently deletes {name} and every version of it from {vault}. It can't be recovered by you, Keyring or Microsoft."
         ),
         expected: name.to_owned(),
-        action: format!("{}/purge", kind.deleted_url(name)),
+        action: format!("{}/purge", kind.deleted_url(vault, name)),
         button: "Permanently delete".into(),
-        cancel_url: kind.deleted_url(name),
+        cancel_url: kind.deleted_url(vault, name),
         second_warning: Some(match kind {
             Kind::Secret => "Only do this if you're sure nothing needs this secret any more, or a policy requires it to be destroyed.".into(),
             Kind::Key => "Anything encrypted with this key can never be decrypted again. Only do this if you're sure.".into(),
@@ -322,7 +327,7 @@ pub(crate) fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Resul
 }
 
 /// The page for a purge the vault won't allow.
-pub(crate) fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
+pub(crate) fn purge_protected_problem(kind: Kind, vault: &str, name: &str) -> Problem {
     Problem::new(
         StatusCode::FORBIDDEN,
         "This vault has purge protection",
@@ -331,7 +336,7 @@ pub(crate) fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
             kind.plural()
         ),
     )
-    .returning_to(&kind.deleted_url(name))
+    .returning_to(&kind.deleted_url(vault, name))
 }
 
 /// Refuse a purge early when the deleted item says the vault has purge
@@ -339,11 +344,12 @@ pub(crate) fn purge_protected_problem(kind: Kind, name: &str) -> Problem {
 pub(crate) fn purge_not_protected(
     shell: Shell,
     kind: Kind,
+    vault: &str,
     name: &str,
     recovery: Recovery,
 ) -> Result<Shell, Halt> {
     if recovery.purge_protected {
-        Err(PageError::new(shell, purge_protected_problem(kind, name)).into())
+        Err(PageError::new(shell, purge_protected_problem(kind, vault, name)).into())
     } else {
         Ok(shell)
     }
@@ -367,13 +373,14 @@ pub(crate) fn purge_problem(
     shell: Shell,
     err: &AzureError,
     kind: Kind,
+    vault: &str,
     name: &str,
     need: crate::routes::error::Need,
 ) -> Halt {
     if is_purge_protection_error(err) {
-        PageError::new(shell, purge_protected_problem(kind, name)).into()
+        PageError::new(shell, purge_protected_problem(kind, vault, name)).into()
     } else {
-        azure_problem(shell, err, need, &kind.deleted_url(name))
+        azure_problem(shell, err, need, &kind.deleted_url(vault, name))
     }
 }
 
@@ -437,7 +444,7 @@ pub(crate) fn deleted_list(
     rows: Vec<DeletedRow>,
     page: Option<usize>,
 ) -> Response {
-    let (rows, pager) = deleted_page(kind, rows, page);
+    let (rows, pager) = deleted_page(kind, &vault, rows, page);
     render(&DeletedList {
         shell,
         vault,
@@ -449,8 +456,13 @@ pub(crate) fn deleted_list(
 }
 
 /// One page of a deleted list, with links to the others.
-pub(crate) fn deleted_page<T>(kind: Kind, rows: Vec<T>, page: Option<usize>) -> (Vec<T>, Pager) {
-    let base = kind.deleted_list_url();
+pub(crate) fn deleted_page<T>(
+    kind: Kind,
+    vault: &str,
+    rows: Vec<T>,
+    page: Option<usize>,
+) -> (Vec<T>, Pager) {
+    let base = kind.deleted_list_url(vault);
     let noun = match kind {
         Kind::Secret => "deleted secrets",
         Kind::Certificate => "deleted certificates",
@@ -510,14 +522,14 @@ pub(crate) fn redirect_with(state: &AppState, to: &str, message: String) -> Resp
 /// take a few seconds to be readable, so go to the deleted list rather
 /// than a detail page that may still say "not found". Keyring doesn't
 /// poll; the message says to wait.
-pub(crate) fn recovered(state: &AppState, kind: Kind, name: &str) -> Response {
+pub(crate) fn recovered(state: &AppState, kind: Kind, vault: &str, name: &str) -> Response {
     let extra = match kind {
         Kind::Secret => ", with its value and versions",
         Kind::Certificate | Kind::Key => ", with every version",
     };
     redirect_with(
         state,
-        &kind.deleted_list_url(),
+        &kind.deleted_list_url(vault),
         format!(
             "Recovering {name}{extra}. It can take a few seconds to show in {}. Refresh that list if it isn't there yet.",
             kind.plural()

@@ -64,7 +64,7 @@ impl Lifecycle for Certificates {
                 shell,
                 &e,
                 Need::ReadCertificates,
-                &Kind::Certificate.item_url(name),
+                &Kind::Certificate.item_url(vault, name),
             ));
         }
         Ok((shell, Recovery::default()))
