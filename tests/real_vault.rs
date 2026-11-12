@@ -340,8 +340,9 @@ async fn clean_one(h: &Harness, pace: Pace, item: Item) {
 
 /// After a delete, wait for the item to show as deleted, then purge it if
 /// its recovery level allows. A failed delete (usually 404: the test
-/// deleted it, or never made it) gets one look only. Anything left behind is
-/// said on stderr, so it can be removed by hand.
+/// deleted it, or never made it) gets one look only. Only a 404 delete then a
+/// 404 lookup counts as nothing left. Anything that may be left behind is said
+/// on stderr, so it can be removed by hand.
 async fn delete_then_purge(
     kind: &str,
     name: &str,
@@ -358,10 +359,28 @@ async fn delete_then_purge(
             ..pace
         }
     };
+    let delete_err = deleted.err();
     let (level, _) = retry(wait, &[404], async || level().await).await;
-    let Ok(level) = level else {
-        // Never made, or already purged.
-        return;
+    let level = match level {
+        Ok(level) => level,
+        // A 404 after a 404 delete: never made, or already gone. Nothing left.
+        Err(AzureError::Status { status: 404, .. })
+            if matches!(&delete_err, Some(AzureError::Status { status: 404, .. })) =>
+        {
+            return;
+        }
+        // Anything else may have left the item behind, live or soft-deleted.
+        Err(e) => {
+            match &delete_err {
+                Some(d) => eprintln!(
+                    "cleanup: {kind} {name} may be left behind: delete failed ({d}), then the deleted lookup failed ({e})"
+                ),
+                None => eprintln!(
+                    "cleanup: {kind} {name} may be left soft-deleted: deleted, but the deleted lookup failed ({e})"
+                ),
+            }
+            return;
+        }
     };
     if !is_purgeable(level.as_deref()) {
         eprintln!(

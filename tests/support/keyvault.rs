@@ -420,7 +420,7 @@ fn conflict(inner: &str, state: &str) -> Response {
         StatusCode::CONFLICT,
         json!({"error": {
             "code": "Conflict",
-            "message": format!("Secret is {state}"),
+            "message": format!("Secret {state}"),
             "innererror": {"code": inner}
         }}),
     )

@@ -1,6 +1,6 @@
 # Real tenant and vault checklist
 
-Every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault and Log Analytics servers (`tests/support/`). The mocks follow Microsoft's REST reference, but nothing has been run against a real tenant yet. This page lists what only a real Entra tenant, a real Key Vault or a real browser can confirm.
+Every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault and Log Analytics servers (`tests/support/`). The mocks follow Microsoft's REST reference. The Key Vault REST rows have been run against real vaults, by hand and with the opt-in `tests/real_vault.rs` (see "Record of runs" below). Sign-in, on-behalf-of, RBAC role, browser and deployment rows haven't been run against a real tenant yet. This page lists what only a real Entra tenant, a real Key Vault or a real browser can confirm.
 
 Use a test tenant or a test resource group, and test vaults that hold nothing that matters. Some checks delete, purge or disable things.
 

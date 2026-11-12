@@ -41,20 +41,20 @@ The seeded token is treated as valid for 50 minutes. Nothing can refresh it: the
 2. Get a token and keep it outside the repository. Do not print it.
 
    ```sh
-   umask 077
+   TOKEN_FILE=$(mktemp)   # a new file only you can read
    az account get-access-token --resource https://vault.azure.net \
-     --query accessToken -o tsv > "$TMPDIR/kv.token"
+     --query accessToken -o tsv > "$TOKEN_FILE"
    ```
 
 3. Run the real half.
 
    ```sh
    KEYRING_REAL_VAULT=kr-test-<something> \
-   KEYRING_REAL_TOKEN_FILE="$TMPDIR/kv.token" \
+   KEYRING_REAL_TOKEN_FILE="$TOKEN_FILE" \
    cargo test --test real_vault -- --ignored --test-threads=1
    ```
 
-4. Delete the token file. Add what you saw to "Record of runs" in the checklist, with no tenant-identifying values.
+4. Delete the token file (`rm "$TOKEN_FILE"`). Add what you saw to "Record of runs" in the checklist, with no tenant-identifying values.
 
 ### Guard rails
 
