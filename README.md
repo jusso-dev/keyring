@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/keyring-banner.jpg" alt="Keyring: an orange padlock and keys over an outback sunset" width="100%">
+</p>
+
 # Keyring
 
 Keyring is a small web app that sits in front of Azure Key Vault. It lets people who don't use the Azure portal find a vault, look up a secret, add a certificate or rotate a key, in plain English.
