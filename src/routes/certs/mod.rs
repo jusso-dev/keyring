@@ -3,6 +3,7 @@
 pub(super) mod create;
 pub(super) mod delete;
 pub(super) mod download;
+pub(super) mod renewal;
 pub(super) mod upload;
 
 use askama::Template;

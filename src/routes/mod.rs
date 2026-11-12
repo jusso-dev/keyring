@@ -145,6 +145,10 @@ fn vault_routes() -> Router<AppState> {
         .route("/certificates/{name}/enabled", post(certs::toggle))
         .route("/certificates/{name}/disable", get(certs::disable_form))
         .route(
+            "/certificates/{name}/renewal",
+            get(certs::renewal::form).post(certs::renewal::save),
+        )
+        .route(
             "/certificates/{name}/pending/cancel",
             post(certs::create::cancel_pending),
         )

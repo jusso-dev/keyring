@@ -23,6 +23,7 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/certificates/-/upload/cancel",
     "/v/kv-test/certificates/-/new",
     "/v/kv-test/certificates/web-tls/enabled",
+    "/v/kv-test/certificates/web-tls/renewal",
     "/v/kv-test/certificates/web-tls/pending/cancel",
     "/v/kv-test/certificates/web-tls/delete",
     "/v/kv-test/certificates/web-tls/download-key",

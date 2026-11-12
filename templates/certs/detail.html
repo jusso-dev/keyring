@@ -72,7 +72,7 @@
     <dt>Private key can be downloaded</dt><dd>{% if pol.exportable %}Yes{% else %}No, it stays in Key Vault{% endif %}</dd>
     <dt>Stored as</dt><dd>{{ pol.content_type }}</dd>
     {% if !pol.validity.is_empty() %}<dt>Valid for</dt><dd>{{ pol.validity }}</dd>{% endif %}
-    <dt>Near expiry</dt><dd>{{ pol.renewal }}</dd>
+    <dt>Near expiry</dt><dd>{{ pol.renewal }} <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/renewal">Change<span class="visually-hidden"> what happens near expiry</span></a></dd>
   </dl>
 </section>
 {% endif %}
