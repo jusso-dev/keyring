@@ -14,6 +14,8 @@ Use a test tenant or a test resource group, and test vaults that hold nothing th
 
 The "Code" column names where Keyring depends on the behaviour, so you know what to change if it differs.
 
+Six of the Key Vault REST rows (four secrets rows, the HSM key row and the self-signed create row) can be re-run by a test against a throwaway vault. See [real-vault-automation.md](real-vault-automation.md).
+
 ## Sign-in and tokens
 
 | Check | Do this | Expected | Code | Result |

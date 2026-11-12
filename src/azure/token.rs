@@ -144,6 +144,15 @@ impl TokenCache {
         map.insert(resource, token);
     }
 
+    /// Put a token straight into the cache. **Test-only**: it exists for
+    /// `tests/real_vault.rs`, which seeds a Key Vault token it was handed
+    /// from outside. It doesn't fetch, exchange or refresh anything, and
+    /// nothing in the app calls it.
+    #[doc(hidden)]
+    pub fn seed_token_for_tests(&self, resource: Resource, token: AccessToken) {
+        self.put(resource, token);
+    }
+
     /// The failure of a call that finished after `since`, if there was one.
     fn failure_since(&self, resource: Resource, since: Instant) -> Option<TokenError> {
         let map = self.failed.lock().unwrap_or_else(|e| e.into_inner());
