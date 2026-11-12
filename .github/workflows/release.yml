@@ -1,9 +1,10 @@
 name: Release image
 
-# A version tag (vX.Y.Z) builds the image, runs the same checks as CI and
-# attests where it came from. Pushing to ghcr.io stays off until the owner
-# sets the repository variable KEYRING_PUBLISH_IMAGE to "true". While it is
-# off, the image is kept as a workflow artifact and nothing is published.
+# A version tag (vX.Y.Z) on a main commit that passed CI builds the image,
+# repeats CI's image checks and attests where it came from. Pushing to
+# ghcr.io stays off until the owner sets the repository variable
+# KEYRING_PUBLISH_IMAGE to "true". While it is off, the image is kept as a
+# workflow artifact and nothing is published.
 #
 # workflow_dispatch is a dry run: it builds and attests an archive of the
 # image under a "-dryrun" version and never publishes.
@@ -26,6 +27,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      checks: read # read CI's results for the tagged commit
       packages: write # push the image to ghcr.io (only when publishing is on)
       id-token: write # sign the provenance with the workflow's identity
       attestations: write # store the provenance attestation
@@ -65,6 +67,32 @@ jobs:
             version="${cargo_version}-dryrun.${COMMIT_SHA::7}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # This workflow repeats only CI's image checks. A tag must therefore
+      # point at a commit on main whose four required CI checks passed, so
+      # a tagged image never skips the Rust and supply-chain checks.
+      - name: Tagged commit is on main and passed CI
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          status=$(gh api "repos/${REPO}/compare/main...${COMMIT_SHA}" --jq .status)
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::The tag points at ${COMMIT_SHA::7}, which isn't on main (compare status: ${status}). Tag a commit on main."
+            exit 1
+          fi
+          runs=$(gh api --paginate "repos/${REPO}/commits/${COMMIT_SHA}/check-runs?per_page=100" \
+            --jq '.check_runs[] | select(.app.slug == "github-actions") | "\(.name)\t\(.conclusion)"')
+          missing=0
+          for check in "fmt, clippy, test, build" "cargo-deny, cargo-audit" "bicep build" "container build"; do
+            if ! printf '%s\n' "$runs" | grep -qxF "${check}	success"; then
+              echo "::error::CI check '${check}' hasn't passed on ${COMMIT_SHA::7}. Wait for CI on main, or tag a commit where it passed."
+              missing=1
+            fi
+          done
+          exit "$missing"
 
       # Dependabot moves rust-toolchain.toml and the builder image in one
       # pull request; this catches the two drifting apart anyway.
