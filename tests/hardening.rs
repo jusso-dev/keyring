@@ -320,18 +320,25 @@ fn fixed_pages_cant_collide_with_item_names() {
     // `/keys/{name}` must sit under `/-/`, which Key Vault can't use as a
     // name, or an item with that name couldn't be opened.
     let src = include_str!("../src/routes/mod.rs");
-    for prefix in [
-        "\"/v/kv-test/secrets/",
-        "\"/v/kv-test/certificates/",
-        "\"/v/kv-test/keys/",
-    ] {
+    // Paths are relative to the `/v/{vault}` nest. The old addresses'
+    // `{*rest}` catch-alls only redirect, so they're skipped.
+    for prefix in ["\"/secrets/", "\"/certificates/", "\"/keys/"] {
+        let mut seen = 0;
         for chunk in src.split(prefix).skip(1) {
             let first = chunk.split(['/', '"']).next().unwrap_or_default();
+            if first == "{*rest}" {
+                continue;
+            }
+            seen += 1;
             assert!(
                 first == "{name}" || first == "-",
                 "{prefix}{first} is a fixed page that could be an item name"
             );
         }
+        assert!(
+            seen > 0,
+            "{prefix} matched no routes, so nothing was checked"
+        );
     }
 }
 

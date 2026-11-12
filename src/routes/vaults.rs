@@ -194,9 +194,8 @@ pub(super) async fn select(
         return PageError::new(shell, problem).into_response();
     };
     let name = vault.name;
-    session.0.select_vault(name.clone());
     // Kept with the name so the audit view doesn't need to look it up.
-    session.0.set_selected_vault_id(vault.id);
+    session.0.select_vault_with_id(name.clone(), vault.id);
     let next = if form.return_to.is_empty() {
         vault_path(&name, "/secrets")
     } else {

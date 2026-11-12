@@ -164,10 +164,6 @@ impl Session {
         lock(&self.claims_challenge).clone()
     }
 
-    pub fn set_selected_vault_id(&self, id: String) {
-        *lock(&self.selected_vault_id) = Some(id);
-    }
-
     /// Keep an uploaded certificate until the person confirms it.
     pub fn set_pending_upload(&self, upload: PendingUpload) {
         *lock(&self.pending_upload) = Some(upload);
@@ -186,6 +182,16 @@ impl Session {
     pub fn select_vault(&self, name: String) {
         *lock(&self.selected_vault) = Some(name);
         *lock(&self.selected_vault_id) = None;
+    }
+
+    /// Remember the chosen vault and its ARM ID together, holding the
+    /// selection lock, so a request from another tab can't change the vault
+    /// between the two and leave this ID filed under its name. Same lock
+    /// order as [`Self::note_vault_used`]. The caller checks the name is valid.
+    pub fn select_vault_with_id(&self, name: String, id: String) {
+        let mut selected = lock(&self.selected_vault);
+        *selected = Some(name);
+        *lock(&self.selected_vault_id) = Some(id);
     }
 
     /// Note that a request used `name`, the vault in its address. The
@@ -569,6 +575,22 @@ pub(crate) mod tests {
         assert!(s.csrf_matches_vault(&a, "kv-a"));
         assert!(!s.csrf_matches_vault(&a, "kv-b"));
         assert!(!s.csrf_matches_vault(&s.csrf_token(), "kv-a"));
+    }
+
+    #[test]
+    fn a_vault_id_is_only_given_for_the_vault_it_was_kept_with() {
+        let store = SessionStore::default();
+        let s = store.get(&store.create(user(), tokens())).unwrap();
+        s.select_vault_with_id("kv-a".into(), "/sub/a/kv-a".into());
+        assert_eq!(s.vault_id_for("kv-a").as_deref(), Some("/sub/a/kv-a"));
+        // Another tab moves on: kv-a's ID must not be given for kv-b.
+        s.note_vault_used("kv-b");
+        assert_eq!(s.vault_id_for("kv-b"), None);
+        assert_eq!(s.vault_id_for("kv-a"), None);
+        // Using the same vault again keeps its ID.
+        s.select_vault_with_id("kv-a".into(), "/sub/a/kv-a".into());
+        s.note_vault_used("kv-a");
+        assert_eq!(s.vault_id_for("kv-a").as_deref(), Some("/sub/a/kv-a"));
     }
 
     #[test]
