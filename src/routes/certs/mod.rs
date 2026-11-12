@@ -23,7 +23,7 @@ use crate::routes::keys::section_note;
 use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
-use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name};
+use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name, vault_path};
 use crate::x509;
 
 /// Name checks for a new certificate.
@@ -114,8 +114,9 @@ impl CertRow {
 pub(super) fn current_vault(
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
 ) -> Result<(String, Shell), Halt> {
-    vault_ctx::current_vault(session, shell, Section::Certificates)
+    vault_ctx::path_vault(session, shell, Section::Certificates, vault)
 }
 
 pub(super) fn api<'a>(
@@ -161,12 +162,15 @@ impl CertFilter {
         }
     }
 
-    fn page_url(&self, page: usize) -> String {
+    fn page_url(&self, vault: &str, page: usize) -> String {
         let enc = crate::auth::return_to::encode;
-        format!(
-            "/certificates?q={}&show={}&page={page}",
-            enc(&self.q),
-            enc(&self.show)
+        vault_path(
+            vault,
+            &format!(
+                "/certificates?q={}&show={}&page={page}",
+                enc(&self.q),
+                enc(&self.show)
+            ),
         )
     }
 }
@@ -196,9 +200,10 @@ pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(filter): Query<CertFilter>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let items = match api(&state, &session, &vault).list().await {
         Ok(i) => i,
         Err(err) => {
@@ -206,7 +211,7 @@ pub(super) async fn list(
                 shell,
                 &err,
                 Need::ReadCertificates,
-                "/certificates",
+                &vault_path(&vault, "/certificates"),
             ));
         }
     };
@@ -218,7 +223,7 @@ pub(super) async fn list(
     let within90 = all.iter().filter(|r| r.within90()).count();
     let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
     let (rows, pager) = paginate(matching, filter.page, "certificates", |p| {
-        filter.page_url(p)
+        filter.page_url(&vault, p)
     });
     let show_options = [
         ("", "All certificates"),
@@ -384,13 +389,13 @@ pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     uri: axum::http::Uri,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
-    let path = format!("/certificates/{name}");
+    let path = vault_path(&vault, &format!("/certificates/{name}"));
     let (bundle, versions, pending) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
@@ -400,7 +405,7 @@ pub(super) async fn detail(
         Ok(b) => b,
         Err(err) => {
             if let Some(res) =
-                crate::routes::moved::missing_item(Kind::Certificate, &name, &err, &uri)
+                crate::routes::moved::missing_item(&vault, Kind::Certificate, &name, &err, &uri)
             {
                 return Ok(res);
             }
@@ -458,11 +463,11 @@ pub(super) async fn disable_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let path = format!("/certificates/{name}");
+    let path = vault_path(&vault, &format!("/certificates/{name}"));
     if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
         return Err(azure_problem(shell, &e, Need::ReadCertificates, &path));
     }
@@ -478,17 +483,17 @@ pub(super) async fn toggle(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<ToggleForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let Some(enable) = f.enable() else {
         return Err(PageError::new(shell, Problem::not_found()).into());
     };
     let certs = api(&state, &session, &vault);
-    let path = format!("/certificates/{name}");
+    let path = vault_path(&vault, &format!("/certificates/{name}"));
     let bundle = match certs.get_cert(&name, None).await {
         Ok(b) => b,
         Err(e) => return Err(azure_problem(shell, &e, Need::ReadCertificates, &path)),

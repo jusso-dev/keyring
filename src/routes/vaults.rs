@@ -13,6 +13,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Need, NextStep, PageError, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::shell::{Section, Shell};
+use crate::routes::vault_ctx::vault_path;
 
 /// Vaults shown per page of the list.
 pub(super) const PER_PAGE: usize = 200;
@@ -121,6 +122,23 @@ pub(super) async fn list(
     render(&page_view).into_response()
 }
 
+/// A bare vault page such as `/secrets/x` gets the chosen vault in front.
+/// Anything else (`/expiry`, an address that already names a vault) is left
+/// as it is.
+fn with_vault(vault: &str, path: &str) -> String {
+    let scoped = ["/secrets", "/certificates", "/keys", "/audit"]
+        .iter()
+        .any(|base| {
+            path.strip_prefix(base)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '.']))
+        });
+    if scoped {
+        vault_path(vault, path)
+    } else {
+        path.to_owned()
+    }
+}
+
 #[derive(Deserialize)]
 pub(super) struct SelectForm {
     #[serde(default)]
@@ -176,13 +194,15 @@ pub(super) async fn select(
         return PageError::new(shell, problem).into_response();
     };
     let name = vault.name;
-    session.0.select_vault(name.clone());
     // Kept with the name so the audit view doesn't need to look it up.
-    session.0.set_selected_vault_id(vault.id);
+    session.0.select_vault_with_id(name.clone(), vault.id);
     let next = if form.return_to.is_empty() {
-        "/secrets".to_owned()
+        vault_path(&name, "/secrets")
     } else {
-        crate::auth::return_to::sanitise(Some(&form.return_to))
+        with_vault(
+            &name,
+            &crate::auth::return_to::sanitise(Some(&form.return_to)),
+        )
     };
     let mut res = Redirect::to(&next).into_response();
     flash::set(
@@ -191,4 +211,27 @@ pub(super) async fn select(
         &Flash::success(format!("Now working in {name}.")),
     );
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_vault_page_gets_the_chosen_vault() {
+        for (given, want) in [
+            ("/secrets", "/v/kv/secrets"),
+            ("/secrets/db", "/v/kv/secrets/db"),
+            ("/audit?item=db", "/v/kv/audit?item=db"),
+            ("/audit.csv", "/v/kv/audit.csv"),
+            ("/certificates/-/new", "/v/kv/certificates/-/new"),
+            ("/keys/k", "/v/kv/keys/k"),
+            ("/expiry", "/expiry"),
+            ("/", "/"),
+            ("/secretsx", "/secretsx"),
+            ("/v/other/secrets", "/v/other/secrets"),
+        ] {
+            assert_eq!(with_vault("kv", given), want, "{given}");
+        }
+    }
 }

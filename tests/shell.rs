@@ -66,7 +66,7 @@ async fn every_section_has_a_page_with_an_empty_state() {
 #[tokio::test]
 async fn sections_need_sign_in() {
     let app = keyring::app(keyring::AppState::new(support::config()));
-    let res = get(&app, "/secrets", None).await;
+    let res = get(&app, "/v/kv-test/secrets", None).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 }
 

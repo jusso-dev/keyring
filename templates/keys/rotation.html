@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Rotation policy for key {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="/keys/{{ name }}">Back to {{ name }}</a></p>
+<p><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Back to {{ name }}</a></p>
 <h1>Rotation policy for <span class="mono">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault can make new versions on a schedule. Every field is optional: leave one blank to turn that part off.</p>
 {% call ui::error_summary(errors) %}{% endcall %}
@@ -20,7 +20,7 @@
   <p>Saving replaces the whole policy with what's on this page, so those parts would be lost. Change it in the Azure portal to keep them.</p>
 </div>
 {% endif %}
-<form method="post" action="/keys/{{ name }}/rotation" class="stacked" novalidate>
+<form method="post" action="{{ shell.vault_prefix() }}/keys/{{ name }}/rotation" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <fieldset>
     <legend>Rotate</legend>
@@ -50,6 +50,6 @@
   </div>
   {% include "_field_error.html" %}
   {% endif %}
-  <div class="actions"><button type="submit">Save policy</button><a href="/keys/{{ name }}">Cancel</a></div>
+  <div class="actions"><button type="submit">Save policy</button><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Cancel</a></div>
 </form>
 {% endblock %}

@@ -2,7 +2,7 @@
 //! Analytics. Read as the signed-in user, with the Log Analytics OBO token.
 
 use askama::Template;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -19,7 +19,7 @@ use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::{FieldError, FieldErrors};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
-use crate::routes::vault_ctx;
+use crate::routes::vault_ctx::{self, vault_path};
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub(super) struct AuditFilter {
@@ -178,7 +178,7 @@ impl AuditPage {
             _ => return None,
         };
         crate::routes::vault_ctx::is_valid_object_name(&self.filter.item)
-            .then(|| format!("{base}/{}", self.filter.item))
+            .then(|| vault_path(&self.vault, &format!("{base}/{}", self.filter.item)))
     }
 
     fn is_no_logging(&self) -> bool {
@@ -192,13 +192,16 @@ impl AuditPage {
     }
 }
 
-/// The chosen vault's ARM ID, from the session or Resource Graph.
+/// The ARM ID of the vault in the address, from the session's copy or
+/// Resource Graph. The session keeps one ID, for the vault last used, so
+/// the copy is only used (or stored) while that is this vault: another tab
+/// may have moved on to a different one.
 async fn vault_id(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
 ) -> Result<Option<String>, AzureError> {
-    if let Some(id) = session.0.selected_vault_id() {
+    if let Some(id) = session.0.vault_id_for(vault) {
         return Ok(Some(id));
     }
     let all = vaults::list_vaults(&state.azure, &session.0, &state.config.management_url).await?;
@@ -207,7 +210,7 @@ async fn vault_id(
         .find(|v| v.name.eq_ignore_ascii_case(vault))
         .map(|v| v.id);
     if let Some(id) = &id {
-        session.0.set_selected_vault_id(id.clone());
+        session.0.set_vault_id_for(vault, id.clone());
     }
     Ok(id)
 }
@@ -300,13 +303,17 @@ fn build_query(vault: &str, f: &AuditFilter) -> Result<AuditQuery, FieldError> {
     })
 }
 
-fn current_vault(session: &CurrentSession, shell: Shell) -> Result<(String, Shell), Halt> {
-    vault_ctx::current_vault(session, shell, Section::Audit)
+fn current_vault(
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+) -> Result<(String, Shell), Halt> {
+    vault_ctx::path_vault(session, shell, Section::Audit, vault)
 }
 
 fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
     AuditPage {
-        csv_url: format!("/audit.csv?{}", filter.query_string()),
+        csv_url: vault_path(vault, &format!("/audit.csv?{}", filter.query_string())),
         shell,
         vault: vault.to_owned(),
         filter: filter.clone(),
@@ -325,9 +332,10 @@ pub(super) async fn page(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(filter): Query<AuditFilter>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let mut page = empty_page(shell, &vault, &filter);
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
@@ -346,7 +354,8 @@ pub(super) async fn page(
         Err(e) => {
             return Err(PageError::new(
                 page.shell,
-                Problem::from_azure(&e, Need::ReadAuditLogs).returning_to("/audit"),
+                Problem::from_azure(&e, Need::ReadAuditLogs)
+                    .returning_to(&vault_path(&vault, "/audit")),
             )
             .into());
         }
@@ -378,9 +387,10 @@ pub(super) async fn csv(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(filter): Query<AuditFilter>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
         Err(e) => {

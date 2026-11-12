@@ -3,7 +3,7 @@
 {% block title %}Certificates in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <h1>Certificates <span class="muted">in {{ vault }}</span></h1>
-<p class="actions"><a class="button" href="/certificates/-/upload">Upload a certificate</a> <a class="button button-secondary" href="/certificates/-/new">Create a certificate</a> <a href="/certificates/-/deleted">Deleted certificates</a></p>
+<p class="actions"><a class="button" href="{{ shell.vault_prefix() }}/certificates/-/upload">Upload a certificate</a> <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/-/new">Create a certificate</a> <a href="{{ shell.vault_prefix() }}/certificates/-/deleted">Deleted certificates</a></p>
 
 {% if total == 0 %}
 <div class="empty-state">
@@ -13,11 +13,11 @@
 {% else %}
 <p class="muted">
   {{ total }} certificate{% if total != 1 %}s{% endif %}.
-  {% if expired > 0 %}<a href="/certificates?show=expired">{{ expired }} expired</a>.{% endif %}
-  {% if within30 > 0 %}<a href="/certificates?show=30">{{ within30 }} expiring within 30 days</a>.{% endif %}
-  {% if within90 > 0 %}<a href="/certificates?show=90">{{ within90 }} more within 90 days</a>.{% endif %}
+  {% if expired > 0 %}<a href="{{ shell.vault_prefix() }}/certificates?show=expired">{{ expired }} expired</a>.{% endif %}
+  {% if within30 > 0 %}<a href="{{ shell.vault_prefix() }}/certificates?show=30">{{ within30 }} expiring within 30 days</a>.{% endif %}
+  {% if within90 > 0 %}<a href="{{ shell.vault_prefix() }}/certificates?show=90">{{ within90 }} more within 90 days</a>.{% endif %}
 </p>
-<form class="filters" method="get" action="/certificates" role="search" data-live-filter="cert-table">
+<form class="filters" method="get" action="{{ shell.vault_prefix() }}/certificates" role="search" data-live-filter="cert-table">
   <div>
     <label for="q">Search by name, tag or thumbprint</label>
     <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
@@ -30,7 +30,7 @@
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>
-    {% if !filter.is_empty() %}<a href="/certificates">Clear</a>{% endif %}
+    {% if !filter.is_empty() %}<a href="{{ shell.vault_prefix() }}/certificates">Clear</a>{% endif %}
   </div>
 </form>
 {% if rows.is_empty() %}
@@ -45,7 +45,7 @@
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
-      <th scope="row"><a class="mono" href="/certificates/{{ row.name }}">{{ row.name }}</a></th>
+      <th scope="row"><a class="mono" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a></th>
       <td>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td class="mono small">{{ ui::or_none(row.thumbprint) }}</td>

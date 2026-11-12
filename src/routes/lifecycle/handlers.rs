@@ -87,8 +87,13 @@ pub(crate) trait Lifecycle: Send + Sync + 'static {
     }
 
     /// The page for a failed purge.
-    fn purge_error(shell: Shell, err: &AzureError, name: &str) -> Halt {
-        azure_problem(shell, err, Self::MANAGE, &Self::KIND.deleted_url(name))
+    fn purge_error(shell: Shell, err: &AzureError, vault: &str, name: &str) -> Halt {
+        azure_problem(
+            shell,
+            err,
+            Self::MANAGE,
+            &Self::KIND.deleted_url(vault, name),
+        )
     }
 }
 
@@ -135,17 +140,18 @@ macro_rules! log_change {
 fn current_vault<L: Lifecycle>(
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
 ) -> Result<(String, Shell), Halt> {
-    vault_ctx::current_vault(session, shell, L::KIND.section())
+    vault_ctx::path_vault(session, shell, L::KIND.section(), vault)
 }
 
 pub(crate) async fn delete_form<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     // Check first, so a missing item gets its own page before the name is
     // asked for, and the warning can give the vault's real retention.
@@ -162,10 +168,10 @@ pub(crate) async fn delete<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(form): Form<ConfirmForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = super::verify(
         &session,
@@ -182,7 +188,7 @@ pub(crate) async fn delete<L: Lifecycle>(
             log_change!(info, L::KIND, session, vault, name, "deleted");
             Ok(super::redirect_with(
                 &state,
-                L::KIND.base(),
+                &L::KIND.list_url(&vault),
                 L::deleted_message(&name, recovery),
             ))
         }
@@ -190,7 +196,7 @@ pub(crate) async fn delete<L: Lifecycle>(
             shell,
             &e,
             L::MANAGE,
-            &L::KIND.item_url(&name),
+            &L::KIND.item_url(&vault, &name),
         )),
     }
 }
@@ -199,16 +205,17 @@ pub(crate) async fn list_deleted<L: DeletedPages>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> PageResult {
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     match L::list_deleted(&state, &session, &vault, now_ts()).await {
         Ok(rows) => Ok(super::deleted_list(shell, vault, L::KIND, rows, query.page)),
         Err(e) => Err(azure_problem(
             shell,
             &e,
             L::MANAGE,
-            &L::KIND.deleted_list_url(),
+            &L::KIND.deleted_list_url(&vault),
         )),
     }
 }
@@ -217,9 +224,9 @@ pub(crate) async fn deleted_detail<L: DeletedPages>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     match L::get_deleted(&state, &session, &vault, &name, now_ts()).await {
         Ok(row) => Ok(super::deleted_detail(&state, shell, vault, L::KIND, &row)),
@@ -227,7 +234,7 @@ pub(crate) async fn deleted_detail<L: DeletedPages>(
             shell,
             &e,
             L::MANAGE,
-            &L::KIND.deleted_list_url(),
+            &L::KIND.deleted_list_url(&vault),
         )),
     }
 }
@@ -236,22 +243,22 @@ pub(crate) async fn recover<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(form): Form<CsrfForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     match L::recover(&state, &session, &vault, &name).await {
         Ok(()) => {
             log_change!(info, L::KIND, session, vault, name, "recovered");
-            Ok(super::recovered(&state, L::KIND, &name))
+            Ok(super::recovered(&state, L::KIND, &vault, &name))
         }
         Err(e) => Err(azure_problem(
             shell,
             &e,
             L::MANAGE,
-            &L::KIND.deleted_url(&name),
+            &L::KIND.deleted_url(&vault, &name),
         )),
     }
 }
@@ -260,10 +267,10 @@ pub(crate) async fn purge_form<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
     let shell = super::purge_allowed(&state, shell, L::KIND)?;
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     Ok(super::confirm_page(
@@ -277,11 +284,11 @@ pub(crate) async fn purge<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(form): Form<ConfirmForm>,
 ) -> PageResult {
     let shell = super::purge_allowed(&state, shell, L::KIND)?;
-    let (vault, shell) = current_vault::<L>(&session, shell)?;
+    let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = super::verify(
         &session,
@@ -297,10 +304,10 @@ pub(crate) async fn purge<L: Lifecycle>(
             log_change!(warn, L::KIND, session, vault, name, "purged");
             Ok(super::redirect_with(
                 &state,
-                &L::KIND.deleted_list_url(),
+                &L::KIND.deleted_list_url(&vault),
                 format!("Permanently deleted {name}."),
             ))
         }
-        Err(e) => Err(L::purge_error(shell, &e, &name)),
+        Err(e) => Err(L::purge_error(shell, &e, &vault, &name)),
     }
 }

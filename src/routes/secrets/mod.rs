@@ -20,7 +20,7 @@ use crate::routes::error::{Halt, Need, PageResult};
 use crate::routes::lifecycle::Kind;
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
-use crate::routes::vault_ctx;
+use crate::routes::vault_ctx::{self, vault_path};
 pub(super) use crate::routes::vault_ctx::{azure_problem, checked_name};
 
 /// One row in the list, ready to show.
@@ -127,13 +127,16 @@ impl SecretFilter {
         }
     }
 
-    fn page_url(&self, page: usize) -> String {
+    fn page_url(&self, vault: &str, page: usize) -> String {
         let enc = crate::auth::return_to::encode;
-        format!(
-            "/secrets?q={}&tag={}&show={}&page={page}",
-            enc(&self.q),
-            enc(&self.tag),
-            enc(&self.show)
+        vault_path(
+            vault,
+            &format!(
+                "/secrets?q={}&tag={}&show={}&page={page}",
+                enc(&self.q),
+                enc(&self.tag),
+                enc(&self.show)
+            ),
         )
     }
 }
@@ -163,8 +166,9 @@ struct ListPage {
 pub(super) fn current_vault(
     session: &CurrentSession,
     shell: Shell,
+    vault: &str,
 ) -> Result<(String, Shell), Halt> {
-    vault_ctx::current_vault(session, shell, Section::Secrets)
+    vault_ctx::path_vault(session, shell, Section::Secrets, vault)
 }
 
 pub(super) fn api<'a>(
@@ -183,12 +187,20 @@ pub(super) async fn list(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Query(filter): Query<SecretFilter>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let items = match api(&state, &session, &vault).list().await {
         Ok(items) => items,
-        Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, "/secrets")),
+        Err(err) => {
+            return Err(azure_problem(
+                shell,
+                &err,
+                Need::ReadSecrets,
+                &vault_path(&vault, "/secrets"),
+            ));
+        }
     };
     let now = now_ts();
     let all: Vec<SecretRow> = items.iter().map(|i| SecretRow::from_item(i, now)).collect();
@@ -198,7 +210,9 @@ pub(super) async fn list(
     let disabled_count = all.iter().filter(|r| !r.enabled).count();
 
     let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
-    let (rows, pager) = paginate(matching, filter.page, "secrets", |p| filter.page_url(p));
+    let (rows, pager) = paginate(matching, filter.page, "secrets", |p| {
+        filter.page_url(&vault, p)
+    });
 
     let show_options = [
         ("", "All secrets"),
@@ -247,18 +261,20 @@ pub(super) async fn detail(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     uri: axum::http::Uri,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let item = match api(&state, &session, &vault).properties(&name).await {
         Ok(item) => item,
         Err(err) => {
-            if let Some(res) = crate::routes::moved::missing_item(Kind::Secret, &name, &err, &uri) {
+            if let Some(res) =
+                crate::routes::moved::missing_item(&vault, Kind::Secret, &name, &err, &uri)
+            {
                 return Ok(res);
             }
-            let path = format!("/secrets/{name}");
+            let path = vault_path(&vault, &format!("/secrets/{name}"));
             return Err(azure_problem(shell, &err, Need::ReadSecrets, &path));
         }
     };

@@ -41,7 +41,7 @@ async fn shows_recent_events_in_plain_words() {
             "Forbidden",
         ),
     ];
-    let (status, html) = w.page("/audit").await;
+    let (status, html) = w.page("/v/kv-test/audit").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Viewed secret value"));
     assert!(html.contains("Rotated key"));
@@ -61,7 +61,7 @@ async fn filters_go_in_as_literals_and_bad_input_is_refused() {
     let w = support::world().await;
     setup(&w);
     let (status, _) = w
-        .page("/audit?range=7d&item=db-password&operation=SecretGet&person=alex%40example.com")
+        .page("/v/kv-test/audit?range=7d&item=db-password&operation=SecretGet&person=alex%40example.com")
         .await;
     assert_eq!(status, StatusCode::OK);
     let q = w
@@ -80,9 +80,9 @@ async fn filters_go_in_as_literals_and_bad_input_is_refused() {
 
     let before = w.arm.state.audit_queries.lock().unwrap().len();
     for bad in [
-        "/audit?item=x%22%20%7C%20union%20*",
-        "/audit?person=a%22%3B%20AzureActivity",
-        "/audit?operation=SecretGet%20%7C%20take%201",
+        "/v/kv-test/audit?item=x%22%20%7C%20union%20*",
+        "/v/kv-test/audit?person=a%22%3B%20AzureActivity",
+        "/v/kv-test/audit?operation=SecretGet%20%7C%20take%201",
     ] {
         let (status, _) = w.page(bad).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
@@ -98,7 +98,7 @@ async fn filters_go_in_as_literals_and_bad_input_is_refused() {
 async fn explains_missing_logging_and_permissions() {
     let w = support::world().await;
     *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/v/kv-test/audit").await;
     assert!(
         html.contains("isn&#39;t sending its audit logs")
             || html.contains("isn't sending its audit logs")
@@ -106,7 +106,7 @@ async fn explains_missing_logging_and_permissions() {
     assert!(html.contains("diagnostic setting"));
 
     *w.arm.state.diagnostics.lock().unwrap() = None;
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/v/kv-test/audit").await;
     assert!(
         html.contains("can&#39;t see where this vault sends its logs")
             || html.contains("can't see where this vault sends its logs")
@@ -114,7 +114,7 @@ async fn explains_missing_logging_and_permissions() {
 
     *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(false));
     *w.arm.state.audit_forbidden.lock().unwrap() = true;
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/v/kv-test/audit").await;
     assert!(html.contains("Log Analytics Reader role"));
 }
 
@@ -123,7 +123,7 @@ async fn uses_azure_diagnostics_table_when_not_dedicated() {
     let w = support::world().await;
     setup(&w);
     *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(false));
-    w.page("/audit").await;
+    w.page("/v/kv-test/audit").await;
     let q = w.arm.state.audit_queries.lock().unwrap()[0].clone();
     assert!(q.contains("AzureDiagnostics") && q.contains("Category == 'AuditEvent'"));
 }
@@ -149,9 +149,11 @@ async fn item_history_and_csv_match() {
             "OK",
         ),
     ];
-    let (_, detail) = w.page("/secrets/db-password").await;
-    assert!(detail.contains("href=\"/audit?item=db-password&amp;range=30d&amp;from=secret\""));
-    let (_, html) = w.page("/audit?item=db-password&range=30d").await;
+    let (_, detail) = w.page("/v/kv-test/secrets/db-password").await;
+    assert!(
+        detail.contains("href=\"/v/kv-test/audit?item=db-password&amp;range=30d&amp;from=secret\"")
+    );
+    let (_, html) = w.page("/v/kv-test/audit?item=db-password&range=30d").await;
     assert!(html.contains("Who used <span class=\"mono\">db-password</span>"));
     let q = w
         .arm
@@ -164,7 +166,9 @@ async fn item_history_and_csv_match() {
         .clone();
     assert!(q.contains("let itemName = \"db-password\";"));
 
-    let res = w.get("/audit.csv?item=db-password&range=30d").await;
+    let res = w
+        .get("/v/kv-test/audit.csv?item=db-password&range=30d")
+        .await;
     assert_eq!(res.status(), StatusCode::OK);
     assert!(
         res.headers()
@@ -206,10 +210,12 @@ async fn item_history_links_back_to_the_item() {
     let w = support::world().await;
     setup(&w);
     let (_, html) = w
-        .page("/audit?item=db-password&range=30d&from=secret")
+        .page("/v/kv-test/audit?item=db-password&range=30d&from=secret")
         .await;
-    assert!(html.contains("href=\"/secrets/db-password\">Back to db-password</a>"));
-    let (_, html) = w.page("/audit?item=db-password&range=30d&from=bogus").await;
+    assert!(html.contains("href=\"/v/kv-test/secrets/db-password\">Back to db-password</a>"));
+    let (_, html) = w
+        .page("/v/kv-test/audit?item=db-password&range=30d&from=bogus")
+        .await;
     assert!(!html.contains("Back to db-password"));
 }
 
@@ -238,14 +244,14 @@ async fn workspaces_that_cannot_be_read_are_reported() {
     )];
     // One of two workspaces refuses: the other's events still show, with a notice.
     *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs-b".into(), 403)];
-    let (status, html) = w.page("/audit").await;
+    let (status, html) = w.page("/v/kv-test/audit").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Viewed secret value"));
     assert!(
         html.contains("1 of 2 Log Analytics workspaces this vault logs to couldn&#39;t be read"),
         "{html}"
     );
-    let csv = body_text(w.get("/audit.csv").await).await;
+    let csv = body_text(w.get("/v/kv-test/audit.csv").await).await;
     let lines: Vec<_> = csv.lines().collect();
     assert_eq!(lines.len(), 3, "{csv}");
     assert!(
@@ -256,7 +262,7 @@ async fn workspaces_that_cannot_be_read_are_reported() {
 
     // A server error on one no longer fails the page.
     *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs-b".into(), 503)];
-    let (status, html) = w.page("/audit").await;
+    let (status, html) = w.page("/v/kv-test/audit").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Viewed secret value"));
     assert!(html.contains("returned an error"));
@@ -266,7 +272,7 @@ async fn workspaces_that_cannot_be_read_are_reported() {
         ("/workspaces/logs-a".into(), 503),
         ("/workspaces/logs-b".into(), 503),
     ];
-    let (status, _) = w.page("/audit").await;
+    let (status, _) = w.page("/v/kv-test/audit").await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
@@ -275,14 +281,14 @@ async fn csv_without_logs_is_not_an_empty_success() {
     let w = support::world().await;
     setup(&w);
     *w.arm.state.diagnostics.lock().unwrap() = Some(serde_json::json!({"value": []}));
-    let res = w.get("/audit.csv").await;
+    let res = w.get("/v/kv-test/audit.csv").await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
     let html = body_text(res).await;
     assert!(html.contains("sending its audit logs"));
 
     *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
     *w.arm.state.audit_forbidden.lock().unwrap() = true;
-    let res = w.get("/audit.csv").await;
+    let res = w.get("/v/kv-test/audit.csv").await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     assert!(body_text(res).await.contains("Log Analytics Reader role"));
 }
@@ -298,7 +304,7 @@ async fn empty_result_reads_unknown_not_refused() {
         "db-password",
         "",
     )];
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/v/kv-test/audit").await;
     assert!(!html.contains("Refused ()"));
     assert!(html.contains("<span class=\"muted\">Unknown</span>"));
 }
@@ -308,10 +314,10 @@ async fn filter_form_keeps_the_way_back() {
     let w = support::world().await;
     setup(&w);
     let (_, html) = w
-        .page("/audit?item=db-password&range=30d&from=secret")
+        .page("/v/kv-test/audit?item=db-password&range=30d&from=secret")
         .await;
     assert!(html.contains("<input type=\"hidden\" name=\"from\" value=\"secret\">"));
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/v/kv-test/audit").await;
     assert!(!html.contains("name=\"from\""));
 }
 
@@ -326,4 +332,38 @@ async fn no_vault_page_has_its_own_words_for_audit() {
     let (_, html) = w.page("/audit").await;
     assert!(!html.contains("Secrets live in a vault"));
     assert!(html.contains("The audit view shows who used one vault"));
+}
+
+/// The session keeps one vault's ARM ID. Opening another vault's audit page
+/// must look up that vault, not reuse the first one's.
+#[tokio::test]
+async fn each_vaults_audit_page_reads_its_own_settings() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![
+        support::vault_row("kv-a", "sub-a", true),
+        support::vault_row("kv-b", "sub-a", true),
+    ];
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
+    let (status, _) = w.page("/v/kv-a/audit").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = w.page("/v/kv-b/audit").await;
+    assert_eq!(status, StatusCode::OK);
+    let paths = w.arm.state.diagnostics_paths.lock().unwrap().clone();
+    assert_eq!(paths.len(), 2, "{paths:?}");
+    assert!(paths[0].contains("/vaults/kv-a/"), "{paths:?}");
+    assert!(paths[1].contains("/vaults/kv-b/"), "{paths:?}");
+    let queries = w.arm.state.audit_queries.lock().unwrap().clone();
+    assert!(
+        queries[0].contains("let vaultName = \"kv-a\";"),
+        "{queries:?}"
+    );
+    assert!(
+        queries[1].contains("let vaultName = \"kv-b\";"),
+        "{queries:?}"
+    );
+    // Going back to the first reads its settings again, not the second's.
+    let (status, _) = w.page("/v/kv-a/audit").await;
+    assert_eq!(status, StatusCode::OK);
+    let paths = w.arm.state.diagnostics_paths.lock().unwrap().clone();
+    assert!(paths[2].contains("/vaults/kv-a/"), "{paths:?}");
 }

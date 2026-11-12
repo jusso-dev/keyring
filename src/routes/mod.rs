@@ -27,7 +27,7 @@ mod vaults;
 use axum::Router;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 
 use crate::AppState;
 use crate::routes::error::{PageError, Problem};
@@ -44,12 +44,11 @@ pub const MAX_FORM_BYTES: usize = 64 * 1024;
 /// value always gets the form's own message, not a 413.
 pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 
-pub fn router(state: AppState) -> Router<AppState> {
-    // Everything here needs a signed-in session. New pages go in this list.
-    let protected = Router::new()
-        .route("/", get(home::index))
-        .route("/vaults", get(vaults::list))
-        .route("/vaults/select", post(vaults::select))
+/// Every page that works on one vault. Nested under `/v/{vault}`, so the
+/// vault in the address is the one the request acts on. New vault pages go
+/// here and start with `vault_ctx::path_vault`.
+fn vault_routes() -> Router<AppState> {
+    Router::new()
         .route("/secrets", get(secrets::list))
         .route(
             "/secrets/-/new",
@@ -192,11 +191,29 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(lifecycle::handlers::delete_form::<keys::delete::Keys>)
                 .post(lifecycle::handlers::delete::<keys::delete::Keys>),
         )
+        .route("/audit", get(audit::page))
+        .route("/audit.csv", get(audit::csv))
+}
+
+pub fn router(state: AppState) -> Router<AppState> {
+    // Everything here needs a signed-in session. New pages go in this list.
+    let protected = Router::new()
+        .route("/", get(home::index))
+        .route("/vaults", get(vaults::list))
+        .route("/vaults/select", post(vaults::select))
+        .nest("/v/{vault}", vault_routes())
+        // The old addresses, before the vault was in the path.
+        .route("/secrets", any(moved::legacy))
+        .route("/secrets/{*rest}", any(moved::legacy))
+        .route("/certificates", any(moved::legacy))
+        .route("/certificates/{*rest}", any(moved::legacy))
+        .route("/keys", any(moved::legacy))
+        .route("/keys/{*rest}", any(moved::legacy))
+        .route("/audit", any(moved::legacy))
+        .route("/audit.csv", any(moved::legacy))
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
         .route("/generator", get(generator::page).post(generator::generate))
-        .route("/audit", get(audit::page))
-        .route("/audit.csv", get(audit::csv))
         .route("/auth/keepalive", get(auth::keepalive))
         // Inside the session check, so the error page has the signed-in shell.
         .route_layer(middleware::from_fn(rejection::layer))
@@ -251,7 +268,8 @@ fn panicked(_: Box<dyn std::any::Any + Send + 'static>) -> Response {
 }
 
 async fn not_found(shell: Shell, req: axum::extract::Request) -> Response {
-    if let Some(res) = moved::from_fallback(&req) {
+    // An old fixed-page address under a vault, such as `/v/kv/secrets/new/x`.
+    if let Some(res) = moved::from_vault_fallback(req.uri()) {
         return res;
     }
     PageError::new(shell, Problem::not_found()).into_response()

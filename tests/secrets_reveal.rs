@@ -10,9 +10,9 @@ const VALUE: &str = "Sup3r-S3cret-Value-<&>\"'";
 async fn detail_does_not_fetch_value_until_asked() {
     let w = support::world().await;
     w.kv.state.put("db-password", VALUE);
-    let (_, html) = w.page("/secrets/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("Show value"));
-    assert!(html.contains("action=\"/secrets/db-password/reveal\""));
+    assert!(html.contains("action=\"/v/kv-test/secrets/db-password/reveal\""));
     assert!(w.kv.state.value_reads().is_empty());
 }
 
@@ -20,7 +20,7 @@ async fn detail_does_not_fetch_value_until_asked() {
 async fn reveal_is_a_post_that_works_without_js_and_is_not_cached() {
     let w = support::world().await;
     w.kv.state.put("db-password", VALUE);
-    let res = w.post("/secrets/db-password/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::OK);
     let cc = res
         .headers()
@@ -42,7 +42,7 @@ async fn reveal_is_a_post_that_works_without_js_and_is_not_cached() {
     assert!(html.contains("data-clear-after=\"30\""));
     assert_eq!(w.kv.state.value_reads().len(), 1);
     // GET on the reveal URL doesn't reveal anything.
-    let (status, _) = w.page("/secrets/db-password/reveal").await;
+    let (status, _) = w.page("/v/kv-test/secrets/db-password/reveal").await;
     assert_ne!(status, StatusCode::OK);
     assert_eq!(w.kv.state.value_reads().len(), 1);
 }
@@ -53,7 +53,7 @@ async fn reveal_needs_the_form_token() {
     w.kv.state.put("db-password", VALUE);
     let mut w = w;
     let real = std::mem::replace(&mut w.csrf, "forged".into());
-    let res = w.post("/secrets/db-password/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     assert!(w.kv.state.value_reads().is_empty());
     w.csrf = real;
@@ -65,13 +65,16 @@ async fn reveal_a_specific_version() {
     let v1 = w.kv.state.put("db-password", "old-value");
     w.kv.state.put("db-password", "new-value");
     let res = w
-        .post("/secrets/db-password/reveal", &[("version", &v1)])
+        .post("/v/kv-test/secrets/db-password/reveal", &[("version", &v1)])
         .await;
     let html = support::body_text(res).await;
     assert!(html.contains("old-value") && !html.contains("new-value"));
     assert!(html.contains(&format!("of version {v1}")));
     let res = w
-        .post("/secrets/db-password/reveal", &[("version", "../../keys")])
+        .post(
+            "/v/kv-test/secrets/db-password/reveal",
+            &[("version", "../../keys")],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
@@ -81,7 +84,7 @@ async fn reveal_errors_are_explained() {
     let w = support::world().await;
     w.kv.state.put("db-password", VALUE);
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let res = w.post("/secrets/db-password/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     let html = support::body_text(res).await;
     assert!(html.contains("Key Vault Secrets User"));

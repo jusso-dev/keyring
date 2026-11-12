@@ -24,7 +24,7 @@ use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 use crate::x509;
 
 use super::{api, current_vault};
@@ -64,10 +64,10 @@ pub(crate) async fn cer(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Query(q): Query<CerQuery>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (version, shell) = checked_version(&q.version, shell)?;
     let bundle = match api(&state, &session, &vault)
@@ -80,7 +80,7 @@ pub(crate) async fn cer(
                 shell,
                 &err,
                 Need::ReadCertificates,
-                &format!("/certificates/{name}"),
+                &vault_path(&vault, &format!("/certificates/{name}")),
             ));
         }
     };
@@ -121,9 +121,9 @@ fn pfx_view(vault: &str, name: &str, pem: bool) -> ConfirmView {
             "You'll get {what} holding the private key from {vault}. Anyone with the file can pretend to be this certificate's owner. Keep it somewhere safe and delete it when you're done."
         ),
         expected: name.to_owned(),
-        action: format!("/certificates/{name}/download-key"),
+        action: vault_path(vault, &format!("/certificates/{name}/download-key")),
         button: "Download with private key".into(),
-        cancel_url: format!("/certificates/{name}"),
+        cancel_url: vault_path(vault, &format!("/certificates/{name}")),
         second_warning: Some(
             "Only use this if you need the key outside Key Vault. Apps on Azure can usually read the certificate straight from the vault instead.".into(),
         ),
@@ -145,7 +145,7 @@ async fn require_exportable(
                 shell,
                 &err,
                 Need::ReadCertificates,
-                &format!("/certificates/{name}"),
+                &vault_path(vault, &format!("/certificates/{name}")),
             ));
         }
     };
@@ -168,9 +168,9 @@ pub(crate) async fn pfx_form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
@@ -224,10 +224,10 @@ pub(crate) async fn pfx(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(form): Form<ConfirmForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     // The form token first, so a forged post reaches nothing in Key Vault.
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
@@ -274,7 +274,7 @@ pub(crate) async fn pfx(
                 shell,
                 &err,
                 Need::ExportCertificate,
-                &format!("/certificates/{name}"),
+                &vault_path(&vault, &format!("/certificates/{name}")),
             ));
         }
     };

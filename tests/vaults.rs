@@ -163,8 +163,10 @@ async fn picking_a_vault_is_remembered_in_the_session() {
         .post("/vaults/select", &format!("csrf={}&name=kv-prod", h.csrf))
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    let html = text(h.get("/secrets").await).await;
+    // The side nav and the header follow the vault last chosen.
+    let html = text(h.get("/vaults").await).await;
     assert!(html.contains("<strong>kv-prod</strong>"));
+    assert!(html.contains("href=\"/v/kv-prod/secrets\""));
 }
 
 #[tokio::test]

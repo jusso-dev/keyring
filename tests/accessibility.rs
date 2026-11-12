@@ -205,36 +205,36 @@ async fn pages_have_labels_headings_and_landmarks() {
     let pages = [
         "/".to_owned(),
         "/vaults".into(),
-        "/secrets".into(),
-        "/secrets/-/new".into(),
-        "/secrets/db-password".into(),
-        "/secrets/db-password/value".into(),
-        "/secrets/db-password/edit".into(),
-        "/secrets/db-password/versions".into(),
-        format!("/secrets/db-password/rollback?version={v1}"),
-        "/secrets/db-password/delete".into(),
-        "/secrets/db-password/disable".into(),
-        "/secrets/-/deleted".into(),
-        "/secrets/-/deleted/old-one".into(),
-        "/certificates".into(),
-        "/certificates/-/new".into(),
-        "/certificates/-/upload".into(),
-        "/certificates/web-tls".into(),
-        "/certificates/web-tls/download-key".into(),
-        "/certificates/web-tls/delete".into(),
-        "/certificates/web-tls/disable".into(),
-        "/certificates/-/deleted".into(),
-        "/keys".into(),
-        "/keys/-/new".into(),
-        "/keys/app-key".into(),
-        "/keys/app-key/rotate".into(),
-        "/keys/app-key/rotation".into(),
-        "/keys/app-key/delete".into(),
-        "/keys/app-key/disable".into(),
-        "/keys/-/deleted".into(),
+        "/v/kv-test/secrets".into(),
+        "/v/kv-test/secrets/-/new".into(),
+        "/v/kv-test/secrets/db-password".into(),
+        "/v/kv-test/secrets/db-password/value".into(),
+        "/v/kv-test/secrets/db-password/edit".into(),
+        "/v/kv-test/secrets/db-password/versions".into(),
+        format!("/v/kv-test/secrets/db-password/rollback?version={v1}"),
+        "/v/kv-test/secrets/db-password/delete".into(),
+        "/v/kv-test/secrets/db-password/disable".into(),
+        "/v/kv-test/secrets/-/deleted".into(),
+        "/v/kv-test/secrets/-/deleted/old-one".into(),
+        "/v/kv-test/certificates".into(),
+        "/v/kv-test/certificates/-/new".into(),
+        "/v/kv-test/certificates/-/upload".into(),
+        "/v/kv-test/certificates/web-tls".into(),
+        "/v/kv-test/certificates/web-tls/download-key".into(),
+        "/v/kv-test/certificates/web-tls/delete".into(),
+        "/v/kv-test/certificates/web-tls/disable".into(),
+        "/v/kv-test/certificates/-/deleted".into(),
+        "/v/kv-test/keys".into(),
+        "/v/kv-test/keys/-/new".into(),
+        "/v/kv-test/keys/app-key".into(),
+        "/v/kv-test/keys/app-key/rotate".into(),
+        "/v/kv-test/keys/app-key/rotation".into(),
+        "/v/kv-test/keys/app-key/delete".into(),
+        "/v/kv-test/keys/app-key/disable".into(),
+        "/v/kv-test/keys/-/deleted".into(),
         "/expiry".into(),
         "/generator".into(),
-        "/audit".into(),
+        "/v/kv-test/audit".into(),
         "/auth/sign-in".into(),
         "/no-such-page".into(),
     ];
@@ -243,7 +243,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         page_basics(&html, p);
     }
     // A revealed value page too.
-    let html = support::body_text(w.post("/secrets/db-password/reveal", &[]).await).await;
+    let html = support::body_text(w.post("/v/kv-test/secrets/db-password/reveal", &[]).await).await;
     page_basics(&html, "reveal");
     assert!(
         html.contains("data-countdown-announce"),
@@ -256,7 +256,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
     let w = support::world().await;
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
         (
-            "/secrets/-/new",
+            "/v/kv-test/secrets/-/new",
             vec![
                 ("name", "bad name"),
                 ("value", ""),
@@ -264,13 +264,16 @@ async fn error_summaries_take_focus_and_link_to_fields() {
                 ("expires", "2020-01-01"),
             ],
         ),
-        ("/keys/-/new", vec![("name", "k"), ("expires", "nope")]),
         (
-            "/certificates/-/new",
+            "/v/kv-test/keys/-/new",
+            vec![("name", "k"), ("expires", "nope")],
+        ),
+        (
+            "/v/kv-test/certificates/-/new",
             vec![("name", "bad name"), ("validity_months", "0")],
         ),
         (
-            "/keys/-/new",
+            "/v/kv-test/keys/-/new",
             vec![
                 ("name", "bad name"),
                 ("key_type", "EC-P-256"),
@@ -278,7 +281,7 @@ async fn error_summaries_take_focus_and_link_to_fields() {
             ],
         ),
         (
-            "/certificates/-/new",
+            "/v/kv-test/certificates/-/new",
             vec![
                 ("name", "c"),
                 ("common_name", "a.example.com"),
@@ -313,8 +316,11 @@ async fn confirm_mismatch_is_an_error_with_focus() {
     let w = support::world().await;
     w.kv.state.put("db-password", "x");
     let html = support::body_text(
-        w.post("/secrets/db-password/delete", &[("confirm_name", "nope")])
-            .await,
+        w.post(
+            "/v/kv-test/secrets/db-password/delete",
+            &[("confirm_name", "nope")],
+        )
+        .await,
     )
     .await;
     assert!(html.contains("tabindex=\"-1\" data-error-summary id=\"confirm_name-error\""));
@@ -366,7 +372,7 @@ fn stylesheet_hides_revealed_values_in_print() {
 async fn reveal_pages_say_what_really_happens() {
     let w = support::world().await;
     w.kv.state.put("db-password", "x");
-    let html = support::body_text(w.post("/secrets/db-password/reveal", &[]).await).await;
+    let html = support::body_text(w.post("/v/kv-test/secrets/db-password/reveal", &[]).await).await;
     assert!(html.contains("Reloading asks Key Vault for it again."));
     assert!(html.contains("Keyring will try to clear the clipboard"));
     assert!(!html.contains("Shown once"), "reloading does show it again");
@@ -391,15 +397,16 @@ async fn titles_name_the_type_and_vault() {
     w.kv.state.add_cert("web-tls", true, "UEZY");
     w.kv.state.add_key_with("web-tls", "RSA", |_| {});
     w.kv.state.put("db-password", "x");
-    let (_, s) = w.page("/secrets/web-tls").await;
-    let (_, c) = w.page("/certificates/web-tls").await;
-    let (_, k) = w.page("/keys/web-tls").await;
+    let (_, s) = w.page("/v/kv-test/secrets/web-tls").await;
+    let (_, c) = w.page("/v/kv-test/certificates/web-tls").await;
+    let (_, k) = w.page("/v/kv-test/keys/web-tls").await;
     assert_eq!(title(&s), "Secret web-tls in kv-test - Keyring");
     assert_eq!(title(&c), "Certificate web-tls in kv-test - Keyring");
     assert_eq!(title(&k), "Key web-tls in kv-test - Keyring");
-    let shown = support::body_text(w.post("/secrets/db-password/reveal", &[]).await).await;
+    let shown =
+        support::body_text(w.post("/v/kv-test/secrets/db-password/reveal", &[]).await).await;
     assert_eq!(title(&shown), "Value of db-password - Keyring");
-    let (_, versions) = w.page("/secrets/db-password/versions").await;
+    let (_, versions) = w.page("/v/kv-test/secrets/db-password/versions").await;
     assert_eq!(
         title(&versions),
         "Versions of secret db-password in kv-test - Keyring"
@@ -416,14 +423,14 @@ async fn disable_asks_first_and_says_what_breaks() {
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     for (detail, words) in [
         (
-            "/secrets/db-password",
+            "/v/kv-test/secrets/db-password",
             "Apps that read this secret will start failing",
         ),
         (
-            "/certificates/web-tls",
+            "/v/kv-test/certificates/web-tls",
             "can start failing on their next read",
         ),
-        ("/keys/app-key", "will start failing"),
+        ("/v/kv-test/keys/app-key", "will start failing"),
     ] {
         let (_, html) = w.page(detail).await;
         assert!(
@@ -438,12 +445,15 @@ async fn disable_asks_first_and_says_what_breaks() {
         assert!(!html.contains("confirm_name"), "no typed name");
         page_basics(&html, detail);
     }
-    let (status, _) = w.page("/secrets/no-such-thing/disable").await;
+    let (status, _) = w.page("/v/kv-test/secrets/no-such-thing/disable").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // A disabled item is enabled again in one click, from its page.
-    w.post("/secrets/db-password/enabled", &[("state", "off")])
-        .await;
-    let (_, html) = w.page("/secrets/db-password").await;
+    w.post(
+        "/v/kv-test/secrets/db-password/enabled",
+        &[("state", "off")],
+    )
+    .await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("name=\"state\" value=\"on\"") && html.contains(">Enable<"));
 }
 
@@ -452,7 +462,7 @@ async fn disable_asks_first_and_says_what_breaks() {
 #[tokio::test]
 async fn pfx_password_isnt_filled_from_the_sign_in() {
     let w = support::world().await;
-    let (_, html) = w.page("/certificates/-/upload").await;
+    let (_, html) = w.page("/v/kv-test/certificates/-/upload").await;
     let tag = tags(&html, "<input id=\"password\"")[0];
     assert!(tag.contains("type=\"password\""));
     assert!(tag.contains("autocomplete=\"new-password\""), "{tag}");
@@ -478,7 +488,7 @@ async fn status_and_tags_look_the_same_everywhere() {
         k.tags.insert("env".into(), String::new());
     });
     s.add_key_with("plain-key", "RSA", |_| {});
-    for list in ["/secrets", "/keys"] {
+    for list in ["/v/kv-test/secrets", "/v/kv-test/keys"] {
         let (_, html) = w.page(list).await;
         assert!(
             html.contains("badge-error\">Expires within 30 days"),
@@ -505,10 +515,10 @@ async fn version_ids_are_shown_in_full() {
     w.kv.state.put("db-password", "x");
     let v2 = w.kv.state.put("db-password", "y");
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
-    let (_, html) = w.page("/secrets/db-password/versions").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/versions").await;
     assert!(html.contains(&format!("<span class=\"mono version-id\">{v2}</span>")));
     assert!(html.contains("<td>\n        <div class=\"row-actions\">"));
-    let (_, html) = w.page("/keys/app-key").await;
+    let (_, html) = w.page("/v/kv-test/keys/app-key").await;
     assert!(html.contains("<span class=\"mono version-id\">"));
 }
 
@@ -539,7 +549,7 @@ async fn generator_and_audit_errors_point_at_the_field() {
 
     *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
     *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
-    let (status, html) = w.page("/audit?person=a%22b").await;
+    let (status, html) = w.page("/v/kv-test/audit?person=a%22b").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(html.contains("<a href=\"#person\">"));
     assert!(html.contains("aria-describedby=\"person-help person-error\" aria-invalid=\"true\""));
