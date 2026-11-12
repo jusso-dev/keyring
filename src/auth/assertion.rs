@@ -7,13 +7,13 @@
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use openidconnect::url::{Host, Url};
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-use crate::azure::token::{EXPIRY_SKEW, MAX_LIFETIME, TokenError};
+use crate::azure::token::{EXPIRY_SKEW, FAILURE_MEMORY, MAX_LIFETIME, TokenError};
 use crate::config::{ClientCredential, Config};
 use crate::http::{HttpError, local_client};
 use crate::secret::Secret;
@@ -84,7 +84,15 @@ pub struct AssertionSource {
     identity_client_id: String,
     http: reqwest::Client,
     /// Held while fetching, so concurrent callers make one request.
-    cached: Mutex<Option<(Secret, SystemTime)>>,
+    cached: Mutex<Cached>,
+}
+
+/// The last token, and the last failure so callers queued behind a failed
+/// fetch get its answer instead of each waiting out their own timeout.
+#[derive(Default)]
+struct Cached {
+    token: Option<(Secret, SystemTime)>,
+    failed: Option<(Instant, TokenError)>,
 }
 
 impl AssertionSource {
@@ -99,24 +107,42 @@ impl AssertionSource {
             header,
             identity_client_id,
             http,
-            cached: Mutex::new(None),
+            cached: Mutex::new(Cached::default()),
         }
     }
 
     /// A token for `api://AzureADTokenExchange` from the managed identity.
-    /// Cached until 5 minutes before it expires. One fetch at a time.
+    /// Cached until 5 minutes before it expires. One fetch at a time. A
+    /// caller that was waiting while a fetch failed gets that failure, the
+    /// same way [`crate::azure::TokenBroker`] shares a failed exchange, so an
+    /// outage costs one timeout and not one per queued request.
     pub async fn assertion(&self) -> Result<Secret, TokenError> {
+        let started = Instant::now();
         let mut cached = self.cached.lock().await;
-        if let Some((token, expires_at)) = cached.as_ref()
+        if let Some((token, expires_at)) = cached.token.as_ref()
             && expires_at
                 .duration_since(SystemTime::now())
                 .is_ok_and(|left| left > EXPIRY_SKEW)
         {
             return Ok(token.clone());
         }
-        let (token, expires_at) = self.fetch().await?;
-        *cached = Some((token.clone(), expires_at));
-        Ok(token)
+        if let Some((at, err)) = cached.failed.as_ref()
+            && *at >= started
+            && at.elapsed() < FAILURE_MEMORY
+        {
+            return Err(err.clone());
+        }
+        match self.fetch().await {
+            Ok((token, expires_at)) => {
+                cached.token = Some((token.clone(), expires_at));
+                cached.failed = None;
+                Ok(token)
+            }
+            Err(e) => {
+                cached.failed = Some((Instant::now(), e.clone()));
+                Err(e)
+            }
+        }
     }
 
     async fn fetch(&self) -> Result<(Secret, SystemTime), TokenError> {

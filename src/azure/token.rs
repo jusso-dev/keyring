@@ -114,7 +114,7 @@ impl fmt::Display for AccessToken {
 
 /// Upper bound on how long a failed exchange is shared with callers that
 /// were queued behind it.
-const FAILURE_MEMORY: Duration = Duration::from_secs(5);
+pub(crate) const FAILURE_MEMORY: Duration = Duration::from_secs(5);
 
 /// Per-session cache of exchanged tokens. Memory only.
 ///

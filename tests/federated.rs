@@ -167,10 +167,18 @@ async fn refresh_sends_the_assertion_and_no_secret() {
     let refreshes = h.idp.state.requests_of("refresh_token");
     assert_eq!(refreshes.len(), 1);
     assert_asserts(&refreshes[0]);
-    // The exchange that followed carried it too.
+    // The user's own refresh token went with it.
+    assert_eq!(field(&refreshes[0], "refresh_token"), Some("user-refresh"));
+    // The exchange that followed carried the assertion too, and swapped the
+    // newly refreshed user token, not the old one.
     let exchanges = h.idp.state.requests_of(OBO_GRANT);
     assert_eq!(exchanges.len(), 1);
     assert_asserts(&exchanges[0]);
+    let user_token = field(&exchanges[0], "assertion").unwrap_or_default();
+    assert!(
+        user_token.starts_with("refreshed-user-token-"),
+        "OBO swapped {user_token:?}, not the refreshed token"
+    );
 }
 
 #[tokio::test]
@@ -274,6 +282,51 @@ async fn identity_endpoint_down_is_reported_as_unreachable() {
         "{html}"
     );
     assert!(!html.contains(MI_ASSERTION));
+}
+
+#[tokio::test]
+async fn callers_queued_behind_a_failed_fetch_share_its_failure() {
+    // A token service that takes 300 ms and then fails. Queued callers must
+    // get the first failure, not each wait their turn.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = silent.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            if let Ok((sock, _)) = silent.accept().await {
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    drop(sock);
+                });
+            }
+        }
+    });
+    // Builds the crypto provider and proxy settings as Keyring does. Its
+    // 30 second timeout is too long for a test, so the service closes the
+    // connection after 300 ms instead (below).
+    let http = keyring::http::local_client().unwrap();
+    let source = Arc::new(keyring::auth::assertion::AssertionSource::new(
+        format!("http://{addr}/msi/token"),
+        Secret::new("header"),
+        support::IDENTITY_CLIENT_ID.into(),
+        http,
+    ));
+    let started = std::time::Instant::now();
+    // Start all five before awaiting any, so they really queue.
+    let calls: Vec<_> = (0..5)
+        .map(|_| {
+            let s = source.clone();
+            tokio::spawn(async move { s.assertion().await })
+        })
+        .collect();
+    for c in calls {
+        assert!(c.await.unwrap().is_err());
+    }
+    // One 300 ms failure for all five, not five in a row (1.5 s).
+    assert!(
+        started.elapsed() < Duration::from_millis(1000),
+        "queued callers each waited out a timeout: {:?}",
+        started.elapsed()
+    );
 }
 
 #[tokio::test]

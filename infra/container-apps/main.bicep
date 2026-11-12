@@ -91,6 +91,9 @@ param replicas int = 1
 @description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
 param useFederatedCredential bool = false
 
+@description('Only when moving an existing app to useFederatedCredential: keep the entra-client-secret entry defined (the container no longer reads it), because Container Apps refuses to remove a secret an active revision still uses. Deploy once with this true, then again with it false once the old revision is inactive. See docs/deploy.md.')
+param keepClientSecretEntry bool = false
+
 param tags object = {}
 
 var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infrastructureSubnetId) && !empty(vaultPrivateDnsZoneId))
@@ -201,7 +204,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
       }
       // Key Vault references, resolved with the identity.
       secrets: concat(
-        useFederatedCredential
+        useFederatedCredential && !keepClientSecretEntry
           ? []
           : [
               {
