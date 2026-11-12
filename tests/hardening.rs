@@ -9,32 +9,32 @@ use tower::ServiceExt;
 /// Every POST route, with a name that exists in the seeded mock.
 const MUTATING: &[&str] = &[
     "/vaults/select",
-    "/secrets/-/new",
-    "/secrets/db-password/value",
-    "/secrets/db-password/edit",
-    "/secrets/db-password/enabled",
-    "/secrets/db-password/rollback",
-    "/secrets/db-password/reveal",
-    "/secrets/db-password/delete",
-    "/secrets/-/deleted/old-secret/recover",
-    "/secrets/-/deleted/old-secret/purge",
-    "/certificates/-/upload",
-    "/certificates/-/upload/confirm",
-    "/certificates/-/upload/cancel",
-    "/certificates/-/new",
-    "/certificates/web-tls/enabled",
-    "/certificates/web-tls/pending/cancel",
-    "/certificates/web-tls/delete",
-    "/certificates/web-tls/download-key",
-    "/certificates/-/deleted/old-cert/recover",
-    "/certificates/-/deleted/old-cert/purge",
-    "/keys/-/new",
-    "/keys/app-key/rotate",
-    "/keys/app-key/rotation",
-    "/keys/app-key/enabled",
-    "/keys/app-key/delete",
-    "/keys/-/deleted/old-key/recover",
-    "/keys/-/deleted/old-key/purge",
+    "/v/kv-test/secrets/-/new",
+    "/v/kv-test/secrets/db-password/value",
+    "/v/kv-test/secrets/db-password/edit",
+    "/v/kv-test/secrets/db-password/enabled",
+    "/v/kv-test/secrets/db-password/rollback",
+    "/v/kv-test/secrets/db-password/reveal",
+    "/v/kv-test/secrets/db-password/delete",
+    "/v/kv-test/secrets/-/deleted/old-secret/recover",
+    "/v/kv-test/secrets/-/deleted/old-secret/purge",
+    "/v/kv-test/certificates/-/upload",
+    "/v/kv-test/certificates/-/upload/confirm",
+    "/v/kv-test/certificates/-/upload/cancel",
+    "/v/kv-test/certificates/-/new",
+    "/v/kv-test/certificates/web-tls/enabled",
+    "/v/kv-test/certificates/web-tls/pending/cancel",
+    "/v/kv-test/certificates/web-tls/delete",
+    "/v/kv-test/certificates/web-tls/download-key",
+    "/v/kv-test/certificates/-/deleted/old-cert/recover",
+    "/v/kv-test/certificates/-/deleted/old-cert/purge",
+    "/v/kv-test/keys/-/new",
+    "/v/kv-test/keys/app-key/rotate",
+    "/v/kv-test/keys/app-key/rotation",
+    "/v/kv-test/keys/app-key/enabled",
+    "/v/kv-test/keys/app-key/delete",
+    "/v/kv-test/keys/-/deleted/old-key/recover",
+    "/v/kv-test/keys/-/deleted/old-key/purge",
     "/generator",
     "/auth/sign-out",
 ];
@@ -49,14 +49,17 @@ async fn seeded() -> support::World {
     s.add_cert("web-tls", true, "UEZY");
     s.add_cert("old-cert", false, "x");
     w.post(
-        "/certificates/old-cert/delete",
+        "/v/kv-test/certificates/old-cert/delete",
         &[("confirm_name", "old-cert")],
     )
     .await;
     s.add_key_with("app-key", "RSA", |_| {});
     s.add_key_with("old-key", "RSA", |_| {});
-    w.post("/keys/old-key/delete", &[("confirm_name", "old-key")])
-        .await;
+    w.post(
+        "/v/kv-test/keys/old-key/delete",
+        &[("confirm_name", "old-key")],
+    )
+    .await;
     let _ = v1;
     w
 }
@@ -139,7 +142,7 @@ async fn every_mutating_route_refuses_a_forged_token() {
     let before = kv_snapshot(&w);
     let reads_before = w.kv.state.value_reads().len();
     for path in MUTATING {
-        let status = if *path == "/certificates/-/upload" {
+        let status = if *path == "/v/kv-test/certificates/-/upload" {
             // Multipart, with a real file, so only the token is wrong.
             let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
             w.post_multipart_with_csrf(
@@ -205,7 +208,10 @@ async fn oversized_bodies_are_refused() {
     let w = support::world().await;
     let big = "a".repeat(300 * 1024);
     let res = w
-        .post("/secrets/-/new", &[("name", "x"), ("value", &big)])
+        .post(
+            "/v/kv-test/secrets/-/new",
+            &[("name", "x"), ("value", &big)],
+        )
         .await;
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
@@ -216,13 +222,13 @@ async fn headers_on_every_kind_of_response() {
     let pages = [
         "/",
         "/vaults",
-        "/secrets",
-        "/secrets/db-password",
-        "/certificates",
-        "/keys",
+        "/v/kv-test/secrets",
+        "/v/kv-test/secrets/db-password",
+        "/v/kv-test/certificates",
+        "/v/kv-test/keys",
         "/expiry",
         "/generator",
-        "/audit",
+        "/v/kv-test/audit",
         "/nope",
         "/auth/sign-in",
         "/healthz",
@@ -314,7 +320,11 @@ fn fixed_pages_cant_collide_with_item_names() {
     // `/keys/{name}` must sit under `/-/`, which Key Vault can't use as a
     // name, or an item with that name couldn't be opened.
     let src = include_str!("../src/routes/mod.rs");
-    for prefix in ["\"/secrets/", "\"/certificates/", "\"/keys/"] {
+    for prefix in [
+        "\"/v/kv-test/secrets/",
+        "\"/v/kv-test/certificates/",
+        "\"/v/kv-test/keys/",
+    ] {
         for chunk in src.split(prefix).skip(1) {
             let first = chunk.split(['/', '"']).next().unwrap_or_default();
             assert!(

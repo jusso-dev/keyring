@@ -45,6 +45,14 @@ impl Section {
         }
     }
 
+    /// True for the sections whose pages live under `/v/{vault}`.
+    pub fn is_vault_scoped(self) -> bool {
+        matches!(
+            self,
+            Self::Secrets | Self::Certificates | Self::Keys | Self::Audit
+        )
+    }
+
     pub fn path(self) -> &'static str {
         match self {
             Self::Home => "/",
@@ -97,6 +105,39 @@ impl Shell {
     pub fn at(mut self, section: Section) -> Self {
         self.section = Some(section);
         self
+    }
+
+    /// Show `vault` (the one in the address) and render the form token for
+    /// it, not for the vault last chosen in another tab.
+    pub fn for_vault(mut self, vault: &str, session: &CurrentSession) -> Self {
+        if let Some(user) = self.user.as_mut() {
+            user.csrf = session.0.csrf_for(Some(vault));
+        }
+        self.vault = Some(ShellVault {
+            name: vault.to_owned(),
+        });
+        self
+    }
+
+    /// `/v/<vault>` for links to this vault's pages, or empty when no vault
+    /// is chosen. The name is checked to be letters, digits and hyphens
+    /// before it gets here, so it needs no URL encoding.
+    pub fn vault_prefix(&self) -> String {
+        self.vault
+            .as_ref()
+            .map(|v| format!("/v/{}", v.name))
+            .unwrap_or_default()
+    }
+
+    /// Where a nav link goes. The vault-scoped sections go to the vault
+    /// last used, or to their bare address (which asks for a vault) when
+    /// there isn't one.
+    pub fn nav_path(&self, section: &Section) -> String {
+        let bare = section.path();
+        match (&self.vault, section.is_vault_scoped()) {
+            (Some(v), true) => format!("/v/{}{bare}", v.name),
+            _ => bare.to_owned(),
+        }
     }
 
     /// True when `s` is the open section, for `aria-current`.

@@ -4,7 +4,7 @@
 {% block content %}
 {% if !filter.item.is_empty() %}
 <h1>Who used <span class="mono">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p>{% if let Some(back) = back_url() %}<a href="{{ back }}">Back to {{ filter.item }}</a> | {% endif %}<a href="/audit">See all events for {{ vault }}</a></p>
+<p>{% if let Some(back) = back_url() %}<a href="{{ back }}">Back to {{ filter.item }}</a> | {% endif %}<a href="{{ shell.vault_prefix() }}/audit">See all events for {{ vault }}</a></p>
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
 {% endif %}
@@ -12,7 +12,7 @@
 
 {% call ui::error_summary(errors) %}{% endcall %}
 
-<form class="filters" method="get" action="/audit" role="search">
+<form class="filters" method="get" action="{{ shell.vault_prefix() }}/audit" role="search">
   {% if !filter.from.is_empty() %}<input type="hidden" name="from" value="{{ filter.from }}">{% endif %}
   <div>
     <label for="range">When</label>

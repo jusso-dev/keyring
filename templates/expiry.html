@@ -74,12 +74,7 @@
         <td>{{ ui::expires(r.expires, r.note) }}</td>
         <td>{{ ui::or_none(r.tags) }}</td>
         <td>
-          <form method="post" action="/vaults/select">
-            <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-            <input type="hidden" name="name" value="{{ r.vault }}">
-            <input type="hidden" name="return_to" value="{{ r.kind.path() }}/{{ r.name }}">
-            <button type="submit" class="button-small">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></button>
-          </form>
+          <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>
         </td>
       </tr>
       {% endfor %}

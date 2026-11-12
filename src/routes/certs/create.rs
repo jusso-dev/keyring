@@ -23,7 +23,7 @@ use crate::routes::forms::{CsrfForm, FieldErrors};
 use crate::routes::lifecycle::redirect_with;
 use crate::routes::secrets::form::parse_tags;
 use crate::routes::shell::Shell;
-use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name};
+use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
 use super::{api, current_vault, new_name_problem};
 
@@ -365,8 +365,9 @@ pub(crate) async fn form(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let issuers = load_issuers(&api(&state, &session, &vault)).await;
     let defaults = CreateForm {
         validity_months: "12".into(),
@@ -391,9 +392,10 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
+    Path(vault): Path<String>,
     Form(f): Form<CreateForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let certs = api(&state, &session, &vault);
     let issuers = load_issuers(&certs).await;
@@ -417,7 +419,7 @@ pub(crate) async fn create(
                 shell,
                 &e,
                 Need::ManageCertificates,
-                "/certificates/-/new",
+                &vault_path(&vault, "/certificates/-/new"),
             ));
         }
     }
@@ -440,7 +442,8 @@ pub(crate) async fn create(
                     "Requested {name}. It appears once the issuer signs it. Its page shows progress."
                 )
             };
-            let mut res = Redirect::to(&format!("/certificates/{name}")).into_response();
+            let mut res =
+                Redirect::to(&vault_path(&vault, &format!("/certificates/{name}"))).into_response();
             flash::set(&state, &mut res, &Flash::success(message));
             Ok(res)
         }
@@ -459,7 +462,7 @@ pub(crate) async fn create(
                 shell,
                 &e,
                 Need::ManageCertificates,
-                "/certificates/-/new",
+                &vault_path(&vault, "/certificates/-/new"),
             )),
         },
     }
@@ -471,13 +474,13 @@ pub(crate) async fn cancel_pending(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(f): Form<CsrfForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let path = format!("/certificates/{name}");
+    let path = vault_path(&vault, &format!("/certificates/{name}"));
     match api(&state, &session, &vault).cancel_pending(&name).await {
         Ok(()) => {
             tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate request cancelled");

@@ -46,18 +46,18 @@ async fn values_never_reach_the_logs() {
 
     let w = support::world().await;
     w.kv.state.put("db-password", VALUE);
-    let res = w.post("/secrets/db-password/reveal", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::OK);
     let _ = support::body_text(res).await;
     // An error path too.
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
-    let _ = w.post("/secrets/db-password/reveal", &[]).await;
+    let _ = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
 
     // A certificate upload with a password, through to import.
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
     let res = w
         .post_multipart(
-            "/certificates/-/upload",
+            "/v/kv-test/certificates/-/upload",
             &[
                 support::Part::File("file", "web.pfx", pfx),
                 support::Part::Text("name", "web-tls"),
@@ -69,7 +69,10 @@ async fn values_never_reach_the_logs() {
     *w.kv.state.fail.lock().unwrap() = None;
     let id = support::hidden_value(&html, "upload_id").unwrap();
     let _ = w
-        .post("/certificates/-/upload/confirm", &[("upload_id", &id)])
+        .post(
+            "/v/kv-test/certificates/-/upload/confirm",
+            &[("upload_id", &id)],
+        )
         .await;
     assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
 
@@ -85,7 +88,7 @@ async fn values_never_reach_the_logs() {
 
     // Query strings never reach the log, but the request line does.
     let res = w
-        .get("/secrets?q=QUERYLEAK-hunter2&filter=QUERYLEAK2")
+        .get("/v/kv-test/secrets?q=QUERYLEAK-hunter2&filter=QUERYLEAK2")
         .await;
     let _ = support::body_text(res).await;
     let res = w.get("/auth/sign-in?return_to=%2FQUERYLEAK3").await;
@@ -110,13 +113,13 @@ async fn values_never_reach_the_logs() {
     assert!(
         logs.lines().any(|l| l.contains("request")
             && l.contains("method=GET")
-            && l.contains("path=/secrets ")
+            && l.contains("path=/v/kv-test/secrets ")
             && l.contains("status=200")
             && l.contains("ms=")),
         "request line missing:\n{logs}"
     );
     assert!(
-        logs.contains("path=/secrets/db-password/reveal") && logs.contains("method=POST"),
+        logs.contains("path=/v/kv-test/secrets/db-password/reveal") && logs.contains("method=POST"),
         "{logs}"
     );
     // Actions name the person by Entra object and tenant ID.

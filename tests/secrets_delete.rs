@@ -18,19 +18,22 @@ fn flash_cookie(res: &axum::http::Response<axum::body::Body>) -> Option<String> 
 async fn delete_needs_the_name_typed() {
     let w = support::world().await;
     w.kv.state.put("db-password", "x");
-    let (status, html) = w.page("/secrets/db-password/delete").await;
+    let (status, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("Type <strong class=\"mono\">db-password</strong> to confirm"));
 
     for typed in ["", "db-passwor", "DB-PASSWORD"] {
         let res = w
-            .post("/secrets/db-password/delete", &[("confirm_name", typed)])
+            .post(
+                "/v/kv-test/secrets/db-password/delete",
+                &[("confirm_name", typed)],
+            )
             .await;
         assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY, "{typed:?}");
         assert!(body_text(res).await.contains("Nothing was deleted"));
     }
     // A post with no confirm field at all, as if the form were bypassed.
-    let res = w.post("/secrets/db-password/delete", &[]).await;
+    let res = w.post("/v/kv-test/secrets/db-password/delete", &[]).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(w.kv.state.current("db-password").is_some());
     assert!(
@@ -44,12 +47,12 @@ async fn delete_needs_the_name_typed() {
 
     let res = w
         .post(
-            "/secrets/db-password/delete",
+            "/v/kv-test/secrets/db-password/delete",
             &[("confirm_name", "db-password")],
         )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&res), "/secrets");
+    assert_eq!(location(&res), "/v/kv-test/secrets");
     assert!(w.kv.state.current("db-password").is_none());
     assert!(
         w.kv.state
@@ -67,7 +70,7 @@ async fn delete_with_forged_token_is_refused() {
     w.csrf = "forged".into();
     let res = w
         .post(
-            "/secrets/db-password/delete",
+            "/v/kv-test/secrets/db-password/delete",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -81,23 +84,25 @@ async fn deleted_list_shows_purge_dates_and_recover_restores() {
     w.kv.state.put("db-password", "keep-this");
     w.kv.state.put("db-password", "and-this");
     w.kv.state.soft_delete("db-password");
-    let (status, html) = w.page("/secrets/-/deleted").await;
+    let (status, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(">db-password<"));
     assert!(html.contains("Permanently deleted on"));
     let purge = w.kv.state.deleted.lock().unwrap()["db-password"].purge;
     assert!(html.contains(&keyring::dates::format_date(purge)));
 
-    let res = w.post("/secrets/-/deleted/db-password/recover", &[]).await;
+    let res = w
+        .post("/v/kv-test/secrets/-/deleted/db-password/recover", &[])
+        .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     // Not the detail page, which may not be readable for a few seconds.
-    assert_eq!(location(&res), "/secrets/-/deleted");
-    let (_, html) = w.page("/secrets/-/deleted").await;
+    assert_eq!(location(&res), "/v/kv-test/secrets/-/deleted");
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert!(html.contains("No deleted secrets"));
     // Like Key Vault, the mock answers 404 for a moment after a recover.
-    let (status, _) = w.page("/secrets/db-password").await;
+    let (status, _) = w.page("/v/kv-test/secrets/db-password").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = w.page("/secrets/db-password").await;
+    let (status, _) = w.page("/v/kv-test/secrets/db-password").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         w.kv.state.version_count("db-password"),
@@ -112,10 +117,12 @@ async fn recover_flash_says_it_can_take_a_few_seconds() {
     let mut w = support::world().await;
     w.kv.state.put("db-password", "x");
     w.kv.state.soft_delete("db-password");
-    let res = w.post("/secrets/-/deleted/db-password/recover", &[]).await;
+    let res = w
+        .post("/v/kv-test/secrets/-/deleted/db-password/recover", &[])
+        .await;
     let flash = flash_cookie(&res).unwrap();
     w.cookie = format!("{}; {flash}", w.cookie);
-    let (_, html) = w.page("/secrets/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert!(html.contains("Recovering db-password"), "{html}");
     assert!(html.contains("can take a few seconds"));
 }
@@ -125,14 +132,14 @@ async fn delete_warning_uses_the_vaults_retention() {
     let w = support::world().await;
     *w.kv.state.retention.lock().unwrap() = Some(("CustomizedRecoverable+Purgeable", 7));
     w.kv.state.put("db-password", "x");
-    let (status, html) = w.page("/secrets/db-password/delete").await;
+    let (status, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("You can recover it for 7 days after it&#39;s deleted"),
         "{html}"
     );
     assert!(!html.contains("usually 90"));
-    let (_, html) = w.page("/secrets/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("Deleted secrets in this vault can be recovered for 7 days."));
     assert!(
         !html.contains("CustomizedRecoverable"),
@@ -143,7 +150,7 @@ async fn delete_warning_uses_the_vaults_retention() {
 #[tokio::test]
 async fn delete_form_for_a_missing_secret_is_not_found() {
     let w = support::world().await;
-    let (status, html) = w.page("/secrets/no-such-thing/delete").await;
+    let (status, html) = w.page("/v/kv-test/secrets/no-such-thing/delete").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!html.contains("to confirm"));
 }
@@ -154,16 +161,18 @@ async fn purge_is_not_offered_on_a_purge_protected_vault() {
     *w.kv.state.retention.lock().unwrap() = Some(("Recoverable", 90));
     w.kv.state.put("db-password", "x");
     w.kv.state.soft_delete("db-password");
-    let (_, html) = w.page("/secrets/-/deleted/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted/db-password").await;
     assert!(!html.contains("/purge\""), "no purge link");
     assert!(html.contains("purge protection"));
 
-    let (status, html) = w.page("/secrets/-/deleted/db-password/purge").await;
+    let (status, html) = w
+        .page("/v/kv-test/secrets/-/deleted/db-password/purge")
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("This vault has purge protection"));
     let res = w
         .post(
-            "/secrets/-/deleted/db-password/purge",
+            "/v/kv-test/secrets/-/deleted/db-password/purge",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -187,16 +196,18 @@ async fn purge_is_off_by_default_everywhere() {
     let w = support::world().await;
     w.kv.state.put("db-password", "x");
     w.kv.state.soft_delete("db-password");
-    let (_, html) = w.page("/secrets/-/deleted/db-password").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted/db-password").await;
     assert!(!html.contains("/purge\""), "no purge button");
     assert!(html.contains("Recover db-password"));
 
-    let (status, _) = w.page("/secrets/-/deleted/db-password/purge").await;
+    let (status, _) = w
+        .page("/v/kv-test/secrets/-/deleted/db-password/purge")
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     // Even a correct, well-formed post is refused on the server.
     let res = w
         .post(
-            "/secrets/-/deleted/db-password/purge",
+            "/v/kv-test/secrets/-/deleted/db-password/purge",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -224,16 +235,18 @@ async fn purge_when_enabled_needs_typed_name_and_warns_twice() {
     let w = support::world_with(&[("KEYRING_ALLOW_PURGE", "true")]).await;
     w.kv.state.put("db-password", "x");
     w.kv.state.soft_delete("db-password");
-    let (_, html) = w.page("/secrets/-/deleted/db-password").await;
-    assert!(html.contains("href=\"/secrets/-/deleted/db-password/purge\""));
-    let (status, html) = w.page("/secrets/-/deleted/db-password/purge").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted/db-password").await;
+    assert!(html.contains("href=\"/v/kv-test/secrets/-/deleted/db-password/purge\""));
+    let (status, html) = w
+        .page("/v/kv-test/secrets/-/deleted/db-password/purge")
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("permanently deletes"));
     assert!(html.contains("notice-error"), "second warning");
 
     let res = w
         .post(
-            "/secrets/-/deleted/db-password/purge",
+            "/v/kv-test/secrets/-/deleted/db-password/purge",
             &[("confirm_name", "db")],
         )
         .await;
@@ -248,7 +261,7 @@ async fn purge_when_enabled_needs_typed_name_and_warns_twice() {
 
     let res = w
         .post(
-            "/secrets/-/deleted/db-password/purge",
+            "/v/kv-test/secrets/-/deleted/db-password/purge",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -271,7 +284,7 @@ async fn delete_without_rights_explains() {
     *w.kv.state.fail_method.lock().unwrap() = Some(axum::http::Method::DELETE);
     let res = w
         .post(
-            "/secrets/db-password/delete",
+            "/v/kv-test/secrets/db-password/delete",
             &[("confirm_name", "db-password")],
         )
         .await;
@@ -287,10 +300,10 @@ async fn deleted_list_pages() {
         w.kv.state.put(&name, "x");
         w.kv.state.soft_delete(&name);
     }
-    let (_, html) = w.page("/secrets/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert_eq!(html.matches("<th scope=\"row\"").count(), 100);
     assert!(html.contains("Page 1 of 2, deleted secrets 1 to 100"));
-    let (_, html) = w.page("/secrets/-/deleted?page=2").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted?page=2").await;
     assert_eq!(html.matches("<th scope=\"row\"").count(), 1);
     assert!(html.contains(">old-100<"));
 }
@@ -303,7 +316,7 @@ async fn deleted_secret_page_keeps_its_content_type_and_retention() {
         v.content_type = Some("text/plain".into());
     });
     w.kv.state.soft_delete("db-password");
-    let (status, html) = w.page("/secrets/-/deleted/db-password").await;
+    let (status, html) = w.page("/v/kv-test/secrets/-/deleted/db-password").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("<dt>Content type</dt><dd>text/plain</dd>"),
@@ -311,7 +324,7 @@ async fn deleted_secret_page_keeps_its_content_type_and_retention() {
     );
     assert!(html.contains("with every version and its value"));
     assert!(html.contains("Deleted secrets in this vault can be recovered for 7 days."));
-    let (_, html) = w.page("/secrets/-/deleted").await;
+    let (_, html) = w.page("/v/kv-test/secrets/-/deleted").await;
     assert!(html.contains("Deleted secrets <span class=\"muted\">in"));
-    assert!(html.contains("action=\"/secrets/-/deleted/db-password/recover\""));
+    assert!(html.contains("action=\"/v/kv-test/secrets/-/deleted/db-password/recover\""));
 }

@@ -188,6 +188,38 @@ impl Session {
         *lock(&self.selected_vault_id) = None;
     }
 
+    /// Note that a request used `name`, the vault in its address. The
+    /// vault last used changes only if it is a different one, so the ARM ID
+    /// kept for it isn't dropped by a request for the same vault. The
+    /// caller checks the name is valid.
+    pub fn note_vault_used(&self, name: &str) {
+        let mut selected = lock(&self.selected_vault);
+        if selected.as_deref() != Some(name) {
+            *selected = Some(name.to_owned());
+            *lock(&self.selected_vault_id) = None;
+        }
+    }
+
+    /// The ARM ID kept for `vault`, if the vault last used is `vault`.
+    /// Another tab may have moved on to a different vault since.
+    pub fn vault_id_for(&self, vault: &str) -> Option<String> {
+        let selected = lock(&self.selected_vault);
+        if selected.as_deref() == Some(vault) {
+            lock(&self.selected_vault_id).clone()
+        } else {
+            None
+        }
+    }
+
+    /// Keep `id` as the ARM ID of `vault`, but only while `vault` is the
+    /// one last used, so it can't be filed under another vault's name.
+    pub fn set_vault_id_for(&self, vault: &str, id: String) {
+        let selected = lock(&self.selected_vault);
+        if selected.as_deref() == Some(vault) {
+            *lock(&self.selected_vault_id) = Some(id);
+        }
+    }
+
     fn expired_at(&self, now: Instant) -> bool {
         now.saturating_duration_since(self.created) >= ABSOLUTE_TIMEOUT
             || now.saturating_duration_since(*lock(&self.last_seen)) >= IDLE_TIMEOUT

@@ -8,7 +8,7 @@
 {% endif %}
 <ul class="card-list">
   {% for s in sections %}
-  <li><a href="{{ s.path() }}">{{ s.label() }}</a></li>
+  <li><a href="{{ shell.nav_path(s) }}">{{ s.label() }}</a></li>
   {% endfor %}
 </ul>
 {% endblock %}

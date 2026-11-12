@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Deleted {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
+<p><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
 <h1>Deleted {{ kind.plural() }} <span class="muted">in {{ vault }}</span></h1>
 <p>Deleted {{ kind.plural() }} are kept for a while so they can be recovered. On the date shown, Key Vault deletes them permanently.</p>
 {% if rows.is_empty() %}
@@ -20,11 +20,11 @@
       <td>{% if row.purge.is_empty() %}<span class="muted">None</span>{% else %}{{ row.purge }} <span class="muted">({{ row.purge_note }})</span>{% endif %}</td>
       <td>
         <div class="row-actions">
-        <form method="post" action="{{ kind.deleted_url(row.name) }}/recover">
+        <form method="post" action="{{ kind.deleted_url(vault, row.name) }}/recover">
           <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
           <button type="submit" class="button-small">Recover<span class="visually-hidden"> {{ row.name }}</span></button>
         </form>
-        <a href="{{ kind.deleted_url(row.name) }}">Details<span class="visually-hidden"> for {{ row.name }}</span></a>
+        <a href="{{ kind.deleted_url(vault, row.name) }}">Details<span class="visually-hidden"> for {{ row.name }}</span></a>
         </div>
       </td>
     </tr>

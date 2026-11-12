@@ -35,7 +35,7 @@ async fn list_shows_expiry_bands_and_thumbprints() {
         v.enabled = false;
         v.tags.insert("env".into(), "prod".into());
     });
-    let (status, html) = w.page("/certificates").await;
+    let (status, html) = w.page("/v/kv-test/certificates").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("5 certificates"));
     assert!(
@@ -51,7 +51,7 @@ async fn list_shows_expiry_bands_and_thumbprints() {
     let thumb =
         keyring::azure::certs::thumbprint_hex(Some(&support::certs::thumb(der.as_ref().unwrap())));
     assert!(html.contains(&thumb));
-    let (_, html) = w.page("/certificates?show=30").await;
+    let (_, html) = w.page("/v/kv-test/certificates?show=30").await;
     assert!(html.contains(">soon<") && html.contains(">expired<") && !html.contains(">quarter<"));
     let bearers = w.kv.state.bearers.lock().unwrap().clone();
     assert!(
@@ -64,10 +64,10 @@ async fn list_shows_expiry_bands_and_thumbprints() {
 #[tokio::test]
 async fn empty_and_forbidden() {
     let w = support::world().await;
-    let (_, html) = w.page("/certificates").await;
+    let (_, html) = w.page("/v/kv-test/certificates").await;
     assert!(html.contains("This vault has no certificates yet"));
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
-    let (status, html) = w.page("/certificates").await;
+    let (status, html) = w.page("/v/kv-test/certificates").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("Key Vault Reader role on this vault"));
 }
@@ -77,7 +77,7 @@ async fn detail_shows_subject_policy_and_versions() {
     let w = support::world().await;
     let v1 = w.kv.state.add_cert("web-tls", false, "pfx");
     let v2 = w.kv.state.add_cert("web-tls", false, "pfx");
-    let (status, html) = w.page("/certificates/web-tls").await;
+    let (status, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("CN=keyring.test"));
     assert!(html.contains("www.keyring.test"));
@@ -98,7 +98,7 @@ async fn detail_shows_subject_policy_and_versions() {
 async fn cer_downloads_der_and_pem() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "pfx");
-    let res = w.get("/certificates/web-tls/cer").await;
+    let res = w.get("/v/kv-test/certificates/web-tls/cer").await;
     assert_eq!(res.status(), StatusCode::OK);
     let h = res.headers().clone();
     assert_eq!(h.get("content-type").unwrap(), "application/pkix-cert");
@@ -122,7 +122,9 @@ async fn cer_downloads_der_and_pem() {
         support::pem_first_cert(support::TEST_CERT_PEM)
     );
 
-    let res = w.get("/certificates/web-tls/cer?format=pem").await;
+    let res = w
+        .get("/v/kv-test/certificates/web-tls/cer?format=pem")
+        .await;
     let pem = body_text(res).await;
     assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
     assert!(!pem.contains("PRIVATE KEY"));
@@ -133,12 +135,12 @@ async fn cer_downloads_der_and_pem() {
 async fn pfx_only_when_exportable() {
     let w = support::world().await;
     w.kv.state.add_cert("locked", false, "c2VjcmV0");
-    let (status, html) = w.page("/certificates/locked/download-key").await;
+    let (status, html) = w.page("/v/kv-test/certificates/locked/download-key").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(html.contains("can&#39;t be downloaded"));
     let res = w
         .post(
-            "/certificates/locked/download-key",
+            "/v/kv-test/certificates/locked/download-key",
             &[("confirm_name", "locked")],
         )
         .await;
@@ -151,9 +153,9 @@ async fn pfx_needs_warning_and_typed_name() {
     let w = support::world().await;
     // base64 of "PFXBYTES"
     w.kv.state.add_cert("web-tls", true, "UEZYQllURVM=");
-    let (_, html) = w.page("/certificates/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert!(html.contains("Download with private key"));
-    let (status, html) = w.page("/certificates/web-tls/download-key").await;
+    let (status, html) = w.page("/v/kv-test/certificates/web-tls/download-key").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("private key"));
     assert!(html.contains("notice-error"), "second warning");
@@ -164,7 +166,7 @@ async fn pfx_needs_warning_and_typed_name() {
 
     let res = w
         .post(
-            "/certificates/web-tls/download-key",
+            "/v/kv-test/certificates/web-tls/download-key",
             &[("confirm_name", "web")],
         )
         .await;
@@ -174,7 +176,7 @@ async fn pfx_needs_warning_and_typed_name() {
 
     let res = w
         .post(
-            "/certificates/web-tls/download-key",
+            "/v/kv-test/certificates/web-tls/download-key",
             &[("confirm_name", "web-tls")],
         )
         .await;
@@ -206,7 +208,7 @@ async fn pfx_forged_token_refused() {
     w.csrf = "forged".into();
     let res = w
         .post(
-            "/certificates/web-tls/download-key",
+            "/v/kv-test/certificates/web-tls/download-key",
             &[("confirm_name", "web-tls")],
         )
         .await;
@@ -217,12 +219,14 @@ async fn pfx_forged_token_refused() {
 #[tokio::test]
 async fn bad_names_and_versions() {
     let w = support::world().await;
-    let (status, _) = w.page("/certificates/bad_name").await;
+    let (status, _) = w.page("/v/kv-test/certificates/bad_name").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     w.kv.state.add_cert("web-tls", false, "x");
-    let (status, _) = w.page("/certificates/web-tls/cer?version=..%2F..").await;
+    let (status, _) = w
+        .page("/v/kv-test/certificates/web-tls/cer?version=..%2F..")
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = w.page("/certificates/nope").await;
+    let (status, _) = w.page("/v/kv-test/certificates/nope").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -238,22 +242,25 @@ async fn backing_secret_cannot_bypass_private_key_download() {
         .get_mut("web-tls")
         .unwrap()
         .managed = true;
-    let (_, html) = w.page("/secrets/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/secrets/web-tls").await;
     assert!(html.contains("belongs to the certificate"));
     assert!(
-        !html.contains("action=\"/secrets/web-tls/reveal\""),
+        !html.contains("action=\"/v/kv-test/secrets/web-tls/reveal\""),
         "no Show value button"
     );
-    assert!(!html.contains("/secrets/web-tls/delete"));
+    assert!(!html.contains("/v/kv-test/secrets/web-tls/delete"));
     for (path, fields) in [
-        ("/secrets/web-tls/reveal", vec![]),
+        ("/v/kv-test/secrets/web-tls/reveal", vec![]),
         (
-            "/secrets/web-tls/value",
+            "/v/kv-test/secrets/web-tls/value",
             vec![("value", "x"), ("enabled", "on")],
         ),
-        ("/secrets/web-tls/edit", vec![("enabled", "on")]),
-        ("/secrets/web-tls/enabled", vec![("state", "off")]),
-        ("/secrets/web-tls/delete", vec![("confirm_name", "web-tls")]),
+        ("/v/kv-test/secrets/web-tls/edit", vec![("enabled", "on")]),
+        ("/v/kv-test/secrets/web-tls/enabled", vec![("state", "off")]),
+        (
+            "/v/kv-test/secrets/web-tls/delete",
+            vec![("confirm_name", "web-tls")],
+        ),
     ] {
         let res = w.post(path, &fields).await;
         assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
@@ -261,12 +268,12 @@ async fn backing_secret_cannot_bypass_private_key_download() {
         assert!(html.contains("belongs to a certificate"), "{path}");
         // The button names where it goes, not "Try again".
         assert!(
-            html.contains("href=\"/certificates/web-tls\">Open the certificate</a>"),
+            html.contains("href=\"/v/kv-test/certificates/web-tls\">Open the certificate</a>"),
             "{path}"
         );
     }
-    let (_, html) = w.page("/secrets/web-tls/versions").await;
-    assert!(!html.contains("action=\"/secrets/web-tls/reveal\""));
+    let (_, html) = w.page("/v/kv-test/secrets/web-tls/versions").await;
+    assert!(!html.contains("action=\"/v/kv-test/secrets/web-tls/reveal\""));
     assert!(
         w.kv.state.value_reads().is_empty(),
         "no value read through the secrets pages"
@@ -279,7 +286,7 @@ async fn detail_says_when_a_section_couldnt_load() {
     w.kv.state.add_cert("web-tls", false, "x");
     *w.kv.state.fail_path.lock().unwrap() = Some("/versions".into());
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
-    let (status, html) = w.page("/certificates/web-tls").await;
+    let (status, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         html.contains("Couldn&#39;t load this certificate&#39;s versions just now"),
@@ -287,7 +294,7 @@ async fn detail_says_when_a_section_couldnt_load() {
     );
     assert!(!html.contains("No versions listed"));
     *w.kv.state.fail_path.lock().unwrap() = Some("/pending".into());
-    let (_, html) = w.page("/certificates/web-tls").await;
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
     assert!(html.contains("Couldn&#39;t load whether a request is pending just now"));
 }
 
@@ -300,7 +307,7 @@ async fn status_cell_is_never_empty() {
         support::certs::default_policy(false, false),
         |v| v.exp = None,
     );
-    let (_, html) = w.page("/certificates").await;
+    let (_, html) = w.page("/v/kv-test/certificates").await;
     let row = html.split(">no-expiry<").nth(1).unwrap();
     let cell = row
         .split("<td>")
@@ -319,7 +326,7 @@ async fn private_key_download_checks_the_token_before_key_vault() {
     // A name that doesn't exist: still a 403, and Key Vault isn't asked.
     let res = w
         .post(
-            "/certificates/no-such-cert/download-key",
+            "/v/kv-test/certificates/no-such-cert/download-key",
             &[("confirm_name", "no-such-cert")],
         )
         .await;

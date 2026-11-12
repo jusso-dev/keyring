@@ -19,29 +19,48 @@ struct NoVaultPage {
     noun: &'static str,
 }
 
-/// The chosen vault for `section`, or a "choose a vault first" page.
-pub(crate) fn current_vault(
+/// The page for an old address when no vault has been chosen yet.
+pub(crate) fn no_vault_page(shell: Shell, section: Section) -> axum::response::Response {
+    let noun = match section {
+        Section::Certificates => "Certificates",
+        Section::Keys => "Keys",
+        _ => "Secrets",
+    };
+    render(&NoVaultPage {
+        shell: shell.at(section),
+        title: section.label(),
+        noun,
+    })
+    .into_response()
+}
+
+/// The vault named in the path. Checked against Key Vault naming rules.
+/// Remembered as the last vault used, for the nav links and old URLs.
+///
+/// Key Vault's own 403 or 404 on the first call covers a vault the person
+/// can't see, so Resource Graph isn't asked here.
+pub(crate) fn path_vault(
     session: &CurrentSession,
     shell: Shell,
     section: Section,
+    vault: &str,
 ) -> Result<(String, Shell), Halt> {
-    match session.0.selected_vault() {
-        Some(v) if is_valid_vault_name(&v) => Ok((v, shell.at(section))),
-        _ => {
-            let noun = match section {
-                Section::Certificates => "Certificates",
-                Section::Keys => "Keys",
-                _ => "Secrets",
-            };
-            Err(render(&NoVaultPage {
-                shell: shell.at(section),
-                title: section.label(),
-                noun,
-            })
-            .into_response()
-            .into())
-        }
+    if !is_valid_vault_name(vault) {
+        return Err(PageError::new(shell.at(section), Problem::not_found()).into());
     }
+    session.0.note_vault_used(vault);
+    Ok((
+        vault.to_owned(),
+        shell.for_vault(vault, session).at(section),
+    ))
+}
+
+/// `rest` (such as `/secrets/db`) under the vault's address.
+///
+/// The vault name is checked to be letters, digits and hyphens before it
+/// gets here (see `is_valid_vault_name`), so it needs no URL encoding.
+pub(crate) fn vault_path(vault: &str, rest: &str) -> String {
+    format!("/v/{vault}{rest}")
 }
 
 /// Turn a failed Azure call into an error page that offers to retry `path`.

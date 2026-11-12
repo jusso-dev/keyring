@@ -20,6 +20,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem};
 use crate::routes::secrets::{SecretRow, api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::vault_ctx::vault_path;
 use crate::secret::Secret;
 
 /// Seconds before the page hides a revealed value and the clipboard is
@@ -60,7 +61,7 @@ impl RevealedPage {
 
 /// The page shown when someone tries to read or change a certificate's
 /// backing secret directly.
-pub(crate) fn managed_problem(shell: Shell, name: &str) -> crate::routes::error::Halt {
+pub(crate) fn managed_problem(shell: Shell, vault: &str, name: &str) -> crate::routes::error::Halt {
     PageError::new(
         shell,
         Problem::new(
@@ -69,7 +70,7 @@ pub(crate) fn managed_problem(shell: Shell, name: &str) -> crate::routes::error:
             format!("{name} holds the certificate of the same name, including its private key. Use the certificate's page to download it, so you see the warning first."),
         )
         .with_next(crate::routes::error::NextStep::Go {
-            url: format!("/certificates/{name}"),
+            url: vault_path(vault, &format!("/certificates/{name}")),
             label: "Open the certificate",
         }),
     )
@@ -91,23 +92,25 @@ pub(crate) async fn reveal(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
-    Path(name): Path<String>,
+    Path((vault, name)): Path<(String, String)>,
     Form(form): Form<RevealForm>,
 ) -> PageResult {
-    let (vault, shell) = current_vault(&session, shell)?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
     let version = form.version.trim();
     if !version.is_empty() && !is_valid_version(version) {
         return Err(PageError::new(shell, Problem::not_found()).into());
     }
-    let path = format!("/secrets/{name}");
+    let path = vault_path(&vault, &format!("/secrets/{name}"));
     // A certificate's backing secret holds its private key. That goes
     // through the certificate's own download, with its warning and typed
     // name, never through reveal. Checked from properties, so no value is
     // read.
     match api(&state, &session, &vault).properties(&name).await {
-        Ok(item) if item.managed.unwrap_or(false) => return Err(managed_problem(shell, &name)),
+        Ok(item) if item.managed.unwrap_or(false) => {
+            return Err(managed_problem(shell, &vault, &name));
+        }
         Ok(_) => {}
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
     }
