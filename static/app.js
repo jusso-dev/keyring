@@ -233,27 +233,51 @@
       });
     }
 
-    // Hide clears the clipboard while this page still has focus, then leaves.
-    if (hideLink) {
-      hideLink.addEventListener("click", function (event) {
-        if (copied) {
-          // Leave once the clear is done, or after a second and a half if
-          // the browser is waiting on a paste prompt.
-          event.preventDefault();
-          var left = false;
-          var go = function () {
-            if (!left) {
-              left = true;
-              window.location.assign(hideLink.href);
-            }
-          };
-          hide().then(go);
-          setTimeout(go, 1500);
-        } else {
-          hide();
+    // After a copy, any way off the page in this tab (Hide, Back, the nav,
+    // Sign out) clears the clipboard first, then leaves: once the clear is
+    // done, or after 1.5 s if the browser waits on a paste prompt. A clear
+    // started on `pagehide` is too late, since nothing waits for it.
+    function leaveAfterClear(event, go) {
+      if (!copied) {
+        hide();
+        return;
+      }
+      event.preventDefault();
+      var left = false;
+      var once = function () {
+        if (!left) {
+          left = true;
+          go();
+        }
+      };
+      hide().then(once);
+      setTimeout(once, 1500);
+    }
+    document.querySelectorAll("a[href]").forEach(function (link) {
+      // A new tab or a jump within the page leaves this page where it is.
+      if (link.hasAttribute("target") || link.hasAttribute("download") ||
+          link.getAttribute("href").charAt(0) === "#") {
+        return;
+      }
+      link.addEventListener("click", function (event) {
+        var newTab = event.ctrlKey || event.metaKey || event.shiftKey ||
+          event.altKey || (event.button !== undefined && event.button !== 0);
+        if (link === hideLink || (copied && !newTab)) {
+          leaveAfterClear(event, function () {
+            window.location.assign(link.href);
+          });
         }
       });
-    }
+    });
+    document.querySelectorAll("form").forEach(function (form) {
+      form.addEventListener("submit", function (event) {
+        if (copied && !panel.contains(form)) {
+          leaveAfterClear(event, function () {
+            form.submit();
+          });
+        }
+      });
+    });
 
     // Back on the page: catch up on an overdue hide, or retry a failed clear.
     function back() {

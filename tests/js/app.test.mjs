@@ -113,6 +113,84 @@ test("Hide clears the clipboard before it leaves the page", async () => {
   assert.deepEqual(p.assigned, ["/secrets/db"], "leaves once");
 });
 
+// The rest of a reveal page: Back above the panel, plus the side nav and the
+// sign-out form from templates/base.html.
+function revealPage(h) {
+  return [
+    h("a", { href: "/secrets/db", id: "back", text: "Back to db" }),
+    h("a", { href: "/expiry", id: "nav" }),
+    h("a", { href: "/docs", id: "new-tab", target: "_blank" }),
+    h("a", { href: "#main", id: "skip" }),
+    h("form", { method: "post", action: "/auth/sign-out", id: "sign-out" }),
+    ...revealPanel(h),
+  ];
+}
+
+function revealWithShell() {
+  const p = page(revealPage);
+  const q = (s) => p.main.querySelector(s);
+  const byId = (id) => [...p.main.querySelectorAll("a"), ...p.main.querySelectorAll("form")].find((e) => e.id === id);
+  const form = byId("sign-out");
+  form.submitted = 0;
+  form.submit = () => {
+    form.submitted += 1;
+  };
+  return { ...p, copy: q("[data-copy]"), form, link: byId };
+}
+
+test("Back and the side nav clear the clipboard before they leave", async () => {
+  for (const id of ["back", "nav"]) {
+    const p = revealWithShell();
+    p.copy.click();
+    await settle();
+    const event = p.link(id).click();
+    assert.equal(event.defaultPrevented, true, `${id} waits for the clear`);
+    await settle();
+    assert.equal(p.clipboard.text, "", id);
+    assert.deepEqual(p.assigned, [p.link(id).href], id);
+    p.clock.advance(2000);
+    assert.equal(p.assigned.length, 1, `${id} leaves once`);
+  }
+});
+
+test("a stalled clear still leaves after a second and a half", async () => {
+  const p = revealWithShell();
+  p.copy.click();
+  await settle();
+  p.clipboard.readText = () => new Promise(() => {}); // a paste prompt nobody answers
+  p.link("back").click();
+  await settle();
+  assert.deepEqual(p.assigned, []);
+  p.clock.advance(1500);
+  assert.deepEqual(p.assigned, ["/secrets/db"]);
+});
+
+test("Sign out clears the clipboard before it submits", async () => {
+  const p = revealWithShell();
+  p.copy.click();
+  await settle();
+  const event = p.form.dispatch("submit");
+  assert.equal(event.defaultPrevented, true);
+  await settle();
+  assert.equal(p.clipboard.text, "");
+  assert.equal(p.form.submitted, 1);
+  p.clock.advance(2000);
+  assert.equal(p.form.submitted, 1, "submits once");
+});
+
+test("leaving with nothing copied, or into a new tab, isn't held up", async () => {
+  const p = revealWithShell();
+  assert.equal(p.link("back").click().defaultPrevented, false, "nothing copied");
+  assert.equal(p.form.dispatch("submit").defaultPrevented, false, "nothing copied");
+  p.copy.click();
+  await settle();
+  assert.equal(p.link("new-tab").click().defaultPrevented, false, "target=_blank");
+  assert.equal(p.link("skip").click().defaultPrevented, false, "same-page jump");
+  assert.equal(p.link("back").dispatch("click", { ctrlKey: true }).defaultPrevented, false, "ctrl-click");
+  assert.equal(p.link("back").dispatch("click", { button: 1 }).defaultPrevented, false, "middle click");
+  assert.equal(p.clipboard.text, SECRET, "the value stays on the page and the clipboard");
+});
+
 test("Hide with nothing copied follows the link straight away", () => {
   const p = reveal();
   const event = p.hideLink.click();

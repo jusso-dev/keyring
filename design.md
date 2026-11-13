@@ -225,9 +225,10 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   seconds." The words are unchanged.
 - A quiet note says the read is recorded: Keyring logs it, and the vault's
   audit log shows it if the vault sends its logs to Log Analytics. It names
-  "Who used it" on the secret's page but doesn't link to it: leaving the page
-  must go through Hide, which waits for the clipboard clear. Generator values aren't read from a vault, so the generator
-  has no such note.
+  "Who used it" on the secret's page rather than adding another link to the
+  panel. Every way off the page waits for the clipboard clear after a copy
+  (static/app.js), so Hide stays the panel's one exit. Generator values aren't
+  read from a vault, so the generator has no such note.
 - Values are hidden in print.
 
 ### Expiry dashboard
