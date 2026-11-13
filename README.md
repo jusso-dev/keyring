@@ -28,7 +28,7 @@ A secret's details. The value stays hidden until you choose Show value.
 
 The value after Show value and Copy. Keyring hides it again after 30 seconds and tries to clear the clipboard. A note says the read is recorded.
 
-<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string in a bordered monospace box with Copy, Show for longer and Hide, a Copied label saying the clipboard will be cleared in 30 seconds, a Hiding in 30 seconds countdown, and a note that the read is recorded with a Who used it link" width="800">
+<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string in a bordered monospace box with Copy, Show for longer and Hide, a Copied label saying the clipboard will be cleared in 30 seconds, a Hiding in 30 seconds countdown, and a note that the read is recorded" width="800">
 
 <details>
 <summary>Creating a secret, with a mistake caught</summary>

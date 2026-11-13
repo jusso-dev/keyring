@@ -224,8 +224,9 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - The countdown is text with a clock glyph and tabular figures: "Hiding in 30
   seconds." The words are unchanged.
 - A quiet note says the read is recorded: Keyring logs it, and the vault's
-  audit log shows it if the vault sends its logs to Log Analytics. It links to
-  "Who used it". Generator values aren't read from a vault, so the generator
+  audit log shows it if the vault sends its logs to Log Analytics. It names
+  "Who used it" on the secret's page but doesn't link to it: leaving the page
+  must go through Hide, which waits for the clipboard clear. Generator values aren't read from a vault, so the generator
   has no such note.
 - Values are hidden in print.
 
