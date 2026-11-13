@@ -319,7 +319,17 @@ impl MockKeyVault {
 
 pub(crate) async fn start() -> MockKeyVault {
     let state = Arc::new(KvState::default());
-    let app = Router::new()
+    let app = router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    MockKeyVault { addr, state }
+}
+
+/// The mock's routes over `state`, for a test that serves several vaults
+/// from one address (see `tests/screenshots.rs`).
+pub(crate) fn router(state: Arc<KvState>) -> Router {
+    Router::new()
         .route("/{vault}/secrets", get(list))
         .route(
             "/{vault}/secrets/{name}",
@@ -339,11 +349,7 @@ pub(crate) async fn start() -> MockKeyVault {
         .merge(super::certs::router(state.clone()))
         .merge(super::keys::router())
         .layer(axum::middleware::from_fn_with_state(state.clone(), record))
-        .with_state(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    MockKeyVault { addr, state }
+        .with_state(state)
 }
 
 async fn record(
