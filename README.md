@@ -12,6 +12,109 @@ Keyring is written in Rust (Axum and Askama) and ships as a single Docker image.
 
 > Status: early development. Every planned feature is built and tested against mock Azure services. The Key Vault calls have also been checked against real vaults; sign-in, on-behalf-of and the browser haven't been tried against a real tenant yet. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists what has been confirmed and what hasn't. Work is tracked in [issues](https://github.com/jusso-dev/keyring/issues).
 
+## Screenshots
+
+These show Keyring running against the mock Azure services from the test suite. Every vault, name and value in them is made up.
+
+### Secrets
+
+The secrets in a vault, with badges for anything expired, expiring within 30 days, disabled or not active yet. Values aren't read to draw this list.
+
+<img src="docs/images/screenshots/secrets-list.png" alt="Secrets list for kv-payments-prod showing nine secrets with Expired, Expires within 30 days, Disabled, Not active yet and Managed by a certificate badges, content types, expiry dates and tags" width="800">
+
+A secret's details. The value stays hidden until you choose Show value.
+
+<img src="docs/images/screenshots/secret-detail.png" alt="Details of the secret db-connection-string: an Expires within 30 days badge, buttons to set a new value, edit, view versions, see who used it, delete or disable, a hidden value panel and the current version's dates and tags" width="800">
+
+The value after Show value and Copy. Keyring hides it again after 30 seconds and tries to clear the clipboard.
+
+<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string shown in a read-only box with Copy, Show for longer and Hide, a message that the clipboard will be cleared in 30 seconds, and a Hiding in 30 seconds countdown" width="800">
+
+<details>
+<summary>Creating a secret, with a mistake caught</summary>
+
+The form keeps what you typed and says what to fix, next to the field and in a summary at the top.
+
+<img src="docs/images/screenshots/secret-form-error.png" alt="The Create a secret form with an error summary at the top and a message under Expires saying the expiry date has already passed" width="800">
+</details>
+
+<details>
+<summary>Deleted secrets</summary>
+
+Deleted secrets can be recovered until Key Vault removes them for good on the date shown.
+
+<img src="docs/images/screenshots/deleted.png" alt="Deleted secrets in kv-payments-prod: two secrets with the date each was deleted, the date it will be permanently deleted, and Recover and Details links" width="800">
+</details>
+
+### Certificates and keys
+
+Certificates in a vault, with when each one expires and its thumbprint.
+
+<img src="docs/images/screenshots/certificates-list.png" alt="Certificates list for kv-payments-prod: internal-gateway marked Expires within 30 days and payments-api-tls marked Active, with expiry dates, thumbprints and tags" width="800">
+
+A certificate's subject, other names, issuer, dates and policy, with downloads for the public part and, when the policy allows it, the private key.
+
+<img src="docs/images/screenshots/certificate-detail.png" alt="Details of the self-signed certificate payments-api-tls: download buttons, subject and other names, validity dates, thumbprint, the policy saying it renews automatically 30 days before it expires, and its versions" width="800">
+
+<details>
+<summary>Changing what happens near expiry</summary>
+
+Choose whether Key Vault renews the certificate or emails the vault's contacts, and how many days ahead. Key Vault won't remove an action once one is set, so "Do nothing" is only offered before then.
+
+<img src="docs/images/screenshots/certificate-renewal.png" alt="Renewal settings for internal-gateway with options to renew automatically or email the vault's certificate contacts, Do nothing greyed out because Key Vault won't remove an action once set, and a days before expiry box set to 30" width="800">
+</details>
+
+Keys in a vault. Keys behind a certificate are marked, and their private parts never leave Key Vault.
+
+<img src="docs/images/screenshots/keys-list.png" alt="Keys list for kv-payments-prod showing five keys, two marked Managed by a certificate and one marked Expires within 30 days, with created and expiry dates" width="800">
+
+<details>
+<summary>A key and its rotation policy</summary>
+
+A key's type, what it's allowed to do and its dates, with Rotate now and the rotation policy one click away.
+
+<img src="docs/images/screenshots/key-detail.png" alt="Details of the RSA 2048 key payments-signing, allowed to sign and verify, with buttons to rotate now, change the rotation policy, see who used it, delete or disable" width="800">
+
+The rotation policy: when Key Vault makes a new version, when each version expires and when to raise a near-expiry event.
+
+<img src="docs/images/screenshots/key-rotation.png" alt="Rotation policy form for payments-signing set to rotate 335 days after each version is made, expire each version after 365 days and send a near-expiry event 30 days before" width="800">
+</details>
+
+### Across vaults
+
+Everything that expires, across every vault you can see, grouped by how soon. Only names and dates are read.
+
+<img src="docs/images/screenshots/expiry.png" alt="Expiry page with counts for expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, and tables of secrets, certificates and keys from three vaults" width="800">
+
+Who read or changed what in a vault, from its diagnostic logs, in plain words.
+
+<img src="docs/images/screenshots/audit.png" alt="Audit page for kv-payments-prod listing recent events with time, person, action such as Viewed secret value or Rotated key, item name, result including one refused request, and IP address" width="800">
+
+<details>
+<summary>Vaults, sign-in and a phone-sized screen</summary>
+
+The vaults you can see across subscriptions, with how each one is set up.
+
+<img src="docs/images/screenshots/vaults.png" alt="Vaults page listing kv-identity-test, kv-payments-prod and kv-platform-dev with subscription, resource group, location, access model, soft delete and purge protection" width="800">
+
+The sign-in page.
+
+<img src="docs/images/screenshots/sign-in.png" alt="Sign in to Keyring page explaining that Keyring acts as you and signs you out after 60 minutes idle or 12 hours, with a Sign in with Microsoft button" width="800">
+
+The secrets list on a phone. The navigation moves to the top and the table scrolls sideways.
+
+<img src="docs/images/screenshots/mobile-secrets.png" alt="The secrets list on a 390 pixel wide screen, with the navigation across the top and the filters stacked" width="300">
+</details>
+
+To take these again, start the demo in one terminal and run the script in another with the cookie line the demo prints:
+
+```sh
+cargo test --test screenshots -- --ignored --nocapture
+KEYRING_DEMO_COOKIE=keyring_session=... scripts/screenshots.sh
+```
+
+The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinned Playwright through `npx` and writes to `docs/images/screenshots/`.
+
 ## What it does
 
 - **Sign in with Entra ID** (OpenID Connect).
