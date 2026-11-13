@@ -6,6 +6,10 @@
 //! version can be cached for a year, since a new build changes the URL. A
 //! request without it, or with an old one (a page left open across an
 //! upgrade), gets the current file with a short cache.
+//!
+//! The fonts (IBM Plex Sans and Mono, SIL Open Font License, in
+//! `static/fonts/` with `OFL.txt`) carry their release in the file name
+//! instead, so they are always cached for a year. A new release is a new name.
 
 use std::sync::LazyLock;
 
@@ -17,6 +21,33 @@ use serde::Deserialize;
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
+
+/// Font files, by the name `style.css` asks for. Latin subset only.
+const FONTS: [(&str, &[u8]); 4] = [
+    (
+        "ibm-plex-sans-5.3.0.woff2",
+        include_bytes!("../../static/fonts/ibm-plex-sans-5.3.0.woff2"),
+    ),
+    (
+        "ibm-plex-mono-400-5.3.0.woff2",
+        include_bytes!("../../static/fonts/ibm-plex-mono-400-5.3.0.woff2"),
+    ),
+    (
+        "ibm-plex-mono-500-5.3.0.woff2",
+        include_bytes!("../../static/fonts/ibm-plex-mono-500-5.3.0.woff2"),
+    ),
+    (
+        "ibm-plex-mono-600-5.3.0.woff2",
+        include_bytes!("../../static/fonts/ibm-plex-mono-600-5.3.0.woff2"),
+    ),
+];
+
+fn font(file: &str) -> Option<&'static [u8]> {
+    FONTS
+        .iter()
+        .find(|(name, _)| *name == file)
+        .map(|(_, b)| *b)
+}
 
 /// Cache header for a versioned URL that matches the file served.
 pub const CACHE_VERSIONED: &str = "public, max-age=31536000, immutable";
@@ -64,6 +95,16 @@ pub struct AssetQuery {
 }
 
 pub async fn serve(Path(file): Path<String>, Query(q): Query<AssetQuery>) -> Response {
+    if let Some(body) = font(&file) {
+        return (
+            [
+                (header::CONTENT_TYPE, "font/woff2"),
+                (header::CACHE_CONTROL, CACHE_VERSIONED),
+            ],
+            body,
+        )
+            .into_response();
+    }
     match lookup(&file) {
         Some((body, mime)) => {
             let cache = if version(&file) == Some(q.v.as_str()) {
@@ -134,6 +175,24 @@ mod tests {
         assert!(v.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_ne!(version("style.css"), version("app.js"));
         assert_eq!(url("nope.js"), "/static/nope.js");
+    }
+
+    #[test]
+    fn every_font_the_stylesheet_asks_for_is_served() {
+        let asked: Vec<&str> = STYLE_CSS
+            .split("url(\"/static/")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        assert_eq!(asked.len(), FONTS.len(), "{asked:?}");
+        for name in asked {
+            let body = font(name).unwrap_or_else(|| panic!("{name} isn't served"));
+            assert!(body.starts_with(b"wOF2"), "{name}");
+            assert!(
+                name.ends_with("-5.3.0.woff2"),
+                "{name} has no release in its name"
+            );
+        }
     }
 
     #[test]

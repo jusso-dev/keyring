@@ -4,6 +4,38 @@
    tokens below; design.md says what each one is for and lists the contrast
    ratio of every pair used. */
 
+/* IBM Plex, served by Keyring itself (SIL Open Font License, see
+   static/fonts/OFL.txt). Latin subset. Sans is one variable file for every
+   weight; Mono has the three weights the styles use. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/static/ibm-plex-sans-5.3.0.woff2") format("woff2");
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/static/ibm-plex-mono-400-5.3.0.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/static/ibm-plex-mono-500-5.3.0.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/static/ibm-plex-mono-600-5.3.0.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Surfaces */
   --color-paper: oklch(97.6% 0.004 250);
@@ -43,9 +75,9 @@
   /* The idle notice's lift off the page */
   --color-shadow: oklch(25% 0.018 255 / 0.12);
 
-  /* System fonts only. Mono is for values, names and identifiers. */
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* IBM Plex, with system fallbacks. Mono is for values, names and identifiers. */
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
