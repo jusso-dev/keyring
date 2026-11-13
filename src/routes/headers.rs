@@ -8,13 +8,13 @@ use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
 
-/// Build the Content-Security-Policy. Scripts and styles only from this
-/// site, no inline code, no framing. Forms may post here, and sign-out may
+/// Build the Content-Security-Policy. Scripts, styles and fonts only from
+/// this site, no inline code, no framing. Forms may post here, and sign-out may
 /// redirect on to Entra ID (browsers apply `form-action` to redirects).
 pub(super) fn csp(authority_host: &str) -> String {
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
-         connect-src 'self'; form-action 'self' {authority_host}; frame-ancestors 'none'; \
+         font-src 'self'; connect-src 'self'; form-action 'self' {authority_host}; frame-ancestors 'none'; \
          base-uri 'none'"
     )
 }
@@ -88,6 +88,7 @@ mod tests {
         let c = csp("https://login.microsoftonline.com");
         assert!(c.contains("script-src 'self';"));
         assert!(c.contains("style-src 'self';"));
+        assert!(c.contains("font-src 'self';"));
         assert!(!c.contains("unsafe-inline"));
         assert!(!c.contains("unsafe-eval"));
         assert!(c.contains("frame-ancestors 'none'"));
