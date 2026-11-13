@@ -59,9 +59,9 @@ A certificate's subject, other names, issuer, dates and policy, with downloads f
 <details>
 <summary>Changing what happens near expiry</summary>
 
-Choose whether Key Vault renews the certificate, emails the vault's contacts or does nothing, and how many days ahead.
+Choose whether Key Vault renews the certificate or emails the vault's contacts, and how many days ahead. Key Vault won't remove an action once one is set, so "Do nothing" is only offered before then.
 
-<img src="docs/images/screenshots/certificate-renewal.png" alt="Renewal settings for internal-gateway with options to renew automatically, email the vault's certificate contacts or do nothing, and a days before expiry box set to 30" width="800">
+<img src="docs/images/screenshots/certificate-renewal.png" alt="Renewal settings for internal-gateway with options to renew automatically or email the vault's certificate contacts, Do nothing greyed out because Key Vault won't remove an action once set, and a days before expiry box set to 30" width="800">
 </details>
 
 Keys in a vault. Keys behind a certificate are marked, and their private parts never leave Key Vault.
