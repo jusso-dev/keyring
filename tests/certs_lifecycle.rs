@@ -586,10 +586,42 @@ async fn renewal_can_be_changed_to_email() {
 }
 
 #[tokio::test]
-async fn renewal_can_be_turned_off() {
+async fn renewal_cannot_be_turned_off_once_set() {
+    // Key Vault answers 200 to an empty action list but keeps the old action
+    // (real run, 13-11-2026), so Keyring refuses "Do nothing" itself.
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
     set_policy(&w, "web-tls", auto_30(), "Self");
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert!(
+        html.contains("id=\"renew-none\" name=\"renewal\" type=\"radio\" value=\"none\" disabled"),
+        "{html}"
+    );
+    assert!(html.contains("won't remove an action once set"), "{html}");
+    let res = w
+        .post(
+            "/v/kv-test/certificates/web-tls/renewal",
+            &[("renewal", "none"), ("renew_days", "")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(html.contains("id=\"renewal-error\""), "{html}");
+    assert!(html.contains("won&#39;t remove the action"), "{html}");
+    assert_eq!(patches(&w), 0, "nothing reached Key Vault");
+    assert_eq!(policy_of(&w, "web-tls")["lifetime_actions"], auto_30());
+}
+
+#[tokio::test]
+async fn renewal_with_no_action_stays_as_do_nothing() {
+    let w = support::world().await;
+    w.kv.state.add_cert("web-tls", false, "x");
+    set_policy(&w, "web-tls", serde_json::json!([]), "Self");
+    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
+    assert!(
+        html.contains("id=\"renew-none\" name=\"renewal\" type=\"radio\" value=\"none\" checked>"),
+        "{html}"
+    );
     let res = w
         .post(
             "/v/kv-test/certificates/web-tls/renewal",
@@ -600,12 +632,6 @@ async fn renewal_can_be_turned_off() {
     assert_eq!(
         policy_of(&w, "web-tls")["lifetime_actions"],
         serde_json::json!([])
-    );
-    let (_, html) = w.page("/v/kv-test/certificates/web-tls").await;
-    assert!(html.contains("Nothing happens automatically"), "{html}");
-    let (_, html) = w.page("/v/kv-test/certificates/web-tls/renewal").await;
-    assert!(
-        html.contains("id=\"renew-none\" name=\"renewal\" type=\"radio\" value=\"none\" checked")
     );
 }
 
@@ -618,7 +644,7 @@ async fn renewal_kept_by_key_vault_is_not_reported_as_saved() {
     let res = w
         .post(
             "/v/kv-test/certificates/web-tls/renewal",
-            &[("renewal", "none"), ("renew_days", "")],
+            &[("renewal", "email"), ("renew_days", "14")],
         )
         .await;
     // Key Vault answered 200 but kept the old action: no redirect, no

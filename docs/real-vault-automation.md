@@ -1,6 +1,6 @@
 # Running checklist rows against a real vault
 
-A few rows of the [real-vault checklist](real-vault-checklist.md) can run as a Rust test target, `tests/real_vault.rs`, against a throwaway vault. This is a spike: it proves the idea on six rows, and it is not full coverage.
+A few rows of the [real-vault checklist](real-vault-checklist.md) can run as a Rust test target, `tests/real_vault.rs`, against a throwaway vault. It covers nine rows, and it is not full coverage.
 
 Why it exists: every other test runs against the mock Key Vault in `tests/support/`, and the first real run found two places where the mock was wrong. A row that runs on demand checks the mock against Key Vault again, for example before moving off API version 7.5.
 
@@ -14,11 +14,16 @@ Why it exists: every other test runs against the mock Key Vault in `tests/suppor
 | Secrets: 409 for a soft-deleted name | `409_for_a_soft_deleted_name` |
 | Keys: HSM key on a Standard vault | `hsm_key_on_a_standard_vault` |
 | Certificates: Self-signed create | `self_signed_create` |
+| Certificates: Change renewal | `change_renewal` |
+| Certificates: Import onto a soft-deleted name | `import_onto_a_soft_deleted_name` |
+| Certificates: BER-encoded PFX | `ber_encoded_pfx` |
 
 Each row has two tests:
 
 - `mock_<row>` runs the steps against the mock and checks the answer Key Vault gave in the recorded run. It runs in a normal `cargo test` and calls nothing outside your machine.
 - `real_<row>` is ignored by default. It runs the same steps against the real vault, then against the mock, and fails if the real answer differs from the recorded one, or if the mock and the real vault disagree. The failure message names the checklist row and the mock file to fix.
+
+The three certificate rows were first run on 13-11-2026. Change renewal: each action replaces the last, but an empty `lifetime_actions` list is answered 200 and the old action stays, and a day count above 27 times the validity gets 400 `BadParameter`. Import onto a soft-deleted name gets the same 409 as for secrets, with inner code `ObjectIsDeletedButRecoverable`. BER-encoded PFX: Key Vault imports `tests/fixtures/test-ber.pfx`, which has indefinite lengths (see `tests/fixtures/README.md`). If a later run answers differently, change the mock and the expected value together.
 
 The steps call Keyring's own clients in `src/azure/` (`SecretsApi`, `KeysApi`, `CertsApi`), so the code that was checked is the code that ships.
 

@@ -30,7 +30,7 @@
     <legend>Near expiry</legend>
     <div class="checkbox"><input id="renew-auto" name="renewal" type="radio" value="auto"{% if form.renewal == "auto" %} checked{% endif %}{% if imported %} disabled{% endif %}><label for="renew-auto">Renew automatically{% if imported %} <span class="muted">(not available for this certificate)</span>{% endif %}</label></div>
     <div class="checkbox"><input id="renew-email" name="renewal" type="radio" value="email"{% if form.renewal == "email" %} checked{% endif %}><label for="renew-email">Email the vault's certificate contacts</label></div>
-    <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}><label for="renew-none">Do nothing</label></div>
+    <div class="checkbox"><input id="renew-none" name="renewal" type="radio" value="none"{% if form.renewal == "none" %} checked{% endif %}{% if has_action %} disabled{% endif %}><label for="renew-none">Do nothing{% if has_action %} <span class="muted">(Key Vault won't remove an action once set)</span>{% endif %}</label></div>
     {% include "_field_error.html" %}
   </fieldset>
   {% let field_name = "renew_days" %}
