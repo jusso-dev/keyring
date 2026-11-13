@@ -25,10 +25,13 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use keyring::AppState;
 use keyring::auth::session::{Session, User, UserId, UserTokens};
 use keyring::azure::certs::{
-    CertsApi, CreateCert, IssuerProps, KeyProps, Policy, SecretProps, X509Props,
+    CertsApi, CreateCert, ImportCert, IssuerProps, KeyProps, LifetimeAction, LifetimeActionType,
+    LifetimeTrigger, Policy, SecretProps, X509Props,
 };
 use keyring::azure::keys::{CreateKey, KeysApi};
 use keyring::azure::secrets::{API_VERSION, Attributes, SecretsApi, SetSecret, now_ts};
@@ -652,8 +655,16 @@ async fn conflict_for_a_soft_deleted_name(t: &Target) -> Conflict {
     ok("delete secret", api.delete(&name).await);
     let (shown, _) = retry(t.pace, &[404], async || api.get_deleted(&name).await).await;
     ok("wait for the deleted secret to show", shown);
-    match api.set(&name, &simple_secret()).await {
-        Ok(_) => panic!("setting a soft-deleted name should be refused, but it worked"),
+    conflict_of(
+        "set a soft-deleted name",
+        api.set(&name, &simple_secret()).await,
+    )
+}
+
+/// The refusal of a write onto a soft-deleted name.
+fn conflict_of<T>(what: &str, r: Result<T, AzureError>) -> Conflict {
+    match r {
+        Ok(_) => panic!("{what}: should be refused, but it worked"),
         Err(AzureError::Status {
             status,
             code,
@@ -668,7 +679,7 @@ async fn conflict_for_a_soft_deleted_name(t: &Target) -> Conflict {
                 }),
             },
         },
-        Err(e) => fail("set a soft-deleted name", e),
+        Err(e) => fail(what, e),
     }
 }
 
@@ -743,6 +754,27 @@ fn expect_self_signed() -> SelfSigned {
 async fn self_signed_create(t: &Target) -> SelfSigned {
     let name = unique_name();
     t.cleanup.track(Item::Cert(name.clone()));
+    let made = create_self_signed(t, &name, 1).await;
+    eprintln!(
+        "self-signed create: {} after {:.1?}",
+        made.finished, made.took
+    );
+    SelfSigned {
+        created: made.created,
+        finished: made.finished,
+    }
+}
+
+struct Created {
+    created: String,
+    finished: String,
+    took: Duration,
+}
+
+/// Create a self-signed certificate valid for `months`, with no lifetime
+/// actions, and poll until it stops being `inProgress` (or the pace runs
+/// out). Track `name` first.
+async fn create_self_signed(t: &Target, name: &str, months: u32) -> Created {
     let api = t.h.certs();
     let body = CreateCert {
         policy: Policy {
@@ -759,7 +791,7 @@ async fn self_signed_create(t: &Target) -> SelfSigned {
             x509_props: Some(X509Props {
                 subject: Some("CN=kr-real.example.test".into()),
                 sans: None,
-                validity_months: Some(1),
+                validity_months: Some(months),
                 ekus: Vec::new(),
             }),
             lifetime_actions: Vec::new(),
@@ -773,14 +805,14 @@ async fn self_signed_create(t: &Target) -> SelfSigned {
         },
         tags: None,
     };
-    let op = ok("create certificate", api.create(&name, &body).await);
+    let op = ok("create certificate", api.create(name, &body).await);
     let created = op.status.unwrap_or_default();
     let start = Instant::now();
     let finished = loop {
-        let status = match ok("read pending", api.pending(&name).await) {
+        let status = match ok("read pending", api.pending(name).await) {
             Some(op) => op.status.unwrap_or_default(),
             // No pending record left: it's done if the certificate reads.
-            None if api.get_cert(&name, None).await.is_ok() => "completed".into(),
+            None if api.get_cert(name, None).await.is_ok() => "completed".into(),
             None => "inProgress".into(),
         };
         if status != "inProgress" || start.elapsed() >= t.pace.up_to {
@@ -788,11 +820,237 @@ async fn self_signed_create(t: &Target) -> SelfSigned {
         }
         tokio::time::sleep(t.pace.every).await;
     };
-    eprintln!(
-        "self-signed create: {finished} after {:.1?}",
-        start.elapsed()
+    Created {
+        created,
+        finished,
+        took: start.elapsed(),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 7: Certificates, "Change renewal"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct Renewal {
+    /// The lifetime actions read back after each change, as
+    /// `<action_type> at <days> days`.
+    after_email: Vec<String>,
+    after_auto: Vec<String>,
+    /// After sending `"lifetime_actions": []`. Empty if Key Vault cleared
+    /// them, the AutoRenew one if it ignored the empty list.
+    after_empty: Vec<String>,
+    /// The rest of the policy (key, secret, x509 and issuer) read back at the
+    /// end is what it was before the first change.
+    other_fields_kept: bool,
+    /// The refusal of a day count above 27 times the validity in months.
+    over_limit: Refusal,
+}
+
+const ROW_RENEWAL: &str = "Certificates: Change renewal";
+const RENEWAL_MONTHS: u32 = 12;
+
+/// Microsoft documents "Update Certificate Policy" as setting the members
+/// sent, so an empty list should clear the actions. The mock does that.
+/// A real run confirms it, or the mock changes.
+fn expect_renewal() -> Renewal {
+    Renewal {
+        after_email: vec!["EmailContacts at 14 days".into()],
+        after_auto: vec!["AutoRenew at 30 days".into()],
+        after_empty: Vec::new(),
+        other_fields_kept: true,
+        over_limit: Refusal {
+            status: 400,
+            code: Some("BadParameter".into()),
+        },
+    }
+}
+
+fn days_action(kind: &str, days: u32) -> LifetimeAction {
+    LifetimeAction {
+        trigger: LifetimeTrigger {
+            days_before_expiry: Some(days),
+            lifetime_percentage: None,
+        },
+        action: LifetimeActionType {
+            action_type: kind.into(),
+        },
+    }
+}
+
+fn summarise(actions: &[LifetimeAction]) -> Vec<String> {
+    actions
+        .iter()
+        .map(|a| {
+            let when = match (a.trigger.days_before_expiry, a.trigger.lifetime_percentage) {
+                (Some(d), _) => format!("{d} days"),
+                (_, Some(p)) => format!("{p}% of its lifetime"),
+                _ => "no trigger".into(),
+            };
+            format!("{} at {when}", a.action.action_type)
+        })
+        .collect()
+}
+
+/// The policy without its lifetime actions, to see that nothing else moved.
+fn without_actions(p: Policy) -> Policy {
+    Policy {
+        lifetime_actions: Vec::new(),
+        ..p
+    }
+}
+
+async fn change_renewal(t: &Target) -> Renewal {
+    let name = unique_name();
+    t.cleanup.track(Item::Cert(name.clone()));
+    let made = create_self_signed(t, &name, RENEWAL_MONTHS).await;
+    assert_eq!(
+        made.finished, "completed",
+        "change renewal: the certificate wasn't created in time"
     );
-    SelfSigned { created, finished }
+    let api = t.h.certs();
+    let policy = async || {
+        ok("read certificate", api.get_cert(&name, None).await)
+            .policy
+            .unwrap_or_default()
+    };
+    let before = without_actions(policy().await);
+    let mut after = Vec::new();
+    for (step, actions) in [
+        ("email at 14 days", vec![days_action("EmailContacts", 14)]),
+        ("auto at 30 days", vec![days_action("AutoRenew", 30)]),
+        ("do nothing", Vec::new()),
+    ] {
+        ok(
+            &format!("change renewal to {step}"),
+            api.update_lifetime_actions(&name, &actions).await,
+        );
+        after.push(summarise(&policy().await.lifetime_actions));
+    }
+    let other_fields_kept = without_actions(policy().await) == before;
+    let too_many = RENEWAL_MONTHS * 27 + 1;
+    let over_limit = match api
+        .update_lifetime_actions(&name, &[days_action("EmailContacts", too_many)])
+        .await
+    {
+        Ok(_) => panic!("change renewal: {too_many} days before expiry was accepted"),
+        Err(AzureError::Status {
+            status,
+            code,
+            message,
+        }) => {
+            // Recorded for the checklist's Result column.
+            eprintln!(
+                "change renewal: {too_many} days refused with {status}: {}",
+                message.unwrap_or_default()
+            );
+            Refusal { status, code }
+        }
+        Err(e) => fail("change renewal over the limit", e),
+    };
+    let [after_email, after_auto, after_empty] =
+        <[Vec<String>; 3]>::try_from(after).unwrap_or_else(|_| unreachable!("three steps"));
+    Renewal {
+        after_email,
+        after_auto,
+        after_empty,
+        other_fields_kept,
+        over_limit,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 8: Certificates, "Import onto a soft-deleted name"
+// ---------------------------------------------------------------------
+
+const ROW_IMPORT_DELETED: &str = "Certificates: Import onto a soft-deleted name";
+
+/// The fixtures' password (tests/fixtures/README.md). It protects nothing.
+const FIXTURE_PASSWORD: &str = "test-password";
+const PLAIN_PFX: &[u8] = include_bytes!("fixtures/test-plain.pfx");
+const BER_PFX: &[u8] = include_bytes!("fixtures/test-ber.pfx");
+
+/// The same answer as for a secret set onto a soft-deleted name (row 4).
+fn expect_import_deleted() -> Conflict {
+    Conflict {
+        status: 409,
+        detail: ConflictDetail {
+            code: Some("ObjectIsDeletedButRecoverable".into()),
+            message_names_deleted_state: true,
+        },
+    }
+}
+
+/// An import of a fixture PFX, as the upload page sends it.
+fn pfx_import(pfx: &[u8]) -> ImportCert {
+    ImportCert {
+        value: Secret::new(STANDARD.encode(pfx)),
+        pwd: Some(Secret::new(FIXTURE_PASSWORD)),
+        policy: Policy {
+            key_props: Some(KeyProps {
+                exportable: Some(true),
+                ..KeyProps::default()
+            }),
+            secret_props: Some(SecretProps {
+                content_type: Some("application/x-pkcs12".into()),
+            }),
+            ..Policy::default()
+        },
+        attributes: Attributes {
+            enabled: Some(true),
+            ..Attributes::default()
+        },
+        tags: None,
+    }
+}
+
+/// The certificate stays soft-deleted when this ends. Clean-up purges it.
+async fn import_onto_a_soft_deleted_name(t: &Target) -> Conflict {
+    let name = unique_name();
+    t.cleanup.track(Item::Cert(name.clone()));
+    let api = t.h.certs();
+    ok("import", api.import(&name, &pfx_import(PLAIN_PFX)).await);
+    ok("delete certificate", api.delete(&name).await);
+    let (shown, _) = retry(t.pace, &[404], async || api.get_deleted(&name).await).await;
+    ok("wait for the deleted certificate to show", shown);
+    conflict_of(
+        "import onto a soft-deleted name",
+        api.import(&name, &pfx_import(PLAIN_PFX)).await,
+    )
+}
+
+// ---------------------------------------------------------------------
+// Row 9: Certificates, "BER-encoded PFX"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+enum Import {
+    Imported,
+    Refused(Refusal),
+}
+
+const ROW_BER: &str = "Certificates: BER-encoded PFX";
+const EXPECT_BER: Import = Import::Imported;
+
+/// `tests/fixtures/test-ber.pfx` has indefinite lengths (see its README).
+async fn ber_encoded_pfx(t: &Target) -> Import {
+    let name = unique_name();
+    t.cleanup.track(Item::Cert(name.clone()));
+    match t.h.certs().import(&name, &pfx_import(BER_PFX)).await {
+        Ok(_) => Import::Imported,
+        Err(AzureError::Status {
+            status,
+            code,
+            message,
+        }) => {
+            eprintln!(
+                "BER-encoded PFX: refused with {status}: {}",
+                message.unwrap_or_default()
+            );
+            Import::Refused(Refusal { status, code })
+        }
+        Err(e) => fail("import BER PFX", e),
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -952,6 +1210,62 @@ async fn real_self_signed_create() {
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mock_change_renewal() {
+    mock_row(ROW_RENEWAL, change_renewal, expect_renewal()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a real kr-test- vault: docs/real-vault-automation.md"]
+async fn real_change_renewal() {
+    real_row(
+        ROW_RENEWAL,
+        "tests/support/certs.rs (update_policy)",
+        change_renewal,
+        expect_renewal(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mock_import_onto_a_soft_deleted_name() {
+    mock_row(
+        ROW_IMPORT_DELETED,
+        import_onto_a_soft_deleted_name,
+        expect_import_deleted(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a real kr-test- vault: docs/real-vault-automation.md"]
+async fn real_import_onto_a_soft_deleted_name() {
+    real_row(
+        ROW_IMPORT_DELETED,
+        "tests/support/certs.rs (import)",
+        import_onto_a_soft_deleted_name,
+        expect_import_deleted(),
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mock_ber_encoded_pfx() {
+    mock_row(ROW_BER, ber_encoded_pfx, EXPECT_BER).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a real kr-test- vault: docs/real-vault-automation.md"]
+async fn real_ber_encoded_pfx() {
+    real_row(
+        ROW_BER,
+        "tests/support/certs.rs (import)",
+        ber_encoded_pfx,
+        EXPECT_BER,
+    )
+    .await;
+}
+
 // ---------------------------------------------------------------------
 // Tests of the harness itself (offline)
 // ---------------------------------------------------------------------
@@ -1034,16 +1348,25 @@ fn only_purgeable_recovery_levels_are_purged() {
 /// Nothing a test makes is left in the mock afterwards.
 fn assert_mock_is_empty(kv: &support::keyvault::MockKeyVault) {
     let state = &kv.state;
+    // The mock also leaves an imported certificate's backing secret in place
+    // when the certificate is deleted. The tests' own secrets have no content
+    // type, so only those count.
     assert!(
-        state.secrets.lock().unwrap().is_empty(),
+        state
+            .secrets
+            .lock()
+            .unwrap()
+            .values()
+            .flat_map(|s| &s.versions)
+            .all(|v| v.content_type.as_deref() == Some("application/x-pkcs12")),
         "live secrets left"
     );
     assert!(
         state.deleted.lock().unwrap().is_empty(),
         "soft-deleted secrets left"
     );
-    // The mock leaves the managed key behind a certificate in place when the
-    // certificate is deleted, so only keys a test made itself count here.
+    // The same for the managed key behind a certificate: only keys a test
+    // made itself count here.
     assert!(
         state.keys.lock().unwrap().values().all(|k| k.managed),
         "keys left"
@@ -1061,6 +1384,9 @@ async fn clean_up_removes_what_the_rows_made() {
         recover_then_read(&t).await;
         conflict_for_a_soft_deleted_name(&t).await;
         self_signed_create(&t).await;
+        change_renewal(&t).await;
+        import_onto_a_soft_deleted_name(&t).await;
+        ber_encoded_pfx(&t).await;
         hsm_key_on_a_standard_vault(&t).await;
     }
     assert_mock_is_empty(&kv);

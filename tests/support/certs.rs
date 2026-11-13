@@ -134,6 +134,16 @@ fn err(status: u16, code: &str) -> Response {
     )
 }
 
+/// Key Vault's 409 for an import or create onto a soft-deleted name: the
+/// same shape as for secrets (see `keyvault::conflict`).
+fn deleted_name_conflict() -> Response {
+    super::keyvault::conflict(
+        "Certificate",
+        "ObjectIsDeletedButRecoverable",
+        "is currently in a deleted but recoverable state",
+    )
+}
+
 /// A 400 with Key Vault's own message, which Keyring now shows.
 fn bad_request(message: &str) -> Response {
     json_response(
@@ -476,7 +486,7 @@ async fn import(
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
-        return err(409, "Conflict");
+        return deleted_name_conflict();
     }
     let value = body["value"].as_str().unwrap_or_default();
     let is_pem = body["policy"]["secret_props"]["contentType"] == "application/x-pem-file";
@@ -554,7 +564,7 @@ async fn create(
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
-        return err(409, "Conflict");
+        return deleted_name_conflict();
     }
     s.creates.lock().unwrap().push(ImportRecord {
         name: name.clone(),
