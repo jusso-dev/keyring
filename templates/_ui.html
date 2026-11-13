@@ -36,13 +36,14 @@
 {%- endmacro -%}
 
 {#- Status badges for a secret, certificate or key. "Active" when nothing
-    else applies. -#}
+    else applies. Each badge has a CSS glyph and a label, so colour is never
+    the only signal. -#}
 {%- macro status(enabled, expired, within30, within90 = false, not_yet = false, managed = false) -%}
 {%- if !enabled %}<span class="badge badge-muted">Disabled</span> {% endif -%}
 {%- if expired %}<span class="badge badge-error">Expired</span> {% elif within30 %}<span class="badge badge-error">Expires within 30 days</span> {% elif within90 %}<span class="badge badge-warn">Expires within 90 days</span> {% endif -%}
 {%- if not_yet %}<span class="badge badge-muted">Not active yet</span> {% endif -%}
 {%- if managed %}<span class="badge badge-muted">Managed by a certificate</span> {% endif -%}
-{%- if enabled && !expired && !within30 && !within90 && !not_yet && !managed %}<span class="muted">Active</span>{% endif -%}
+{%- if enabled && !expired && !within30 && !within90 && !not_yet && !managed %}<span class="badge badge-ok">Active</span>{% endif -%}
 {%- endmacro -%}
 
 {#- Tags as name=value, or a muted "None". A tag with an empty value shows
@@ -56,9 +57,9 @@
 {%- if text.is_empty() %}<span class="muted">None</span>{% else %}{{ text }}{% endif -%}
 {%- endmacro -%}
 
-{#- An expiry date with its note, or "No expiry". -#}
+{#- An expiry date with its note, or a neutral "No expiry" badge. -#}
 {%- macro expires(date, note = "") -%}
-{%- if date.is_empty() %}<span class="muted">No expiry</span>{% else %}{{ date }}{% if !note.is_empty() %} <span class="muted">({{ note }})</span>{% endif %}{% endif -%}
+{%- if date.is_empty() %}<span class="badge badge-none">No expiry</span>{% else %}{{ date }}{% if !note.is_empty() %} <span class="muted">({{ note }})</span>{% endif %}{% endif -%}
 {%- endmacro -%}
 
 {#- The name field on every create form. The same rule holds for secrets,

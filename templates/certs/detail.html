@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Certificate {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates in {{ vault }}</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
 <p>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</p>
 

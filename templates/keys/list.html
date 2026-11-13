@@ -30,7 +30,7 @@
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <th scope="row"><a class="mono" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
       <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</td>
-      <td>{{ ui::or_none(row.created) }}</td>
+      <td class="nowrap">{{ ui::or_none(row.created) }}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td>{{ ui::tags(row.tags) }}</td>
     </tr>

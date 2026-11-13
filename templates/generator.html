@@ -20,7 +20,7 @@
     <a href="/generator" data-hide-link>Hide</a>
     <span class="muted" role="status" aria-live="polite" data-copy-status></span>
   </div>
-  <p class="muted" data-countdown hidden><span aria-hidden="true">Hiding in <span data-countdown-secs>{{ clear_after }}</span> seconds.</span><span class="visually-hidden" role="status" data-countdown-announce></span></p>
+  <p class="muted countdown" data-countdown hidden><svg class="countdown-mark" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.75V8l2.25 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span aria-hidden="true">Hiding in <span data-countdown-secs>{{ clear_after }}</span> seconds.</span><span class="visually-hidden" role="status" data-countdown-announce></span></p>
   {% if form.for_secret == "1" %}<noscript><p class="muted">Copy the value, go back to the secret form and paste it in.</p></noscript>{% endif %}
 </section>
 {% endif %}

@@ -70,7 +70,7 @@
 {% if let Some(p) = partial %}<p class="notice notice-warn">{{ p }}</p>{% endif %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 {% call ui::table_wrap("audit-caption") %}
-<table>
+<table class="ledger">
   <caption class="visually-hidden" id="audit-caption">Audit events for {{ vault }}</caption>
   <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
   <tbody>
@@ -80,7 +80,7 @@
       <td>{{ r.who }}</td>
       <th scope="row">{{ r.what }}{% if r.operation != r.what %}<br><span class="muted small mono">{{ r.operation }}</span>{% endif %}</th>
       <td class="mono">{{ ui::or_none(r.item) }}</td>
-      <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}Allowed{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
+      <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
       <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}

@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Create a key in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/keys">Back to keys</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys</a></p>
 <h1>Create a key <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault makes the key and keeps the private part. The defaults suit most uses: an RSA 3072 key that can encrypt, sign and wrap other keys.</p>
 {% call ui::error_summary(errors) %}{% endcall %}

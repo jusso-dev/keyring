@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Rotation policy for key {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Back to {{ name }}</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Back to {{ name }}</a></p>
 <h1>Rotation policy for <span class="mono">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault can make new versions on a schedule. Every field is optional: leave one blank to turn that part off.</p>
 {% call ui::error_summary(errors) %}{% endcall %}
