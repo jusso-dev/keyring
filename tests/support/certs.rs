@@ -409,7 +409,9 @@ async fn policy(
 }
 
 /// "Update Certificate Policy": the members sent replace the stored ones,
-/// the rest are left alone. Only `lifetime_actions` is used here. Refuses
+/// the rest are left alone. Only `lifetime_actions` is used here. As in the
+/// real run of 13-11-2026, an empty list is answered 200 and changes
+/// nothing: Key Vault won't remove a certificate's actions. Refuses
 /// what Key Vault documents: `days_before_expiry` above 27 times the
 /// validity in months, and `AutoRenew` for an issuer of `Unknown`.
 async fn update_policy(
@@ -447,7 +449,8 @@ async fn update_policy(
                 );
             }
         }
-        if !*s.cert_extra.keep_lifetime_actions.lock().unwrap() {
+        let empty = actions.as_array().is_none_or(Vec::is_empty);
+        if !empty && !*s.cert_extra.keep_lifetime_actions.lock().unwrap() {
             c.policy["lifetime_actions"] = actions.clone();
         }
     }

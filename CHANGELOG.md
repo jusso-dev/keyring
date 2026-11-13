@@ -8,7 +8,7 @@ Releases are tagged `vX.Y.Z`, and each tag's image is built by `.github/workflow
 
 - **Managed identity credential**: Keyring can prove itself to Entra with the app's managed identity (`KEYRING_FEDERATED_IDENTITY_CLIENT_ID`) instead of a client secret, so there is no secret to rotate. `ENTRA_CLIENT_SECRET` is now optional, and the Bicep templates have `useFederatedCredential`. The app registration must stay delegated-only (see the threat model).
 
-- **Certificate renewal**: a certificate's page has a "Change" link next to "Near expiry". It opens a form to renew automatically, email the vault's contacts or do nothing, with a number of days, and saves it with `PATCH /certificates/{name}/policy`.
+- **Certificate renewal**: a certificate's page has a "Change" link next to "Near expiry". It opens a form to renew automatically or email the vault's contacts, with a number of days, and saves it with `PATCH /certificates/{name}/policy`. "Do nothing" is only offered when the certificate has no action yet, because a real vault keeps the old action when sent an empty list.
 
 ### Review fixes, November 2026
 

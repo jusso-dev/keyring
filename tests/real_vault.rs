@@ -837,8 +837,8 @@ struct Renewal {
     /// `<action_type> at <days> days`.
     after_email: Vec<String>,
     after_auto: Vec<String>,
-    /// After sending `"lifetime_actions": []`. Empty if Key Vault cleared
-    /// them, the AutoRenew one if it ignored the empty list.
+    /// After sending `"lifetime_actions": []`. Key Vault keeps the AutoRenew
+    /// action: it won't remove a certificate's actions.
     after_empty: Vec<String>,
     /// The rest of the policy (key, secret, x509 and issuer) read back at the
     /// end is what it was before the first change.
@@ -850,14 +850,14 @@ struct Renewal {
 const ROW_RENEWAL: &str = "Certificates: Change renewal";
 const RENEWAL_MONTHS: u32 = 12;
 
-/// Microsoft documents "Update Certificate Policy" as setting the members
-/// sent, so an empty list should clear the actions. The mock does that.
-/// A real run confirms it, or the mock changes.
+/// Recorded on 13-11-2026: each action replaces the last, but an empty
+/// list is answered 200 and the previous action stays. The 325-day refusal
+/// is 400 `BadParameter`.
 fn expect_renewal() -> Renewal {
     Renewal {
         after_email: vec!["EmailContacts at 14 days".into()],
         after_auto: vec!["AutoRenew at 30 days".into()],
-        after_empty: Vec::new(),
+        after_empty: vec!["AutoRenew at 30 days".into()],
         other_fields_kept: true,
         over_limit: Refusal {
             status: 400,
