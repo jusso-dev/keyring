@@ -1,6 +1,11 @@
-//! Change what Key Vault does near expiry: renew, email the contacts, or
-//! nothing. Only the lifetime actions are sent, so the rest of the policy is
-//! left alone.
+//! Change what Key Vault does near expiry: renew, or email the contacts.
+//! Only the lifetime actions are sent, so the rest of the policy is left
+//! alone.
+//!
+//! "Do nothing" can't be set here once a certificate has an action. Key
+//! Vault answers 200 to `"lifetime_actions": []` (and to `null`, or the
+//! field left out) but keeps the old action (real-vault run, 13-11-2026), so
+//! the server refuses it before calling Key Vault.
 
 use askama::Template;
 use axum::Form;
@@ -42,6 +47,8 @@ struct Current {
     months: u32,
     /// Signed outside Key Vault (an import), so Key Vault can't renew it.
     imported: bool,
+    /// The policy has at least one action, which Key Vault won't remove.
+    has_action: bool,
     /// Parts of the current setting the form can't show.
     unsupported: Vec<String>,
 }
@@ -95,6 +102,7 @@ impl Current {
             },
             months,
             imported,
+            has_action: first.is_some(),
             unsupported,
         }
     }
@@ -112,6 +120,7 @@ struct RenewalPage {
     max_days: u32,
     default_days: u32,
     imported: bool,
+    has_action: bool,
     unsupported: Vec<String>,
     /// Key Vault's own reason, after it refused the change.
     azure_message: Option<String>,
@@ -149,6 +158,7 @@ fn renewal_page(
             max_days: current.months * super::create::DAYS_PER_MONTH_LIMIT,
             default_days: default_renew_days(current.months),
             imported: current.imported,
+            has_action: current.has_action,
             unsupported: current.unsupported,
             azure_message,
         }),
@@ -208,7 +218,13 @@ pub(crate) async fn save(
     } else if f.renewal == "auto" && current.imported {
         errors.push(
             "renewal",
-            "Key Vault can only remind for a certificate that was signed outside it. Pick the email choice, or do nothing.",
+            "Key Vault can only remind for a certificate that was signed outside it. Pick the email choice.",
+        );
+        Vec::new()
+    } else if f.renewal == "none" && current.has_action {
+        errors.push(
+            "renewal",
+            "Key Vault won't remove the action this certificate already has. Pick renewing or emailing.",
         );
         Vec::new()
     } else {
@@ -227,9 +243,9 @@ pub(crate) async fn save(
     }
     match certs.update_lifetime_actions(&name, &actions).await {
         // Key Vault answered, but its policy doesn't show what was sent. It
-        // isn't documented what an empty list does, and Key Vault has kept
-        // values it was asked to clear before (dates sent as null, #187), so
-        // say nothing changed rather than report a change that didn't happen.
+        // has kept values it was asked to change before (dates sent as null,
+        // #187, and an empty action list), so say nothing changed rather than
+        // report a change that didn't happen.
         Ok(policy) if !applied(&actions, &policy.lifetime_actions) => {
             let mut errors = FieldErrors::new();
             errors.push(
@@ -359,5 +375,12 @@ mod tests {
         ));
         assert!(c.imported);
         assert_eq!(c.form.renewal, "email");
+    }
+
+    #[test]
+    fn knows_whether_there_is_an_action_to_keep() {
+        let some = Current::from_policy(&policy("Self", vec![action("AutoRenew", Some(30), None)]));
+        assert!(some.has_action);
+        assert!(!Current::from_policy(&policy("Self", Vec::new())).has_action);
     }
 }

@@ -421,12 +421,12 @@ fn err(status: u16, code: &str) -> Response {
 
 /// A 409 in real Key Vault's shape. `state` ends the message, after the
 /// item's name, as Key Vault words it.
-fn conflict(inner: &str, state: &str) -> Response {
+pub(crate) fn conflict(what: &str, inner: &str, state: &str) -> Response {
     json_response(
         StatusCode::CONFLICT,
         json!({"error": {
             "code": "Conflict",
-            "message": format!("Secret {state}"),
+            "message": format!("{what} {state}"),
             "innererror": {"code": inner}
         }}),
     )
@@ -625,12 +625,14 @@ async fn set(
     // reason as the inner code, and a message that names the state.
     if s.deleted.lock().unwrap().contains_key(&name) {
         return conflict(
+            "Secret",
             "ObjectIsDeletedButRecoverable",
             "is currently in a deleted but recoverable state",
         );
     }
     if s.recovering.lock().unwrap().contains_key(&name) {
         return conflict(
+            "Secret",
             "ObjectIsBeingRecovered",
             "is currently being recovered and cannot be re-created; retry later.",
         );

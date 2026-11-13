@@ -134,6 +134,16 @@ fn err(status: u16, code: &str) -> Response {
     )
 }
 
+/// Key Vault's 409 for an import or create onto a soft-deleted name: the
+/// same shape as for secrets (see `keyvault::conflict`).
+fn deleted_name_conflict() -> Response {
+    super::keyvault::conflict(
+        "Certificate",
+        "ObjectIsDeletedButRecoverable",
+        "is currently in a deleted but recoverable state",
+    )
+}
+
 /// A 400 with Key Vault's own message, which Keyring now shows.
 fn bad_request(message: &str) -> Response {
     json_response(
@@ -399,7 +409,9 @@ async fn policy(
 }
 
 /// "Update Certificate Policy": the members sent replace the stored ones,
-/// the rest are left alone. Only `lifetime_actions` is used here. Refuses
+/// the rest are left alone. Only `lifetime_actions` is used here. As in the
+/// real run of 13-11-2026, an empty list is answered 200 and changes
+/// nothing: Key Vault won't remove a certificate's actions. Refuses
 /// what Key Vault documents: `days_before_expiry` above 27 times the
 /// validity in months, and `AutoRenew` for an issuer of `Unknown`.
 async fn update_policy(
@@ -437,7 +449,8 @@ async fn update_policy(
                 );
             }
         }
-        if !*s.cert_extra.keep_lifetime_actions.lock().unwrap() {
+        let empty = actions.as_array().is_none_or(Vec::is_empty);
+        if !empty && !*s.cert_extra.keep_lifetime_actions.lock().unwrap() {
             c.policy["lifetime_actions"] = actions.clone();
         }
     }
@@ -476,7 +489,7 @@ async fn import(
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
-        return err(409, "Conflict");
+        return deleted_name_conflict();
     }
     let value = body["value"].as_str().unwrap_or_default();
     let is_pem = body["policy"]["secret_props"]["contentType"] == "application/x-pem-file";
@@ -554,7 +567,7 @@ async fn create(
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
-        return err(409, "Conflict");
+        return deleted_name_conflict();
     }
     s.creates.lock().unwrap().push(ImportRecord {
         name: name.clone(),
