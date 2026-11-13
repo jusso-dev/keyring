@@ -34,7 +34,7 @@ Use the image by digest (`<registry>/keyring@sha256:...`) in the templates, so a
 
 ### Or use a published image
 
-This applies once Keyring's releases are published. Until then, build your own as above. Each version tag (`vX.Y.Z`) is built by [`.github/workflows/release.yml`](../.github/workflows/release.yml), which runs the same checks as CI and attests where the image came from. The image is `ghcr.io/jusso-dev/keyring`. Take the digest from the release's workflow run summary and use the image by digest:
+This applies once Keyring's releases are published. Until then, build your own as above. Each version tag (`vX.Y.Z`) is built by [`.github/workflows/release.yml`](../.github/workflows/release.yml), which only runs for a commit on `main` that passed CI, repeats CI's image checks and attests where the image came from. The image is `ghcr.io/jusso-dev/keyring`. Take the digest from the release's workflow run summary and use the image by digest:
 
 ```
 ghcr.io/jusso-dev/keyring@sha256:<digest>
