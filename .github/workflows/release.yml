@@ -33,8 +33,9 @@ jobs:
       attestations: write # store the provenance attestation
     env:
       # The one place the publishing decision is made. Only a tag push can
-      # publish, so a dry run never does, even with the variable on.
-      PUBLISH: ${{ vars.KEYRING_PUBLISH_IMAGE == 'true' && github.ref_type == 'tag' }}
+      # publish. A dry run never does, even with the variable on, and even
+      # when it is dispatched against a tag (its ref is then a tag too).
+      PUBLISH: ${{ vars.KEYRING_PUBLISH_IMAGE == 'true' && github.event_name == 'push' && github.ref_type == 'tag' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
