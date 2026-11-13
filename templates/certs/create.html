@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Create a certificate in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
 <h1>Create a certificate <span class="muted">in {{ vault }}</span></h1>
 <p>Key Vault makes the key and the certificate. Self-signed certificates are usually ready in a few seconds. Certificates from an issuer (a certificate authority set up on this vault) wait until the issuer signs them.</p>
 

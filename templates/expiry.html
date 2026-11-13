@@ -62,7 +62,7 @@
 <section aria-labelledby="group-{{ g.group.slug() }}">
   <h2 id="group-{{ g.group.slug() }}">{{ g.group.label() }} <span class="muted">({{ g.count }})</span></h2>
   {% call ui::table_wrap("group-{}-caption"|format(g.group.slug())) %}
-  <table>
+  <table class="ledger">
     <caption class="visually-hidden" id="group-{{ g.group.slug() }}-caption">{{ g.group.label() }}</caption>
     <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
@@ -71,7 +71,7 @@
         <th scope="row" class="mono">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
         <td>{{ r.kind.label() }}</td>
         <td class="mono">{{ r.vault }}</td>
-        <td>{{ ui::expires(r.expires, r.note) }}</td>
+        <td class="nowrap">{{ ui::expires(r.expires, r.note) }}</td>
         <td>{{ ui::or_none(r.tags) }}</td>
         <td>
           <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>

@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
 <h1 class="mono">{{ row.name }}</h1>
 <p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</p>
 <div class="actions">
@@ -86,7 +86,7 @@
       <tr>
         <th scope="row"><span class="mono version-id">{{ v.version }}</span>{% if v.version == row.version %} <span class="badge">Current</span>{% endif %}</th>
         <td>{{ ui::or_none(v.created) }}</td>
-        <td>{% if v.enabled %}Enabled{% else %}<span class="badge badge-muted">Disabled</span>{% endif %}</td>
+        <td>{% if v.enabled %}<span class="badge badge-ok">Enabled</span>{% else %}<span class="badge badge-muted">Disabled</span>{% endif %}</td>
         <td>{{ ui::expires(v.expires) }}</td>
       </tr>
       {% endfor %}

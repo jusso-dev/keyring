@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Renewal for certificate {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/certificates/{{ name }}">Back to {{ name }}</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/certificates/{{ name }}">Back to {{ name }}</a></p>
 <h1>Renewal for <span class="mono">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
 <p>Choose what Key Vault does as this certificate gets close to expiring. Only this setting changes. The rest of the policy stays as it is.</p>
 {% call ui::error_summary(errors) %}{% endcall %}

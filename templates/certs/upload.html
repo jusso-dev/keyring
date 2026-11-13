@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Upload a certificate to {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
 <h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1>
 <p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, until you upload it, start again, or 10 minutes pass.</p>
 

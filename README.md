@@ -18,17 +18,17 @@ These show Keyring running against the mock Azure services from the test suite. 
 
 ### Secrets
 
-The secrets in a vault, with badges for anything expired, expiring within 30 days, disabled or not active yet. Values aren't read to draw this list.
+The secrets in a vault. Each one has a status badge (Active, Expired, Expires within 30 days, Disabled, Not active yet or Managed by a certificate) with a label and a shape, so colour isn't the only signal. Values aren't read to draw this list.
 
-<img src="docs/images/screenshots/secrets-list.png" alt="Secrets list for kv-payments-prod showing nine secrets with Expired, Expires within 30 days, Disabled, Not active yet and Managed by a certificate badges, content types, expiry dates and tags" width="800">
+<img src="docs/images/screenshots/secrets-list.png" alt="Secrets list for kv-payments-prod showing nine secrets in a table with Active, Expired, Expires within 30 days, Disabled, Not active yet and Managed by a certificate badges, content types, updated dates, expiry dates or No expiry, and tags" width="800">
 
 A secret's details. The value stays hidden until you choose Show value.
 
 <img src="docs/images/screenshots/secret-detail.png" alt="Details of the secret db-connection-string: an Expires within 30 days badge, buttons to set a new value, edit, view versions, see who used it, delete or disable, a hidden value panel and the current version's dates and tags" width="800">
 
-The value after Show value and Copy. Keyring hides it again after 30 seconds and tries to clear the clipboard.
+The value after Show value and Copy. Keyring hides it again after 30 seconds and tries to clear the clipboard. A note says the read is recorded.
 
-<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string shown in a read-only box with Copy, Show for longer and Hide, a message that the clipboard will be cleared in 30 seconds, and a Hiding in 30 seconds countdown" width="800">
+<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string in a bordered monospace box with Copy, Show for longer and Hide, a Copied label saying the clipboard will be cleared in 30 seconds, a Hiding in 30 seconds countdown, and a note that the read is recorded with a Who used it link" width="800">
 
 <details>
 <summary>Creating a secret, with a mistake caught</summary>
@@ -43,7 +43,7 @@ The form keeps what you typed and says what to fix, next to the field and in a s
 
 Deleted secrets can be recovered until Key Vault removes them for good on the date shown.
 
-<img src="docs/images/screenshots/deleted.png" alt="Deleted secrets in kv-payments-prod: two secrets with the date each was deleted, the date it will be permanently deleted, and Recover and Details links" width="800">
+<img src="docs/images/screenshots/deleted.png" alt="Deleted secrets in kv-payments-prod: two secrets with the date each was deleted, the date it will be permanently deleted, a Recover button and a Details link" width="800">
 </details>
 
 ### Certificates and keys
@@ -82,20 +82,20 @@ The rotation policy: when Key Vault makes a new version, when each version expir
 
 ### Across vaults
 
-Everything that expires, across every vault you can see, grouped by how soon. Only names and dates are read.
+Everything that expires, across every vault you can see, grouped by how soon. A row of counts links to each group's table. Only names and dates are read.
 
-<img src="docs/images/screenshots/expiry.png" alt="Expiry page with counts for expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, and tables of secrets, certificates and keys from three vaults" width="800">
+<img src="docs/images/screenshots/expiry.png" alt="Expiry page with a count tile for each of expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, then a ruled table per group of secrets, certificates and keys from three vaults" width="800">
 
 Who read or changed what in a vault, from its diagnostic logs, in plain words.
 
-<img src="docs/images/screenshots/audit.png" alt="Audit page for kv-payments-prod listing recent events with time, person, action such as Viewed secret value or Rotated key, item name, result including one refused request, and IP address" width="800">
+<img src="docs/images/screenshots/audit.png" alt="Audit page for kv-payments-prod listing recent events with time, person, action such as Viewed secret value or Rotated key, item name, result (Allowed, or one Refused request) and IP address" width="800">
 
 <details>
 <summary>Vaults, sign-in and a phone-sized screen</summary>
 
 The vaults you can see across subscriptions, with how each one is set up.
 
-<img src="docs/images/screenshots/vaults.png" alt="Vaults page listing kv-identity-test, kv-payments-prod and kv-platform-dev with subscription, resource group, location, access model, soft delete and purge protection" width="800">
+<img src="docs/images/screenshots/vaults.png" alt="Vaults page listing kv-identity-test, kv-payments-prod (marked Current) and kv-platform-dev with subscription, resource group, location, access model, soft delete, purge protection and an Open button" width="800">
 
 The sign-in page.
 
@@ -103,7 +103,7 @@ The sign-in page.
 
 The secrets list on a phone. The navigation moves to the top and the table scrolls sideways.
 
-<img src="docs/images/screenshots/mobile-secrets.png" alt="The secrets list on a 390 pixel wide screen, with the navigation across the top and the filters stacked" width="300">
+<img src="docs/images/screenshots/mobile-secrets.png" alt="The secrets list on a 390 pixel wide screen, with the vault and person in the top bar, the navigation across the top and the filters stacked" width="300">
 </details>
 
 To take these again, start the demo in one terminal and run the script in another with the cookie line the demo prints:
