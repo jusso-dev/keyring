@@ -1,0 +1,37 @@
+{#- "Used by in the last 30 days", on an item's page and on the forms that
+    change it. Advice only: whatever it says, the form below works. Needs
+    `used_by`. -#}
+{%- import "_ui.html" as ui -%}
+<section aria-labelledby="used-by-heading" class="used-by">
+  <h2 id="used-by-heading">Used by in the last 30 days</h2>
+  {% if let Some(why) = used_by.unavailable %}
+  <div class="empty-state">
+    <p>{{ why }} You can still go ahead.</p>
+    {% if !used_by.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ used_by.hint }}</p>{% endif %}
+  </div>
+  {% elif used_by.callers.is_empty() %}
+  <div class="empty-state"><p>{{ used_by.empty }}</p></div>
+  {% else %}
+  <p class="muted">{{ used_by.counted() }}, from Key Vault's audit log. Anything listed may break if the {{ used_by.noun }} changes, is disabled or is deleted. <a href="{{ used_by.audit_url }}">See every event</a>.</p>
+  {% call ui::table_wrap("used-by-caption") %}
+  <table class="ledger">
+    <caption class="visually-hidden" id="used-by-caption">Who used this {{ used_by.noun }} in the last 30 days</caption>
+    <thead><tr><th scope="col">Who</th><th scope="col">Kind</th><th scope="col">Object ID</th><th scope="col">Last</th><th scope="col">{{ used_by.column() }}</th><th scope="col">From</th></tr></thead>
+    <tbody>
+      {% for c in used_by.callers %}
+      <tr>
+        <th scope="row" class="mono small">{{ c.who }}{% if !c.app_id.is_empty() %}<br><span class="muted">App <span class="mono">{{ c.app_id }}</span></span>{% endif %}</th>
+        <td>{{ c.kind }}</td>
+        <td class="mono small">{% call ui::or_none(c.object_id) %}{% endcall %}</td>
+        <td class="nowrap">{{ c.last }}</td>
+        <td>{{ c.reads }}</td>
+        <td class="small">{% if c.ip.is_empty() && c.client_info.is_empty() %}<span class="muted">None</span>{% else %}<span class="mono">{{ c.ip }}</span>{% if !c.client_info.is_empty() %}<br><span class="muted">{{ c.client_info }}</span>{% endif %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% if used_by.capped %}<p class="muted">Showing the {{ used_by.callers.len() }} most recent. <a href="{{ used_by.audit_url }}">See every event</a> for the rest.</p>{% endif %}
+  {% endif %}
+  {% if let Some(p) = used_by.partial %}<p class="notice notice-warn">{{ p }}</p>{% endif %}
+</section>

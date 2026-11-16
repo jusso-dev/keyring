@@ -241,6 +241,17 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - When a vault logs to several workspaces and some can't be read, the others are still shown, and the page and the CSV say how many were left out and why. If none can be read, the CSV answers 403 or 404 with an explanation instead of an empty file.
 - Each secret, certificate and key page has "Who used it", which opens the audit view filtered to that item for the last 30 days.
 
+### Used by in the last 30 days
+
+Each secret, certificate and key page, and the forms that change one (Set a new value, Roll back, Disable, Rotate and Delete), has a "Used by in the last 30 days" panel: the distinct callers in Key Vault's audit log, each with its kind (person, app or managed identity), sign-in name or app ID, object ID, last use, number of uses, and up to three client infos (user agents) and IP addresses. Code: `src/azure/used_by.rs` (query) and `src/routes/used_by.rs` (panel), shown by `templates/_used_by.html`.
+
+- What counts: allowed `SecretGet` for a secret, and for a certificate the same on its backing secret (which holds the private key and has the certificate's name). For a key, `KeySign`, `KeyVerify`, `KeyWrap`, `KeyUnwrap`, `KeyEncrypt` and `KeyDecrypt`. Refused calls don't count.
+- One fixed query per workspace the vault logs to, `summarize count(), max(TimeGenerated) by ObjectId, AppId, Upn`, over `AZKVAuditLogs` (claims from `Identity`, plus `ClientInfo` and `CallerIpAddress`) or `AzureDiagnostics` (`identity_claim_appid_g`, `identity_claim_oid_g`, `identity_claim_upn_s`, `clientInfo_s`, `CallerIPAddress`). A caller with a sign-in name is a person; one whose token carries a managed identity resource ID (`xms_mirid`) is a managed identity; any other with an app ID is an app. Workspaces' answers are merged by caller, latest first, up to 100.
+- **No query injection.** The vault and item names are already-checked names (letters, digits and hyphens), checked again, and reach the query only as escaped string literals in `let vaultName` and `let itemName` lines. The operations and the 30 days are fixed text.
+- As the signed-in person, with their ARM and Log Analytics tokens, like the audit view. Nothing uses Keyring's managed identity.
+- **Advice, not a gate.** The panel runs beside the page's own reads (`tokio::join!`) with a 5 second limit of its own, so it never holds up a form for longer than that. If the vault has no diagnostic setting to a workspace, the person can't read the settings or the workspace, consent is missing, or Azure is slow or fails, the panel says why in plain words, with what to ask for, and the form works as before. Some workspaces failing still shows the rest, with a note. An empty result reads "No reads in the last 30 days, so nothing should break."
+- The panel only reads, so it writes none of Keyring's own audit events.
+
 ### Across vaults
 
 `/audit` with no vault runs fixed reports over every vault the person can see (the first 100 by name, chosen by `src/routes/every_vault.rs` as for search and the expiry dashboard). Code: `src/azure/audit_across.rs` (queries) and `src/routes/audit_across.rs` (page and CSV).
