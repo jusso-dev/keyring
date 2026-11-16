@@ -391,6 +391,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 - **Keyring doesn't rotate credentials on the target system.** A new value set in Keyring changes Key Vault only. The rotation line on a secret's page is a display of its tags, which anyone with tag rights can write, not something Keyring checked. See [rotation.md](rotation.md).
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
 - **Access shows object IDs, not names.** Keyring has no Microsoft Graph permission, so the Access page can't name people, groups or apps, or list a group's members. It links to each in the portal instead.
+- **App registration credentials aren't shown.** Client secrets and certificates on Entra app registrations would need a Graph permission, so the expiry dashboard covers Key Vault only. [app-credentials.md](app-credentials.md) points to Entra's own tools.
 - **The connection cap is shared** by every client, and idle keep-alive connections and slow request bodies aren't limited beyond the 90 second request limit and the 5 minute connection age. A front-end proxy or the platform's load balancer normally covers this.
 - **Zeroising covers Keyring's own copies.** Copies of tokens held inside `openidconnect` and `reqwest` aren't zeroised.
 - **A panic** gives that one request a 500 page. Sessions survive it, since release builds unwind.
