@@ -412,6 +412,7 @@ While a request waits for its issuer, the certificate's page shows it as pending
 - **Certificates signed outside Key Vault.** No `Unknown` issuer, signing request download or merge. See [Certificate issuers](#certificate-issuers).
 - **Managing issuers.** Set them up in the Azure portal.
 - **Rotating secrets on the system they belong to.** A new value set in Keyring changes Key Vault only. Use Azure's own pattern (Event Grid and a Function with its own identity), or better, remove the credential. See [docs/rotation.md](docs/rotation.md).
+- **App registration secrets and certificates.** The expiry dashboard covers Key Vault only. See [docs/app-credentials.md](docs/app-credentials.md) for Entra's own tools.
 
 ## Deploying to Azure
 
