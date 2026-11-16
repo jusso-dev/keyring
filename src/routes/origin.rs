@@ -52,6 +52,9 @@ pub(super) async fn layer(State(state): State<AppState>, req: Request, next: Nex
         return next.run(req).await;
     }
     tracing::warn!(method = %req.method(), path = %req.uri().path(), "cross-site request refused");
+    // Refused before routing, so the action isn't known yet.
+    crate::audit::set_action(crate::audit::Action::RequestRefused);
+    crate::audit::refuse(crate::audit::Refusal::CrossSite);
     (
         StatusCode::FORBIDDEN,
         crate::routes::assets::plain_page(

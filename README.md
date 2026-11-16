@@ -84,6 +84,8 @@ The rotation policy: when Key Vault makes a new version, when each version expir
 
 Everything that expires, across every vault you can see, grouped by how soon. A row of counts links to each group's table. Only names and dates are read.
 
+Beside it, **By time since the value changed** (`/expiry/age`) groups the same items by when their current version was made, oldest first, so a secret with no expiry that hasn't changed in three years still shows up. Secrets and keys that belong to a certificate change with it, so only the certificate is listed.
+
 <img src="docs/images/screenshots/expiry.png" alt="Expiry page with a count tile for each of expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, then a ruled table per group of secrets, certificates and keys from three vaults" width="800">
 
 Who read or changed what in a vault, from its diagnostic logs, in plain words.
@@ -124,6 +126,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
 - **Generator** for passwords, GUIDs and API keys.
@@ -241,6 +244,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | --- | --- | --- |
 | See vaults in the vault list | Reader | Subscription, resource group or vault |
 | List secrets and see their details | Key Vault Secrets User (or Key Vault Reader for names and dates only) | Vault |
+| Expiry dashboard, age view and search across vaults | Key Vault Reader on each vault (names and dates only), and Reader to see the vault | Vault |
 | Show and copy a secret's value | Key Vault Secrets User | Vault |
 | Add secrets, set new values, edit details, enable or disable | Key Vault Secrets Officer | Vault |
 | Roll back to an older version | Key Vault Secrets Officer | Vault |
@@ -279,7 +283,10 @@ Set these as environment variables. Don't commit them.
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
 | `KEYRING_ALLOW_PURGE` | Optional. `true` to allow permanent deletes. Off by default |
 | `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
-| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting |
+| `KEYRING_STALE_AFTER_DAYS` | Optional. Days without a new value before a secret, certificate or key shows "Not changed in over a year" (or "over N days"). A whole number from 1 to 3650, default 365. Checked at start: anything else stops Keyring starting |
+| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting. Keyring's audit events are written at every level |
+| `KEYRING_LOG_FORMAT` | Optional. `text` (default) or `json`: one JSON object per line, with Keyring's audit events marked `"kind":"audit"`. See [Logs](docs/deploy.md#logs) |
+| `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
 
 Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
@@ -287,7 +294,7 @@ Sessions live in memory, so restarting Keyring signs everyone out. A request tha
 
 ### Behind a proxy
 
-- **Reverse proxy or load balancer in front.** Keyring ignores `X-Forwarded-*` headers. Set `APP_BASE_URL` to exactly the origin the browser uses (scheme, host and any port). If it differs, sign-in redirects go to the wrong place and every form post is refused with "This request didn't come from Keyring".
+- **Reverse proxy or load balancer in front.** Keyring ignores `X-Forwarded-*` headers, except that `KEYRING_TRUSTED_PROXY_HOPS` lets audit events take the browser's address from `X-Forwarded-For`. Set `APP_BASE_URL` to exactly the origin the browser uses (scheme, host and any port). If it differs, sign-in redirects go to the wrong place and every form post is refused with "This request didn't come from Keyring".
 - **Outbound proxy.** Calls to Entra ID and Azure honour `HTTPS_PROXY` and `NO_PROXY` (and their lower-case forms).
 - **Private CA**, for example a firewall that inspects TLS. Keyring trusts the operating system's certificate store. The distroless image has only the public roots, so point `SSL_CERT_FILE` at a PEM file in the container that holds the public roots plus your CA. When `SSL_CERT_FILE` is set, only that file is used.
 

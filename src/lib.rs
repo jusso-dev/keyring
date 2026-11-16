@@ -2,6 +2,8 @@
 //!
 //! Every Azure call is made as the signed-in user. Nothing is stored.
 
+pub(crate) mod age;
+pub mod audit;
 pub mod auth;
 pub mod azure;
 pub mod config;
@@ -65,7 +67,7 @@ impl AppState {
         let oidc = Oidc::new(&config, http.clone(), credential.clone());
         let broker = Arc::new(TokenBroker::new(&config, http.clone(), credential));
         Ok(Self {
-            sessions: Arc::new(SessionStore::default()),
+            sessions: Arc::new(SessionStore::new(&config.session_secret)),
             oidc: Arc::new(oidc),
             azure: AzureClient::new(http, broker),
             fanout: azure::fanout::Limits::STANDARD,

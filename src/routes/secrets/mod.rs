@@ -12,6 +12,7 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::age;
 use crate::auth::CurrentSession;
 use crate::azure::secrets::{ExpiryState, SecretItem, SecretsApi, now_ts};
 use crate::dates;
@@ -28,7 +29,14 @@ pub(super) struct SecretRow {
     pub name: String,
     pub enabled: bool,
     pub content_type: String,
-    pub updated: String,
+    /// When the current version was made: when the value last changed.
+    pub changed: String,
+    /// "N days ago" for [`Self::changed`].
+    pub changed_note: String,
+    pub created_at: Option<i64>,
+    /// The "Not changed in over ..." badge, or empty. Set by
+    /// [`Self::mark_stale`].
+    pub stale: String,
     pub expires: String,
     pub expires_note: String,
     pub expiry: ExpiryState,
@@ -55,7 +63,13 @@ impl SecretRow {
             name: item.name().to_owned(),
             enabled: a.is_enabled(),
             content_type: item.content_type.clone().unwrap_or_default(),
-            updated: a.updated.map(dates::format_date).unwrap_or_default(),
+            changed: a.created.map(dates::format_date).unwrap_or_default(),
+            changed_note: a
+                .created
+                .map(|c| dates::relative_days(c, now))
+                .unwrap_or_default(),
+            created_at: a.created,
+            stale: String::new(),
             expires: a.expires.map(dates::format_date).unwrap_or_default(),
             expires_note: a
                 .expires
@@ -76,7 +90,22 @@ impl SecretRow {
     pub(super) fn is_expiring(&self) -> bool {
         self.expiry == ExpiryState::Soon
     }
+
+    /// Set the badge for a value unchanged in more than `after_days`.
+    pub(super) fn mark_stale(mut self, after_days: u32, now: i64) -> Self {
+        self.stale = age::stale_badge(self.created_at, self.managed, after_days, now);
+        self
+    }
+
+    /// The value hasn't changed in more than `days`. Never true for a
+    /// certificate's backing secret, which changes with the certificate.
+    fn older_than(&self, days: u32, now: i64) -> bool {
+        !self.managed && age::is_stale(self.created_at, days, now)
+    }
 }
+
+/// Most days the "Not changed in over" filter takes: a hundred years.
+const MAX_OLDER_DAYS: u32 = 36_500;
 
 /// List filters. All optional.
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -90,16 +119,42 @@ pub(super) struct SecretFilter {
     /// `disabled`.
     #[serde(default)]
     pub show: String,
+    /// "Not changed in over N days": a whole number of days, or empty.
+    #[serde(default)]
+    pub older: String,
     #[serde(default)]
     pub page: Option<usize>,
 }
 
 impl SecretFilter {
     pub(super) fn is_empty(&self) -> bool {
-        self.q.trim().is_empty() && self.tag.trim().is_empty() && self.show.is_empty()
+        self.q.trim().is_empty()
+            && self.tag.trim().is_empty()
+            && self.show.is_empty()
+            && self.older.trim().is_empty()
     }
 
-    pub(super) fn matches(&self, row: &SecretRow) -> bool {
+    /// The days in the "Not changed in over" filter. `Ok(None)` when it is
+    /// empty, `Err(())` when it isn't a whole number from 1 to
+    /// [`MAX_OLDER_DAYS`].
+    pub(super) fn older_days(&self) -> Result<Option<u32>, ()> {
+        let v = self.older.trim();
+        if v.is_empty() {
+            return Ok(None);
+        }
+        v.parse::<u32>()
+            .ok()
+            .filter(|d| (1..=MAX_OLDER_DAYS).contains(d))
+            .map(Some)
+            .ok_or(())
+    }
+
+    pub(super) fn matches(&self, row: &SecretRow, now: i64) -> bool {
+        if let Ok(Some(days)) = self.older_days()
+            && !row.older_than(days, now)
+        {
+            return false;
+        }
         // The same text the browser's live filter searches: the name and
         // every tag as `key=value`.
         let q = self.q.trim().to_lowercase();
@@ -132,10 +187,11 @@ impl SecretFilter {
         vault_path(
             vault,
             &format!(
-                "/secrets?q={}&tag={}&show={}&page={page}",
+                "/secrets?q={}&tag={}&show={}&older={}&page={page}",
                 enc(&self.q),
                 enc(&self.tag),
-                enc(&self.show)
+                enc(&self.show),
+                enc(self.older.trim())
             ),
         )
     }
@@ -157,6 +213,13 @@ struct ListPage {
     expired_count: usize,
     expiring_count: usize,
     disabled_count: usize,
+    /// Values unchanged past `KEYRING_STALE_AFTER_DAYS`.
+    stale_count: usize,
+    stale_after_days: u32,
+    /// "over a year", or "over N days".
+    stale_phrase: String,
+    /// The "Not changed in over" filter isn't a usable number.
+    older_error: bool,
     filter: SecretFilter,
     show_options: Vec<ShowOption>,
     pager: Pager,
@@ -203,13 +266,18 @@ pub(super) async fn list(
         }
     };
     let now = now_ts();
-    let all: Vec<SecretRow> = items.iter().map(|i| SecretRow::from_item(i, now)).collect();
+    let after = state.config.stale_after_days;
+    let all: Vec<SecretRow> = items
+        .iter()
+        .map(|i| SecretRow::from_item(i, now).mark_stale(after, now))
+        .collect();
     let total = all.len();
+    let stale_count = all.iter().filter(|r| !r.stale.is_empty()).count();
     let expired_count = all.iter().filter(|r| r.is_expired()).count();
     let expiring_count = all.iter().filter(|r| r.is_expiring()).count();
     let disabled_count = all.iter().filter(|r| !r.enabled).count();
 
-    let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
+    let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r, now)).collect();
     let (rows, pager) = paginate(matching, filter.page, "secrets", |p| {
         filter.page_url(&vault, p)
     });
@@ -237,6 +305,10 @@ pub(super) async fn list(
         expired_count,
         expiring_count,
         disabled_count,
+        stale_count,
+        stale_after_days: after,
+        stale_phrase: age::stale_phrase(after),
+        older_error: filter.older_days().is_err(),
         filter,
         show_options,
     })
@@ -296,7 +368,7 @@ pub(super) async fn detail(
             a.recoverable_days,
         )
         .sentence(Kind::Secret),
-        row: SecretRow::from_item(&item, now),
+        row: SecretRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now),
         shell,
         vault,
         access,
@@ -313,7 +385,10 @@ mod tests {
             name: name.into(),
             enabled,
             content_type: String::new(),
-            updated: String::new(),
+            changed: String::new(),
+            changed_note: String::new(),
+            created_at: None,
+            stale: String::new(),
             expires: String::new(),
             expires_note: String::new(),
             expiry,
@@ -335,6 +410,7 @@ mod tests {
             q: q.into(),
             tag: tag.into(),
             show: show.into(),
+            older: String::new(),
             page: None,
         }
     }
@@ -342,21 +418,52 @@ mod tests {
     #[test]
     fn filters() {
         let r = row("db-password", true, ExpiryState::Soon, &[("env", "prod")]);
-        assert!(f("DB", "", "").matches(&r));
-        assert!(!f("api", "", "").matches(&r));
-        assert!(f("", "env=PROD", "").matches(&r));
-        assert!(!f("", "env=test", "").matches(&r));
-        assert!(f("", "", "expiring").matches(&r));
-        assert!(!f("", "", "expired").matches(&r));
-        assert!(!f("", "", "disabled").matches(&r));
+        assert!(f("DB", "", "").matches(&r, 0));
+        assert!(!f("api", "", "").matches(&r, 0));
+        assert!(f("", "env=PROD", "").matches(&r, 0));
+        assert!(!f("", "env=test", "").matches(&r, 0));
+        assert!(f("", "", "expiring").matches(&r, 0));
+        assert!(!f("", "", "expired").matches(&r, 0));
+        assert!(!f("", "", "disabled").matches(&r, 0));
         // The search box matches tags too, as the live filter does.
-        assert!(f("prod", "", "").matches(&r));
-        assert!(f("env=pr", "", "").matches(&r));
-        assert!(!f("staging", "", "").matches(&r));
+        assert!(f("prod", "", "").matches(&r, 0));
+        assert!(f("env=pr", "", "").matches(&r, 0));
+        assert!(!f("staging", "", "").matches(&r, 0));
         let d = row("old", false, ExpiryState::Expired, &[]);
-        assert!(f("", "", "disabled").matches(&d));
-        assert!(f("", "", "expired").matches(&d));
+        assert!(f("", "", "disabled").matches(&d, 0));
+        assert!(f("", "", "expired").matches(&d, 0));
         // "Expiring" means soon, not already expired, to match its count.
-        assert!(!f("", "", "expiring").matches(&d));
+        assert!(!f("", "", "expiring").matches(&d, 0));
+    }
+
+    #[test]
+    fn not_changed_in_over_n_days() {
+        const DAY: i64 = 86_400;
+        let now = 1_800_000_000;
+        let mut r = row("old", true, ExpiryState::None, &[]);
+        r.created_at = Some(now - 100 * DAY);
+        let older = |days: &str| SecretFilter {
+            older: days.into(),
+            ..f("", "", "")
+        };
+        assert!(older("99").matches(&r, now));
+        assert!(
+            !older("100").matches(&r, now),
+            "exactly 100 days isn't over"
+        );
+        assert!(older("").matches(&r, now));
+        // A bad number filters nothing, and the page says so.
+        assert!(older("abc").matches(&r, now));
+        assert_eq!(older("abc").older_days(), Err(()));
+        assert_eq!(older("0").older_days(), Err(()));
+        assert_eq!(older("36501").older_days(), Err(()));
+        assert_eq!(older(" 30 ").older_days(), Ok(Some(30)));
+        // A certificate's backing secret changes with the certificate.
+        r.managed = true;
+        assert!(!older("99").matches(&r, now));
+        assert_eq!(r.mark_stale(30, now).stale, "");
+        let mut n = row("new", true, ExpiryState::None, &[]);
+        n.created_at = Some(now - 400 * DAY);
+        assert_eq!(n.mark_stale(365, now).stale, "Not changed in over a year");
     }
 }

@@ -26,6 +26,16 @@ pub struct Config {
     pub allow_purge: bool,
     pub listen: SocketAddr,
     pub log_level: String,
+    /// `KEYRING_LOG_FORMAT`: plain text lines (the default) or one JSON
+    /// object per line.
+    pub log_format: LogFormat,
+    /// `KEYRING_TRUSTED_PROXY_HOPS`: how many proxies in front of Keyring
+    /// add to `X-Forwarded-For`. 0 (the default) ignores the header and
+    /// records the socket peer as the client's address.
+    pub trusted_proxy_hops: u8,
+    /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
+    /// many days gets the "Not changed in over ..." badge.
+    pub stale_after_days: u32,
     /// Azure Resource Manager base URL. Only changed by tests.
     pub management_url: String,
     /// Log Analytics query API base URL. Only changed by tests.
@@ -247,7 +257,50 @@ impl Config {
             }
         };
 
+        let log_format = match get("KEYRING_LOG_FORMAT")
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("text") => LogFormat::Text,
+            Some("json") => LogFormat::Json,
+            Some(_) => {
+                return Err(ConfigError::Invalid {
+                    name: "KEYRING_LOG_FORMAT",
+                    reason: "use text or json".into(),
+                });
+            }
+        };
+
+        let trusted_proxy_hops = match get("KEYRING_TRUSTED_PROXY_HOPS") {
+            None => 0,
+            Some(v) => v
+                .parse::<u8>()
+                .ok()
+                .filter(|n| *n <= MAX_PROXY_HOPS)
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_TRUSTED_PROXY_HOPS",
+                    reason: format!(
+                        "use a whole number from 0 to {MAX_PROXY_HOPS}: 1 on App Service or Container Apps, 0 with nothing in front"
+                    ),
+                })?,
+        };
+
+        let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
+            None => DEFAULT_STALE_AFTER_DAYS,
+            Some(v) => v
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (1..=MAX_STALE_AFTER_DAYS).contains(d))
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_STALE_AFTER_DAYS",
+                    reason: format!("use a whole number of days from 1 to {MAX_STALE_AFTER_DAYS}"),
+                })?,
+        };
+
         Ok(Self {
+            stale_after_days,
+            log_format,
+            trusted_proxy_hops,
             loganalytics_url,
             management_url,
             keyvault_test_base,
@@ -326,9 +379,27 @@ impl Config {
     }
 }
 
-/// Values `KEYRING_LOG_LEVEL` accepts. `off` is left out on purpose: it
-/// would also drop the lines that record reveals and downloads.
+/// How log lines are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    /// `key=value` text lines, as before.
+    #[default]
+    Text,
+    /// One JSON object per line.
+    Json,
+}
+
+/// Most proxies `KEYRING_TRUSTED_PROXY_HOPS` can name.
+pub const MAX_PROXY_HOPS: u8 = 8;
+
+/// Values `KEYRING_LOG_LEVEL` accepts. `off` is left out on purpose.
+/// Keyring's audit events are written at every level.
 pub const LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
+/// Default for `KEYRING_STALE_AFTER_DAYS`.
+pub const DEFAULT_STALE_AFTER_DAYS: u32 = 365;
+/// Largest `KEYRING_STALE_AFTER_DAYS` accepted: ten years.
+pub const MAX_STALE_AFTER_DAYS: u32 = 3650;
 
 /// Default Log Analytics query endpoint.
 pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
@@ -608,6 +679,64 @@ pub(crate) mod tests {
                     load(&env),
                     Err(ConfigError::Invalid {
                         name: "KEYRING_LOG_LEVEL",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_after_days_is_checked() {
+        let mut env = sample_env();
+        assert_eq!(load(&env).unwrap().stale_after_days, 365);
+        env.insert("KEYRING_STALE_AFTER_DAYS", "90".into());
+        assert_eq!(load(&env).unwrap().stale_after_days, 90);
+        env.insert("KEYRING_STALE_AFTER_DAYS", "3650".into());
+        assert_eq!(load(&env).unwrap().stale_after_days, 3650);
+        for bad in ["0", "-1", "3651", "1.5", "a year"] {
+            env.insert("KEYRING_STALE_AFTER_DAYS", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_STALE_AFTER_DAYS",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn log_format_and_proxy_hops() {
+        let mut env = sample_env();
+        let c = load(&env).unwrap();
+        assert_eq!(c.log_format, LogFormat::Text);
+        assert_eq!(c.trusted_proxy_hops, 0);
+        env.insert("KEYRING_LOG_FORMAT", "JSON".into());
+        env.insert("KEYRING_TRUSTED_PROXY_HOPS", "1".into());
+        let c = load(&env).unwrap();
+        assert_eq!(c.log_format, LogFormat::Json);
+        assert_eq!(c.trusted_proxy_hops, 1);
+        env.insert("KEYRING_LOG_FORMAT", "xml".into());
+        assert!(matches!(
+            load(&env),
+            Err(ConfigError::Invalid {
+                name: "KEYRING_LOG_FORMAT",
+                ..
+            })
+        ));
+        env.remove("KEYRING_LOG_FORMAT");
+        for bad in ["-1", "9", "one", "1.5"] {
+            env.insert("KEYRING_TRUSTED_PROXY_HOPS", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_TRUSTED_PROXY_HOPS",
                         ..
                     })
                 ),

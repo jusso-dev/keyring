@@ -1,7 +1,7 @@
 //! Access: who can reach a vault or one of its items, from Azure role
 //! assignments (active and PIM eligible) and, on older vaults, access
 //! policies. Read through ARM as the signed-in person. Only reads, so it
-//! writes no action line.
+//! writes no audit event.
 //!
 //! Principals are shown as object IDs and a type, with a link to the
 //! portal. Keyring doesn't call Microsoft Graph, so it has no names.

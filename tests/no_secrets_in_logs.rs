@@ -1,6 +1,6 @@
 //! Secret values and tokens never reach the logs.
 //!
-//! Kept in its own test binary with a single test: `tracing` caches whether
+//! Kept in its own test binary with a single log capture test: `tracing` caches whether
 //! a log line is wanted, and other tests running alongside without a
 //! subscriber can switch lines off for this one.
 
@@ -36,12 +36,23 @@ const VALUE: &str = "Sup3r-S3cret-Value-<&>\"'";
 
 #[tokio::test]
 async fn values_never_reach_the_logs() {
+    use tracing_subscriber::layer::SubscriberExt;
+    // Both formats at once: text as before, and KEYRING_LOG_FORMAT=json.
     let capture = Capture::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_writer(capture.clone())
-        .with_ansi(false)
-        .finish();
+    let json = Capture::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::TRACE)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(capture.clone())
+                .with_ansi(false),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .event_format(keyring::telemetry::JsonLines)
+                .with_writer(json.clone()),
+        );
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let w = support::world().await;
@@ -111,7 +122,7 @@ async fn values_never_reach_the_logs() {
 
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
-        logs.contains("secret value revealed"),
+        logs.contains("action=secret.reveal outcome=success"),
         "the reveal itself is logged: {logs}"
     );
     assert!(
@@ -137,7 +148,7 @@ async fn values_never_reach_the_logs() {
     );
     // Actions name the person by Entra object and tenant ID.
     assert!(
-        logs.contains("subject=oid:aaaaaaaa-0000-0000-0000-000000000001,tid:"),
+        logs.contains("actor_oid=aaaaaaaa-0000-0000-0000-000000000001 actor_tid="),
         "{logs}"
     );
     // Headers are never logged: no cookies, no session ID.
@@ -149,4 +160,72 @@ async fn values_never_reach_the_logs() {
         !logs.contains("private detail"),
         "Azure message leaked into logs"
     );
+
+    // The same rules for the JSON lines, which must each parse.
+    let json = String::from_utf8(json.0.lock().unwrap().clone()).unwrap();
+    for leak in [
+        "Sup3r-S3cret",
+        "QUERYLEAK",
+        "Upl0ad-Passw0rd",
+        "GENLEAK_",
+        "user-api-token",
+        "obo:",
+        "private detail",
+        w.cookie.as_str(),
+        w.csrf.as_str(),
+    ] {
+        assert!(!json.contains(leak), "{leak} leaked into JSON logs");
+    }
+    let lines: Vec<serde_json::Value> = json
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("not JSON: {l}")))
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
+        "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "log"
+            && l["message"] == "request"
+            && l["path"] == "/v/kv-test/secrets"),
+        "request lines are JSON too"
+    );
+    // A crafted sign-in error is one escaped string, not a new line.
+    assert!(!json.lines().any(|l| l.starts_with("FORGEDLINE")));
+}
+
+/// Every action goes through `audit::record`: no handler writes its own
+/// free-text action line naming a person any more.
+#[test]
+fn no_handler_writes_its_own_action_line() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap();
+        let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for level in ["info", "warn", "error", "debug", "trace"] {
+            let bad = format!("tracing::{level}!( subject =");
+            let bad2 = format!("tracing::{level}!(subject =");
+            assert!(
+                !flat.contains(&bad) && !flat.contains(&bad2),
+                "{} writes an action line itself. Use crate::audit instead",
+                f.display()
+            );
+        }
+    }
 }

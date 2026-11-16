@@ -254,14 +254,11 @@ pub(crate) async fn save(
             );
             Ok(renewal_page(shell, vault, name, f, current, errors, None))
         }
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate renewal changed");
-            Ok(redirect_with(
-                &state,
-                &vault_path(&vault, &format!("/certificates/{name}")),
-                format!("Saved what happens near expiry for {name}."),
-            ))
-        }
+        Ok(_) => Ok(redirect_with(
+            &state,
+            &vault_path(&vault, &format!("/certificates/{name}")),
+            format!("Saved what happens near expiry for {name}."),
+        )),
         Err(e) => match rejection_message(&e) {
             Some(m) => Ok(renewal_page(
                 shell,

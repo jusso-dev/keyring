@@ -34,9 +34,11 @@ pub(crate) fn verify(
     expected: &str,
 ) -> Result<(), ConfirmError> {
     if !session.csrf_matches_vault(&form.csrf, vault) {
+        crate::audit::refuse(crate::audit::Refusal::Csrf);
         return Err(ConfirmError::StaleForm);
     }
     if expected.is_empty() || form.confirm_name.trim() != expected {
+        crate::audit::refuse(crate::audit::Refusal::TypedNameMismatch);
         return Err(ConfirmError::NameMismatch);
     }
     Ok(())

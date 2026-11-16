@@ -126,6 +126,10 @@ pub struct UserTokens {
 /// One signed-in session.
 pub struct Session {
     pub user: User,
+    /// A keyed hash of the session ID, written on Keyring's audit events so
+    /// one session's events join up without the log holding the cookie
+    /// value. See [`SessionStore::new`].
+    pub audit_ref: String,
     /// Per-session key for form tokens. Never sent to the browser; forms
     /// carry a token derived from it and the chosen vault.
     csrf: Secret,
@@ -369,15 +373,41 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/// Drop expired sessions, writing an audit event for each. Not tied to
+/// the request in progress, if any, so no browser details.
+fn drop_expired(map: &mut HashMap<String, Arc<Session>>, now: Instant) {
+    map.retain(|_, s| {
+        let expired = s.expired_at(now);
+        if expired {
+            record_expired(s);
+        }
+        !expired
+    });
+}
+
+fn record_expired(session: &Session) {
+    use crate::audit::{Action, AuditEvent, Outcome, record};
+    record(AuditEvent::new(Action::SessionExpired, Outcome::Success).by(session));
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding the lock leaves plain data behind, so carry on.
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// All live sessions, keyed by the random ID in the session cookie.
-#[derive(Default)]
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// Keys each session's [`Session::audit_ref`].
+    audit_key: ring::hmac::Key,
+}
+
+/// A store whose audit key is random, so its session references join up
+/// only within this process. For tests; Keyring uses [`SessionStore::new`].
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::with_audit_key(random_token(32).as_bytes())
+    }
 }
 
 /// Prints only how many sessions there are. The keys are live session IDs.
@@ -404,6 +434,36 @@ pub fn spawn_sweeper(store: Arc<SessionStore>) -> tokio::task::JoinHandle<()> {
 }
 
 impl SessionStore {
+    /// A store whose session references are keyed from `SESSION_SECRET`,
+    /// so they stay the same across restarts of the same deployment.
+    pub fn new(session_secret: &Secret) -> Self {
+        let salt = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, b"keyring audit v1");
+        let prk = salt.extract(session_secret.expose().as_bytes());
+        let info = [b"session_ref".as_slice()];
+        let okm = prk
+            .expand(&info, ring::hmac::HMAC_SHA256)
+            .expect("valid HKDF length");
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            audit_key: ring::hmac::Key::from(okm),
+        }
+    }
+
+    fn with_audit_key(key: &[u8]) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            audit_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key),
+        }
+    }
+
+    /// The audit reference for a session ID: the first 16 bytes of its
+    /// HMAC, base64url.
+    fn audit_ref(&self, id: &str) -> String {
+        use base64::Engine;
+        let tag = ring::hmac::sign(&self.audit_key, id.as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&tag.as_ref()[..16])
+    }
+
     /// Start a new session and return its ID for the cookie.
     pub fn create(&self, user: User, tokens: UserTokens) -> String {
         self.create_at(user, tokens, Instant::now())
@@ -412,6 +472,7 @@ impl SessionStore {
     pub fn create_at(&self, user: User, tokens: UserTokens, now: Instant) -> String {
         let id = random_token(32);
         let session = Arc::new(Session {
+            audit_ref: self.audit_ref(&id),
             user,
             csrf: Secret::new(random_token(32)),
             azure_tokens: TokenCache::default(),
@@ -425,7 +486,7 @@ impl SessionStore {
             last_seen: Mutex::new(now),
         });
         let mut map = lock(&self.sessions);
-        map.retain(|_, s| !s.expired_at(now));
+        drop_expired(&mut map, now);
         map.insert(id.clone(), session);
         id
     }
@@ -440,6 +501,11 @@ impl SessionStore {
         let session = map.get(id)?.clone();
         if session.expired_at(now) {
             map.remove(id);
+            // Found by the browser that holds it, so its details belong.
+            use crate::audit::{Action, AuditEvent, Outcome, from_this_browser, record};
+            record(from_this_browser(
+                AuditEvent::new(Action::SessionExpired, Outcome::Success).by(&session),
+            ));
             return None;
         }
         *lock(&session.last_seen) = now;
@@ -451,7 +517,7 @@ impl SessionStore {
     /// the sessions that are left.
     pub fn sweep_at(&self, now: Instant) {
         let mut map = lock(&self.sessions);
-        map.retain(|_, s| !s.expired_at(now));
+        drop_expired(&mut map, now);
         for s in map.values() {
             s.drop_stale_upload(now);
             s.drop_stale_lists(now);
