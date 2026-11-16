@@ -154,8 +154,10 @@ curves, which suits a security console.
 
 - **Top bar**: dark chrome, one line on desktop. Wordmark (an inline SVG key
   ring, hidden from assistive tech, and "Keyring"), the current vault as a
-  small "Vault" label with the name in mono and a "Change vault" link, and the
-  signed-in person with "Sign out" at the right. It wraps on small screens.
+  small "Vault" label with the name in mono and a "Change vault" link, a
+  search box (a plain GET form to `/search`, with a small Search button and a
+  visually hidden label), and the signed-in person with "Sign out" at the
+  right. It wraps on small screens, where the search box takes its own row.
 - **Section nav**: 12rem on the paper colour with a hairline on its right. The
   current section has the accent tint, a 3px accent bar and weight 600. Below
   48rem it becomes a wrapping row with an underline for the current section.
@@ -250,6 +252,14 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   count, not a status, and keeps the badge's glyph so the tone isn't colour
   alone.
 - Then a ledger table per group, most urgent first. No charts, no score.
+
+### Search
+
+- A list page across vaults: heading, the search form (text, vault, type,
+  status), then the notes on vaults not read, then one framed table per vault
+  under an `h2` with the vault name in mono and its count.
+- Rows use the same columns and status badges as each vault's own list.
+- Before a search, and when nothing matches, an empty state says what to do.
 
 ### Audit
 

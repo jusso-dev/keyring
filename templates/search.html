@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{% if searched %}Search for {{ query.q.trim() }} - Keyring{% else %}Search - Keyring{% endif %}{% endblock %}
+{% block content %}
+<h1>Search</h1>
+<p>Find a secret, certificate or key in any vault you can see, by its name, a tag or its content type. Only names and properties are read, never values.</p>
+
+<form class="filters" method="get" action="/search" role="search">
+  <div>
+    <label for="q">Search for</label>
+    <p class="field-help" id="q-help">Part of a name, a tag such as env=prod, or a content type. Up to {{ max_query }} characters.</p>
+    <input id="q" name="q" type="search" value="{{ query.q }}" maxlength="{{ max_query }}" aria-describedby="q-help"{% call ui::ident() %}{% endcall %}>
+  </div>
+  <div>
+    <label for="vault">Vault</label>
+    <select id="vault" name="vault">
+      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+      {% if !query.vault.is_empty() && vault_names.is_empty() %}<option value="{{ query.vault }}" selected>{{ query.vault }}</option>{% endif %}
+      {% for v in vault_names %}<option value="{{ v }}"{% if query.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="type">Type</label>
+    <select id="type" name="type">
+      {% for (value, label, selected) in self.kind_options() %}<option value="{{ value }}"{% if selected %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="status">Status</label>
+    <select id="status" name="status">
+      {% for (value, label, selected) in self.status_options() %}<option value="{{ value }}"{% if selected %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Search</button>
+  </div>
+</form>
+
+{% if too_long %}
+<div class="notice notice-error"><p>That search is too long. Use up to {{ max_query }} characters.</p></div>
+{% elif !searched %}
+<div class="empty-state"><p>Type part of a name, a tag or a content type, then Search.</p></div>
+{% else %}
+
+{% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this searched the first {{ max_vaults }} by name. Pick a vault to search others.</p>{% endif %}
+
+{% if !skipped.is_empty() %}
+<div class="notice notice-warn">
+  <p><strong>Some of what you can see couldn't be read</strong>, so it wasn't searched:</p>
+  <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if unknown_vault %}
+<div class="empty-state"><p><span class="mono">{{ query.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access.</p></div>
+{% elif total == 0 %}
+<div class="empty-state"><p>Nothing matches. Try a shorter search, or change the filters.</p></div>
+{% else %}
+<p class="muted">{{ total }} match{% if total != 1 %}es{% endif %}{% if shown < total %}. Showing the first {{ shown }}: add to the search to narrow it{% endif %}.</p>
+
+{% for g in groups %}
+<section aria-labelledby="vault-{{ g.vault }}">
+  <h2 id="vault-{{ g.vault }}"><span class="mono">{{ g.vault }}</span> <span class="muted">({{ g.rows.len() }})</span></h2>
+  {% call ui::table_wrap("vault-{}-caption"|format(g.vault)) %}
+  <table>
+    <caption class="visually-hidden" id="vault-{{ g.vault }}-caption">Matches in {{ g.vault }}</caption>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Content type</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+    <tbody>
+      {% for r in g.rows %}
+      <tr{% if !r.status.enabled %} class="row-muted"{% endif %}>
+        <th scope="row"><a class="mono" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
+        <td>{{ r.kind.label() }}</td>
+        <td>{% call ui::status(r.status.enabled, r.status.expired, r.status.within30, r.status.within90, r.status.not_yet, r.status.managed) %}{% endcall %}</td>
+        <td>{% call ui::or_none(r.content_type) %}{% endcall %}</td>
+        <td>{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
+        <td>{% call ui::tags(r.tags) %}{% endcall %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+</section>
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endblock %}

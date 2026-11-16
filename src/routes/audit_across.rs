@@ -2,8 +2,10 @@
 //! secret values read in the last 7 days, over the Log Analytics
 //! workspaces the vaults send their audit logs to.
 //!
-//! 1. List the vaults (Resource Graph), the first [`MAX_VAULTS`] by name.
-//! 2. Read each vault's diagnostic settings through the shared fan-out.
+//! 1. List the vaults (Resource Graph), the first [`MAX_VAULTS`] by name,
+//!    through [`every_vault::choose`].
+//! 2. Read each vault's diagnostic settings through the shared fan-out,
+//!    within `state.fanout`.
 //! 3. Group the vaults by workspace and table, and send one query per
 //!    group, a few at a time.
 //!
@@ -13,7 +15,6 @@
 //! and in the CSV. This page only reads, so it writes no action line.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use askama::Template;
 use axum::extract::{Query, Request, State};
@@ -29,31 +30,30 @@ use crate::azure::audit_across::{
     self, Answer, Refusal, Report, ReportQuery, VaultEvent, WorkspaceGroup,
 };
 use crate::azure::fanout::{self, Limits};
-use crate::azure::vaults::{self, is_valid_vault_name};
+use crate::azure::vaults::is_valid_vault_name;
 use crate::azure::{AzureError, TokenError};
 use crate::expiry::csv_field;
 use crate::routes::assets::render;
 use crate::routes::audit::EventRow;
 use crate::routes::error::{Need, PageError, PageResult, Problem};
-use crate::routes::expiry::MAX_VAULTS;
+use crate::routes::every_vault::{self, MAX_VAULTS};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::vault_ctx::{is_valid_object_name, vault_path};
 
-/// Limits for reading diagnostic settings. With [`QUERY_LIMITS`], well
-/// inside the 90 second request limit in `routes::headers`.
-const SETTINGS_LIMITS: Limits = Limits {
-    concurrency: fanout::CONCURRENCY,
-    vault_timeout: Duration::from_secs(15),
-    deadline: Duration::from_secs(35),
-};
-
-/// Limits for the workspace queries, after the settings are read.
-const QUERY_LIMITS: Limits = Limits {
-    concurrency: fanout::CONCURRENCY,
-    vault_timeout: Duration::from_secs(25),
-    deadline: Duration::from_secs(30),
-};
+/// The page reads in two stages, diagnostic settings then workspace
+/// queries, so each gets half of the fan-out's deadline (`state.fanout`),
+/// and the whole page keeps to the same minute as the other pages across
+/// vaults. Each vault or workspace keeps the fan-out's own time limit,
+/// within its half.
+fn stage_limits(all: Limits) -> Limits {
+    let deadline = all.deadline / 2;
+    Limits {
+        concurrency: all.concurrency,
+        vault_timeout: all.vault_timeout.min(deadline),
+        deadline,
+    }
+}
 
 const SETTINGS_OUT_OF_TIME: &str =
     "Not read in time. Open the vault's own audit page to see its events";
@@ -151,16 +151,14 @@ async fn load(
     session: &CurrentSession,
     q: &ReportQuery,
 ) -> Result<Loaded, AzureError> {
-    let all = vaults::list_vaults(&state.azure, &session.0, &state.config.management_url).await?;
-    let mut vaults: Vec<(String, String)> = all
+    let chosen = every_vault::choose(state, session, "").await?;
+    let vaults_total = chosen.vault_names.len();
+    let vaults: Vec<(String, String)> = chosen
+        .ids
         .into_iter()
-        .filter(|v| is_valid_vault_name(&v.name) && audit::is_safe_resource_id(&v.id))
-        .map(|v| (v.name, v.id))
+        .filter(|(_, id)| audit::is_safe_resource_id(id))
         .collect();
-    vaults.sort();
-    vaults.dedup_by(|a, b| a.0 == b.0);
-    let vaults_total = vaults.len();
-    vaults.truncate(MAX_VAULTS);
+    let limits = stage_limits(state.fanout);
     let ids: HashMap<String, String> = vaults.iter().cloned().collect();
     let names: HashMap<String, String> = vaults
         .iter()
@@ -182,7 +180,7 @@ async fn load(
                 }
             }
         },
-        SETTINGS_LIMITS,
+        limits,
     )
     .await;
     let mut no_logging = Vec::new();
@@ -237,7 +235,7 @@ async fn load(
                 )
             }
         },
-        QUERY_LIMITS,
+        limits,
     )
     .await;
     let vault_list = |g: &WorkspaceGroup| {
@@ -312,7 +310,7 @@ async fn load(
         no_logging,
         settings_not_read,
         workspaces_not_read,
-        capped_vaults: vaults_total > MAX_VAULTS,
+        capped_vaults: chosen.capped,
         vaults_total,
         names,
     })
@@ -721,15 +719,23 @@ pub(super) async fn csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn both_stages_fit_inside_the_request_limit() {
+        let stage = stage_limits(Limits::STANDARD);
+        assert_eq!(stage.deadline * 2, Limits::STANDARD.deadline);
         assert!(
-            SETTINGS_LIMITS.deadline + QUERY_LIMITS.deadline + Duration::from_secs(20)
-                <= crate::routes::headers::REQUEST_TIMEOUT
+            stage.deadline * 2 + Duration::from_secs(20) <= crate::routes::headers::REQUEST_TIMEOUT
         );
-        assert!(SETTINGS_LIMITS.vault_timeout < SETTINGS_LIMITS.deadline);
-        assert!(QUERY_LIMITS.vault_timeout < QUERY_LIMITS.deadline);
+        assert!(stage.vault_timeout < stage.deadline);
+        // Shortened limits in tests shorten both stages.
+        let quick = stage_limits(Limits {
+            concurrency: 2,
+            vault_timeout: Duration::from_secs(5),
+            deadline: Duration::from_secs(2),
+        });
+        assert_eq!(quick.vault_timeout, Duration::from_secs(1));
     }
 
     #[test]

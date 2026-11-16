@@ -239,8 +239,21 @@ ul { padding-left: var(--space-md); }
 }
 .vault-picker strong { font-family: var(--font-mono); font-weight: 600; color: var(--color-chrome-ink); }
 
+/* Search every vault, from any page. A plain GET form. */
+.site-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin: 0 0 0 auto;
+}
+.site-search input[type="search"] {
+  width: 14rem;
+  min-height: var(--control-h-sm);
+  padding: var(--space-3xs) var(--space-xs);
+  border-color: var(--color-chrome-muted);
+}
+
 .account {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -842,6 +855,8 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .site-header { flex-wrap: wrap; padding: var(--space-2xs) var(--space-sm); }
   .vault-picker { padding-left: 0; border-left: 0; }
   .account { margin-left: 0; }
+  .site-search { margin-left: 0; width: 100%; }
+  .site-search input[type="search"] { width: 100%; }
   .content { padding: var(--space-md) var(--space-sm) var(--space-xl); }
   .filters { padding: var(--space-xs); }
   .filters > div, .filters input, .filters select { width: 100%; }

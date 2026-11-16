@@ -46,7 +46,8 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | "This vault is blocked from here" | The vault firewall doesn't allow Keyring's address. Add it, or use a private endpoint |
 | "Can't reach this vault" | The vault probably has public access off. See [private-vaults.md](private-vaults.md) |
 | "Azure asked Keyring to slow down" | Key Vault throttles busy vaults. Keyring already waits and retries a couple of times; wait a few seconds and try again |
-| Expiry dashboard lists vaults it couldn't read | Each one says why. Usually a missing role or a private vault. "Not read in time" means the vault took over 20 seconds or the dashboard reached its one minute limit; pick that vault on its own to see it |
+| Expiry dashboard or search lists vaults it couldn't read | Each one says why. Usually a missing role or a private vault. "Not read in time" means the vault took over 20 seconds or the page reached its one minute limit; pick that vault on its own to see it |
+| Search or the expiry dashboard doesn't show a change made outside Keyring | Each vault's list is kept for a minute in your session. Wait a minute and search again. Changes made in Keyring show straight away |
 | "You switched vaults" or "The page was out of date" after posting a form | The form was opened for one vault and you've since picked another, usually in another tab. Nothing was changed. Go back, refresh the page and try again |
 | "You were signed out before that was saved, so nothing changed" | The session ended (an hour idle, or 12 hours after sign-in) while the form was open. Sign in again and enter it again |
 

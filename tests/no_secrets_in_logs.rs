@@ -93,6 +93,15 @@ async fn values_never_reach_the_logs() {
     let _ = support::body_text(res).await;
     let res = w.get("/auth/sign-in?return_to=%2FQUERYLEAK3").await;
     let _ = support::body_text(res).await;
+    // A search across vaults: the search text is a query string too.
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    let res = w.get("/search?q=QUERYLEAK4-db&status=QUERYLEAK5").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let res = w.get("/search?q=db-password").await;
+    let html = support::body_text(res).await;
+    assert!(html.contains(">db-password<"), "found by search");
+    assert!(!html.contains("Sup3r-S3cret"), "search never shows a value");
 
     // A crafted sign-in error can't add a line to the log.
     let res = w
@@ -121,6 +130,10 @@ async fn values_never_reach_the_logs() {
     assert!(
         logs.contains("path=/v/kv-test/secrets/db-password/reveal") && logs.contains("method=POST"),
         "{logs}"
+    );
+    assert!(
+        logs.contains("path=/search "),
+        "the search is logged without its text"
     );
     // Actions name the person by Entra object and tenant ID.
     assert!(

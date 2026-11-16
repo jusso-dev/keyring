@@ -31,7 +31,7 @@ pub const DEADLINE: Duration = Duration::from_secs(60);
 /// Why a vault over [`VAULT_TIMEOUT`] is missing.
 pub(crate) const TOO_SLOW: &str = "Took too long to answer";
 /// Why a vault not finished by [`DEADLINE`] is missing.
-pub(crate) const OUT_OF_TIME: &str = "Not read in time. The dashboard stops after a minute so it can show what it has. Pick this vault on its own to see it";
+pub(crate) const OUT_OF_TIME: &str = "Not read in time. Keyring stops reading after a minute so it can show what it has. Pick this vault on its own to see it";
 /// Why a vault whose read failed inside Keyring is missing.
 pub(crate) const TASK_FAILED: &str = "Keyring hit a problem reading it";
 
@@ -52,15 +52,17 @@ pub struct Fanned<T> {
 }
 
 /// How many vaults at once, and how long each and all may take.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Limits {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
     pub concurrency: usize,
     pub vault_timeout: Duration,
     pub deadline: Duration,
 }
 
 impl Limits {
-    pub(crate) const STANDARD: Limits = Limits {
+    /// [`CONCURRENCY`], [`VAULT_TIMEOUT`] and [`DEADLINE`]. Only tests use
+    /// anything else.
+    pub const STANDARD: Limits = Limits {
         concurrency: CONCURRENCY,
         vault_timeout: VAULT_TIMEOUT,
         deadline: DEADLINE,

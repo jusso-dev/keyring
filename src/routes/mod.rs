@@ -7,6 +7,7 @@ mod auth;
 mod certs;
 pub(crate) mod confirm;
 pub mod error;
+mod every_vault;
 mod expiry;
 pub mod flash;
 pub(crate) mod forms;
@@ -20,6 +21,7 @@ mod moved;
 mod origin;
 pub(crate) mod paging;
 mod rejection;
+pub mod search;
 mod secrets;
 pub(crate) mod shell;
 pub(crate) mod vault_ctx;
@@ -198,6 +200,8 @@ fn vault_routes() -> Router<AppState> {
         )
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
+        // A change to a vault drops the list search keeps for it.
+        .route_layer(middleware::from_fn(every_vault::forget_on_change))
 }
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -219,6 +223,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/audit.csv", get(audit_across::csv))
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
+        .route("/search", get(search::page))
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/auth/keepalive", get(auth::keepalive))
         // Inside the session check, so the error page has the signed-in shell.

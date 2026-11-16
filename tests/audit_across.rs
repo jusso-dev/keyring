@@ -400,3 +400,28 @@ async fn too_many_rows_are_capped_with_a_note() {
     let csv = body_text(w.get("/audit.csv?report=reads").await).await;
     assert!(csv.contains("NOT READ,Only the first 500 rows are included"));
 }
+
+#[tokio::test]
+async fn a_slow_workspace_is_listed_and_the_rest_still_show() {
+    let w = support::world_within(keyring::azure::fanout::Limits {
+        concurrency: 6,
+        vault_timeout: std::time::Duration::from_millis(400),
+        deadline: std::time::Duration::from_secs(4),
+    })
+    .await;
+    setup(&w);
+    *w.arm.state.workspace_delay.lock().unwrap() =
+        vec![("/workspaces/own".into(), std::time::Duration::from_secs(5))];
+    let started = std::time::Instant::now();
+    let (status, html) = w.page("/audit?report=reads").await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "per-workspace limit"
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("api-token"), "shared workspace still read");
+    assert!(
+        html.contains("<span class=\"mono\">own</span> (for <span class=\"mono\">kv-c</span>): Took too long to answer."),
+        "{html}"
+    );
+}

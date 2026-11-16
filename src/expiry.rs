@@ -106,6 +106,12 @@ pub(crate) struct Item {
     pub name: String,
     pub enabled: bool,
     pub expires: Option<i64>,
+    pub not_before: Option<i64>,
+    /// A secret's content type. Empty for certificates and keys, whose list
+    /// calls don't give one.
+    pub content_type: String,
+    /// A secret or key that backs a certificate.
+    pub managed: bool,
     pub tags: Vec<(String, String)>,
 }
 
@@ -221,6 +227,9 @@ mod tests {
             name: name.into(),
             enabled: true,
             expires: exp,
+            not_before: None,
+            content_type: String::new(),
+            managed: false,
             tags: vec![("env".into(), "prod".into())],
         }
     }
