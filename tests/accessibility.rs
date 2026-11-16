@@ -242,6 +242,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         format!("/search?q={}", "a".repeat(101)),
         "/generator".into(),
         "/v/kv-test/audit".into(),
+        "/v/kv-test/access".into(),
         "/audit".into(),
         "/audit?report=reads".into(),
         "/audit?report=refused".into(),

@@ -253,6 +253,7 @@ struct DetailPage {
     /// Set when the rotation policy couldn't be read.
     rotation_note: Option<String>,
     hsm: bool,
+    access: crate::routes::access::Access,
 }
 
 /// Plain names for permitted operations.
@@ -292,10 +293,11 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let keys = api(&state, &session, &vault);
-    let (bundle, versions, rotation) = tokio::join!(
+    let (bundle, versions, rotation, access) = tokio::join!(
         keys.get(&name, None),
         keys.versions(&name),
-        keys.rotation_policy(&name)
+        keys.rotation_policy(&name),
+        crate::routes::access::for_item(&state, &session, &vault, Kind::Key, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -358,6 +360,7 @@ pub(super) async fn detail(
         rotation_note,
         shell,
         vault,
+        access,
     })
     .into_response())
 }

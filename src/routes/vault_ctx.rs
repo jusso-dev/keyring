@@ -24,6 +24,7 @@ pub(crate) fn no_vault_page(shell: Shell, section: Section) -> axum::response::R
     let noun = match section {
         Section::Certificates => "Certificates",
         Section::Keys => "Keys",
+        Section::Access => "Access",
         _ => "Secrets",
     };
     render(&NoVaultPage {
