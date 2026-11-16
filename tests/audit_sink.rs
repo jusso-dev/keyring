@@ -716,14 +716,15 @@ async fn an_import_with_a_reason_puts_it_on_each_secrets_row() {
     let sink = w.state.audit_sink.clone().unwrap();
     sink.shutdown().await;
     let rows = ingest.state.rows();
-    let per_secret: Vec<&Value> = rows
+    // Audit rows hold names and the typed reason, never a value.
+    let item_rows: Vec<&Value> = rows
         .iter()
         .filter(|r| {
             r["Action"] == "secret.import" && r["ItemName"].is_string() && r["Outcome"] == "success"
         })
         .collect();
-    assert_eq!(per_secret.len(), 2, "{rows:#?}");
-    for r in per_secret {
-        assert_eq!(r["Reason"], "Moving the app's settings", "{r:#?}");
+    assert_eq!(item_rows.len(), 2);
+    for r in item_rows {
+        assert_eq!(r["Reason"], "Moving the app's settings");
     }
 }
