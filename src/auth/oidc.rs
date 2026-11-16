@@ -24,6 +24,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::auth::assertion::{ASSERTION_TYPE, Credential};
 use crate::auth::entra::{self, EntraAdvice};
 use crate::auth::session::{User, UserId, UserTokens};
+use crate::auth::step_up::{SignInFacts, auth_context_id};
 use crate::azure::token::expiry_from;
 use crate::config::Config;
 use crate::http::{OidcHttp, error_chain};
@@ -47,6 +48,11 @@ pub struct PendingLogin {
     /// page they return to can say nothing changed.
     #[serde(default)]
     pub unsaved: bool,
+    /// Started to meet `KEYRING_STEP_UP_*` before a sensitive action. The
+    /// callback refuses a reply that still doesn't meet them, instead of
+    /// sending the person back to try again (which would loop).
+    #[serde(default)]
+    pub step_up: bool,
 }
 
 /// Written by hand so state, nonce and the PKCE verifier never print.
@@ -55,6 +61,7 @@ impl std::fmt::Debug for PendingLogin {
         f.debug_struct("PendingLogin")
             .field("return_to", &self.return_to)
             .field("unsaved", &self.unsaved)
+            .field("step_up", &self.step_up)
             .finish_non_exhaustive()
     }
 }
@@ -117,6 +124,10 @@ pub struct EntraClaims {
     pub oid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tid: Option<String>,
+    /// Authentication context IDs the sign-in met, when Keyring asked for
+    /// one with the `claims` parameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acrs: Option<Vec<String>>,
 }
 
 impl AdditionalClaims for EntraClaims {}
@@ -292,6 +303,19 @@ impl Oidc {
         unsaved: bool,
         claims: Option<String>,
     ) -> Result<(String, PendingLogin), SignInError> {
+        self.begin_with(return_to, unsaved, claims, None).await
+    }
+
+    /// [`Self::begin`], for a step-up when `step_up` is set. With a maximum
+    /// age in it, Entra is asked for a fresh sign-in (`prompt=login` and
+    /// `max_age`).
+    pub async fn begin_with(
+        &self,
+        return_to: String,
+        unsaved: bool,
+        claims: Option<String>,
+        step_up: Option<StepUpAsk>,
+    ) -> Result<(String, PendingLogin), SignInError> {
         let metadata = self.metadata().await?;
         let client = self.client(&metadata)?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
@@ -310,6 +334,11 @@ impl Oidc {
         if let Some(c) = claims {
             request = request.add_extra_param("claims", c);
         }
+        if let Some(max_age) = step_up.and_then(|s| s.max_age) {
+            request = request
+                .add_prompt(CoreAuthPrompt::Login)
+                .set_max_age(max_age);
+        }
         let (url, state, nonce) = request.url();
         Ok((
             url.to_string(),
@@ -319,6 +348,7 @@ impl Oidc {
                 pkce_verifier: verifier.secret().clone(),
                 return_to,
                 unsaved,
+                step_up: step_up.is_some(),
             },
         ))
     }
@@ -328,7 +358,7 @@ impl Oidc {
         &self,
         pending: PendingLogin,
         code: String,
-    ) -> Result<(User, UserTokens), SignInError> {
+    ) -> Result<(User, UserTokens, SignInFacts), SignInError> {
         let metadata = self.metadata().await?;
         let client = self.client(&metadata)?;
         // In managed identity mode, the assertion takes the secret's place.
@@ -397,6 +427,16 @@ impl Oidc {
                 tid: extra.tid.as_deref().and_then(guid_claim),
             },
         };
+        let facts = SignInFacts {
+            // Only well-formed context IDs are kept, so nothing odd is stored.
+            acrs: extra
+                .acrs
+                .iter()
+                .flatten()
+                .filter_map(|a| auth_context_id(a))
+                .collect(),
+            auth_time: claims.auth_time().map(|t| t.timestamp()),
+        };
         let tokens = UserTokens {
             access_token: Secret::new(token.access_token().secret().clone()),
             expires_at: expiry_from(token.expires_in(), SystemTime::now()),
@@ -404,7 +444,7 @@ impl Oidc {
                 .refresh_token()
                 .map(|t| Secret::new(t.secret().clone())),
         };
-        Ok((user, tokens))
+        Ok((user, tokens, facts))
     }
 
     /// Entra's sign-out URL, which sends the browser back to us afterwards.
@@ -423,10 +463,17 @@ impl Oidc {
     }
 }
 
+/// What a step-up sign-in asks Entra for beyond the `claims` parameter.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StepUpAsk {
+    /// Ask for a fresh sign-in, no older than this.
+    pub max_age: Option<Duration>,
+}
+
 /// Entra's error number from an `error_description` such as
 /// `AADSTS54005: OAuth2 Authorization code was already redeemed...`. Only
 /// the number is kept; the rest of the text is never stored or logged.
-fn aadsts_code(description: Option<&str>) -> Option<u64> {
+pub fn aadsts_code(description: Option<&str>) -> Option<u64> {
     let digits: String = description?
         .strip_prefix("AADSTS")?
         .chars()
@@ -478,6 +525,7 @@ mod tests {
             pkce_verifier: "verifier-value".into(),
             return_to: "/secrets".into(),
             unsaved: false,
+            step_up: false,
         };
         let out = format!("{p:?}");
         for hidden in ["state-value", "nonce-value", "verifier-value"] {

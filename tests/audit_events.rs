@@ -638,6 +638,78 @@ async fn audited_routes_write_exactly_one_event() {
     assert_eq!(expired[0]["action"], "session.expired");
     assert_eq!(expired[0]["actor_oid"], OID);
 
+    // --- Step-up: a sensitive action sent off to confirm it's you ------
+    let w = seeded(&[("KEYRING_STEP_UP_AUTH_CONTEXT", "c1")]).await;
+    capture.take_events();
+    let kv_calls = w.kv.state.log.lock().unwrap().len();
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/db-password/reveal",
+        &w.csrf,
+        &[],
+        &[SAME_SITE],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let ev = capture.one_event("step-up required");
+    assert_eq!(ev["action"], "secret.reveal");
+    assert_eq!(ev["outcome"], "refused");
+    assert_eq!(ev["reason_code"], "step_up_required");
+    assert_eq!(ev["actor_oid"], OID);
+    assert_eq!(ev["item_name"], "db-password");
+    assert_eq!(
+        w.kv.state.log.lock().unwrap().len(),
+        kv_calls,
+        "nothing reached Key Vault"
+    );
+    // The step-up sign-in comes back without the context: refused.
+    let start = w
+        .app
+        .clone()
+        .oneshot(
+            Request::get("/auth/start?return_to=%2F&reason=step_up")
+                .header("cookie", &w.cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let url = url::Url::parse(&support::location(&start)).unwrap();
+    let login = start
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_owned())
+        .find(|c| c.starts_with("keyring_login="))
+        .unwrap();
+    let q = |k: &str| {
+        url.query_pairs()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.into_owned())
+            .unwrap()
+    };
+    *w.idp.state.nonce.lock().unwrap() = Some(q("nonce"));
+    let res = w
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/auth/callback?code=abc&state={}", q("state")))
+                .header("cookie", format!("{}; {login}", w.cookie))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let ev = capture.one_event("step-up not met");
+    assert_eq!(ev["action"], "session.sign_in_failed");
+    assert_eq!(ev["outcome"], "refused");
+    assert_eq!(ev["reason_code"], "step_up_not_met");
+    assert_eq!(
+        ev["actor_oid"], OID,
+        "the ID token was verified, so who is known"
+    );
+
     // --- The client's address behind a trusted proxy --------------------
     let w = seeded(&[("KEYRING_TRUSTED_PROXY_HOPS", "1")]).await;
     capture.take_events();

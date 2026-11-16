@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Couldn't confirm it's you - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Couldn't confirm it's you</h1>
+  <p>Your organisation asks you to confirm it's you before showing values. Microsoft sign-in came back without that confirmation, so nothing was shown or changed. You're still signed in as before.</p>
+  <p class="hint"><strong>Details:</strong> Keyring asked Entra ID for a stronger or more recent sign-in and didn't get it. If this keeps happening, ask your admin to check the Conditional Access policy for Keyring's authentication context.</p>
+  <p><a class="button" href="{{ back_url }}">Back</a></p>
+</div>
+{% endblock %}
