@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Access to {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>Access <span class="muted">to {{ vault }}</span></h1>
+<p>Who can reach this vault's secrets, certificates and keys, as Azure has it set up. Assignments made on the subscription or resource group are included. Only settings are read, never values.</p>
+{% if access.unavailable.is_none() %}<p class="actions"><a href="{{ csv_url }}">Download CSV</a></p>{% endif %}
+{% let prefix = "" %}
+{% include "_access.html" %}
+{% endblock %}
