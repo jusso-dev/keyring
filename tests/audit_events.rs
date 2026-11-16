@@ -40,6 +40,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "forgets the file held in memory; nothing sent to Key Vault",
     ),
     (
+        "/v/{vault}/secrets/-/import",
+        "preview: reads the file of secrets and holds it in memory; only lists names in Key Vault, nothing written or read back",
+    ),
+    (
+        "/v/{vault}/secrets/-/import/cancel",
+        "forgets the file of secrets held in memory; nothing sent to Key Vault",
+    ),
+    (
         "/v/{vault}/secrets/{name}",
         "only redirects an old form address",
     ),
@@ -500,6 +508,89 @@ async fn audited_routes_write_exactly_one_event() {
         (ev["action"].as_str(), ev["outcome"].as_str()),
         (Some("key.delete"), Some("success"))
     );
+
+    // --- An import: one event for the request, one per secret written ---
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                ".env",
+                b"NEW_ONE=a\ndb-password=b\nold-secret=c\n",
+            )],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert_eq!(
+        capture.take_events(),
+        Vec::<Value>::new(),
+        "preview writes none"
+    );
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/-/import/confirm",
+        &w.csrf,
+        &[("import_id", &id)],
+        &[SAME_SITE, ("user-agent", "ImportBrowser/1.0")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let events = capture.take_events();
+    assert_eq!(events.len(), 3, "two secrets and the request: {events:#?}");
+    assert!(events.iter().all(|e| e["action"] == "secret.import"));
+    assert!(events.iter().all(|e| e["actor_oid"] == OID
+        && e["session_ref"].is_string()
+        && e["user_agent"] == "ImportBrowser/1.0"
+        && e["vault"] == "kv-test"
+        && e["outcome"] == "success"));
+    let mut items: Vec<&str> = events
+        .iter()
+        .filter_map(|e| e["item_name"].as_str())
+        .collect();
+    items.sort_unstable();
+    assert_eq!(
+        items,
+        ["NEW-ONE", "db-password"],
+        "old-secret is blocked, so not sent"
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.get("item_name").is_some())
+            .all(|e| e["kv_request_id"].is_string())
+    );
+    // A refused write: its own event says denied, and so does the request.
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"A=1\n")],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    *w.kv.state.fail.lock().unwrap() = Some((403, "ForbiddenByRbac"));
+    let _ = post(
+        &w,
+        "/v/kv-test/secrets/-/import/confirm",
+        &w.csrf,
+        &[("import_id", &id)],
+        &[SAME_SITE],
+    )
+    .await;
+    *w.kv.state.fail.lock().unwrap() = None;
+    let events = capture.take_events();
+    assert_eq!(events.len(), 2, "{events:#?}");
+    let item = events.iter().find(|e| e["item_name"] == "A").unwrap();
+    assert_eq!(item["outcome"], "denied");
+    assert_eq!(item["reason_code"], "ForbiddenByRbac");
+    let whole = events
+        .iter()
+        .find(|e| e.get("item_name").is_none())
+        .unwrap();
+    assert_eq!(whole["outcome"], "denied");
+    assert_eq!(whole["reason_code"], "none_written");
+    assert!(!format!("{events:?}").contains("private detail"));
 
     // --- A managed item -------------------------------------------------
     w.kv.state.put("managed-one", "x");

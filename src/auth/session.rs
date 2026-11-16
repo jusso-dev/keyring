@@ -58,6 +58,48 @@ impl std::fmt::Debug for PendingUpload {
     }
 }
 
+/// A file of secrets waiting to be imported. Values are [`Secret`]s, so
+/// they are zeroised when this is dropped. Never written anywhere.
+pub struct PendingImport {
+    pub id: String,
+    pub vault: String,
+    pub rows: Vec<PendingSecret>,
+    /// Rows the preview showed that won't be written, with why.
+    pub skipped: Vec<SkippedSecret>,
+    pub created: Instant,
+}
+
+/// A row of an import that won't be written. Never holds the value.
+#[derive(Debug, Clone)]
+pub struct SkippedSecret {
+    pub original: String,
+    pub name: String,
+    pub reason: String,
+}
+
+/// One secret in a [`PendingImport`].
+pub struct PendingSecret {
+    /// The name as written in the file.
+    pub original: String,
+    /// The Key Vault name it becomes.
+    pub name: String,
+    pub value: Secret,
+    pub content_type: Option<String>,
+    pub expires: Option<i64>,
+    pub tags: std::collections::BTreeMap<String, String>,
+    /// The name already has a secret, so this adds a version.
+    pub exists: bool,
+}
+
+impl std::fmt::Debug for PendingImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingImport")
+            .field("vault", &self.vault)
+            .field("rows", &self.rows.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Who is signed in, for display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct User {
@@ -143,6 +185,8 @@ pub struct Session {
     claims_challenge: Mutex<Option<String>>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
+    /// A secrets import between "preview" and "import". Memory only.
+    pending_import: Mutex<Option<PendingImport>>,
     /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
     lists: Mutex<HashMap<String, CachedList>>,
     tokens: Mutex<UserTokens>,
@@ -193,6 +237,26 @@ impl Session {
         (crate::auth::crypto::constant_time_eq(upload.id.as_bytes(), id.as_bytes())
             && upload.created.elapsed() < PENDING_UPLOAD_TTL)
             .then_some(upload)
+    }
+
+    /// Keep a previewed import until the person confirms it. Replaces (and
+    /// so drops) any import already waiting.
+    pub fn set_pending_import(&self, import: PendingImport) {
+        *lock(&self.pending_import) = Some(import);
+    }
+
+    /// Take the pending import if it's for this ID and not too old. It's
+    /// removed either way, so a file is only ever imported once.
+    pub fn take_pending_import(&self, id: &str) -> Option<PendingImport> {
+        let import = lock(&self.pending_import).take()?;
+        (crate::auth::crypto::constant_time_eq(import.id.as_bytes(), id.as_bytes())
+            && import.created.elapsed() < PENDING_UPLOAD_TTL)
+            .then_some(import)
+    }
+
+    /// Drop any import waiting in this session.
+    pub fn forget_pending_import(&self) {
+        *lock(&self.pending_import) = None;
     }
 
     /// Remember the chosen vault. The caller checks the name is valid.
@@ -291,9 +355,17 @@ impl Session {
             || now.saturating_duration_since(*lock(&self.last_seen)) >= IDLE_TIMEOUT
     }
 
-    /// Drop a pending upload nobody confirmed in time.
+    /// Drop a pending upload or import nobody confirmed in time.
     fn drop_stale_upload(&self, now: Instant) {
         let mut slot = lock(&self.pending_upload);
+        if slot
+            .as_ref()
+            .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
+        {
+            *slot = None;
+        }
+        drop(slot);
+        let mut slot = lock(&self.pending_import);
         if slot
             .as_ref()
             .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
@@ -480,6 +552,7 @@ impl SessionStore {
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
             pending_upload: Mutex::new(None),
+            pending_import: Mutex::new(None),
             lists: Mutex::new(HashMap::new()),
             tokens: Mutex::new(tokens),
             created: now,
@@ -651,6 +724,44 @@ pub(crate) mod tests {
         store.sweep_at(t0 + PENDING_UPLOAD_TTL);
         assert!(lock(&s.pending_upload).is_none());
         assert_eq!(store.len(), 1, "the session itself stays");
+    }
+
+    #[test]
+    fn sweep_drops_stale_imports_and_take_is_once_only() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let import = |created| PendingImport {
+            id: "im-1".into(),
+            vault: "kv-a".into(),
+            rows: vec![PendingSecret {
+                original: "DB_PASSWORD".into(),
+                name: "DB-PASSWORD".into(),
+                value: Secret::new("v"),
+                content_type: None,
+                expires: None,
+                tags: Default::default(),
+                exists: false,
+            }],
+            skipped: Vec::new(),
+            created,
+        };
+        s.set_pending_import(import(Instant::now()));
+        assert!(s.take_pending_import("wrong").is_none());
+        assert!(
+            s.take_pending_import("im-1").is_none(),
+            "gone after a wrong ID"
+        );
+        s.set_pending_import(import(Instant::now()));
+        assert!(s.take_pending_import("im-1").is_some());
+        assert!(s.take_pending_import("im-1").is_none(), "only once");
+        s.set_pending_import(import(t0));
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL / 2);
+        assert!(lock(&s.pending_import).is_some());
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL);
+        assert!(lock(&s.pending_import).is_none());
+        assert!(!format!("{:?}", import(t0)).contains("\"v\""));
     }
 
     #[test]

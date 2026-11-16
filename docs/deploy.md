@@ -243,7 +243,9 @@ Schema version 1. Field names don't change without a new `schema_version` and a 
 | `keyring_version` | Keyring's version |
 | `instance` | A random ID for this run of Keyring |
 
-Actions: `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.delete`, `key.recover`, `key.purge`, `session.sign_in`, `session.sign_in_failed`, `session.sign_out`, `session.expired`, and `request.refused` for a form post refused before Keyring knew what it was for (a cross-site post, or one with no session).
+Actions: `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `secret.import`, `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.delete`, `key.recover`, `key.purge`, `session.sign_in`, `session.sign_in_failed`, `session.sign_out`, `session.expired`, and `request.refused` for a form post refused before Keyring knew what it was for (a cross-site post, or one with no session).
+
+`secret.import` is written once for the import request, and once more for each secret it writes, with that secret's `item_name` and its own outcome.
 
 `session.sign_in_failed` has no `actor_*` fields: Keyring only believes who someone is once the ID token has passed every check. Entra's own sign-in log has the rest. `session.expired` is written when Keyring finds or sweeps an expired session, up to a minute after it ran out.
 
