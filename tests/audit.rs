@@ -201,7 +201,9 @@ async fn needs_a_vault() {
     let fresh = w.state.sessions.create(s.user.clone(), s.tokens());
     let mut w = w;
     w.cookie = format!("keyring_session={fresh}");
-    let (_, html) = w.page("/audit").await;
+    // An old per-vault address asks for a vault. Bare `/audit` is the
+    // page across vaults (tests/audit_across.rs).
+    let (_, html) = w.page("/audit?item=db").await;
     assert!(html.contains("Choose a vault first"));
 }
 
@@ -329,7 +331,7 @@ async fn no_vault_page_has_its_own_words_for_audit() {
     let fresh = w.state.sessions.create(s.user.clone(), s.tokens());
     let mut w = w;
     w.cookie = format!("keyring_session={fresh}");
-    let (_, html) = w.page("/audit").await;
+    let (_, html) = w.page("/audit?item=db&from=secret").await;
     assert!(!html.contains("Secrets live in a vault"));
     assert!(html.contains("The audit view shows who used one vault"));
 }

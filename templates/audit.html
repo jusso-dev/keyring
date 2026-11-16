@@ -8,7 +8,7 @@
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
 {% endif %}
-<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC.</p>
+<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC. <a href="/audit">Reports across every vault</a></p>
 
 {% call ui::error_summary(errors) %}{% endcall %}
 

@@ -1,6 +1,7 @@
 //! Calls to Azure, always made as the signed-in user via on-behalf-of.
 
 pub mod audit;
+pub mod audit_across;
 pub mod certs;
 pub mod client;
 pub mod fanout;

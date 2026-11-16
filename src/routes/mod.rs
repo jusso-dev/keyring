@@ -2,6 +2,7 @@
 
 pub mod assets;
 mod audit;
+mod audit_across;
 mod auth;
 mod certs;
 pub(crate) mod confirm;
@@ -218,8 +219,9 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/certificates/{*rest}", any(moved::legacy))
         .route("/keys", any(moved::legacy))
         .route("/keys/{*rest}", any(moved::legacy))
-        .route("/audit", any(moved::legacy))
-        .route("/audit.csv", any(moved::legacy))
+        // Across every vault. An old per-vault address is still sent on.
+        .route("/audit", get(audit_across::page))
+        .route("/audit.csv", get(audit_across::csv))
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
         .route("/vault-health", get(vault_health::page))

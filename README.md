@@ -126,7 +126,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Generator** for passwords, GUIDs and API keys.
-- **Audit view** built from Key Vault diagnostic logs, per vault and per item.
+- **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
 - Deletes need you to type the item's name first.
 
 ## How access works
@@ -255,6 +255,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | Vault health: settings checks | Reader | Vault or resource group |
 | Vault health: secret expiry, certificate renewal and key rotation counts | Key Vault Reader | Vault |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
+| Audit reports across vaults | Reader and Log Analytics Reader, as above | Each vault, and each workspace they log to. Vaults and workspaces you can't read are listed, not hidden |
 
 These roles apply to the whole vault unless you assign them on a single item. **Key Vault Certificate User and Key Vault Secrets User can both read secret values.** Certificate User needs to, because a certificate's private key is kept in its backing secret, but at vault scope it can read every secret in the vault. Where that matters, assign it on the one certificate (its scope is `<vault ID>/certificates/<name>`, or `<vault ID>/secrets/<name>` for the backing secret) instead of the vault.
 

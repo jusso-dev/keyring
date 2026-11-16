@@ -39,6 +39,9 @@ pub(super) struct Chosen {
     pub capped: bool,
     /// The vault filter names a vault that isn't in the list.
     pub unknown_vault: bool,
+    /// Each wanted vault's name and ARM resource ID, for pages that read
+    /// through ARM (the audit reports across vaults).
+    pub ids: Vec<(String, String)>,
 }
 
 /// The vaults the person can see, and which of them to read: `vault`, or
@@ -65,7 +68,16 @@ pub(super) async fn choose(
             .cloned()
             .collect()
     };
+    let ids = wanted
+        .iter()
+        .filter_map(|n| {
+            all.iter()
+                .find(|v| v.name == *n)
+                .map(|v| (n.clone(), v.id.clone()))
+        })
+        .collect();
     Ok(Chosen {
+        ids,
         capped: vault.is_empty() && vault_names.len() > MAX_VAULTS,
         unknown_vault: !vault.is_empty() && wanted.is_empty(),
         vault_names,
