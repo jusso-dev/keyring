@@ -278,7 +278,9 @@ Set these as environment variables. Don't commit them.
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
 | `KEYRING_ALLOW_PURGE` | Optional. `true` to allow permanent deletes. Off by default |
 | `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
-| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting |
+| `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting. Keyring's audit events are written at every level |
+| `KEYRING_LOG_FORMAT` | Optional. `text` (default) or `json`: one JSON object per line, with Keyring's audit events marked `"kind":"audit"`. See [Logs](docs/deploy.md#logs) |
+| `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
 
 Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
@@ -286,7 +288,7 @@ Sessions live in memory, so restarting Keyring signs everyone out. A request tha
 
 ### Behind a proxy
 
-- **Reverse proxy or load balancer in front.** Keyring ignores `X-Forwarded-*` headers. Set `APP_BASE_URL` to exactly the origin the browser uses (scheme, host and any port). If it differs, sign-in redirects go to the wrong place and every form post is refused with "This request didn't come from Keyring".
+- **Reverse proxy or load balancer in front.** Keyring ignores `X-Forwarded-*` headers, except that `KEYRING_TRUSTED_PROXY_HOPS` lets audit events take the browser's address from `X-Forwarded-For`. Set `APP_BASE_URL` to exactly the origin the browser uses (scheme, host and any port). If it differs, sign-in redirects go to the wrong place and every form post is refused with "This request didn't come from Keyring".
 - **Outbound proxy.** Calls to Entra ID and Azure honour `HTTPS_PROXY` and `NO_PROXY` (and their lower-case forms).
 - **Private CA**, for example a firewall that inspects TLS. Keyring trusts the operating system's certificate store. The distroless image has only the public roots, so point `SSL_CERT_FILE` at a PEM file in the container that holds the public roots plus your CA. When `SSL_CERT_FILE` is set, only that file is used.
 

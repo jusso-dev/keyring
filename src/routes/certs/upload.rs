@@ -655,9 +655,9 @@ pub(crate) async fn confirm(
         tags: Some(up.tags),
     };
     let name = up.name;
+    crate::audit::note_item(&name);
     match api(&state, &session, &vault).import(&name, &body).await {
         Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate uploaded");
             let mut res = Redirect::to(&vault_path(&vault, &format!("/certificates/{name}"))).into_response();
             flash::set(&state, &mut res, &Flash::success(format!("Uploaded {name}.")));
             Ok(res)

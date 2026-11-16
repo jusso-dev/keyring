@@ -116,27 +116,6 @@ pub(crate) trait DeletedPages: Lifecycle {
     ) -> impl Future<Output = Result<DeletedRow, AzureError>> + Send;
 }
 
-/// Log a change, with the item under a field named for its kind (`secret`,
-/// `certificate` or `key`), as every other change is logged.
-macro_rules! log_change {
-    ($level:ident, $kind:expr, $session:expr, $vault:expr, $name:expr, $what:literal) => {
-        match $kind {
-            Kind::Secret => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, secret = %$name,
-                concat!("secret ", $what)
-            ),
-            Kind::Certificate => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, certificate = %$name,
-                concat!("certificate ", $what)
-            ),
-            Kind::Key => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, key = %$name,
-                concat!("key ", $what)
-            ),
-        }
-    };
-}
-
 fn current_vault<L: Lifecycle>(
     session: &CurrentSession,
     shell: Shell,
@@ -184,14 +163,11 @@ pub(crate) async fn delete<L: Lifecycle>(
     let (shell, recovery) =
         L::check_delete(&state, &session, &vault, &name, shell, Stage::Submit).await?;
     match L::delete(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(info, L::KIND, session, vault, name, "deleted");
-            Ok(super::redirect_with(
-                &state,
-                &L::KIND.list_url(&vault),
-                L::deleted_message(&name, recovery),
-            ))
-        }
+        Ok(()) => Ok(super::redirect_with(
+            &state,
+            &L::KIND.list_url(&vault),
+            L::deleted_message(&name, recovery),
+        )),
         Err(e) => Err(azure_problem(
             shell,
             &e,
@@ -250,10 +226,7 @@ pub(crate) async fn recover<L: Lifecycle>(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     match L::recover(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(info, L::KIND, session, vault, name, "recovered");
-            Ok(super::recovered(&state, L::KIND, &vault, &name))
-        }
+        Ok(()) => Ok(super::recovered(&state, L::KIND, &vault, &name)),
         Err(e) => Err(azure_problem(
             shell,
             &e,
@@ -300,14 +273,11 @@ pub(crate) async fn purge<L: Lifecycle>(
     )?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     match L::purge(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(warn, L::KIND, session, vault, name, "purged");
-            Ok(super::redirect_with(
-                &state,
-                &L::KIND.deleted_list_url(&vault),
-                format!("Permanently deleted {name}."),
-            ))
-        }
+        Ok(()) => Ok(super::redirect_with(
+            &state,
+            &L::KIND.deleted_list_url(&vault),
+            format!("Permanently deleted {name}."),
+        )),
         Err(e) => Err(L::purge_error(shell, &e, &vault, &name)),
     }
 }

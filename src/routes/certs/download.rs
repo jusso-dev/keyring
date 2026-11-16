@@ -278,7 +278,6 @@ pub(crate) async fn pfx(
             ));
         }
     };
-    tracing::warn!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate private key downloaded");
     let is_pem = secret.content_type.as_deref() == Some("application/x-pem-file");
     if is_pem {
         Ok(attachment(

@@ -196,7 +196,10 @@ async fn mutating_routes_list_is_complete() {
     // change nothing; `tests/moved_pages.rs` covers them.
     let redirects = src.matches("post(moved::post_item)").count();
     assert_eq!(redirects, 3);
-    let posts = src.matches("post(").count() - redirects;
+    // `audited(...)` is a POST route that writes an audit event; the one
+    // `post(handler)` inside its definition isn't a route.
+    let audited = src.matches("audited(").count();
+    let posts = src.matches("post(").count() - redirects - 1 + audited;
     assert_eq!(
         posts,
         MUTATING.len(),

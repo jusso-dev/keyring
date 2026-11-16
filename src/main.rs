@@ -12,7 +12,7 @@ async fn main() -> ExitCode {
         }
     };
 
-    keyring::telemetry::init(&config.log_level);
+    keyring::telemetry::init(&config.log_level, config.log_format);
     keyring::telemetry::quiet_panics();
 
     for name in config.test_overrides() {

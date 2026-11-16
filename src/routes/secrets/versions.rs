@@ -247,14 +247,9 @@ pub(crate) async fn rollback(
     };
     match secrets.set(&name, &body).await {
         Ok(new) => {
-            tracing::info!(
-                subject = %session.0.user.subject,
-                vault = %vault,
-                secret = %name,
-                from_version = %target.version(),
-                version = %new.version(),
-                "secret rolled back"
-            );
+            // The version restored from. The new version is in Key
+            // Vault's own log, joined by kv_request_id.
+            crate::audit::note_version(target.version());
             let short: String = target.version().chars().take(8).collect();
             let mut res = Redirect::to(&back).into_response();
             let new_short: String = new.version().chars().take(8).collect();
