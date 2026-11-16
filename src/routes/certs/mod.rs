@@ -399,6 +399,7 @@ struct DetailPage {
     versions: Vec<CertRow>,
     /// Set when the versions couldn't be read.
     versions_note: Option<String>,
+    access: crate::routes::access::Access,
 }
 
 pub(super) async fn detail(
@@ -412,10 +413,11 @@ pub(super) async fn detail(
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    let (bundle, versions, pending) = tokio::join!(
+    let (bundle, versions, pending, access) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
-        api.pending(&name)
+        api.pending(&name),
+        crate::routes::access::for_item(&state, &session, &vault, Kind::Certificate, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -468,6 +470,7 @@ pub(super) async fn detail(
         versions_note,
         shell,
         vault,
+        access,
     })
     .into_response())
 }

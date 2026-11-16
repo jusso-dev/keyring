@@ -6,6 +6,8 @@
   <p><strong>Choose a vault first.</strong></p>
   {% if title == "Audit" %}
   <p>The audit view shows who used one vault. Pick one from your list of vaults and Keyring will show its events here.</p>
+  {% elif title == "Access" %}
+  <p>The access view shows who can reach one vault. Pick one from your list of vaults and Keyring will show it here.</p>
   {% else %}
   <p>{{ noun }} live in a vault. Pick one from your list of vaults and Keyring will show them here.</p>
   {% endif %}

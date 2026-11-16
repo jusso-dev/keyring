@@ -35,6 +35,7 @@ async fn shell_has_nav_vault_picker_and_no_scripts() {
         "Expiry",
         "Generator",
         "Audit",
+        "Access",
     ] {
         assert!(html.contains(&format!(">{label}</a>")), "{label} missing");
     }
@@ -49,7 +50,7 @@ async fn shell_has_nav_vault_picker_and_no_scripts() {
 #[tokio::test]
 async fn every_section_has_a_page_with_an_empty_state() {
     let (_, app, cookie) = support::signed_in_app(support::config());
-    for path in ["/secrets", "/certificates", "/keys", "/audit"] {
+    for path in ["/secrets", "/certificates", "/keys", "/audit", "/access"] {
         // With no vault chosen, each says to choose one.
         let res = get(&app, path, Some(&cookie)).await;
         assert_eq!(res.status(), StatusCode::OK, "{path}");
