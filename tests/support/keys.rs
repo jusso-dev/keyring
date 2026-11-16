@@ -239,6 +239,17 @@ async fn update_version(
     if let Some(e) = body["attributes"]["enabled"].as_bool() {
         v.enabled = e;
     }
+    // Like real Key Vault: a date can be set or changed, and tags sent
+    // replace the version's tags as a whole.
+    if let Some(exp) = body["attributes"]["exp"].as_i64() {
+        v.exp = Some(exp);
+    }
+    if let Some(tags) = body["tags"].as_object() {
+        v.tags = tags
+            .iter()
+            .map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_owned()))
+            .collect();
+    }
     json_response(StatusCode::OK, bundle(&b, &name, v, managed))
 }
 

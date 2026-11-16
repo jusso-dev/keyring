@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- The check before a bulk change (src/routes/bulk.rs). Nothing has been
+    changed yet. The names go back in hidden fields and are checked again. -#}
+{% block title %}Check changes to {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
+<h1>{{ change }} on {{ self.noun_for(changing.len()) }}?</h1>
+<p>Here's what will happen to each {{ kind.noun() }} you ticked. Nothing has been changed yet.</p>
+{% if disable %}
+<p class="notice notice-warn">Anything that reads a disabled {{ kind.noun() }} gets an error until it is enabled again. Nothing is deleted.</p>
+{% endif %}
+
+{% call ui::table_wrap("review-table-caption") %}
+<table>
+  <caption class="visually-hidden" id="review-table-caption">What will happen to each {{ kind.noun() }}</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">What happens</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <th scope="row" class="mono">{{ r.name }}</th>
+      <td>
+        {%- match r.kind -%}
+        {%- when RowKind::Change %}<span class="badge badge-ok">Will change</span>
+        {%- when RowKind::NoChange %}<span class="badge badge-muted">No change</span>
+        {%- when RowKind::Blocked %}<span class="badge badge-error">Can't change</span>
+        {%- when RowKind::NotFound %}<span class="badge badge-error">Not found</span>
+        {%- endmatch -%}
+        <p class="muted">{{ r.why }}</p>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+
+{% if changing.is_empty() %}
+<p class="notice notice-error">None of these {{ kind.plural() }} would change. Go back and choose another change or other {{ kind.plural() }}.</p>
+{% else %}
+<form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/-/bulk/apply">
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="op" value="{{ op }}">
+  <input type="hidden" name="tag_name" value="{{ tag_name }}">
+  <input type="hidden" name="tag_value" value="{{ tag_value }}">
+  <input type="hidden" name="expires" value="{{ expires }}">
+  {% for n in changing %}<input type="hidden" name="item" value="{{ n }}">
+  {% endfor %}
+  {% if disable %}
+  <label for="confirm_count">Type <strong>{{ changing.len() }}</strong>, the number of {{ kind.plural() }} to disable, to confirm</label>
+  <input id="confirm_count" name="confirm_count" type="text" inputmode="numeric" required size="6"{% call ui::ident() %}{% endcall %}>
+  {% endif %}
+  <div class="actions">
+    <button type="submit"{% if disable %} class="button-danger"{% endif %}>{{ change }} on {{ self.noun_for(changing.len()) }}</button>
+    <a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Cancel</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

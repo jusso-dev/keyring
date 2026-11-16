@@ -21,9 +21,13 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/secrets/-/import",
     "/v/kv-test/secrets/-/import/confirm",
     "/v/kv-test/secrets/-/import/cancel",
+    "/v/kv-test/secrets/-/bulk",
+    "/v/kv-test/secrets/-/bulk/apply",
     "/v/kv-test/certificates/-/upload",
     "/v/kv-test/certificates/-/upload/confirm",
     "/v/kv-test/certificates/-/upload/cancel",
+    "/v/kv-test/certificates/-/bulk",
+    "/v/kv-test/certificates/-/bulk/apply",
     "/v/kv-test/certificates/-/new",
     "/v/kv-test/certificates/web-tls/enabled",
     "/v/kv-test/certificates/web-tls/renewal",
@@ -33,6 +37,8 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/certificates/-/deleted/old-cert/recover",
     "/v/kv-test/certificates/-/deleted/old-cert/purge",
     "/v/kv-test/keys/-/new",
+    "/v/kv-test/keys/-/bulk",
+    "/v/kv-test/keys/-/bulk/apply",
     "/v/kv-test/keys/app-key/rotate",
     "/v/kv-test/keys/app-key/rotation",
     "/v/kv-test/keys/app-key/enabled",
@@ -90,6 +96,13 @@ fn fields_for(path: &str) -> Vec<(&'static str, String)> {
         ("kind", "guid".into()),
         ("common_name", "a.example.com".into()),
         ("validity_months", "12".into()),
+        // The bulk change forms: every seeded item, enabled, so a disable
+        // would change each one if the checks weren't there.
+        ("item", "db-password".into()),
+        ("item", "web-tls".into()),
+        ("item", "app-key".into()),
+        ("op", "disable".into()),
+        ("confirm_count", "1".into()),
     ]
 }
 
@@ -124,17 +137,31 @@ fn kv_snapshot(w: &support::World) -> String {
             .map(|(k, v)| (
                 k.clone(),
                 v.versions.len(),
-                v.versions.last().map(|x| x.enabled)
+                v.versions.last().map(|x| (x.enabled, x.tags.clone()))
             ))
             .collect::<Vec<_>>(),
         s.deleted.lock().unwrap().keys().collect::<Vec<_>>(),
-        s.certs.lock().unwrap().keys().collect::<Vec<_>>(),
+        s.certs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (
+                k.clone(),
+                v.versions.last().map(|x| (x.enabled, x.tags.clone()))
+            ))
+            .collect::<Vec<_>>(),
         s.deleted_certs.lock().unwrap().keys().collect::<Vec<_>>(),
         s.keys
             .lock()
             .unwrap()
             .iter()
-            .map(|(k, v)| (k.clone(), v.versions.len()))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.versions.len(),
+                    v.versions.last().map(|x| (x.enabled, x.tags.clone())),
+                )
+            })
             .collect::<Vec<_>>(),
         s.deleted_keys.lock().unwrap().keys().collect::<Vec<_>>(),
     )

@@ -15,6 +15,9 @@ use crate::secret::Secret;
 
 /// Most tags Key Vault allows on one secret.
 pub(crate) const MAX_TAGS: usize = 15;
+/// Longest tag name and value Key Vault takes, in characters.
+pub(crate) const MAX_TAG_NAME: usize = 512;
+pub(crate) const MAX_TAG_VALUE: usize = 256;
 /// Key Vault's limit on a secret value (25 KB).
 pub(crate) const MAX_VALUE_BYTES: usize = 25 * 1024;
 pub(crate) const MAX_CONTENT_TYPE: usize = 255;
@@ -84,9 +87,9 @@ pub(crate) fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> 
         if k.is_empty() {
             return Err(format!("Line {} has no tag name before the =.", i + 1));
         }
-        if k.len() > 512 || v.len() > 256 {
+        if k.len() > MAX_TAG_NAME || v.len() > MAX_TAG_VALUE {
             return Err(format!(
-                "Line {} is too long. Tag names can be 512 characters and values 256.",
+                "Line {} is too long. Tag names can be {MAX_TAG_NAME} characters and values {MAX_TAG_VALUE}.",
                 i + 1
             ));
         }
@@ -125,6 +128,37 @@ fn parse_date(field: &'static str, raw: &str, label: &str) -> Result<Option<i64>
             field,
             message: format!("{label} isn't a real date. Use the date picker or type YYYY-MM-DD."),
         })
+}
+
+/// One tag from the bulk change form, checked against the same limits as
+/// the tags box. Returns the trimmed name and value.
+pub(crate) fn one_tag(name: &str, value: &str) -> Result<(String, String), String> {
+    let (k, v) = (name.trim(), value.trim());
+    if k.is_empty() {
+        return Err("Give the tag a name.".into());
+    }
+    if k.contains(['\n', '\r']) || v.contains(['\n', '\r']) {
+        return Err("A tag can't have a line break in it.".into());
+    }
+    if k.len() > MAX_TAG_NAME || v.len() > MAX_TAG_VALUE {
+        return Err(format!(
+            "That tag is too long. Tag names can be {MAX_TAG_NAME} characters and values {MAX_TAG_VALUE}."
+        ));
+    }
+    Ok((k.to_owned(), v.to_owned()))
+}
+
+/// An expiry date from a form: the end of the chosen day, UTC, which
+/// must be after `now`. Required, since Key Vault can't remove a date.
+pub(crate) fn new_expiry(raw: &str, now: i64) -> Result<i64, String> {
+    let day = parse_date("expires", raw, "Expiry date")
+        .map_err(|e| e.message)?
+        .ok_or("Choose an expiry date. Key Vault can't remove one, only set or change it.")?;
+    let exp = day + 86_399;
+    if exp <= now {
+        return Err("The expiry date has already passed. Pick a later date.".into());
+    }
+    Ok(exp)
 }
 
 /// Everything except the value, checked.

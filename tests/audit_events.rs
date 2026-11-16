@@ -48,6 +48,18 @@ const EXEMPT: &[(&str, &str)] = &[
         "forgets the file of secrets held in memory; nothing sent to Key Vault",
     ),
     (
+        "/v/{vault}/secrets/-/bulk",
+        "bulk change review: lists names and properties only; nothing written or read back",
+    ),
+    (
+        "/v/{vault}/certificates/-/bulk",
+        "bulk change review: lists names and properties only; nothing written",
+    ),
+    (
+        "/v/{vault}/keys/-/bulk",
+        "bulk change review: lists names and properties only; nothing written",
+    ),
+    (
         "/v/{vault}/secrets/{name}",
         "only redirects an old form address",
     ),
@@ -659,6 +671,96 @@ async fn audited_routes_write_exactly_one_event() {
     assert_eq!(whole["outcome"], "denied");
     assert_eq!(whole["reason_code"], "none_written");
     assert!(!format!("{events:?}").contains("private detail"));
+
+    // --- A bulk change: one event for the request, one per item ---------
+    w.kv.state.put("bulk-a", "x");
+    w.kv.state.put("bulk-b", "x");
+    w.kv.state.put("bulk-gone", "x");
+    w.kv.state.soft_delete("bulk-gone");
+    w.kv.state.fail_each.lock().unwrap().push((
+        axum::http::Method::PATCH,
+        "/secrets/bulk-b/".into(),
+        403,
+        "ForbiddenByRbac",
+    ));
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/-/bulk",
+        &w.csrf,
+        &[("item", "bulk-a"), ("op", "enable")],
+        &[SAME_SITE],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        capture.take_events(),
+        Vec::<Value>::new(),
+        "the review writes none"
+    );
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/-/bulk/apply",
+        &w.csrf,
+        &[
+            ("item", "bulk-a"),
+            ("item", "bulk-b"),
+            ("item", "bulk-gone"),
+            ("item", "web-tls"),
+            ("op", "tag_set"),
+            ("tag_name", "owner"),
+            ("tag_value", "ops"),
+        ],
+        &[SAME_SITE, ("user-agent", "BulkBrowser/1.0")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    w.kv.state.fail_each.lock().unwrap().clear();
+    let events = capture.take_events();
+    assert_eq!(events.len(), 5, "four items and the request: {events:#?}");
+    assert!(events.iter().all(|e| e["action"] == "secret.bulk_update"
+        && e["actor_oid"] == OID
+        && e["user_agent"] == "BulkBrowser/1.0"
+        && e["vault"] == "kv-test"));
+    let by = |name: &str| {
+        events
+            .iter()
+            .find(|e| e["item_name"] == name)
+            .unwrap_or_else(|| panic!("no event for {name}: {events:#?}"))
+    };
+    assert_eq!(by("bulk-a")["outcome"], "success");
+    assert!(by("bulk-a")["kv_request_id"].is_string());
+    assert_eq!(by("bulk-b")["outcome"], "denied");
+    assert_eq!(by("bulk-b")["reason_code"], "ForbiddenByRbac");
+    assert_eq!(by("bulk-gone")["outcome"], "failed");
+    assert_eq!(by("bulk-gone")["reason_code"], "SecretNotFound");
+    assert_eq!(by("web-tls")["outcome"], "refused");
+    assert_eq!(by("web-tls")["reason_code"], "managed_item");
+    let whole = events
+        .iter()
+        .find(|e| e.get("item_name").is_none())
+        .unwrap();
+    assert_eq!(whole["outcome"], "failed");
+    assert_eq!(whole["reason_code"], "partly_changed");
+    assert!(!format!("{events:?}").contains("private detail"));
+    // Disable without the count typed: one refused event, nothing sent.
+    let kv_calls = w.kv.state.log.lock().unwrap().len();
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/-/bulk/apply",
+        &w.csrf,
+        &[
+            ("item", "bulk-a"),
+            ("op", "disable"),
+            ("confirm_count", "2"),
+        ],
+        &[SAME_SITE],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ev = capture.one_event("bulk disable mismatch");
+    assert_eq!(ev["outcome"], "refused");
+    assert_eq!(ev["reason_code"], "typed_name_mismatch");
+    assert_eq!(w.kv.state.log.lock().unwrap().len(), kv_calls);
 
     // --- A managed item -------------------------------------------------
     w.kv.state.put("managed-one", "x");

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Bulk change results for {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
+<h1>Changed {% if changed == 1 %}1 {{ kind.noun() }}{% else %}{{ changed }} {{ kind.plural() }}{% endif %} <span class="muted">in {{ vault }}</span></h1>
+<p>{{ change }}.</p>
+{% if not_changed == 0 %}
+<p class="notice notice-ok">Every {{ kind.noun() }} was changed.</p>
+{% else %}
+<p class="notice notice-warn">{% if not_changed == 1 %}1 {{ kind.noun() }} wasn't{% else %}{{ not_changed }} {{ kind.plural() }} weren't{% endif %} changed. Each is listed below with why.</p>
+{% endif %}
+
+{% call ui::table_wrap("results-table-caption") %}
+<table>
+  <caption class="visually-hidden" id="results-table-caption">What happened to each {{ kind.noun() }}</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">Result</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <th scope="row" class="mono">{% if r.done == Done::NotFound %}{{ r.name }}{% else %}<a href="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ r.name }}">{{ r.name }}</a>{% endif %}</th>
+      <td>
+        {%- match r.done -%}
+        {%- when Done::Changed %}<span class="badge badge-ok">Done</span>
+        {%- when Done::NoChange %}<span class="badge badge-muted">No change needed</span>
+        {%- when Done::Blocked %}<span class="badge badge-error">Refused by Keyring</span>
+        {%- when Done::NotFound %}<span class="badge badge-error">Not found</span>
+        {%- when Done::Denied %}<span class="badge badge-error">Refused by Azure</span>
+        {%- when Done::Failed %}<span class="badge badge-error">Failed</span>
+        {%- when Done::NotStarted %}<span class="badge badge-muted">Not sent</span>
+        {%- when Done::Unknown %}<span class="badge badge-warn">Unknown</span>
+        {%- endmatch -%}
+        {% if !r.why.is_empty() %}<p class="muted">{{ r.why }}</p>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endblock %}
