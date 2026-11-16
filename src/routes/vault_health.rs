@@ -36,7 +36,7 @@ use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 
 /// Most vaults checked on one page. More than this, and you pick.
-pub(super) const MAX_VAULTS: usize = super::expiry::MAX_VAULTS;
+pub(super) const MAX_VAULTS: usize = super::every_vault::MAX_VAULTS;
 /// Most certificates, and most keys, given a call each in one vault.
 pub(crate) const MAX_ITEM_CHECKS: usize = 200;
 /// Per-item calls at once within the one vault.

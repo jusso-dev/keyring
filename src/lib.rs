@@ -42,6 +42,11 @@ pub struct AppState {
     pub flash_sealer: Arc<Sealer>,
     pub cookies: CookieOptions,
     pub azure: AzureClient,
+    /// Limits for reading every vault. Always [`Limits::STANDARD`] outside
+    /// tests.
+    ///
+    /// [`Limits::STANDARD`]: crate::azure::fanout::Limits::STANDARD
+    pub fanout: azure::fanout::Limits,
 }
 
 impl AppState {
@@ -63,6 +68,7 @@ impl AppState {
             sessions: Arc::new(SessionStore::default()),
             oidc: Arc::new(oidc),
             azure: AzureClient::new(http, broker),
+            fanout: azure::fanout::Limits::STANDARD,
             sealer: Arc::new(Sealer::new(&config.session_secret, "login")),
             flash_sealer: Arc::new(Sealer::new(&config.session_secret, "flash")),
             cookies: CookieOptions {

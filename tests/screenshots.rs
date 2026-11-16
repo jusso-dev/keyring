@@ -16,8 +16,6 @@ mod support;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::Request;
 use serde_json::json;
 use support::keyvault::KvState;
 
@@ -306,28 +304,6 @@ fn audit_row(ago_minutes: i64, who: &str, op: &str, item: &str, result: &str) ->
     ]
 }
 
-/// One mock Key Vault per vault name, all behind one address: requests
-/// start `/{vault}/...`, so the first path segment picks the vault.
-fn several_vaults(vaults: Vec<(&'static str, Arc<KvState>)>) -> Router {
-    let routers: Vec<(&'static str, Router)> = vaults
-        .into_iter()
-        .map(|(name, state)| (name, support::keyvault::router(state)))
-        .collect();
-    Router::new().fallback(move |req: Request| {
-        let routers = routers.clone();
-        async move {
-            use tower::ServiceExt;
-            let vault = req.uri().path().split('/').nth(1).unwrap_or_default();
-            let router = routers
-                .iter()
-                .find(|(n, _)| *n == vault)
-                .map(|(_, r)| r.clone())
-                .unwrap_or_else(|| routers[0].1.clone());
-            router.oneshot(req).await.unwrap()
-        }
-    })
-}
-
 #[tokio::test]
 #[ignore = "serves a demo for the README screenshots until stopped"]
 async fn serve_demo_for_screenshots() {
@@ -349,7 +325,7 @@ async fn serve_demo_for_screenshots() {
     seed_identity(&vaults[2].1);
     let kv_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let kv_url = format!("http://{}", kv_listener.local_addr().unwrap());
-    let kv_app = several_vaults(vaults);
+    let kv_app = support::keyvault::several_vaults(vaults);
     tokio::spawn(async move { axum::serve(kv_listener, kv_app).await.unwrap() });
 
     *arm.state.subscriptions.lock().unwrap() = vec![

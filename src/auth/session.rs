@@ -22,6 +22,17 @@ pub const PENDING_UPLOAD_TTL: Duration = Duration::from_secs(10 * 60);
 /// How often expired sessions and stale uploads are dropped.
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
+/// How long a vault's list of names and properties is reused by search and
+/// the expiry dashboard before Key Vault is asked again.
+pub const LIST_TTL: Duration = Duration::from_secs(60);
+
+/// One vault's secrets, certificates and keys as last read: names and
+/// properties only, never values. Memory only, dropped with the session.
+struct CachedList {
+    read_at: Instant,
+    items: Arc<Vec<crate::expiry::Item>>,
+}
+
 /// A certificate file waiting to be imported. Never written anywhere.
 pub struct PendingUpload {
     pub id: String,
@@ -128,6 +139,8 @@ pub struct Session {
     claims_challenge: Mutex<Option<String>>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
+    /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
+    lists: Mutex<HashMap<String, CachedList>>,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -224,6 +237,49 @@ impl Session {
         if selected.as_deref() == Some(vault) {
             *lock(&self.selected_vault_id) = Some(id);
         }
+    }
+
+    /// The list read from `vault` within the last [`LIST_TTL`], if any.
+    pub(crate) fn cached_list(&self, vault: &str) -> Option<Arc<Vec<crate::expiry::Item>>> {
+        self.cached_list_at(vault, Instant::now())
+    }
+
+    pub(crate) fn cached_list_at(
+        &self,
+        vault: &str,
+        now: Instant,
+    ) -> Option<Arc<Vec<crate::expiry::Item>>> {
+        lock(&self.lists)
+            .get(vault)
+            .filter(|c| now.saturating_duration_since(c.read_at) < LIST_TTL)
+            .map(|c| c.items.clone())
+    }
+
+    /// Keep a vault's list, read in full just now. Only names and
+    /// properties: [`crate::expiry::Item`] has no field for a value.
+    pub(crate) fn keep_list(&self, vault: &str, items: Vec<crate::expiry::Item>) {
+        self.keep_list_at(vault, items, Instant::now());
+    }
+
+    pub(crate) fn keep_list_at(&self, vault: &str, items: Vec<crate::expiry::Item>, now: Instant) {
+        lock(&self.lists).insert(
+            vault.to_owned(),
+            CachedList {
+                read_at: now,
+                items: Arc::new(items),
+            },
+        );
+    }
+
+    /// Forget the list kept for `vault`, because something in it is about
+    /// to change.
+    pub fn forget_list(&self, vault: &str) {
+        lock(&self.lists).remove(vault);
+    }
+
+    /// Drop lists older than [`LIST_TTL`].
+    fn drop_stale_lists(&self, now: Instant) {
+        lock(&self.lists).retain(|_, c| now.saturating_duration_since(c.read_at) < LIST_TTL);
     }
 
     fn expired_at(&self, now: Instant) -> bool {
@@ -363,6 +419,7 @@ impl SessionStore {
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
             pending_upload: Mutex::new(None),
+            lists: Mutex::new(HashMap::new()),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),
@@ -390,12 +447,14 @@ impl SessionStore {
     }
 
     /// Drop expired sessions, and pending uploads older than
-    /// [`PENDING_UPLOAD_TTL`] in the sessions that are left.
+    /// [`PENDING_UPLOAD_TTL`] and vault lists older than [`LIST_TTL`] in
+    /// the sessions that are left.
     pub fn sweep_at(&self, now: Instant) {
         let mut map = lock(&self.sessions);
         map.retain(|_, s| !s.expired_at(now));
         for s in map.values() {
             s.drop_stale_upload(now);
+            s.drop_stale_lists(now);
         }
     }
 
@@ -526,6 +585,22 @@ pub(crate) mod tests {
         store.sweep_at(t0 + PENDING_UPLOAD_TTL);
         assert!(lock(&s.pending_upload).is_none());
         assert_eq!(store.len(), 1, "the session itself stays");
+    }
+
+    #[test]
+    fn vault_lists_are_kept_for_a_minute_and_swept() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        s.keep_list_at("kv-a", Vec::new(), t0);
+        s.keep_list_at("kv-b", Vec::new(), t0);
+        assert!(s.cached_list_at("kv-a", t0 + LIST_TTL / 2).is_some());
+        assert!(s.cached_list_at("kv-a", t0 + LIST_TTL).is_none());
+        s.forget_list("kv-b");
+        assert!(s.cached_list_at("kv-b", t0).is_none());
+        store.sweep_at(t0 + LIST_TTL);
+        assert!(lock(&s.lists).is_empty(), "stale lists are dropped");
     }
 
     #[test]

@@ -64,6 +64,8 @@ pub(crate) struct KvState {
     pub key_creates: Mutex<Vec<serde_json::Value>>,
     /// Answer this many requests with 429 before serving normally.
     pub throttle_next: Mutex<u32>,
+    /// Wait this long before answering each request, as a slow vault does.
+    pub delay: Mutex<std::time::Duration>,
     /// Whether the vault allows HSM keys.
     pub premium: Mutex<bool>,
     /// The vault's recovery level and retention days, as Key Vault reports
@@ -306,6 +308,71 @@ impl KvState {
     }
 }
 
+/// Fails the test, when dropped, if Key Vault was asked for a secret's
+/// value (`GET /secrets/{name}` or `GET /secrets/{name}/{version}`) after
+/// it was made. From [`KvState::no_value_reads`].
+pub(crate) struct NoValueReads {
+    state: Arc<KvState>,
+    before: usize,
+}
+
+impl Drop for NoValueReads {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let reads = self.state.value_reads();
+        assert!(
+            reads.len() <= self.before,
+            "a secret value was read: {:?}",
+            &reads[self.before..]
+        );
+    }
+}
+
+impl KvState {
+    /// From now until the guard is dropped, any value read fails the test.
+    pub(crate) fn no_value_reads(self: &Arc<Self>) -> NoValueReads {
+        NoValueReads {
+            state: self.clone(),
+            before: self.value_reads().len(),
+        }
+    }
+}
+
+/// One mock Key Vault per vault name, all behind one address: requests
+/// start `/{vault}/...`, so the first path segment picks the vault. A vault
+/// not listed gets the first one.
+pub(crate) fn several_vaults(vaults: Vec<(&'static str, Arc<KvState>)>) -> Router {
+    let routers: Vec<(&'static str, Router)> = vaults
+        .into_iter()
+        .map(|(name, state)| (name, router(state)))
+        .collect();
+    Router::new().fallback(move |req: axum::extract::Request| {
+        let routers = routers.clone();
+        async move {
+            use tower::ServiceExt;
+            let vault = req.uri().path().split('/').nth(1).unwrap_or_default();
+            let router = routers
+                .iter()
+                .find(|(n, _)| *n == vault)
+                .map(|(_, r)| r.clone())
+                .unwrap_or_else(|| routers[0].1.clone());
+            router.oneshot(req).await.unwrap()
+        }
+    })
+}
+
+/// [`several_vaults`], listening on a local port.
+pub(crate) async fn start_several(vaults: Vec<(&'static str, Arc<KvState>)>) -> MockKeyVault {
+    let state = vaults[0].1.clone();
+    let app = several_vaults(vaults);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    MockKeyVault { addr, state }
+}
+
 pub(crate) struct MockKeyVault {
     pub addr: SocketAddr,
     pub state: Arc<KvState>,
@@ -393,6 +460,10 @@ async fn record(
         && method_ok
     {
         return err(status, code);
+    }
+    let delay = *s.delay.lock().unwrap();
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
     }
     {
         let mut t = s.throttle_next.lock().unwrap();

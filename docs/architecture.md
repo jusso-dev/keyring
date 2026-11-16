@@ -5,7 +5,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 ## Principles
 
 - **Act as the user.** Every Azure call uses a token obtained through the on-behalf-of (OBO) flow. Keyring has no identity of its own with data-plane or control-plane access.
-- **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk.
+- **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk. The only list Keyring keeps is the names and properties of each vault's items, in the session's memory, for a minute (see [Search](#search)).
 - **Let Key Vault decide.** Authorisation is Key Vault RBAC (or access policies on older vaults). Keyring shows what Azure allows and explains clearly when it doesn't.
 - **Safe by default.** Purge is off. Deletes need typed confirmation. Secret values are hidden until revealed, and Keyring tries to clear the clipboard after a copy.
 
@@ -230,7 +230,17 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 
 ## Expiry dashboard
 
-The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, so other cross-vault pages can share it.
+The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, and the reading of each vault's lists in `src/routes/every_vault.rs`, shared with search.
+
+## Search
+
+`/search?q=...`, and the box in the top bar, find secrets, certificates and keys across every vault the person can see. It reads the same lists as the expiry dashboard, with the same limits and the same notes for vaults it couldn't read, and never a value: only the list calls are made (`GET /secrets`, `/certificates` and `/keys`), never `GET /secrets/{name}` or a version.
+
+- The text matches a name, a tag as `name=value`, or a secret's content type, as a case-insensitive substring: the same match as each vault's own list filter. Certificates and keys have no content type in their list calls. Filters narrow by type, vault and status (expires within 30 days, expired, disabled).
+- The text is capped at 100 characters, and the page at 500 results. It is a query string, so like every query string it is never logged. Search only reads, so it writes no action line.
+- Results are grouped by vault, with the same status badges as each vault's list, and link to the item's page under `/v/{vault}/...`.
+- It is a plain GET form and works without JavaScript. There is no script for it.
+- **List cache.** Reading every vault on each search would be slow and draw throttling. Each vault read in full is kept in the session for 60 seconds, in memory, and reused by the next search and by the expiry dashboard. It holds names and properties only (the `Item` type has no field for a value). A vault that was only partly read is not kept. A form posted to a vault's pages drops that vault's list, before and after the change, so a change shows straight away. Lists older than a minute are dropped by the session sweep, and every list goes with its session. Nothing is shared between sessions.
 
 ## Vault health
 
