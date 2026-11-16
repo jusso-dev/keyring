@@ -258,3 +258,39 @@ async fn a_second_file_is_refused() {
     assert!(html.contains("one file"), "{html}");
     assert!(hidden_value(&html, "import_id").is_none(), "nothing kept");
 }
+
+#[tokio::test]
+async fn an_older_preview_form_leaves_the_newer_import_waiting() {
+    let w = support::world().await;
+    let (_, old) = preview(&w, b"A=1\n", ".env").await;
+    let (_, new) = preview(&w, b"B=2\n", ".env").await;
+    let (status, _) = confirm(&w, &old).await;
+    assert_eq!(status, StatusCode::GONE);
+    let (status, html) = confirm(&w, &new).await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    assert!(w.kv.state.current("B").is_some());
+    assert!(w.kv.state.current("A").is_none());
+}
+
+#[tokio::test]
+async fn start_again_during_a_preview_means_it_is_not_kept() {
+    let w = support::world().await;
+    // The vault lists are slow, so "Start again" lands while the preview
+    // waits on them.
+    *w.kv.state.delay.lock().unwrap() = std::time::Duration::from_millis(600);
+    let slow = preview(&w, b"A=1\n", ".env");
+    let cancel = async {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        w.post("/v/kv-test/secrets/-/import/cancel", &[]).await
+    };
+    let ((status, html), res) = tokio::join!(slow, cancel);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{html}");
+    assert!(hidden_value(&html, "import_id").is_none(), "nothing kept");
+    assert!(html.contains("Choose the file again"), "{html}");
+    *w.kv.state.delay.lock().unwrap() = std::time::Duration::ZERO;
+    // A preview after that is kept as usual.
+    let (_, html) = preview(&w, b"A=1\n", ".env").await;
+    let (status, _) = confirm(&w, &html).await;
+    assert_eq!(status, StatusCode::OK);
+}

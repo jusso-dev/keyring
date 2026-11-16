@@ -77,6 +77,14 @@ pub struct SkippedSecret {
     pub reason: String,
 }
 
+/// Where a [`PendingImport`] waits. `generation` goes up each time the
+/// person forgets imports, so a preview that started before can tell.
+#[derive(Default)]
+struct ImportSlot {
+    generation: u64,
+    import: Option<PendingImport>,
+}
+
 /// One secret in a [`PendingImport`].
 pub struct PendingSecret {
     /// The name as written in the file.
@@ -186,7 +194,7 @@ pub struct Session {
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
     /// A secrets import between "preview" and "import". Memory only.
-    pending_import: Mutex<Option<PendingImport>>,
+    pending_import: Mutex<ImportSlot>,
     /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
     lists: Mutex<HashMap<String, CachedList>>,
     tokens: Mutex<UserTokens>,
@@ -239,24 +247,49 @@ impl Session {
             .then_some(upload)
     }
 
-    /// Keep a previewed import until the person confirms it. Replaces (and
-    /// so drops) any import already waiting.
-    pub fn set_pending_import(&self, import: PendingImport) {
-        *lock(&self.pending_import) = Some(import);
+    /// The pending import slot's generation. A preview reads it before it
+    /// starts and hands it to [`Self::set_pending_import`].
+    pub fn pending_import_generation(&self) -> u64 {
+        lock(&self.pending_import).generation
     }
 
-    /// Take the pending import if it's for this ID and not too old. It's
-    /// removed either way, so a file is only ever imported once.
+    /// Keep a previewed import until the person confirms it, if nothing has
+    /// forgotten imports since `generation` was read. Replaces (and so
+    /// drops) any import already waiting. `false` if it was too late: the
+    /// import is dropped, so a preview that finishes after "Start again"
+    /// can't bring its secrets back.
+    pub fn set_pending_import(&self, generation: u64, import: PendingImport) -> bool {
+        let mut slot = lock(&self.pending_import);
+        if slot.generation != generation {
+            return false;
+        }
+        slot.import = Some(import);
+        true
+    }
+
+    /// Take the pending import if it's for this ID and not too old. A
+    /// matching one is removed, so a file is only ever imported once. A
+    /// different ID, from an older preview, leaves a newer import waiting.
+    /// An expired one is removed whatever the ID.
     pub fn take_pending_import(&self, id: &str) -> Option<PendingImport> {
-        let import = lock(&self.pending_import).take()?;
-        (crate::auth::crypto::constant_time_eq(import.id.as_bytes(), id.as_bytes())
-            && import.created.elapsed() < PENDING_UPLOAD_TTL)
-            .then_some(import)
+        let mut slot = lock(&self.pending_import);
+        let import = slot.import.as_ref()?;
+        if import.created.elapsed() >= PENDING_UPLOAD_TTL {
+            slot.import = None;
+            return None;
+        }
+        if !crate::auth::crypto::constant_time_eq(import.id.as_bytes(), id.as_bytes()) {
+            return None;
+        }
+        slot.import.take()
     }
 
-    /// Drop any import waiting in this session.
+    /// Drop any import waiting in this session, and any preview still
+    /// running: one that finishes later isn't kept.
     pub fn forget_pending_import(&self) {
-        *lock(&self.pending_import) = None;
+        let mut slot = lock(&self.pending_import);
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.import = None;
     }
 
     /// Remember the chosen vault. The caller checks the name is valid.
@@ -367,10 +400,11 @@ impl Session {
         drop(slot);
         let mut slot = lock(&self.pending_import);
         if slot
+            .import
             .as_ref()
             .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
         {
-            *slot = None;
+            slot.import = None;
         }
     }
 
@@ -552,7 +586,7 @@ impl SessionStore {
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
             pending_upload: Mutex::new(None),
-            pending_import: Mutex::new(None),
+            pending_import: Mutex::new(ImportSlot::default()),
             lists: Mutex::new(HashMap::new()),
             tokens: Mutex::new(tokens),
             created: now,
@@ -747,21 +781,61 @@ pub(crate) mod tests {
             skipped: Vec::new(),
             created,
         };
-        s.set_pending_import(import(Instant::now()));
-        assert!(s.take_pending_import("wrong").is_none());
-        assert!(
-            s.take_pending_import("im-1").is_none(),
-            "gone after a wrong ID"
-        );
-        s.set_pending_import(import(Instant::now()));
+        let g = s.pending_import_generation();
+        assert!(s.set_pending_import(g, import(Instant::now())));
         assert!(s.take_pending_import("im-1").is_some());
         assert!(s.take_pending_import("im-1").is_none(), "only once");
-        s.set_pending_import(import(t0));
+        assert!(s.set_pending_import(g, import(t0)));
         store.sweep_at(t0 + PENDING_UPLOAD_TTL / 2);
-        assert!(lock(&s.pending_import).is_some());
+        assert!(lock(&s.pending_import).import.is_some());
         store.sweep_at(t0 + PENDING_UPLOAD_TTL);
-        assert!(lock(&s.pending_import).is_none());
+        assert!(lock(&s.pending_import).import.is_none());
         assert!(!format!("{:?}", import(t0)).contains("\"v\""));
+    }
+
+    fn pending(id: &str, created: Instant) -> PendingImport {
+        PendingImport {
+            id: id.into(),
+            vault: "kv-a".into(),
+            rows: Vec::new(),
+            skipped: Vec::new(),
+            created,
+        }
+    }
+
+    #[test]
+    fn a_stale_import_id_leaves_the_newer_import_waiting() {
+        let store = SessionStore::default();
+        let id = store.create(user(), tokens());
+        let s = store.get(&id).unwrap();
+        let g = s.pending_import_generation();
+        assert!(s.set_pending_import(g, pending("im-a", Instant::now())));
+        assert!(s.set_pending_import(g, pending("im-b", Instant::now())));
+        assert!(s.take_pending_import("im-a").is_none(), "replaced by B");
+        assert!(s.take_pending_import("wrong").is_none());
+        assert!(s.take_pending_import("im-b").is_some(), "B still waits");
+        assert!(s.take_pending_import("im-b").is_none(), "only once");
+        // An expired import goes whatever the ID.
+        let old = Instant::now()
+            .checked_sub(PENDING_UPLOAD_TTL + Duration::from_secs(1))
+            .unwrap();
+        assert!(s.set_pending_import(g, pending("im-c", old)));
+        assert!(s.take_pending_import("wrong").is_none());
+        assert!(lock(&s.pending_import).import.is_none());
+    }
+
+    #[test]
+    fn a_preview_that_finishes_after_forgetting_is_not_kept() {
+        let store = SessionStore::default();
+        let id = store.create(user(), tokens());
+        let s = store.get(&id).unwrap();
+        let before = s.pending_import_generation();
+        s.forget_pending_import();
+        assert!(!s.set_pending_import(before, pending("im-a", Instant::now())));
+        assert!(s.take_pending_import("im-a").is_none());
+        let now = s.pending_import_generation();
+        assert!(s.set_pending_import(now, pending("im-b", Instant::now())));
+        assert!(s.take_pending_import("im-b").is_some());
     }
 
     #[test]

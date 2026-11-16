@@ -327,6 +327,9 @@ pub(crate) async fn preview(
     multipart: Multipart,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
+    // Read before anything else, so "Start again" or a fresh form while
+    // this preview runs means its import isn't kept.
+    let generation = session.0.pending_import_generation();
     let mut p = Posted::default();
     let read = read_multipart(multipart, &mut p).await;
     // A body cut off at the size limit may end before the form token
@@ -420,13 +423,26 @@ pub(crate) async fn preview(
     let count = |want: Plan| shown.iter().filter(|r| r.plan == want).count();
     let (new, versions) = (count(Plan::New), count(Plan::NewVersion));
     let import_id = random_token(16);
-    session.0.set_pending_import(PendingImport {
-        id: import_id.clone(),
-        vault: vault.clone(),
-        rows: pending,
-        skipped,
-        created: Instant::now(),
-    });
+    let kept = session.0.set_pending_import(
+        generation,
+        PendingImport {
+            id: import_id.clone(),
+            vault: vault.clone(),
+            rows: pending,
+            skipped,
+            created: Instant::now(),
+        },
+    );
+    if !kept {
+        return Ok(import_page(
+            shell,
+            vault,
+            FieldErrors::one(
+                "file",
+                "Keyring forgot this file because the import was started again. Choose the file again.",
+            ),
+        ));
+    }
     Ok(no_store(
         render(&PreviewPage {
             shell,
