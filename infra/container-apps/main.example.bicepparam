@@ -14,6 +14,7 @@ param ingress = 'external'
 // Optional. Leave empty for the defaults.
 param apiScope = '' // only if your app registration's scope isn't api://<clientId>/access_as_user
 param logLevel = '' // error, warn, info (default), debug or trace
+param staleAfterDays = 0 // days before the "Not changed in over a year" badge; 0 for 365
 param logFormat = '' // text (default) or json; see docs/deploy.md, "Logs"
 param trustedProxyHops = 1 // proxies in front that add to X-Forwarded-For: 1 behind this template's front end
 param stepUpAuthContext = '' // c1 to c99: ask for this Conditional Access authentication context before a reveal; see docs/deploy.md, "Step-up before sensitive actions"

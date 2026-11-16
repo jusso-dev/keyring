@@ -97,6 +97,11 @@ param stepUpMaxAge int = 0
 @maxValue(8)
 param trustedProxyHops int = 1
 
+@description('Days without a new value before secrets, certificates and keys show "Not changed in over a year" (or over N days). 0 for the default, 365.')
+@minValue(0)
+@maxValue(3650)
+param staleAfterDays int = 0
+
 @description('Resource ID of a Log Analytics workspace to send the container\'s output and HTTP logs to. Leave empty to keep a short local log on the app instead (7 days, see docs/deploy.md).')
 param logAnalyticsWorkspaceId string = ''
 
@@ -202,6 +207,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         ],
         empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
         empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
+        staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
         empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
         [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
         empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],

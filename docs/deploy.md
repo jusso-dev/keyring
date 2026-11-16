@@ -142,6 +142,7 @@ App Service (`infra/app-service/main.bicep`):
 | `trustedProxyHops` | Sets `KEYRING_TRUSTED_PROXY_HOPS` (see Logs, "Client address") | `1` |
 | `stepUpAuthContext` | Sets `KEYRING_STEP_UP_AUTH_CONTEXT` (see Step-up) | None (off) |
 | `stepUpMaxAge` | Sets `KEYRING_STEP_UP_MAX_AGE` in minutes (see Step-up) | `0` (off) |
+| `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
 | `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only | None (public) |
@@ -159,7 +160,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext` and `stepUpMaxAge` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge` and `staleAfterDays` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 

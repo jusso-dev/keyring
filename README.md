@@ -84,6 +84,8 @@ The rotation policy: when Key Vault makes a new version, when each version expir
 
 Everything that expires, across every vault you can see, grouped by how soon. A row of counts links to each group's table. Only names and dates are read.
 
+Beside it, **By time since the value changed** (`/expiry/age`) groups the same items by when their current version was made, oldest first, so a secret with no expiry that hasn't changed in three years still shows up. Secrets and keys that belong to a certificate change with it, so only the certificate is listed.
+
 <img src="docs/images/screenshots/expiry.png" alt="Expiry page with a count tile for each of expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, then a ruled table per group of secrets, certificates and keys from three vaults" width="800">
 
 Who read or changed what in a vault, from its diagnostic logs, in plain words.
@@ -124,6 +126,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
@@ -240,6 +243,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | --- | --- | --- |
 | See vaults in the vault list | Reader | Subscription, resource group or vault |
 | List secrets and see their details | Key Vault Secrets User (or Key Vault Reader for names and dates only) | Vault |
+| Expiry dashboard, age view and search across vaults | Key Vault Reader on each vault (names and dates only), and Reader to see the vault | Vault |
 | Show and copy a secret's value | Key Vault Secrets User | Vault |
 | Add secrets, set new values, edit details, enable or disable | Key Vault Secrets Officer | Vault |
 | Roll back to an older version | Key Vault Secrets Officer | Vault |
@@ -278,6 +282,7 @@ Set these as environment variables. Don't commit them.
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
 | `KEYRING_ALLOW_PURGE` | Optional. `true` to allow permanent deletes. Off by default |
 | `KEYRING_LISTEN` | Optional. Address to listen on. Defaults to `0.0.0.0:3000` |
+| `KEYRING_STALE_AFTER_DAYS` | Optional. Days without a new value before a secret, certificate or key shows "Not changed in over a year" (or "over N days"). A whole number from 1 to 3650, default 365. Checked at start: anything else stops Keyring starting |
 | `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting. Keyring's audit events are written at every level |
 | `KEYRING_LOG_FORMAT` | Optional. `text` (default) or `json`: one JSON object per line, with Keyring's audit events marked `"kind":"audit"`. See [Logs](docs/deploy.md#logs) |
 | `KEYRING_STEP_UP_AUTH_CONTEXT` | Optional. A Conditional Access authentication context ID, `c1` to `c99`. Before a reveal, private key download, rollback or purge, Keyring checks the sign-in met it and, if not, asks Entra for it. Checked at start. See [Step-up](docs/deploy.md#step-up-before-sensitive-actions) |
