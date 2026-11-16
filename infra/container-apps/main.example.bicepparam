@@ -17,5 +17,7 @@ param logLevel = '' // error, warn, info (default), debug or trace
 param staleAfterDays = 0 // days before the "Not changed in over a year" badge; 0 for 365
 param logFormat = '' // text (default) or json; see docs/deploy.md, "Logs"
 param trustedProxyHops = 1 // proxies in front that add to X-Forwarded-For: 1 behind this template's front end
+param stepUpAuthContext = '' // c1 to c99: ask for this Conditional Access authentication context before a reveal; see docs/deploy.md, "Step-up before sensitive actions"
+param stepUpMaxAge = 0 // minutes since sign-in allowed before a reveal; 0 is off
 param useFederatedCredential = false // true: sign in to Entra with the app's managed identity, no client secret; see the README, step 2 option B
 param keepClientSecretEntry = false // only while moving an existing app to useFederatedCredential; see docs/deploy.md

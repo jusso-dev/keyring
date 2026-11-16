@@ -249,6 +249,24 @@ pub(crate) async fn recover<L: Lifecycle>(
     }
 }
 
+/// Step-up before a purge. Comes back to the purge confirmation page.
+fn purge_step_up<L: Lifecycle>(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<Shell, Halt> {
+    let deleted = L::KIND.deleted_url(vault, name);
+    crate::routes::step_up::require(
+        state,
+        &session.0,
+        shell,
+        &format!("{deleted}/purge"),
+        &deleted,
+    )
+}
+
 pub(crate) async fn purge_form<L: Lifecycle>(
     State(state): State<AppState>,
     session: CurrentSession,
@@ -258,6 +276,7 @@ pub(crate) async fn purge_form<L: Lifecycle>(
     let shell = super::purge_allowed(&state, shell, L::KIND)?;
     let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let shell = purge_step_up::<L>(&state, &session, shell, &vault, &name)?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     Ok(super::confirm_page(
         shell,
@@ -284,6 +303,7 @@ pub(crate) async fn purge<L: Lifecycle>(
         shell,
         super::purge_view(L::KIND, &vault, &name),
     )?;
+    let shell = purge_step_up::<L>(&state, &session, shell, &vault, &name)?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     match L::purge(&state, &session, &vault, &name).await {
         Ok(()) => Ok(super::redirect_with(

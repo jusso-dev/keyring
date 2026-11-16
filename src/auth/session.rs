@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::auth::crypto::{constant_time_eq, random_token};
+use crate::auth::step_up::SignInFacts;
 use crate::azure::token::TokenCache;
 use crate::secret::Secret;
 
@@ -154,6 +155,9 @@ pub struct Session {
     /// A conditional access challenge from a failed on-behalf-of exchange,
     /// sent with the next sign-in so Entra asks for what's missing.
     claims_challenge: Mutex<Option<String>>,
+    /// `acrs` and `auth_time` from the verified ID token, for step-up. See
+    /// [`crate::auth::step_up`].
+    sign_in: Mutex<SignInFacts>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
     /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
@@ -195,6 +199,17 @@ impl Session {
 
     pub fn claims_challenge(&self) -> Option<String> {
         lock(&self.claims_challenge).clone()
+    }
+
+    /// How the person signed in, from the verified ID token.
+    pub fn sign_in_facts(&self) -> SignInFacts {
+        lock(&self.sign_in).clone()
+    }
+
+    /// Keep `acrs` and `auth_time` from the ID token. Set once, by the
+    /// sign-in callback, and by tests.
+    pub fn set_sign_in_facts(&self, facts: SignInFacts) {
+        *lock(&self.sign_in) = facts;
     }
 
     /// Keep an uploaded certificate until the person confirms it.
@@ -530,6 +545,7 @@ impl SessionStore {
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
+            sign_in: Mutex::new(SignInFacts::default()),
             pending_upload: Mutex::new(None),
             lists: Mutex::new(HashMap::new()),
             permissions: Mutex::new(HashMap::new()),

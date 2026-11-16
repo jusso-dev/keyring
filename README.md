@@ -126,6 +126,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Rotation status** from tags: a secret's page shows what its `rotation`, `rotation-last` and `rotation-status` tags say about its last rotation, and the expiry dashboard lists secrets whose rotation failed. Keyring reads the tags only; see [docs/rotation.md](docs/rotation.md).
 - **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
@@ -288,6 +289,8 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_STALE_AFTER_DAYS` | Optional. Days without a new value before a secret, certificate or key shows "Not changed in over a year" (or "over N days"). A whole number from 1 to 3650, default 365. Checked at start: anything else stops Keyring starting |
 | `KEYRING_LOG_LEVEL` | Optional. `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Checked at start: anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting. Keyring's audit events are written at every level |
 | `KEYRING_LOG_FORMAT` | Optional. `text` (default) or `json`: one JSON object per line, with Keyring's audit events marked `"kind":"audit"`. See [Logs](docs/deploy.md#logs) |
+| `KEYRING_STEP_UP_AUTH_CONTEXT` | Optional. A Conditional Access authentication context ID, `c1` to `c99`. Before a reveal, private key download, rollback or purge, Keyring checks the sign-in met it and, if not, asks Entra for it. Checked at start. See [Step-up](docs/deploy.md#step-up-before-sensitive-actions) |
+| `KEYRING_STEP_UP_MAX_AGE` | Optional. Minutes, 1 to 720, since the person last signed in for those same actions to go ahead. Older, and Keyring asks for a fresh sign-in. For tenants without Conditional Access. Checked at start |
 | `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
 
 Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
@@ -398,6 +401,7 @@ While a request waits for its issuer, the certificate's page shows it as pending
 - **Hosting under a path.** Keyring must be at the root of its host.
 - **Certificates signed outside Key Vault.** No `Unknown` issuer, signing request download or merge. See [Certificate issuers](#certificate-issuers).
 - **Managing issuers.** Set them up in the Azure portal.
+- **Rotating secrets on the system they belong to.** A new value set in Keyring changes Key Vault only. Use Azure's own pattern (Event Grid and a Function with its own identity), or better, remove the credential. See [docs/rotation.md](docs/rotation.md).
 
 ## Deploying to Azure
 
