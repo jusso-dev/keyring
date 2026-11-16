@@ -141,6 +141,9 @@ App Service (`infra/app-service/main.bicep`):
 | `logFormat` | Sets `KEYRING_LOG_FORMAT`: `text` or `json` (see Logs) | None (`text`) |
 | `trustedProxyHops` | Sets `KEYRING_TRUSTED_PROXY_HOPS` (see Logs, "Client address") | `1` |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
+| `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription (see Logs, "Audit sink") | None (off) |
+| `auditRetentionInDays` | How long `KeyringAudit_CL` keeps rows | `365` |
+| `auditRequired` | Sets `KEYRING_AUDIT_REQUIRED`: refuse reveals and private key downloads while the sink is degraded. Needs `auditWorkspaceId` | `false` |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
 | `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only | None (public) |
 | `configVaultPrivateEndpointSubnetId`, `vaultPrivateDnsZoneId` | Make the config vault private. Needs `vnetIntegrationSubnetId` too (the deployment stops if not) | None |
@@ -157,7 +160,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat` and `trustedProxyHops` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `auditWorkspaceId`, `auditRetentionInDays` and `auditRequired` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
@@ -272,6 +275,42 @@ With `0` Keyring ignores the header and records the socket peer, which behind a 
 
 Without a workspace, App Service's file log is the only record of who revealed what, and it's short. Use a workspace for anything you'd want to look back on.
 
+### Audit sink
+
+The audit sink also sends Keyring's own audit events straight to a custom table, `KeyringAudit_CL`, in a Log Analytics workspace, through the [Azure Monitor Logs Ingestion API](https://learn.microsoft.com/azure/azure-monitor/logs/logs-ingestion-api-overview). It is separate from the console log tables above, keeps its own retention, and gives Sentinel typed columns. It works on any host where Keyring has its managed identity's local token service: App Service and Container Apps today.
+
+Three things are easy to mix up:
+
+- **Keyring's own audit events**: what Keyring writes for each action (`src/audit.rs`), always to standard output.
+- **The audit sink**: the same events, also sent to `KeyringAudit_CL`. Optional.
+- **Key Vault's audit log**: what Key Vault writes for every call it receives, which Keyring's audit pages read as you.
+
+**Turning it on with the templates.** Set `auditWorkspaceId` to a workspace's resource ID: the one the Container Apps template makes, or an existing Sentinel workspace in any resource group or subscription you can deploy to. `infra/modules/audit-sink.bicep` then makes, in that workspace's resource group:
+
+- the `KeyringAudit_CL` table, kept for `auditRetentionInDays` (default 365)
+- a data collection rule of kind `Direct`, so no separate data collection endpoint is needed, with a stream for the table and a transform that sets `TimeGenerated` from the event's `time`
+- **Monitoring Metrics Publisher** on that one rule for Keyring's managed identity (`<name>-id`). Nothing else, and no role for any person
+
+and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_AUDIT_INGESTION_ENDPOINT`, `KEYRING_AUDIT_DCR_ID`, `KEYRING_AUDIT_STREAM` and `KEYRING_AUDIT_REQUIRED` on the app. Whoever deploys needs to be able to assign roles on the rule (Owner or User Access Administrator on that resource group). Role assignments can take a few minutes to apply, so the first events may be retried until it does.
+
+**Who writes and who is named.** Keyring writes every row as its managed identity, and nothing else: no client secret, no second app registration, and never the signed-in person's token. Each row names the person who acted in `ActorObjectId`, `ActorTenantId` and `ActorUpn`, taken from Keyring's verified session at the moment of the action. They are empty only when nobody was signed in, such as a failed sign-in. `WriterIdentityClientId`, `KeyringInstance` and `KeyringVersion` name the writer. Only Keyring's identity can add rows, and no identity Keyring has can read, change or delete them.
+
+**Columns.** The schema version 1 fields as columns: `TimeGenerated` (from `time`), `EventId`, `SchemaVersion`, `Action`, `Outcome`, `ReasonCode`, `ActorObjectId`, `ActorTenantId`, `ActorUpn`, `SessionRef`, `ClientIp`, `UserAgent`, `Vault`, `ItemKind`, `ItemName`, `ItemVersion`, `KvRequestId`, `Reason`, `Ticket`, plus the writer columns. The list lives in `COLUMNS` in `src/audit/sink.rs`, and a test fails if the module or the event fields drift from it.
+
+**Sending.** One background task sends a batch every 5 seconds, or as soon as 500 events are waiting, gzipped and under the API's 1 MB a call. A 429 or 5xx is retried with backoff, honouring `Retry-After`. A 401 or 403 (the identity lost its role) gets a fresh token and is retried. Any other refusal drops that batch and counts it. Up to 10,000 events wait in memory; past that the oldest is dropped and counted. On shutdown (SIGTERM), Keyring sends what is left for up to 10 seconds. Every event is also on standard output, so nothing is lost from the console log while the sink is down. Only status codes and counts are logged, never a row or token.
+
+**Health.** `/healthz/audit` needs no sign-in and shows only `status=ok`, `status=degraded` or `status=off` and counts since start (`queued`, `sent`, `dropped_queue_full`, `dropped_rejected`, `dropped_at_shutdown`, `failed_attempts`). It answers 503 while degraded: the sink has been failing for over a minute with no success. Point an availability test or alert at it. `/healthz` stays a liveness check and doesn't change.
+
+**Requiring it.** With `auditRequired` (`KEYRING_AUDIT_REQUIRED=true`), Keyring refuses reveals and private key downloads while the sink is degraded, with a page that says auditing is unavailable. The refusal is itself an audit event (`reason_code` `audit_unavailable`). Off by default.
+
+**Other hosts.** AKS workload identity and Azure VMs (IMDS) are still a managed identity but get tokens another way, and aren't supported yet. Hosts without a managed identity can't use the sink; their events still go to standard output.
+
+```kusto
+KeyringAudit_CL
+| where TimeGenerated > ago(1d) and Action == "secret.reveal"
+| project TimeGenerated, ActorUpn, ActorObjectId, Vault, ItemName, Outcome, ClientIp, WriterIdentityClientId
+```
+
 ### Example queries
 
 Who revealed secret values in the last week. With `json`:
@@ -335,7 +374,7 @@ Keyring's tests run against mock Azure services. Some behaviour only a real Entr
 
 ### The Entra client secret
 
-With the managed identity (`useFederatedCredential`, or `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` set), there is no client secret to rotate, and nothing here applies. The identity's tokens are short-lived and the platform renews them. The federated credential on the app registration has no expiry. If you replace the managed identity, add a federated credential for the new one, deploy, and check that sign-in works. Then delete the old identity's federated credential from the app registration (**Certificates & secrets > Federated credentials**, or `az ad app federated-credential delete`). Until you do, the old identity can still act as the Keyring app.
+With the managed identity (`useFederatedCredential`, or `KEYRING_MANAGED_IDENTITY_CLIENT_ID` set without `ENTRA_CLIENT_SECRET`), there is no client secret to rotate, and nothing here applies. The identity's tokens are short-lived and the platform renews them. The federated credential on the app registration has no expiry. If you replace the managed identity, add a federated credential for the new one, deploy, and check that sign-in works. Then delete the old identity's federated credential from the app registration (**Certificates & secrets > Federated credentials**, or `az ad app federated-credential delete`). Until you do, the old identity can still act as the Keyring app.
 
 ### Moving an existing deployment to the managed identity
 
