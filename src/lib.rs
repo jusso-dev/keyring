@@ -2,6 +2,7 @@
 //!
 //! Every Azure call is made as the signed-in user. Nothing is stored.
 
+pub(crate) mod age;
 pub mod auth;
 pub mod azure;
 pub mod config;

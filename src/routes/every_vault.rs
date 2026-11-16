@@ -1,5 +1,5 @@
 //! Reading the lists of every vault the person can see, for the expiry
-//! dashboard and search.
+//! dashboard, the age view and search.
 //!
 //! Vaults are read through [`crate::azure::fanout`]. Each vault's secrets,
 //! certificates and keys are list calls only: names and properties, never
@@ -151,6 +151,7 @@ async fn read_vault(
             enabled: x.attributes.is_enabled(),
             expires: x.attributes.expires,
             not_before: x.attributes.not_before,
+            created: x.attributes.created,
             content_type: x.content_type.clone().unwrap_or_default(),
             managed: x.managed.unwrap_or(false),
             tags: tag_vec(x.tags()),
@@ -166,6 +167,7 @@ async fn read_vault(
             enabled: x.attributes.is_enabled(),
             expires: x.attributes.expires,
             not_before: x.attributes.not_before,
+            created: x.attributes.created,
             content_type: String::new(),
             managed: false,
             tags: tag_vec(x.tags()),
@@ -180,6 +182,7 @@ async fn read_vault(
             enabled: x.attributes.is_enabled(),
             expires: x.attributes.expires,
             not_before: x.attributes.not_before,
+            created: x.attributes.created,
             content_type: String::new(),
             managed: x.managed.unwrap_or(false),
             tags: tag_vec(x.tags()),

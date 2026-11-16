@@ -151,6 +151,12 @@ fn config_rules_match_the_readme() {
     assert!(!LOG_LEVELS.contains(&"off"));
     has(README, "README", "including `off`");
     has(DEPLOY, "deploy.md", "including `off`");
+    use keyring::config::{DEFAULT_STALE_AFTER_DAYS, MAX_STALE_AFTER_DAYS};
+    has(
+        README,
+        "README",
+        &format!("from 1 to {MAX_STALE_AFTER_DAYS}, default {DEFAULT_STALE_AFTER_DAYS}"),
+    );
 }
 
 #[test]

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Age - Keyring{% endblock %}
+{% block content %}
+<h1>Age</h1>
+<nav aria-label="Expiry views"><p class="view-switch"><a href="/expiry">By expiry date</a> <a href="/expiry/age" aria-current="page">By time since the value changed</a></p></nav>
+<p>Secrets, certificates and keys across your vaults, by how long since their value last changed. That is when the current version was made. Only names and dates are read, never values.</p>
+<p class="muted">Secrets and keys that belong to a certificate change with it, so only the certificate is listed, by its own current version.</p>
+
+<form class="filters" method="get" action="/expiry/age" role="search">
+  <div>
+    <label for="vault">Vault</label>
+    <select id="vault" name="vault">
+      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+      {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="type">Type</label>
+    <select id="type" name="type">
+      <option value="">Everything</option>
+      <option value="secret"{% if filter.kind == "secret" %} selected{% endif %}>Secrets</option>
+      <option value="certificate"{% if filter.kind == "certificate" %} selected{% endif %}>Certificates</option>
+      <option value="key"{% if filter.kind == "key" %} selected{% endif %}>Keys</option>
+    </select>
+  </div>
+  <div>
+    <label for="tag">Tag</label>
+    <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+    <a href="{{ csv_url }}">Download CSV</a>
+  </div>
+</form>
+
+{% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
+
+{% if !skipped.is_empty() %}
+<div class="notice notice-warn">
+  <p><strong>Some of what you can see couldn't be read</strong>, so it isn't included:</p>
+  <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<nav aria-label="Age groups">
+<ul class="group-summary">
+  {% for b in bands %}
+  {% if b.count > 0 || b.band.slug() != "unknown" %}
+  <li>{% if b.count > 0 %}<a href="#band-{{ b.band.slug() }}"><span class="badge {{ b.band.css() }}">{{ b.count }}</span> {{ b.band.label() }}</a>{% else %}<span class="badge badge-muted">0</span> {{ b.band.label() }}{% endif %}</li>
+  {% endif %}
+  {% endfor %}
+</ul>
+</nav>
+
+{% if unknown_vault %}
+<div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry/age">Show all vaults</a></p></div>
+{% elif total == 0 %}
+<div class="empty-state"><p>Nothing to show. Either nothing matches the filters, or these vaults are empty.</p></div>
+{% endif %}
+
+{% for b in bands %}
+{% if b.count > 0 %}
+<section aria-labelledby="band-{{ b.band.slug() }}">
+  <h2 id="band-{{ b.band.slug() }}">{{ b.band.label() }} <span class="muted">({{ b.count }})</span></h2>
+  {% call ui::table_wrap("band-{}-caption"|format(b.band.slug())) %}
+  <table class="ledger">
+    <caption class="visually-hidden" id="band-{{ b.band.slug() }}-caption">Value changed {{ b.band.label()|lower }} ago</caption>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Value changed</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <tbody>
+      {% for r in b.rows %}
+      <tr{% if !r.enabled %} class="row-muted"{% endif %}>
+        <th scope="row" class="mono">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <td>{{ r.kind.label() }}</td>
+        <td class="mono">{{ r.vault }}</td>
+        <td class="nowrap">{% call ui::changed(r.changed, r.note, r.stale) %}{% endcall %}</td>
+        <td>{{ ui::or_none(r.tags) }}</td>
+        <td>
+          <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+</section>
+{% endif %}
+{% endfor %}
+{% endblock %}

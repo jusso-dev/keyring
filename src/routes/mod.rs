@@ -1,5 +1,6 @@
 //! HTTP routes.
 
+mod age;
 pub mod assets;
 mod audit;
 mod auth;
@@ -222,6 +223,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/audit.csv", any(moved::legacy))
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
+        .route("/expiry/age", get(age::page))
+        .route("/expiry/age.csv", get(age::csv))
         .route("/vault-health", get(vault_health::page))
         .route("/vault-health.csv", get(vault_health::csv))
         .route("/search", get(search::page))

@@ -107,6 +107,9 @@ pub(crate) struct Item {
     pub enabled: bool,
     pub expires: Option<i64>,
     pub not_before: Option<i64>,
+    /// When the current version was made: when the value last changed.
+    /// Key Vault gives it on the list calls.
+    pub created: Option<i64>,
     /// A secret's content type. Empty for certificates and keys, whose list
     /// calls don't give one.
     pub content_type: String,
@@ -127,6 +130,22 @@ impl Item {
             .map(|e| dates::relative_days(e, now))
             .unwrap_or_default()
     }
+    /// True when the item has the tag `name`, or `name=value`, ignoring
+    /// case. An empty filter matches everything.
+    pub(crate) fn has_tag(&self, filter: &str) -> bool {
+        let tag = filter.trim();
+        if tag.is_empty() {
+            return true;
+        }
+        let (k, v) = match tag.split_once('=') {
+            Some((k, v)) => (k.trim(), Some(v.trim())),
+            None => (tag, None),
+        };
+        self.tags
+            .iter()
+            .any(|(a, b)| a.eq_ignore_ascii_case(k) && v.is_none_or(|v| b.eq_ignore_ascii_case(v)))
+    }
+
     pub(crate) fn tags_text(&self) -> String {
         self.tags
             .iter()
@@ -228,6 +247,7 @@ mod tests {
             enabled: true,
             expires: exp,
             not_before: None,
+            created: None,
             content_type: String::new(),
             managed: false,
             tags: vec![("env".into(), "prod".into())],

@@ -273,6 +273,10 @@ impl KvState {
             sv.content_type = Some("application/x-pkcs12".into());
             sv.version = v.clone();
         });
+        // Key Vault marks a certificate's backing secret `managed`.
+        if let Some(sec) = self.secrets.lock().unwrap().get_mut(name) {
+            sec.managed = true;
+        }
         v
     }
 
