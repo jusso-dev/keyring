@@ -185,6 +185,8 @@ async fn a_429_waits_for_retry_after() {
         started.elapsed()
     );
     assert_eq!(*r.ingest.state.attempts.lock().unwrap(), 2);
+    // The mock records a batch before the sink counts it as sent.
+    until("the count", || r.sink.health().sent == 1).await;
     let h = r.sink.health();
     assert_eq!((h.sent, h.failed_attempts, h.dropped_rejected), (1, 1, 0));
 }
@@ -200,6 +202,7 @@ async fn a_5xx_is_retried_with_backoff() {
     r.sink.enqueue(&event(0));
     until("the retry", || r.ingest.state.rows().len() == 1).await;
     assert_eq!(*r.ingest.state.attempts.lock().unwrap(), 3);
+    until("the count", || r.sink.health().sent == 1).await;
     let h = r.sink.health();
     assert_eq!((h.sent, h.failed_attempts), (1, 2));
     assert!(!h.degraded, "recovered");
@@ -217,6 +220,26 @@ async fn a_400_drops_the_batch_and_counts_it() {
     until("the next", || r.ingest.state.rows().len() == 1).await;
     assert_eq!(*r.ingest.state.attempts.lock().unwrap(), 2);
     assert_eq!(r.ingest.state.rows()[0]["ItemName"], "item-2");
+    // One refused batch doesn't leave the sink degraded: the accepted one
+    // after it cleared the clock.
+    until("the count", || r.sink.health().sent == 1).await;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(!r.sink.degraded());
+}
+
+#[tokio::test]
+async fn batches_refused_one_after_another_mean_degraded() {
+    let r = rig(quick()).await;
+    *r.ingest.state.always.lock().unwrap() = Some(400);
+    r.sink.enqueue(&event(0));
+    until("the drop", || r.sink.health().dropped_rejected == 1).await;
+    // Nothing has been accepted since, so once the limit passes the sink is
+    // degraded even though it isn't retrying anything.
+    until("degraded", || r.sink.degraded()).await;
+    *r.ingest.state.always.lock().unwrap() = None;
+    r.sink.enqueue(&event(1));
+    until("recovered", || !r.sink.degraded()).await;
+    assert_eq!(r.sink.health().dropped_rejected, 1);
 }
 
 #[tokio::test]
@@ -524,6 +547,9 @@ async fn audit_required_refuses_a_reveal_while_degraded() {
 
     // Ingestion fails for longer than the limit.
     *ingest.state.always.lock().unwrap() = Some(503);
+    // An event queued after the failure starts, in case the reveal's own
+    // event had already gone out.
+    sink.enqueue(&event(99));
     until("degraded", || sink.degraded()).await;
     let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);

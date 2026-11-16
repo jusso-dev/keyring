@@ -220,6 +220,8 @@ pub struct AuditSink {
     counts: Counts,
     /// When sending started failing, cleared by the next success.
     failing_since: Mutex<Option<Instant>>,
+    /// Rows in the batch being sent: off the queue, not yet counted.
+    in_flight: AtomicU64,
     stop: watch::Sender<bool>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -264,6 +266,7 @@ impl AuditSink {
             wake: Notify::new(),
             counts: Counts::default(),
             failing_since: Mutex::new(None),
+            in_flight: AtomicU64::new(0),
             stop,
             task: Mutex::new(None),
         });
@@ -322,7 +325,9 @@ impl AuditSink {
             .is_err()
         {
             task.abort();
-            let left = std::mem::take(&mut *lock(&self.queue)).len();
+            // The batch being sent when the task was stopped is lost too.
+            let left = std::mem::take(&mut *lock(&self.queue)).len()
+                + self.in_flight.swap(0, Ordering::Relaxed) as usize;
             self.count_shutdown_drop(left);
             tracing::warn!(
                 dropped = left,
@@ -396,10 +401,25 @@ impl AuditSink {
         (!batch.is_empty()).then_some(batch)
     }
 
+    /// [`Self::send_batch`], with the batch's rows held in `in_flight`
+    /// until it has been counted one way or another, so a batch cut off by
+    /// the end of the shutdown grace is counted as dropped.
+    async fn deliver(
+        &self,
+        batch: Vec<Vec<u8>>,
+        deadline: Option<Instant>,
+        stop: &mut watch::Receiver<bool>,
+    ) -> bool {
+        self.in_flight.store(batch.len() as u64, Ordering::Relaxed);
+        let more = self.send_batch(batch, deadline, stop).await;
+        self.in_flight.store(0, Ordering::Relaxed);
+        more
+    }
+
     /// Send one batch until it is accepted or refused for good. Before
     /// shutdown, retries until it works; after, only until `deadline`.
     /// False if shutdown began while waiting to retry.
-    async fn deliver(
+    async fn send_batch(
         &self,
         batch: Vec<Vec<u8>>,
         deadline: Option<Instant>,
@@ -439,9 +459,11 @@ impl AuditSink {
                     return true;
                 }
                 Sent::Rejected => {
-                    // Counted, but not a sign the sink is down: one bad
-                    // batch shouldn't hold up reveals for good.
-                    self.counts.failed_attempts.fetch_add(1, Ordering::Relaxed);
+                    // Starts the degraded clock as a retry does: if every
+                    // batch is refused (a changed table, say), events are
+                    // being lost. The next accepted batch clears it, so one
+                    // bad batch doesn't hold up reveals for good.
+                    self.note_failure();
                     self.counts
                         .dropped_rejected
                         .fetch_add(batch.len() as u64, Ordering::Relaxed);
