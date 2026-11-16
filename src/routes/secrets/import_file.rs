@@ -71,17 +71,13 @@ impl std::fmt::Debug for Row {
 struct Raw {
     line: usize,
     name: String,
-    value: String,
+    /// Wiped when dropped. A quoted `.env` value stops growing once it is
+    /// over Key Vault's limit, and `too_long` says so.
+    value: Zeroizing<String>,
+    too_long: bool,
     content_type: String,
     expires: String,
     tags: String,
-}
-
-impl Drop for Raw {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-        self.value.zeroize();
-    }
 }
 
 /// Read a whole file. An `Err` is a message for the person about why the
@@ -140,7 +136,7 @@ fn check(raw: Raw, now: i64) -> Row {
     if problem.is_none() && value.is_empty() {
         problem = Some("It has no value. Key Vault needs one.".into());
     }
-    if problem.is_none() && value.len() > MAX_VALUE_BYTES {
+    if problem.is_none() && (raw.too_long || value.len() > MAX_VALUE_BYTES) {
         problem = Some("Its value is over 25 KB, Key Vault's limit.".into());
     }
     let content_type = raw.content_type.trim().to_owned();
@@ -194,7 +190,7 @@ fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
             return Err("A tag is too long. Names can be 512 characters and values 256.".into());
         }
         if tags.insert(k.to_owned(), v.to_owned()).is_some() {
-            return Err(format!("The tag {k} is given twice."));
+            return Err("A tag name is given twice.".into());
         }
     }
     if tags.len() > MAX_TAGS {
@@ -208,7 +204,12 @@ fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
 fn clashes(rows: &[Row]) -> Result<(), String> {
     let mut seen: HashMap<String, &Row> = HashMap::new();
     let mut found = Vec::new();
-    for r in rows.iter().filter(|r| !r.name.is_empty()) {
+    // Only names that pass Key Vault's rules are quoted. Any other row
+    // already has a problem of its own, so it can't be imported anyway.
+    for r in rows
+        .iter()
+        .filter(|r| name_problem(Kind::Secret, &r.name).is_none())
+    {
         if let Some(first) = seen.get(&r.name.to_ascii_lowercase()) {
             found.push(if first.original == r.original {
                 format!(
@@ -273,35 +274,33 @@ fn parse_env(text: &str) -> Result<Vec<Raw>, String> {
             return Err(format!("Line {line_no} has no name before the =."));
         }
         let rest = rest.trim_start();
-        let value = match rest.chars().next() {
+        let (value, too_long) = match rest.chars().next() {
             Some(q @ ('"' | '\'')) => {
-                let mut body = rest[1..].to_owned();
-                loop {
-                    if let Some((value, after)) = quoted(&body, q) {
-                        let after = after.trim();
-                        if !after.is_empty() && !after.starts_with('#') {
-                            return Err(format!(
-                                "Line {line_no} has text after the closing quote."
-                            ));
-                        }
-                        use zeroize::Zeroize;
-                        body.zeroize();
-                        break value;
+                // Each character is looked at once, however many lines the
+                // value runs over, and the value stops growing at the limit.
+                let mut value = Quoted::new(q);
+                let mut seg = &rest[1..];
+                let after = loop {
+                    if let Some(after) = value.feed(seg) {
+                        break after;
                     }
                     match lines.next() {
                         Some((_, next)) => {
-                            body.push('\n');
-                            body.push_str(next.strip_suffix('\r').unwrap_or(next));
+                            value.line_break();
+                            seg = next.strip_suffix('\r').unwrap_or(next);
                         }
                         None => {
-                            use zeroize::Zeroize;
-                            body.zeroize();
                             return Err(format!(
                                 "The quote that starts on line {line_no} is never closed."
                             ));
                         }
                     }
+                };
+                let after = after.trim();
+                if !after.is_empty() && !after.starts_with('#') {
+                    return Err(format!("Line {line_no} has text after the closing quote."));
                 }
+                (value.value, value.too_long)
             }
             _ => {
                 // A comment starts at a # with a space before it.
@@ -309,13 +308,14 @@ fn parse_env(text: &str) -> Result<Vec<Raw>, String> {
                     .char_indices()
                     .find(|&(i, c)| c == '#' && rest[..i].ends_with([' ', '\t']))
                     .map_or(rest.len(), |(i, _)| i);
-                rest[..end].trim_end().to_owned()
+                (Zeroizing::new(rest[..end].trim_end().to_owned()), false)
             }
         };
         out.push(Raw {
             line: line_no,
             name: name.to_owned(),
             value,
+            too_long,
             content_type: String::new(),
             expires: String::new(),
             tags: String::new(),
@@ -324,36 +324,85 @@ fn parse_env(text: &str) -> Result<Vec<Raw>, String> {
     Ok(out)
 }
 
-/// The value inside quotes `q`, and what follows the closing quote, or
-/// `None` if the quote isn't closed in `body`. Double quotes take escapes.
-fn quoted(body: &str, q: char) -> Option<(String, &str)> {
-    let mut value = String::new();
-    let mut chars = body.char_indices();
-    while let Some((i, c)) = chars.next() {
-        if c == q {
-            return Some((value, &body[i + 1..]));
+/// A quoted `.env` value, read a line at a time. Double quotes take
+/// escapes. The quote and escape state carry over from one line to the
+/// next, so a value over many lines is read in one pass.
+struct Quoted {
+    q: char,
+    /// Wiped when dropped, on every way out of the parser.
+    value: Zeroizing<String>,
+    /// A `\` was the last character, and the next one says what it means.
+    escape: bool,
+    /// The value went over Key Vault's limit and stopped growing.
+    too_long: bool,
+}
+
+impl Quoted {
+    fn new(q: char) -> Self {
+        Self {
+            q,
+            value: Zeroizing::new(String::new()),
+            escape: false,
+            too_long: false,
         }
-        if c == '\\' && q == '"' {
-            match chars.next() {
-                Some((_, 'n')) => value.push('\n'),
-                Some((_, 'r')) => value.push('\r'),
-                Some((_, 't')) => value.push('\t'),
-                Some((_, '"')) => value.push('"'),
-                Some((_, '\\')) => value.push('\\'),
-                // Anything else is kept as written.
-                Some((_, other)) => {
-                    value.push('\\');
-                    value.push(other);
-                }
-                None => value.push('\\'),
-            }
-            continue;
-        }
-        value.push(c);
     }
-    use zeroize::Zeroize;
-    value.zeroize();
-    None
+
+    fn push(&mut self, c: char) {
+        if self.too_long {
+            return;
+        }
+        // CRLF counts as one line break, as the value is stored.
+        if c == '\n' && self.value.ends_with('\r') {
+            self.value.pop();
+        }
+        if self.value.len() + c.len_utf8() > MAX_VALUE_BYTES {
+            self.too_long = true;
+            return;
+        }
+        self.value.push(c);
+    }
+
+    /// Read one piece of a line. What follows the closing quote, or `None`
+    /// if the quote is still open at the end of `seg`.
+    fn feed<'a>(&mut self, seg: &'a str) -> Option<&'a str> {
+        for (i, c) in seg.char_indices() {
+            if self.escape {
+                self.escaped(c);
+            } else if c == self.q {
+                return Some(&seg[i + 1..]);
+            } else if c == '\\' && self.q == '"' {
+                self.escape = true;
+            } else {
+                self.push(c);
+            }
+        }
+        None
+    }
+
+    /// The line break between two lines inside the quotes.
+    fn line_break(&mut self) {
+        if self.escape {
+            self.escaped('\n');
+        } else {
+            self.push('\n');
+        }
+    }
+
+    fn escaped(&mut self, c: char) {
+        self.escape = false;
+        match c {
+            'n' => self.push('\n'),
+            'r' => self.push('\r'),
+            't' => self.push('\t'),
+            '"' => self.push('"'),
+            '\\' => self.push('\\'),
+            // Anything else is kept as written.
+            other => {
+                self.push('\\');
+                self.push(other);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -375,10 +424,12 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
     let mut at: HashMap<&str, usize> = HashMap::new();
     for (i, h) in header.iter().enumerate() {
         let h = h.trim().to_ascii_lowercase();
+        // The column is given by its place, never its text: a file with no
+        // header row has a value there.
         let Some(col) = COLUMNS.iter().find(|c| **c == h) else {
             return Err(format!(
-                "The first line needs column names: name, value, and optionally content_type, expires and tags. Keyring doesn't know the column \"{}\".",
-                h.chars().take(40).collect::<String>()
+                "The first line needs column names: name, value, and optionally content_type, expires and tags. Keyring doesn't know the column name in column {} of the first line.",
+                i + 1
             ));
         };
         if at.insert(col, i).is_some() {
@@ -407,7 +458,8 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
         let raw = Raw {
             line,
             name: take("name"),
-            value: take("value"),
+            value: Zeroizing::new(take("value")),
+            too_long: false,
             content_type: take("content_type"),
             expires: take("expires"),
             tags: take("tags"),
@@ -679,6 +731,58 @@ mod tests {
             let e = parse(text.as_bytes(), Format::Csv, NOW).err().unwrap();
             assert!(e.contains(expect), "{text:?}: {e}");
         }
+    }
+
+    #[test]
+    fn errors_never_quote_a_value_looking_header() {
+        // A .csv with no header row: its first line is a value.
+        for text in [
+            "PASSWORD=TopSecret42\na,b\n",
+            "name,TopSecret42\na,b\n",
+            "\"TopSecret42\",name,value\nx,a,b\n",
+        ] {
+            let e = parse(text.as_bytes(), Format::Csv, NOW).err().unwrap();
+            assert!(!e.to_ascii_lowercase().contains("topsecret42"), "{e}");
+            assert!(e.contains("column"), "{e}");
+        }
+        let e = parse(b"name,value\nPASSWORD=TopSecret42\n", Format::Csv, NOW)
+            .err()
+            .unwrap();
+        assert!(!e.to_ascii_lowercase().contains("topsecret42"), "{e}");
+        // Tag names aren't quoted either.
+        let rows = csv("name,value,tags\na,v,TopSecret42=1;TopSecret42=2\n");
+        let p = rows[0].problem.as_deref().unwrap();
+        assert!(p.contains("twice") && !p.contains("TopSecret42"), "{p}");
+    }
+
+    #[test]
+    fn quoted_values_over_many_lines_are_read_in_one_pass() {
+        // Just under 1 MB: one quote that never closes, over about 450,000
+        // one-character lines.
+        let mut text = String::from("A=\"");
+        while text.len() < 900 * 1024 {
+            text.push_str("x\n");
+        }
+        let t = std::time::Instant::now();
+        let e = parse(text.as_bytes(), Format::Env, NOW).err().unwrap();
+        assert!(e.contains("never closed"), "{e}");
+        assert!(
+            t.elapsed() < std::time::Duration::from_millis(500),
+            "{:?}",
+            t.elapsed()
+        );
+        // Closed at the end: the value is over Key Vault's limit.
+        text.push_str("\"\n");
+        let t = std::time::Instant::now();
+        let rows = env(&text);
+        assert!(t.elapsed() < std::time::Duration::from_millis(500));
+        assert!(rows[0].problem.as_deref().unwrap().contains("25 KB"));
+        assert!(rows[0].value.expose().len() <= MAX_VALUE_BYTES);
+        // An escape at the end of a line carries on to the next.
+        assert_eq!(env("A=\"x\\\ny\"\n")[0].value.expose(), "x\\\ny");
+        // Exactly at the limit is fine.
+        let at = format!("A=\"{}\"\n", "x".repeat(MAX_VALUE_BYTES));
+        assert!(env(&at)[0].problem.is_none());
     }
 
     #[test]
