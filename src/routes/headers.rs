@@ -21,7 +21,7 @@ pub(super) fn csp(authority_host: &str) -> String {
 
 /// Longest any request may take, including Azure calls. The expiry
 /// dashboard is the slowest page; it gives each vault its own limit and
-/// stops the whole read well before this one (see `routes::expiry`), so it
+/// stops the whole read well before this one (see `azure::fanout`), so it
 /// can still show what it found.
 pub(super) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 

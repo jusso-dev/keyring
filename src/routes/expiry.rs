@@ -1,14 +1,11 @@
 //! Expiry dashboard across vaults, and its CSV export.
 //!
-//! Vaults are read in parallel, a few at a time, each with its own time
-//! limit, so one slow or throttled vault doesn't hold up the rest. The
-//! whole read also has a deadline, well inside the request limit, so the
+//! Vaults are read through [`crate::azure::fanout`]: a few at a time, each
+//! with its own time limit, and the whole read within a deadline, so the
 //! page always comes back with what it found. Vaults that can't be read,
 //! or weren't reached in time, are listed with the reason.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use askama::Template;
 use axum::extract::{Query, State};
@@ -16,13 +13,12 @@ use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::auth::session::Session;
 use crate::azure::certs::CertsApi;
+use crate::azure::fanout::{self, Skipped, reason};
 use crate::azure::keys::KeysApi;
 use crate::azure::secrets::{SecretsApi, now_ts};
 use crate::azure::vaults::{self, is_valid_vault_name};
@@ -33,20 +29,8 @@ use crate::routes::error::{Need, PageError, PageResult, Problem};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 
-/// Vaults read at the same time.
-pub(super) const CONCURRENCY: usize = 6;
 /// Most vaults read for one dashboard. More than this, and you pick.
 pub(super) const MAX_VAULTS: usize = 100;
-/// Time limit for reading one vault.
-pub(super) const VAULT_TIMEOUT: Duration = Duration::from_secs(20);
-/// Time limit for the whole dashboard. Well under the 90 second request
-/// limit in `routes::headers`, so there is time left to build the page.
-pub(super) const DEADLINE: Duration = Duration::from_secs(60);
-
-/// Why a vault not finished by [`DEADLINE`] is missing.
-const OUT_OF_TIME: &str = "Not read in time. The dashboard stops after a minute so it can show what it has. Pick this vault on its own to see it";
-/// Why a vault whose read failed inside Keyring is missing.
-const TASK_FAILED: &str = "Keyring hit a problem reading it";
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub(super) struct ExpiryFilter {
@@ -98,34 +82,6 @@ impl ExpiryFilter {
     }
 }
 
-/// A vault that couldn't be read, and why in plain words.
-pub(super) struct Skipped {
-    pub vault: String,
-    pub reason: String,
-}
-
-fn reason(err: &AzureError) -> String {
-    match err {
-        AzureError::Status {
-            status: 403, code, ..
-        } if code
-            .as_deref()
-            .is_some_and(|c| c == "ForbiddenByFirewall" || c == "ForbiddenByConnection") =>
-        {
-            "Blocked by the vault's firewall".into()
-        }
-        AzureError::Status { status: 403, .. } => "You don't have a Key Vault role on it".into(),
-        AzureError::Status { status: 429, .. } => {
-            "Azure was throttling requests. Try again in a minute".into()
-        }
-        AzureError::Network(_) => {
-            "Couldn't reach it. It may only be reachable on a private network".into()
-        }
-        AzureError::Token(_) => "Sign-in needs refreshing".into(),
-        _ => "Azure returned an error".into(),
-    }
-}
-
 /// "You don't have..." becomes "you don't have...", leaving names like
 /// "Key Vault" and "Azure" alone.
 fn lower_first(s: &str) -> String {
@@ -141,7 +97,7 @@ async fn read_vault(
     session: Arc<Session>,
     vault_url: String,
     vault: String,
-) -> (Vec<Item>, Option<Skipped>) {
+) -> (Vec<Item>, Option<String>) {
     let secrets = SecretsApi {
         azure: &azure,
         session: &session,
@@ -158,13 +114,7 @@ async fn read_vault(
         vault_url,
     };
     let work = async { tokio::join!(secrets.list(), certs.list(), keys.list()) };
-    let (s, c, k) = match tokio::time::timeout(VAULT_TIMEOUT, work).await {
-        Ok(r) => r,
-        Err(_) => {
-            let reason = "Took too long to answer".into();
-            return (Vec::new(), Some(Skipped { vault, reason }));
-        }
-    };
+    let (s, c, k) = work.await;
     let mut items = Vec::new();
     // Which kinds failed, and why.
     let mut failed: Vec<(&'static str, AzureError)> = Vec::new();
@@ -214,25 +164,19 @@ async fn read_vault(
     }
     // Show what could be read, and say what couldn't. With every kind
     // failing, the whole vault is listed as not read.
-    let skipped = match failed.as_slice() {
+    let why = match failed.as_slice() {
         [] => None,
-        [(_, e), _, _] => Some(Skipped {
-            vault,
-            reason: reason(e),
-        }),
+        [(_, e), _, _] => Some(reason(e)),
         some => {
             let kinds: Vec<&str> = some.iter().map(|(k, _)| *k).collect();
-            Some(Skipped {
-                reason: format!(
-                    "Its {} couldn't be read ({}). The rest is included",
-                    kinds.join(" and "),
-                    lower_first(&reason(&some[0].1))
-                ),
-                vault,
-            })
+            Some(format!(
+                "Its {} couldn't be read ({}). The rest is included",
+                kinds.join(" and "),
+                lower_first(&reason(&some[0].1))
+            ))
         }
     };
-    (items, skipped)
+    (items, why)
 }
 
 struct Loaded {
@@ -268,20 +212,15 @@ async fn load(
     };
     let capped = filter.vault.is_empty() && vault_names.len() > MAX_VAULTS;
     let unknown_vault = !filter.vault.is_empty() && wanted.is_empty();
-    let limit = Arc::new(Semaphore::new(CONCURRENCY));
-    let reads = wanted.into_iter().map(|vault| {
-        let limit = limit.clone();
+    let read = fanout::read_each(wanted, |vault| {
         let azure = state.azure.clone();
         let sess = session.0.clone();
         let url = state.config.vault_url(&vault);
-        let name = vault.clone();
-        let read = async move {
-            let _permit = limit.acquire_owned().await;
-            read_vault(azure, sess, url, vault).await
-        };
-        (name, read)
-    });
-    let (items, skipped) = gather(reads, DEADLINE).await;
+        read_vault(azure, sess, url, vault)
+    })
+    .await;
+    let items = read.read.into_iter().flat_map(|(_, v)| v).collect();
+    let skipped = read.skipped;
     Ok(Loaded {
         items,
         skipped,
@@ -289,65 +228,6 @@ async fn load(
         capped,
         unknown_vault,
     })
-}
-
-/// Run each vault read as its own task and collect the results, giving up
-/// on whatever is left after `deadline`. A vault whose task panicked or
-/// didn't finish in time is listed as skipped, with the reason.
-async fn gather<F>(
-    reads: impl IntoIterator<Item = (String, F)>,
-    deadline: Duration,
-) -> (Vec<Item>, Vec<Skipped>)
-where
-    F: std::future::Future<Output = (Vec<Item>, Option<Skipped>)> + Send + 'static,
-{
-    let deadline = tokio::time::Instant::now() + deadline;
-    let mut set = JoinSet::new();
-    // Task ID to vault name, so a task that panics or runs out of time
-    // can still be reported by name.
-    let mut pending: HashMap<tokio::task::Id, String> = HashMap::new();
-    for (vault, read) in reads {
-        let handle = set.spawn(read);
-        pending.insert(handle.id(), vault);
-    }
-    let mut items = Vec::new();
-    let mut skipped = Vec::new();
-    loop {
-        let done = match tokio::time::timeout_at(deadline, set.join_next_with_id()).await {
-            Ok(Some(done)) => done,
-            Ok(None) => break,
-            Err(_) => {
-                tracing::warn!(
-                    unfinished = pending.len(),
-                    "expiry dashboard ran out of time"
-                );
-                set.abort_all();
-                skipped.extend(pending.drain().map(|(_, vault)| Skipped {
-                    vault,
-                    reason: OUT_OF_TIME.into(),
-                }));
-                break;
-            }
-        };
-        match done {
-            Ok((id, (mut v, skip))) => {
-                pending.remove(&id);
-                items.append(&mut v);
-                skipped.extend(skip);
-            }
-            Err(e) => {
-                tracing::error!(error = ?e.to_string(), "expiry task failed");
-                if let Some(vault) = pending.remove(&e.id()) {
-                    skipped.push(Skipped {
-                        vault,
-                        reason: TASK_FAILED.into(),
-                    });
-                }
-            }
-        }
-    }
-    skipped.sort_by(|a, b| a.vault.cmp(&b.vault));
-    (items, skipped)
 }
 
 pub(super) struct GroupView {
@@ -501,59 +381,12 @@ pub(super) async fn csv(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn one(vault: &str) -> (Vec<Item>, Option<Skipped>) {
-        let item = Item {
-            vault: vault.into(),
-            kind: ItemType::Secret,
-            name: "s".into(),
-            enabled: true,
-            expires: None,
-            tags: Vec::new(),
-        };
-        (vec![item], None)
-    }
+    use crate::azure::fanout::{DEADLINE, VAULT_TIMEOUT};
+    use std::time::Duration;
 
     #[test]
     fn deadline_sits_well_inside_the_request_limit() {
         assert!(DEADLINE + Duration::from_secs(20) <= crate::routes::headers::REQUEST_TIMEOUT);
         assert!(VAULT_TIMEOUT < DEADLINE);
-    }
-
-    #[tokio::test]
-    async fn slow_vaults_past_the_deadline_are_skipped_not_lost() {
-        type Read = std::pin::Pin<Box<dyn Future<Output = (Vec<Item>, Option<Skipped>)> + Send>>;
-        let reads: Vec<(String, Read)> = vec![
-            ("kv-fast".into(), Box::pin(async { one("kv-fast") })),
-            (
-                "kv-slow".into(),
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    one("kv-slow")
-                }),
-            ),
-            (
-                "kv-broken".into(),
-                Box::pin(async { panic!("read failed inside the task") }),
-            ),
-        ];
-        let started = std::time::Instant::now();
-        let (items, skipped) = gather(reads, Duration::from_millis(300)).await;
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "stopped at the deadline"
-        );
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].vault, "kv-fast");
-        let got: Vec<(&str, &str)> = skipped
-            .iter()
-            .map(|s| (s.vault.as_str(), s.reason.as_str()))
-            .collect();
-        assert_eq!(
-            got,
-            [("kv-broken", TASK_FAILED), ("kv-slow", OUT_OF_TIME)],
-            "a panic and a timeout both name the vault"
-        );
     }
 }
