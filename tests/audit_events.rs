@@ -310,7 +310,7 @@ async fn audited_routes_write_exactly_one_event() {
         ev.kv_request_id = Some("11111111-2222-4333-8444-555555555555".into());
         ev.reason = Some("why".into());
         ev.ticket = Some("CHG-1".into());
-        record(ev.clone());
+        record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");
         let got = capture.one_event("golden");
@@ -331,7 +331,10 @@ async fn audited_routes_write_exactly_one_event() {
         assert_eq!(got["event_id"], ev.event_id.as_str());
         assert_eq!(got["keyring_version"], env!("CARGO_PKG_VERSION"));
         // Absent fields are left out, not null.
-        record(AuditEvent::new(Action::SessionSignOut, Outcome::Success));
+        record(
+            AuditEvent::new(Action::SessionSignOut, Outcome::Success),
+            None,
+        );
         let bare = capture.one_event("bare");
         let keys: Vec<&str> = bare
             .as_object()

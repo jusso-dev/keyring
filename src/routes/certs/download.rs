@@ -231,6 +231,7 @@ pub(crate) async fn pfx(
     let (name, shell) = checked_name(&name, shell)?;
     // The form token first, so a forged post reaches nothing in Key Vault.
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
+    let shell = crate::routes::audit_gate::require_audit(&state, shell)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
         .policy

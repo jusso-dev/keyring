@@ -7,7 +7,9 @@
 //! Keyring refused, and the `x-ms-client-request-id` that joins an event to
 //! Key Vault's own row.
 //!
-//! Every event goes through [`record`]. During a request, [`layer`] keeps a
+//! Every event goes through [`record`], which writes it to standard output
+//! and, when the audit sink ([`sink`]) is set, queues it to be sent to Log
+//! Analytics as well. During a request, [`layer`] keeps a
 //! draft that the route, the guards (form token, origin, typed name, purge
 //! off, managed item) and the Azure client add to. When the request
 //! finishes, the layer writes exactly one event if the request was for an
@@ -18,6 +20,8 @@
 //! version bump and a CHANGELOG line (`tests/audit_events.rs` pins them).
 //! Never put a value, token, password, query string or Azure's error
 //! message in an event.
+
+pub mod sink;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -209,11 +213,14 @@ pub enum Refusal {
     StaleSignIn,
     /// Entra's ID token failed Keyring's checks.
     IdTokenRejected,
+    /// `KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded, so a
+    /// reveal or private key download was refused.
+    AuditUnavailable,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 9] = [
+    pub const ALL: [Refusal; 10] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -223,6 +230,7 @@ impl Refusal {
         Self::InvalidRequest,
         Self::StaleSignIn,
         Self::IdTokenRejected,
+        Self::AuditUnavailable,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -236,6 +244,7 @@ impl Refusal {
             Self::InvalidRequest => "invalid_request",
             Self::StaleSignIn => "stale_sign_in",
             Self::IdTokenRejected => "id_token_rejected",
+            Self::AuditUnavailable => "audit_unavailable",
         }
     }
 }
@@ -332,8 +341,10 @@ fn opt(v: &Option<String>) -> Option<tracing::field::DisplayValue<&str>> {
     v.as_deref().map(tracing::field::display)
 }
 
-/// Write one audit event. The only way an event is written.
-pub fn record(ev: AuditEvent) {
+/// Write one audit event to standard output and, with the audit sink set,
+/// queue it for Log Analytics. The only way an event is written. The actor
+/// is already on the event, from the verified session.
+pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
     // Fields from Keyring or checked on the way in are written as they are.
     // The user agent, UPN and the free text of #205 are written as plain
     // strings, which the text format quotes and escapes, so a crafted
@@ -364,6 +375,9 @@ pub fn record(ev: AuditEvent) {
         instance = tracing::field::display(instance()),
         "audit"
     );
+    if let Some(sink) = sink {
+        sink.enqueue(&ev);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -502,13 +516,14 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     let draft = Arc::new(Mutex::new(draft));
     let mut pending = Pending {
         draft: draft.clone(),
+        sink: state.audit_sink.clone(),
         done: false,
     };
     let res = CTX.scope(draft.clone(), next.run(req)).await;
     pending.done = true;
     let d = std::mem::take(&mut *lock(&draft));
     if let Some(ev) = finish(d, res.status()) {
-        record(ev);
+        record(ev, state.audit_sink.as_deref());
     }
     res
 }
@@ -518,6 +533,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
 /// have been called by then, so the request still gets its event.
 struct Pending {
     draft: Arc<Mutex<Draft>>,
+    sink: Option<Arc<sink::AuditSink>>,
     done: bool,
 }
 
@@ -528,7 +544,7 @@ impl Drop for Pending {
         }
         let d = std::mem::take(&mut *lock(&self.draft));
         if let Some(ev) = finish_cancelled(d) {
-            record(ev);
+            record(ev, self.sink.as_deref());
         }
     }
 }
