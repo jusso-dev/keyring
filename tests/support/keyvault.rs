@@ -57,6 +57,10 @@ pub(crate) struct KvState {
     pub fail_path: Mutex<Option<String>>,
     /// If set, only requests with this method fail.
     pub fail_method: Mutex<Option<Method>>,
+    /// Each `(method, path part, status, code)`: a request with that
+    /// method whose path contains the part fails so. For mixed results in
+    /// one request, such as some items refused and others not.
+    pub fail_each: Mutex<Vec<(Method, String, u16, &'static str)>>,
     pub certs: Mutex<BTreeMap<String, super::certs::StoredCert>>,
     pub deleted_certs: Mutex<BTreeMap<String, super::certs::DeletedCert>>,
     pub imports: Mutex<Vec<super::certs::ImportRecord>>,
@@ -472,6 +476,16 @@ async fn record(
     if let Some((status, code)) = fail
         && method_ok
     {
+        return err(status, code);
+    }
+    let each = s
+        .fail_each
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(m, part, _, _)| m == req.method() && req.uri().path().contains(part.as_str()))
+        .map(|(_, _, st, code)| (*st, *code));
+    if let Some((status, code)) = each {
         return err(status, code);
     }
     let delay = *s.delay.lock().unwrap();

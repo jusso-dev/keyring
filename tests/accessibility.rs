@@ -626,3 +626,26 @@ fn stylesheet_has_no_dead_or_duplicate_rules() {
     assert!(narrow > css.find(".side-nav a[aria-current=\"page\"] {").unwrap());
     assert!(narrow > css.find("@media (forced-colors: active)").unwrap());
 }
+
+#[tokio::test]
+async fn bulk_change_pages_have_labels_and_one_heading() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "x");
+    w.kv.state.put("api-key", "x");
+    let picked = [
+        ("item", "db-password"),
+        ("item", "api-key"),
+        ("op", "disable"),
+    ];
+    let html = support::body_text(w.post("/v/kv-test/secrets/-/bulk", &picked).await).await;
+    page_basics(&html, "bulk review");
+    assert!(
+        html.contains("for=\"confirm_count\""),
+        "the count is labelled"
+    );
+    let mut run = picked.to_vec();
+    run.push(("confirm_count", "2"));
+    let html = support::body_text(w.post("/v/kv-test/secrets/-/bulk/apply", &run).await).await;
+    page_basics(&html, "bulk results");
+    assert!(html.contains("Changed 2 secrets"), "{html}");
+}

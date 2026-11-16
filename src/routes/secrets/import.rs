@@ -8,9 +8,7 @@
 //! happened to each. There is deliberately no export.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use askama::Template;
 use axum::Form;
@@ -18,8 +16,6 @@ use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::AppState;
@@ -41,13 +37,7 @@ use crate::routes::vault_ctx::{azure_problem, check_csrf, vault_path};
 use super::import_file::{self, Format, MAX_FILE_BYTES, MAX_ROWS};
 use super::{api, current_vault};
 
-/// Secrets written at once.
-pub(crate) const CONCURRENCY: usize = 4;
-/// No new write starts after this long, so the page comes back well
-/// inside the request limit.
-pub(crate) const START_DEADLINE: Duration = Duration::from_secs(45);
-/// Stop waiting for writes still running after this long.
-pub(crate) const STOP_DEADLINE: Duration = Duration::from_secs(70);
+use crate::routes::batch::{self, Deadlines, Ran};
 
 const IMPORT_PATH: &str = "/secrets/-/import";
 
@@ -468,20 +458,6 @@ pub(crate) struct ConfirmForm {
     import_id: String,
 }
 
-/// When writes stop starting, and when Keyring stops waiting for them.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Deadlines {
-    pub start: Duration,
-    pub stop: Duration,
-}
-
-impl Deadlines {
-    pub(crate) const STANDARD: Self = Self {
-        start: START_DEADLINE,
-        stop: STOP_DEADLINE,
-    };
-}
-
 /// Write each row with `write`, [`CONCURRENCY`] at a time, and say how each
 /// went, in the same order. A row whose write began writes one `secret.import`
 /// event (`cancelled` if Keyring stopped waiting for it). A row that never
@@ -498,77 +474,22 @@ where
     F: Fn(PendingSecret) -> Fut + Clone + Send + 'static,
     Fut: std::future::Future<Output = Result<(), AzureError>> + Send + 'static,
 {
-    let started = tokio::time::Instant::now();
-    let start_by = started + deadlines.start;
-    let permits = Arc::new(Semaphore::new(CONCURRENCY));
-    // Set just before a row's write begins, so a row whose task was cut
-    // off before then is known not to have been sent.
-    let began: Arc<Vec<AtomicBool>> =
-        Arc::new((0..rows.len()).map(|_| AtomicBool::new(false)).collect());
-    let mut set = JoinSet::new();
-    let mut results: Vec<Option<(Written, String)>> = vec![None; rows.len()];
-    for (i, row) in rows.into_iter().enumerate() {
-        let permits = permits.clone();
-        let events = events.clone();
-        let began = began.clone();
-        let write = write.clone();
-        set.spawn(async move {
-            // Waiting for a permit stops at the start deadline too, so a
-            // row queued behind slow writes is reported as not sent.
-            let Ok(Ok(_permit)) = tokio::time::timeout_at(start_by, permits.acquire_owned()).await
-            else {
-                return (i, (Written::NotStarted, String::new()));
-            };
-            if tokio::time::Instant::now() >= start_by {
-                return (i, (Written::NotStarted, String::new()));
-            }
-            let name = row.name.clone();
-            let exists = row.exists;
-            began[i].store(true, Ordering::SeqCst);
-            let res = events.run(&name, write(row)).await;
-            (i, outcome_of(&res, exists))
-        });
-    }
-    let stop = started + deadlines.stop;
-    loop {
-        match tokio::time::timeout_at(stop, set.join_next()).await {
-            Ok(Some(Ok((i, r)))) => results[i] = Some(r),
-            // A task that panicked: its result depends on whether it began.
-            Ok(Some(Err(_))) => {}
-            Ok(None) => break,
-            Err(_) => {
-                // Dropping the tasks writes a `cancelled` event for each
-                // write still in flight, and none for a row not begun.
-                set.abort_all();
-                while let Some(done) = set.join_next().await {
-                    if let Ok((i, r)) = done {
-                        results[i] = Some(r);
-                    }
-                }
-                break;
-            }
-        }
-    }
-    results
+    let exists: Vec<bool> = rows.iter().map(|r| r.exists).collect();
+    let items = rows.into_iter().map(|r| (r.name.clone(), r)).collect();
+    batch::run_each(items, events, deadlines, write)
+        .await
         .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let (result, why) = match r {
-                Some(r) => r,
-                None if began[i].load(Ordering::SeqCst) => (
-                    Written::Unknown,
-                    "Keyring stopped waiting for Key Vault. Open the secret to see whether it was written.".into(),
-                ),
-                None => (Written::NotStarted, String::new()),
-            };
-            if result == Written::NotStarted {
-                (
-                    result,
-                    "Not sent: the import ran out of time. Import the rest in a smaller file.".into(),
-                )
-            } else {
-                (result, why)
-            }
+        .zip(exists)
+        .map(|(ran, exists)| match ran {
+            Ran::Done(res) => outcome_of(&res, exists),
+            Ran::Unknown => (
+                Written::Unknown,
+                "Keyring stopped waiting for Key Vault. Open the secret to see whether it was written.".into(),
+            ),
+            Ran::NotStarted => (
+                Written::NotStarted,
+                "Not sent: the import ran out of time. Import the rest in a smaller file.".into(),
+            ),
         })
         .collect()
 }
@@ -723,12 +644,9 @@ pub(crate) async fn confirm(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn deadlines_sit_inside_the_request_limit() {
-        assert!(START_DEADLINE < STOP_DEADLINE);
-        assert!(STOP_DEADLINE + Duration::from_secs(15) <= crate::routes::headers::REQUEST_TIMEOUT);
-    }
+    use crate::routes::batch::CONCURRENCY;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     fn row(name: &str) -> PendingSecret {
         PendingSecret {
