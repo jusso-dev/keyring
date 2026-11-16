@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Keys in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Keys <span class="muted">in {{ vault }}</span></h1>
+<h1 data-pin="vault" data-pin-vault="{{ vault }}">Keys <span class="muted">in {{ vault }}</span></h1>
 <p class="actions">{{ ui::link_button(hints.needs(Action::CreateKey), "create", "{}/keys/-/new"|format(shell.vault_prefix()), "button", "Create a key") }} <a href="{{ shell.vault_prefix() }}/keys/-/deleted">Deleted keys</a></p>
 <p class="muted">Keys never leave Key Vault. Keyring only shows their public parts.</p>
 {% if total == 0 %}
