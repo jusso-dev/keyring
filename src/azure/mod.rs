@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod certs;
 pub mod client;
+pub mod fanout;
 pub mod keys;
 pub mod paging;
 pub mod secrets;

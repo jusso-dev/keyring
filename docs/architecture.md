@@ -228,7 +228,7 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 
 ## Expiry dashboard
 
-The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV.
+The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, so other cross-vault pages can share it.
 
 ## Alerts
 
