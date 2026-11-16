@@ -100,6 +100,9 @@ pub(super) struct KeyRow {
     pub version: String,
     pub enabled: bool,
     pub created: String,
+    pub created_at: Option<i64>,
+    /// The "Not changed in over ..." badge, or empty. Set by `mark_stale`.
+    pub stale: String,
     pub expires: String,
     pub expires_note: String,
     pub expiry: ExpiryState,
@@ -109,6 +112,12 @@ pub(super) struct KeyRow {
 }
 
 impl KeyRow {
+    /// Set the badge for a value unchanged in more than `after_days`.
+    pub(super) fn mark_stale(mut self, after_days: u32, now: i64) -> Self {
+        self.stale = crate::age::stale_badge(self.created_at, self.managed, after_days, now);
+        self
+    }
+
     pub(super) fn from_item(k: &KeyItem, now: i64) -> Self {
         let a = &k.attributes;
         let tags: Vec<(String, String)> = k
@@ -125,6 +134,8 @@ impl KeyRow {
             version: k.version().to_owned(),
             enabled: a.is_enabled(),
             created: a.created.map(dates::format_datetime).unwrap_or_default(),
+            created_at: a.created,
+            stale: String::new(),
             expires: a.expires.map(dates::format_date).unwrap_or_default(),
             expires_note: a
                 .expires
@@ -191,7 +202,11 @@ pub(super) async fn list(
         }
     };
     let now = now_ts();
-    let all: Vec<KeyRow> = items.iter().map(|k| KeyRow::from_item(k, now)).collect();
+    let after = state.config.stale_after_days;
+    let all: Vec<KeyRow> = items
+        .iter()
+        .map(|k| KeyRow::from_item(k, now).mark_stale(after, now))
+        .collect();
     let total = all.len();
     let q = filter.q.trim().to_lowercase();
     let matching: Vec<KeyRow> = all
@@ -347,7 +362,7 @@ pub(super) async fn detail(
         }
     };
     Ok(render(&DetailPage {
-        row: bundle_row(&bundle, now),
+        row: bundle_row(&bundle, now).mark_stale(state.config.stale_after_days, now),
         kind: bundle.key.describe(),
         hsm: bundle.key.kty.ends_with("-HSM"),
         operations: bundle.key.key_ops.iter().map(|o| op_label(o)).collect(),

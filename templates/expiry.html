@@ -3,6 +3,7 @@
 {% block title %}Expiry - Keyring{% endblock %}
 {% block content %}
 <h1>Expiry</h1>
+<nav aria-label="Expiry views"><p class="view-switch"><a href="/expiry" aria-current="page">By expiry date</a> <a href="/expiry/age">By time since the value changed</a></p></nav>
 <p>Secrets, certificates and keys across your vaults, by when they expire. Only names and dates are read, never values.</p>
 <p class="muted">To get an email before things expire, ask whoever runs Keyring to set up <a href="https://github.com/jusso-dev/keyring/blob/main/docs/alerts.md" rel="noopener noreferrer">expiry alerts</a>.</p>
 

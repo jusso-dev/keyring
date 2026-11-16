@@ -25,7 +25,7 @@ Keyring works with the Azure public cloud only: these hosts, `login.microsoftonl
 
 | Part | Job |
 | --- | --- |
-| Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry, generator and audit |
+| Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry and age, generator and audit |
 | Pages | Askama templates compiled into the binary. Plain hand-written CSS |
 | Browser script | One small hand-written vanilla JS file for copy to clipboard, clearing it again, and similar extras. Pages work without it |
 | Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
@@ -277,6 +277,16 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 
 The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, and the reading of each vault's lists in `src/routes/every_vault.rs`, shared with search.
 
+## Age view
+
+`/expiry/age` groups every secret, certificate and key across vaults by how long since its value last changed: under 90 days, 90 to 180, 180 to 365, and over a year (more than 365 days). It reads through `src/routes/every_vault.rs`, like the expiry dashboard and search, so it has the same limits, lists the vaults it couldn't read (on the page and in the CSV), and shares the session's one-minute list cache. It only reads, as the signed-in person, and makes no list call of its own and no value read.
+
+- **The date.** Key Vault makes a new version for every new value, so the current version's `attributes.created` is when the value last changed. Editing properties (tags, dates, enabled) moves `updated`, not `created`, so `updated` isn't used. The view assumes the list calls (`GET /secrets`, `/certificates` and `/keys`) give the **current** version's `created`, not the first version's. The mock Key Vault does; a real vault is still to be confirmed (see the [checklist](real-vault-checklist.md), "Age: list gives the current version's created"). If a real vault gives the first version's date, the age view would need a versions call per secret, which is far more expensive, and should then be limited to one vault at a time.
+- **What's left out.** A secret or key that backs a certificate changes with the certificate, so it is left out and the certificate is shown by its own current version. On each vault's lists it never gets the badge.
+- **The badge.** `KEYRING_STALE_AFTER_DAYS` (default 365, from 1 to 3650, checked at start) sets when "Not changed in over a year" (or "over N days") shows: on the age view, on the secrets, certificates and keys lists, and on each item's page. The four bands stay fixed whatever it is set to.
+- **Per vault.** The secrets list's "Value changed" column replaces "Updated", and the filter "Not changed in over N days" (`?older=N`, 1 to 36500) leaves out certificate-backed secrets. A number it can't use filters nothing and the page says so.
+- **CSV.** `/expiry/age.csv` has the vault, type, name, enabled, the date the value changed, days since, the band and tags, with the same formula guarding as the expiry CSV, and a `NOT READ` row for each vault not read.
+
 ## Search
 
 `/search?q=...`, and the box in the top bar, find secrets, certificates and keys across every vault the person can see. It reads the same lists as the expiry dashboard, with the same limits and the same notes for vaults it couldn't read, and never a value: only the list calls are made (`GET /secrets`, `/certificates` and `/keys`), never `GET /secrets/{name}` or a version.
@@ -285,7 +295,7 @@ The dashboard reads secrets, certificates and keys from every vault the person c
 - The text is capped at 100 characters, and the page at 500 results. It is a query string, so like every query string it is never logged. Search only reads, so it writes no audit event.
 - Results are grouped by vault, with the same status badges as each vault's list, and link to the item's page under `/v/{vault}/...`.
 - It is a plain GET form and works without JavaScript. There is no script for it.
-- **List cache.** Reading every vault on each search would be slow and draw throttling. Each vault read in full is kept in the session for 60 seconds, in memory, and reused by the next search and by the expiry dashboard. It holds names and properties only (the `Item` type has no field for a value). A vault that was only partly read is not kept. A form posted to a vault's pages drops that vault's list, before and after the change, so a change shows straight away. Lists older than a minute are dropped by the session sweep, and every list goes with its session. Nothing is shared between sessions.
+- **List cache.** Reading every vault on each search would be slow and draw throttling. Each vault read in full is kept in the session for 60 seconds, in memory, and reused by the next search, the expiry dashboard and the age view. It holds names and properties only (the `Item` type has no field for a value). A vault that was only partly read is not kept. A form posted to a vault's pages drops that vault's list, before and after the change, so a change shows straight away. Lists older than a minute are dropped by the session sweep, and every list goes with its session. Nothing is shared between sessions.
 
 ## Vault health
 

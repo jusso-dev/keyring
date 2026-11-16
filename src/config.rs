@@ -43,6 +43,9 @@ pub struct Config {
     /// add to `X-Forwarded-For`. 0 (the default) ignores the header and
     /// records the socket peer as the client's address.
     pub trusted_proxy_hops: u8,
+    /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
+    /// many days gets the "Not changed in over ..." badge.
+    pub stale_after_days: u32,
     /// Azure Resource Manager base URL. Only changed by tests.
     pub management_url: String,
     /// Log Analytics query API base URL. Only changed by tests.
@@ -347,7 +350,20 @@ impl Config {
                 })?,
         };
 
+        let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
+            None => DEFAULT_STALE_AFTER_DAYS,
+            Some(v) => v
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (1..=MAX_STALE_AFTER_DAYS).contains(d))
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_STALE_AFTER_DAYS",
+                    reason: format!("use a whole number of days from 1 to {MAX_STALE_AFTER_DAYS}"),
+                })?,
+        };
+
         Ok(Self {
+            stale_after_days,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -601,6 +617,11 @@ pub const MAX_PROXY_HOPS: u8 = 8;
 /// Values `KEYRING_LOG_LEVEL` accepts. `off` is left out on purpose.
 /// Keyring's audit events are written at every level.
 pub const LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
+/// Default for `KEYRING_STALE_AFTER_DAYS`.
+pub const DEFAULT_STALE_AFTER_DAYS: u32 = 365;
+/// Largest `KEYRING_STALE_AFTER_DAYS` accepted: ten years.
+pub const MAX_STALE_AFTER_DAYS: u32 = 3650;
 
 /// Default Log Analytics query endpoint.
 pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
@@ -880,6 +901,29 @@ pub(crate) mod tests {
                     load(&env),
                     Err(ConfigError::Invalid {
                         name: "KEYRING_LOG_LEVEL",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_after_days_is_checked() {
+        let mut env = sample_env();
+        assert_eq!(load(&env).unwrap().stale_after_days, 365);
+        env.insert("KEYRING_STALE_AFTER_DAYS", "90".into());
+        assert_eq!(load(&env).unwrap().stale_after_days, 90);
+        env.insert("KEYRING_STALE_AFTER_DAYS", "3650".into());
+        assert_eq!(load(&env).unwrap().stale_after_days, 3650);
+        for bad in ["0", "-1", "3651", "1.5", "a year"] {
+            env.insert("KEYRING_STALE_AFTER_DAYS", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_STALE_AFTER_DAYS",
                         ..
                     })
                 ),

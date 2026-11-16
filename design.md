@@ -179,7 +179,7 @@ One size, one shape, one vocabulary.
 | Active, Enabled | `badge badge-ok` | ok | filled circle |
 | Current | `badge` | accent | filled circle |
 | Expired, Expires within 30 days, Refused | `badge badge-error` | danger | diamond |
-| Expires within 90 days, soft delete Off | `badge badge-warn` | warn | triangle |
+| Expires within 90 days, soft delete Off, Not changed in over a year | `badge badge-warn` | warn | triangle |
 | Disabled, Not active yet, Managed by a certificate | `badge badge-muted` | neutral | ring |
 | No expiry | `badge badge-none` | neutral | dash |
 | Health check: Pass / Warn / Unknown | `badge-ok` / `badge-warn` / `badge-muted` | ok / warn / neutral | circle / triangle / ring |
@@ -254,6 +254,29 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   count, not a status, and keeps the badge's glyph so the tone isn't colour
   alone.
 - Then a ledger table per group, most urgent first. No charts, no score.
+- Two views share the Expiry section: "By expiry date" (`/expiry`) and "By
+  time since the value changed" (`/expiry/age`). A `p.view-switch` under the
+  heading links the two, inside a `nav` labelled "Expiry views". The open
+  view is ink text at weight 600 with `aria-current="page"` and no
+  underline; the other is a normal link. Not tabs: each is its own page and
+  works without JavaScript.
+
+### Age view
+
+- The same layout as the expiry dashboard: the view switch, filters (vault,
+  type, tag, Download CSV), notes on vaults not read, count tiles, then a
+  ledger table per band.
+- Bands, oldest first: Over a year, 180 to 365 days, 90 to 180 days, Under
+  90 days. A fifth, "Date not given", shows only when it has items. The
+  Over a year tile is warn; the rest are neutral. Age is a prompt to
+  rotate, never an error.
+- Columns: Name, Type, Vault, Value changed (date, "N days ago" muted, and
+  the stale badge), Tags, Open.
+- The stale badge, "Not changed in over a year" (or "over N days" when
+  `KEYRING_STALE_AFTER_DAYS` isn't 365), is `badge-warn`. It shows in the
+  Value changed cell on the age view and the secrets list, and beside the
+  status badges on a secret's page. Never on an item managed by a
+  certificate.
 
 ### Search
 
