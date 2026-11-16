@@ -225,6 +225,7 @@ Keyring calls the Key Vault secrets REST API (version 7.5) directly as the user.
 - "Expiring soon" means within 30 days. Dates are shown in UTC.
 - Editing properties changes the current version. Key Vault can change a version's start and expiry dates but never remove them: it keeps a date sent as `null`. So the edit form refuses a removed date and says to set a new value with the date left blank, which makes a new version without it.
 - Filters (name, tag, expired or expiring, disabled) run on the server, with the same filter-as-you-type extra as the vault list.
+- The rotation line on a secret's page (`src/rotation.rs`) comes from its `rotation`, `rotation-last` and `rotation-status` tags. They are untrusted text: cleaned, cut to 64 characters, escaped, and shown as unknown when they don't follow the format. The expiry dashboard lists secrets tagged `rotation-status=failed` from the tags its list calls already return. Keyring doesn't rotate anything; see [rotation.md](rotation.md).
 
 ## Certificates
 
@@ -398,6 +399,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 - **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
 - **The session secret** only protects short-lived cookies (sign-in state and flash messages), which the server also refuses once they're past their age limit. Pending certificate uploads are kept in the server-side session. Rotating it means a restart, which signs everyone out (sessions are in memory), and cancels sign-ins in progress.
 - **Step-up is Keyring's own check.** Key Vault doesn't know about it, so it doesn't stop anyone reading values with the Azure CLI, the portal or another app. It is there to raise the bar for a stolen Keyring session cookie. A Conditional Access policy on Key Vault itself is what applies everywhere. Where Entra returns `acrs` (ID token, access token or both) and the AADSTS codes for a policy that can't be met are taken from Microsoft's documentation and haven't been confirmed on a real tenant.
+- **Keyring doesn't rotate credentials on the target system.** A new value set in Keyring changes Key Vault only. The rotation line on a secret's page is a display of its tags, which anyone with tag rights can write, not something Keyring checked. See [rotation.md](rotation.md).
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
 - **Access shows object IDs, not names.** Keyring has no Microsoft Graph permission, so the Access page can't name people, groups or apps, or list a group's members. It links to each in the portal instead.
 - **The connection cap is shared** by every client, and idle keep-alive connections and slow request bodies aren't limited beyond the 90 second request limit and the 5 minute connection age. A front-end proxy or the platform's load balancer normally covers this.
