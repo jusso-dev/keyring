@@ -147,8 +147,9 @@ jobs:
             az bicep build --file "$f" --stdout > /dev/null || status=1
           done
           # Copy each example the way the docs say (next to its template,
-          # as main.bicepparam), so a broken `using` path fails here.
-          for f in */main.example.bicepparam; do
+          # as main.bicepparam or access.bicepparam), so a broken `using`
+          # path fails here.
+          for f in */*.example.bicepparam; do
             copy="${f%.example.bicepparam}.bicepparam"
             cp "$f" "$copy"
             az bicep build-params --file "$copy" --stdout > /dev/null || status=1
