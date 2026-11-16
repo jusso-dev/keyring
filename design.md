@@ -23,7 +23,8 @@ decoration: no illustrations, gradients, background art, charts or scores.
     generator): a single column of fields, 40rem wide at most.
   - **Decision pages** (confirm, disable, rotate, rollback, upload preview,
     sign-in, signed out, errors): one narrow panel that ends in its action.
-  - **Ledger pages** (audit, expiry): the table is the page. Fully ledger-style.
+  - **Ledger pages** (audit, expiry, vault health): the table is the page.
+    Fully ledger-style.
 
 ## Colour
 
@@ -181,6 +182,7 @@ One size, one shape, one vocabulary.
 | Expires within 90 days, soft delete Off | `badge badge-warn` | warn | triangle |
 | Disabled, Not active yet, Managed by a certificate | `badge badge-muted` | neutral | ring |
 | No expiry | `badge badge-none` | neutral | dash |
+| Health check: Pass / Warn / Unknown | `badge-ok` / `badge-warn` / `badge-muted` | ok / warn / neutral | circle / triangle / ring |
 
 "None" in an empty cell stays plain muted text, so an empty cell doesn't look
 like a status.
@@ -274,6 +276,19 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   count in an error badge. Vaults and workspaces left out are warn notices
   listing each with its reason; vaults with no logging are a plain notice
   with a "What to ask for" hint.
+
+### Vault health
+
+- Filters (one vault or all, and Download CSV), a one-line summary of
+  warnings and unknowns, then one ledger table: a row per vault, a column
+  per check, each cell a Pass, Warn or Unknown badge. A check left for the
+  one-vault view is muted text, "Pick this vault", not a badge.
+- Under it, "What to look at": a plain list, one line per warning or
+  unknown, with its badge, the vault in mono, the check, one sentence on
+  why it matters and what to do, and a link to Microsoft's guide.
+- No score, no chart and no totals per vault. Unknown never reads as a pass.
+- On the vault list, the Audit logs column is plain "On", a warn badge
+  "Off", or muted "Unknown" with the reason.
 
 ### Rollback, rotate
 

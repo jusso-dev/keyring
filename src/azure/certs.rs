@@ -350,6 +350,11 @@ impl CertsApi<'_> {
         }
     }
 
+    /// A certificate's policy on its own, without the certificate.
+    pub async fn policy(&self, name: &str) -> Result<Policy, AzureError> {
+        self.get(&format!("/certificates/{name}/policy")).await
+    }
+
     /// The pending operation, or `None` if there isn't one.
     pub async fn pending(&self, name: &str) -> Result<Option<Operation>, AzureError> {
         match self.get(&format!("/certificates/{name}/pending")).await {

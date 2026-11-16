@@ -17,17 +17,19 @@ pub enum Section {
     Certificates,
     Keys,
     Expiry,
+    Health,
     Generator,
     Audit,
 }
 
 impl Section {
-    pub const NAV: [Section; 7] = [
+    pub const NAV: [Section; 8] = [
         Section::Vaults,
         Section::Secrets,
         Section::Certificates,
         Section::Keys,
         Section::Expiry,
+        Section::Health,
         Section::Generator,
         Section::Audit,
     ];
@@ -40,6 +42,7 @@ impl Section {
             Self::Certificates => "Certificates",
             Self::Keys => "Keys",
             Self::Expiry => "Expiry",
+            Self::Health => "Vault health",
             Self::Generator => "Generator",
             Self::Audit => "Audit",
         }
@@ -61,6 +64,7 @@ impl Section {
             Self::Certificates => "/certificates",
             Self::Keys => "/keys",
             Self::Expiry => "/expiry",
+            Self::Health => "/vault-health",
             Self::Generator => "/generator",
             Self::Audit => "/audit",
         }

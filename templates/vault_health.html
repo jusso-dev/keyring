@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Vault health - Keyring{% endblock %}
+{% block content %}
+<h1>Vault health</h1>
+<p>How each vault you can see is set up: whether it keeps audit logs, who can reach it, whether deletes can be undone, and how well its contents are looked after. Only settings, names and dates are read, never values.</p>
+<p class="muted">Each check is Pass, Warn, or Unknown when Keyring couldn't read it. Unknown is never counted as a pass.</p>
+
+<form class="filters" method="get" action="/vault-health" role="search">
+  <div>
+    <label for="vault">Vault</label>
+    <p class="field-help" id="vault-help">Pick one vault to also check certificate renewal and key rotation, which need a call per item.</p>
+    <select id="vault" name="vault" aria-describedby="vault-help">
+      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+      {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Check</button>
+    <a href="{{ csv_url }}">Download CSV</a>
+  </div>
+</form>
+
+{% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
+
+{% if unknown_vault %}
+<div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/vault-health">Show all vaults</a></p></div>
+{% elif rows.is_empty() %}
+<div class="empty-state">
+  <p><strong>You can't see any vaults yet.</strong></p>
+  <p>Keyring checks the vaults your account can see in Azure. You'll need at least the Reader role on a vault, its resource group or its subscription.</p>
+</div>
+{% else %}
+<p>{{ rows.len() }} vault{% if rows.len() != 1 %}s{% endif %} checked: {{ warnings }} warning{% if warnings != 1 %}s{% endif %} and {{ unknowns }} check{% if unknowns != 1 %}s{% endif %} Keyring couldn't read.{% if !per_item_checks %} Certificate renewal and key rotation are checked when you pick one vault.{% endif %}</p>
+
+{% call ui::table_wrap("health-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="health-caption">Checks for each vault</caption>
+  <thead>
+    <tr>
+      <th scope="col">Vault</th>
+      {% for k in kinds %}<th scope="col">{{ k.label() }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <th scope="row" class="mono">{{ r.vault }}</th>
+      {% for f in r.findings %}
+      <td>{% if f.deferred %}<span class="muted">Pick this vault</span>{% else %}<span class="badge {{ f.status.css() }}">{{ f.status.label() }}</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+
+{% if !issues.is_empty() %}
+<section aria-labelledby="issues">
+  <h2 id="issues">What to look at</h2>
+  <ul>
+    {% for i in issues %}
+    <li><span class="badge {{ i.finding.status.css() }}">{{ i.finding.status.label() }}</span> <span class="mono">{{ i.vault }}</span>, {{ i.finding.kind.label() }}: {{ i.finding.detail }}. <a href="{{ i.finding.kind.guide() }}" rel="noopener noreferrer">Microsoft's guide<span class="visually-hidden"> on {{ i.finding.kind.label() }}</span></a></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% if per_item_checks %}<p class="muted">Certificate renewal and key rotation check up to {{ max_item_checks }} of each in the vault.</p>{% endif %}
+{% endif %}
+{% endblock %}

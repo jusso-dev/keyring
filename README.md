@@ -124,6 +124,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
 - Deletes need you to type the item's name first.
@@ -250,7 +251,9 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | List the vault's certificate issuers (to offer them when creating a certificate) | Key Vault Certificates Officer (without it, only self-signed is offered) | Vault |
 | List and view keys, copy public keys | Key Vault Reader (or Key Vault Crypto User) | Vault |
 | Create, rotate, enable or disable, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
-| See where a vault sends its logs (audit view) | Reader | Vault or resource group |
+| See where a vault sends its logs (audit view, vault list, vault health) | Reader | Vault or resource group |
+| Vault health: settings checks | Reader | Vault or resource group |
+| Vault health: secret expiry, certificate renewal and key rotation counts | Key Vault Reader | Vault |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
 | Audit reports across vaults | Reader and Log Analytics Reader, as above | Each vault, and each workspace they log to. Vaults and workspaces you can't read are listed, not hidden |
 

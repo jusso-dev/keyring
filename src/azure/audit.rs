@@ -49,7 +49,37 @@ struct SettingProps {
     #[serde(default)]
     log_analytics_destination_type: Option<String>,
     #[serde(default)]
+    storage_account_id: Option<String>,
+    #[serde(default)]
+    event_hub_authorization_rule_id: Option<String>,
+    #[serde(default)]
+    marketplace_partner_id: Option<String>,
+    #[serde(default)]
     logs: Vec<LogSetting>,
+}
+
+impl SettingProps {
+    /// True when the setting has `AuditEvent` (or the `audit` or `allLogs`
+    /// group) turned on.
+    fn sends_audit(&self) -> bool {
+        self.logs.iter().any(|l| {
+            l.enabled
+                && (l.category.as_deref() == Some("AuditEvent")
+                    || matches!(l.category_group.as_deref(), Some("audit") | Some("allLogs")))
+        })
+    }
+
+    /// True when the setting names somewhere to send logs.
+    fn has_destination(&self) -> bool {
+        [
+            &self.workspace_id,
+            &self.storage_account_id,
+            &self.event_hub_authorization_rule_id,
+            &self.marketplace_partner_id,
+        ]
+        .iter()
+        .any(|d| d.as_deref().is_some_and(|d| !d.trim().is_empty()))
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -68,12 +98,7 @@ fn workspaces_from(settings: SettingsList) -> Vec<Workspace> {
     let mut out: Vec<Workspace> = Vec::new();
     for s in settings.value {
         let p = s.properties;
-        let audits = p.logs.iter().any(|l| {
-            l.enabled
-                && (l.category.as_deref() == Some("AuditEvent")
-                    || matches!(l.category_group.as_deref(), Some("audit") | Some("allLogs")))
-        });
-        if let (true, Some(ws)) = (audits, p.workspace_id)
+        if let (true, Some(ws)) = (p.sends_audit(), p.workspace_id)
             && !out.iter().any(|w| w.resource_id.eq_ignore_ascii_case(&ws))
         {
             out.push(Workspace {
@@ -101,6 +126,44 @@ pub fn is_safe_resource_id(id: &str) -> bool {
         })
 }
 
+/// Where a vault's audit logs go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuditSinks {
+    /// Diagnostic settings that send audit logs anywhere: a workspace, a
+    /// storage account, an event hub or a partner.
+    pub any: usize,
+    /// Log Analytics workspaces among them, which the audit view reads.
+    pub workspaces: usize,
+}
+
+fn audit_sinks_from(settings: SettingsList) -> AuditSinks {
+    let any = settings
+        .value
+        .iter()
+        .filter(|s| s.properties.sends_audit() && s.properties.has_destination())
+        .count();
+    AuditSinks {
+        any,
+        workspaces: workspaces_from(settings).len(),
+    }
+}
+
+/// A vault's diagnostic settings, read through ARM. Needs Reader.
+async fn settings(
+    azure: &AzureClient,
+    session: &Session,
+    management_url: &str,
+    vault_id: &str,
+) -> Result<SettingsList, AzureError> {
+    if !is_safe_resource_id(vault_id) {
+        return Err(AzureError::Unreadable);
+    }
+    let url = format!(
+        "{management_url}{vault_id}/providers/Microsoft.Insights/diagnosticSettings?api-version={DIAGNOSTICS_API}"
+    );
+    azure.get_json(session, Resource::Management, &url).await
+}
+
 /// Workspaces for a vault. `vault_id` is the vault's ARM resource ID.
 pub async fn workspaces(
     azure: &AzureClient,
@@ -108,14 +171,21 @@ pub async fn workspaces(
     management_url: &str,
     vault_id: &str,
 ) -> Result<Vec<Workspace>, AzureError> {
-    if !is_safe_resource_id(vault_id) {
-        return Err(AzureError::Unreadable);
-    }
-    let url = format!(
-        "{management_url}{vault_id}/providers/Microsoft.Insights/diagnosticSettings?api-version={DIAGNOSTICS_API}"
-    );
-    let list: SettingsList = azure.get_json(session, Resource::Management, &url).await?;
-    Ok(workspaces_from(list))
+    Ok(workspaces_from(
+        settings(azure, session, management_url, vault_id).await?,
+    ))
+}
+
+/// Where a vault sends its audit logs. `any == 0` means it keeps none.
+pub async fn audit_sinks(
+    azure: &AzureClient,
+    session: &Session,
+    management_url: &str,
+    vault_id: &str,
+) -> Result<AuditSinks, AzureError> {
+    Ok(audit_sinks_from(
+        settings(azure, session, management_url, vault_id).await?,
+    ))
 }
 
 /// Time ranges offered.
@@ -484,6 +554,30 @@ mod tests {
         assert_eq!(w.len(), 2);
         assert!(w[0].resource_specific);
         assert!(!w[1].resource_specific);
+    }
+
+    #[test]
+    fn counts_every_kind_of_audit_destination() {
+        let s: SettingsList = serde_json::from_value(serde_json::json!({"value": [
+            {"properties": {"workspaceId": "/w1", "logs": [{"category": "AuditEvent", "enabled": true}]}},
+            {"properties": {"storageAccountId": "/st", "logs": [{"categoryGroup": "audit", "enabled": true}]}},
+            {"properties": {"eventHubAuthorizationRuleId": "/eh", "logs": [{"categoryGroup": "allLogs", "enabled": true}]}},
+            {"properties": {"marketplacePartnerId": "/p", "logs": [{"category": "AuditEvent", "enabled": true}]}},
+            // Off, a metrics-only setting and one with nowhere to go.
+            {"properties": {"workspaceId": "/w2", "logs": [{"category": "AuditEvent", "enabled": false}]}},
+            {"properties": {"workspaceId": "/w3", "logs": [], "metrics": [{"category": "AllMetrics", "enabled": true}]}},
+            {"properties": {"logs": [{"category": "AuditEvent", "enabled": true}]}}
+        ]}))
+        .unwrap();
+        assert_eq!(
+            audit_sinks_from(s),
+            AuditSinks {
+                any: 4,
+                workspaces: 1
+            }
+        );
+        let none: SettingsList = serde_json::from_value(serde_json::json!({"value": []})).unwrap();
+        assert_eq!(audit_sinks_from(none).any, 0);
     }
 
     #[test]

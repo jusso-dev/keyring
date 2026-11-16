@@ -529,6 +529,9 @@ pub(crate) struct ArmState {
     pub diagnostics: Mutex<Option<serde_json::Value>>,
     /// The path of each diagnostic settings request, which names the vault.
     pub diagnostics_paths: Mutex<Vec<String>>,
+    /// Diagnostic settings for one vault by name, in place of
+    /// `diagnostics`. `None` means 403 for that vault.
+    pub diagnostics_by_vault: Mutex<std::collections::HashMap<String, Option<serde_json::Value>>>,
     /// Log Analytics rows returned: (time, who, operation, item, result, ip).
     pub audit_rows: Mutex<Vec<[String; 6]>>,
     /// Make Log Analytics answer 403.
@@ -583,6 +586,7 @@ pub(crate) async fn start_arm() -> MockArm {
         bearers: Mutex::new(Vec::new()),
         diagnostics: Mutex::new(Some(json!({"value": []}))),
         diagnostics_paths: Mutex::new(Vec::new()),
+        diagnostics_by_vault: Mutex::new(std::collections::HashMap::new()),
         audit_rows: Mutex::new(Vec::new()),
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
@@ -671,13 +675,23 @@ async fn arm_fallback(
     {
         s.bearers.lock().unwrap().push(bearer);
         s.diagnostics_paths.lock().unwrap().push(path.clone());
+        // Per-vault settings win over the shared ones: `diagnostics_for`
+        // (audit across vaults) first, then `diagnostics_by_vault` (vault
+        // health).
+        let vault = path
+            .split("/vaults/")
+            .nth(1)
+            .and_then(|r| r.split('/').next())
+            .unwrap_or_default()
+            .to_owned();
         let own = s
             .diagnostics_for
             .lock()
             .unwrap()
             .iter()
-            .find(|(v, _)| path.contains(&format!("/vaults/{v}/")))
-            .map(|(_, d)| d.clone());
+            .find(|(v, _)| *v == vault)
+            .map(|(_, d)| d.clone())
+            .or_else(|| s.diagnostics_by_vault.lock().unwrap().get(&vault).cloned());
         return match own.unwrap_or_else(|| s.diagnostics.lock().unwrap().clone()) {
             Some(v) => json_response(StatusCode::OK, v),
             None => json_response(
@@ -927,6 +941,15 @@ pub(crate) fn audit_settings(dedicated: bool) -> serde_json::Value {
         "workspaceId": "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/logs",
         "logAnalyticsDestinationType": if dedicated { json!("Dedicated") } else { json!(null) },
         "logs": [{"categoryGroup": "audit", "enabled": true}]
+    }}]})
+}
+
+/// A diagnostic setting that sends audit logs to a storage account only,
+/// which the audit view can't read but still counts as kept.
+pub(crate) fn storage_audit_settings() -> serde_json::Value {
+    json!({"value": [{"properties": {
+        "storageAccountId": "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/logs",
+        "logs": [{"category": "AuditEvent", "enabled": true}]
     }}]})
 }
 

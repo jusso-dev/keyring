@@ -20,7 +20,10 @@ pub const VAULTS_QUERY: &str = "resources \
 | project id, name, resourceGroup, subscriptionId, location, tags, \
 enableRbacAuthorization = properties.enableRbacAuthorization, \
 enableSoftDelete = properties.enableSoftDelete, \
-enablePurgeProtection = properties.enablePurgeProtection \
+enablePurgeProtection = properties.enablePurgeProtection, \
+publicNetworkAccess = properties.publicNetworkAccess, \
+networkDefaultAction = properties.networkAcls.defaultAction, \
+privateEndpointConnections = properties.privateEndpointConnections \
 | order by name asc";
 
 pub const SUBSCRIPTIONS_QUERY: &str = "resourcecontainers \
@@ -42,6 +45,24 @@ pub struct Vault {
     pub rbac: bool,
     pub soft_delete: bool,
     pub purge_protection: bool,
+    /// Settings for the health page, as Resource Graph reported them.
+    pub health: HealthProps,
+}
+
+/// Vault settings for the health page. Missing values stay `None`, so the
+/// page can tell "Azure didn't say" from a value and never guess a pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HealthProps {
+    /// `properties.enableSoftDelete` as sent.
+    pub soft_delete: Option<bool>,
+    /// `properties.publicNetworkAccess`: `Enabled`, `Disabled` or another
+    /// value Azure adds later.
+    pub public_access: Option<String>,
+    /// `properties.networkAcls.defaultAction`: `Allow` or `Deny`.
+    pub default_action: Option<String>,
+    /// The status of each private endpoint connection (`Approved`,
+    /// `Pending`, `Rejected`, `Disconnected`), empty text if it had none.
+    pub private_endpoints: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -103,6 +124,27 @@ struct VaultRow {
     enable_soft_delete: Option<bool>,
     #[serde(default)]
     enable_purge_protection: Option<bool>,
+    #[serde(default)]
+    public_network_access: Option<String>,
+    #[serde(default)]
+    network_default_action: Option<String>,
+    #[serde(default)]
+    private_endpoint_connections: Option<Vec<serde_json::Value>>,
+}
+
+/// The status of each private endpoint connection. Azure nests it as
+/// `properties.privateLinkServiceConnectionState.status`.
+fn endpoint_statuses(conns: Option<Vec<serde_json::Value>>) -> Vec<String> {
+    conns
+        .unwrap_or_default()
+        .iter()
+        .map(|c| {
+            c.pointer("/properties/privateLinkServiceConnectionState/status")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -143,6 +185,12 @@ fn map_vaults(rows: Vec<VaultRow>, subs: &HashMap<String, String>) -> Vec<Vault>
             rbac: r.enable_rbac_authorization.unwrap_or(false),
             soft_delete: r.enable_soft_delete.unwrap_or(true),
             purge_protection: r.enable_purge_protection.unwrap_or(false),
+            health: HealthProps {
+                soft_delete: r.enable_soft_delete,
+                public_access: r.public_network_access,
+                default_action: r.network_default_action,
+                private_endpoints: endpoint_statuses(r.private_endpoint_connections),
+            },
         })
         .collect();
     vaults.sort_by(|a, b| {
@@ -292,6 +340,9 @@ mod tests {
     fn queries_target_the_right_types() {
         assert!(VAULTS_QUERY.contains("microsoft.keyvault/vaults"));
         assert!(VAULTS_QUERY.contains("enableRbacAuthorization"));
+        assert!(VAULTS_QUERY.contains("properties.publicNetworkAccess"));
+        assert!(VAULTS_QUERY.contains("properties.networkAcls.defaultAction"));
+        assert!(VAULTS_QUERY.contains("properties.privateEndpointConnections"));
         assert!(SUBSCRIPTIONS_QUERY.contains("microsoft.resources/subscriptions"));
     }
 
@@ -319,6 +370,24 @@ mod tests {
         assert_eq!(v[1].subscription_name, "Production");
         assert!(v[1].rbac && v[1].purge_protection);
         assert_eq!(v[1].tags.get("n").map(String::as_str), Some("3"));
+        assert_eq!(v[0].health, HealthProps::default(), "missing stays missing");
+    }
+
+    #[test]
+    fn maps_network_settings() {
+        let rows: Vec<VaultRow> = serde_json::from_value(serde_json::json!([{
+            "id": "/subscriptions/s/x/kv", "name": "kv",
+            "publicNetworkAccess": "Disabled", "networkDefaultAction": "Deny",
+            "privateEndpointConnections": [
+                {"id": "/pe1", "properties": {"privateLinkServiceConnectionState": {"status": "Approved"}}},
+                {"id": "/pe2", "properties": {}}
+            ]
+        }]))
+        .unwrap();
+        let v = map_vaults(rows, &HashMap::new());
+        assert_eq!(v[0].health.public_access.as_deref(), Some("Disabled"));
+        assert_eq!(v[0].health.default_action.as_deref(), Some("Deny"));
+        assert_eq!(v[0].health.private_endpoints, ["Approved", ""]);
     }
 
     #[test]
@@ -357,6 +426,7 @@ mod tests {
             rbac: true,
             soft_delete: true,
             purge_protection: false,
+            health: HealthProps::default(),
         }
     }
 
