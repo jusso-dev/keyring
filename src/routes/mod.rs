@@ -5,6 +5,7 @@ mod age;
 pub mod assets;
 mod audit;
 mod audit_across;
+pub(crate) mod audit_gate;
 mod auth;
 mod certs;
 pub(crate) mod confirm;
@@ -313,6 +314,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     let public = Router::new()
         .route("/healthz", get(health::healthz))
+        .route("/healthz/audit", get(health::audit))
         .route("/static/{file}", get(assets::serve))
         .route("/favicon.ico", get(assets::favicon))
         .route("/auth/sign-in", get(auth::sign_in))

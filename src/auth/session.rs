@@ -390,19 +390,26 @@ impl std::fmt::Debug for Session {
 
 /// Drop expired sessions, writing an audit event for each. Not tied to
 /// the request in progress, if any, so no browser details.
-fn drop_expired(map: &mut HashMap<String, Arc<Session>>, now: Instant) {
+fn drop_expired(
+    map: &mut HashMap<String, Arc<Session>>,
+    now: Instant,
+    sink: Option<&crate::audit::sink::AuditSink>,
+) {
     map.retain(|_, s| {
         let expired = s.expired_at(now);
         if expired {
-            record_expired(s);
+            record_expired(s, sink);
         }
         !expired
     });
 }
 
-fn record_expired(session: &Session) {
+fn record_expired(session: &Session, sink: Option<&crate::audit::sink::AuditSink>) {
     use crate::audit::{Action, AuditEvent, Outcome, record};
-    record(AuditEvent::new(Action::SessionExpired, Outcome::Success).by(session));
+    record(
+        AuditEvent::new(Action::SessionExpired, Outcome::Success).by(session),
+        sink,
+    );
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -415,6 +422,8 @@ pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// Keys each session's [`Session::audit_ref`].
     audit_key: ring::hmac::Key,
+    /// The audit sink, for session expiry events, when it is set.
+    audit_sink: std::sync::OnceLock<Arc<crate::audit::sink::AuditSink>>,
 }
 
 /// A store whose audit key is random, so its session references join up
@@ -461,6 +470,7 @@ impl SessionStore {
         Self {
             sessions: Mutex::new(HashMap::new()),
             audit_key: ring::hmac::Key::from(okm),
+            audit_sink: std::sync::OnceLock::new(),
         }
     }
 
@@ -468,7 +478,18 @@ impl SessionStore {
         Self {
             sessions: Mutex::new(HashMap::new()),
             audit_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key),
+            audit_sink: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Send session expiry events to the audit sink too. Set once, at
+    /// start.
+    pub fn set_audit_sink(&self, sink: Arc<crate::audit::sink::AuditSink>) {
+        let _ = self.audit_sink.set(sink);
+    }
+
+    fn sink(&self) -> Option<&crate::audit::sink::AuditSink> {
+        self.audit_sink.get().map(Arc::as_ref)
     }
 
     /// The audit reference for a session ID: the first 16 bytes of its
@@ -502,7 +523,7 @@ impl SessionStore {
             last_seen: Mutex::new(now),
         });
         let mut map = lock(&self.sessions);
-        drop_expired(&mut map, now);
+        drop_expired(&mut map, now, self.sink());
         map.insert(id.clone(), session);
         id
     }
@@ -519,9 +540,12 @@ impl SessionStore {
             map.remove(id);
             // Found by the browser that holds it, so its details belong.
             use crate::audit::{Action, AuditEvent, Outcome, from_this_browser, record};
-            record(from_this_browser(
-                AuditEvent::new(Action::SessionExpired, Outcome::Success).by(&session),
-            ));
+            record(
+                from_this_browser(
+                    AuditEvent::new(Action::SessionExpired, Outcome::Success).by(&session),
+                ),
+                self.sink(),
+            );
             return None;
         }
         *lock(&session.last_seen) = now;
@@ -533,7 +557,7 @@ impl SessionStore {
     /// the sessions that are left.
     pub fn sweep_at(&self, now: Instant) {
         let mut map = lock(&self.sessions);
-        drop_expired(&mut map, now);
+        drop_expired(&mut map, now, self.sink());
         for s in map.values() {
             s.drop_stale_upload(now);
             s.drop_stale_lists(now);

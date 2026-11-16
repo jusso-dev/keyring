@@ -1,10 +1,16 @@
-//! How Keyring proves to Entra that it is the app registration.
+//! The managed identity token source, and how Keyring proves to Entra
+//! that it is the app registration.
 //!
-//! Either with a client secret, or with a short-lived token from a
-//! user-assigned managed identity that the app registration trusts as a
-//! federated credential. The token goes to Entra as `client_assertion`, so
-//! there is no secret to store or rotate.
+//! Keyring has at most one managed identity of its own
+//! (`KEYRING_MANAGED_IDENTITY_CLIENT_ID`). [`ManagedIdentityTokens`] gets its
+//! tokens from the platform's local token service, one cache per resource.
+//! Two resources are ever asked for: [`ASSERTION_AUDIENCE`], sent to Entra
+//! as `client_assertion` in place of a client secret, and
+//! [`crate::audit::sink::MONITOR_RESOURCE`], for writing audit rows. No
+//! token from here ever reads or changes a person's vault, ARM or Log
+//! Analytics data: that is always the person's own on-behalf-of token.
 
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -14,7 +20,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::azure::token::{EXPIRY_SKEW, FAILURE_MEMORY, MAX_LIFETIME, TokenError};
-use crate::config::{ClientCredential, Config};
+use crate::config::{ClientCredential, Config, ManagedIdentity};
 use crate::http::{HttpError, local_client};
 use crate::secret::Secret;
 
@@ -76,15 +82,17 @@ struct IdentityToken {
     expires_on: ExpiresOn,
 }
 
-/// Gets tokens for [`ASSERTION_AUDIENCE`] from the managed identity's local
-/// token service. Holds the token until shortly before it expires.
-pub struct AssertionSource {
+/// Gets tokens from the managed identity's local token service, for any
+/// resource Keyring names. Each resource's token is held until shortly
+/// before it expires.
+pub struct ManagedIdentityTokens {
     endpoint: String,
     header: Secret,
     identity_client_id: String,
     http: reqwest::Client,
-    /// Held while fetching, so concurrent callers make one request.
-    cached: Mutex<Cached>,
+    /// One slot per resource. The slot's lock is held while fetching, so
+    /// concurrent callers for one resource make one request.
+    cached: std::sync::Mutex<HashMap<&'static str, Arc<Mutex<Cached>>>>,
 }
 
 /// The last token, and the last failure so callers queued behind a failed
@@ -95,7 +103,7 @@ struct Cached {
     failed: Option<(Instant, TokenError)>,
 }
 
-impl AssertionSource {
+impl ManagedIdentityTokens {
     pub fn new(
         endpoint: String,
         header: Secret,
@@ -107,18 +115,46 @@ impl AssertionSource {
             header,
             identity_client_id,
             http,
-            cached: Mutex::new(Cached::default()),
+            cached: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    /// A token for `api://AzureADTokenExchange` from the managed identity.
-    /// Cached until 5 minutes before it expires. One fetch at a time. A
-    /// caller that was waiting while a fetch failed gets that failure, the
-    /// same way [`crate::azure::TokenBroker`] shares a failed exchange, so an
-    /// outage costs one timeout and not one per queued request.
+    /// From the configured identity, with the local-only client.
+    pub fn for_identity(identity: &ManagedIdentity) -> Result<Self, HttpError> {
+        Ok(Self::new(
+            identity.endpoint.clone(),
+            identity.header.clone(),
+            identity.client_id.clone(),
+            local_client()?,
+        ))
+    }
+
+    /// The identity's client ID, for the audit sink's writer column.
+    pub fn client_id(&self) -> &str {
+        &self.identity_client_id
+    }
+
+    /// A token for `api://AzureADTokenExchange`, sent to Entra as
+    /// `client_assertion`.
     pub async fn assertion(&self) -> Result<Secret, TokenError> {
+        self.token(ASSERTION_AUDIENCE).await
+    }
+
+    /// A token for `resource` from the managed identity. Cached until 5
+    /// minutes before it expires. One fetch at a time per resource. A
+    /// caller that was waiting while a fetch failed gets that failure, the
+    /// same way [`crate::azure::TokenBroker`] shares a failed exchange, so
+    /// an outage costs one timeout and not one per queued request.
+    pub async fn token(&self, resource: &'static str) -> Result<Secret, TokenError> {
         let started = Instant::now();
-        let mut cached = self.cached.lock().await;
+        let slot = self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(resource)
+            .or_default()
+            .clone();
+        let mut cached = slot.lock().await;
         if let Some((token, expires_at)) = cached.token.as_ref()
             && expires_at
                 .duration_since(SystemTime::now())
@@ -132,7 +168,7 @@ impl AssertionSource {
         {
             return Err(err.clone());
         }
-        match self.fetch().await {
+        match self.fetch(resource).await {
             Ok((token, expires_at)) => {
                 cached.token = Some((token.clone(), expires_at));
                 cached.failed = None;
@@ -145,11 +181,25 @@ impl AssertionSource {
         }
     }
 
-    async fn fetch(&self) -> Result<(Secret, SystemTime), TokenError> {
+    /// Forget the cached token for `resource`, so the next call fetches a
+    /// new one. For a token the resource has just refused.
+    pub async fn forget(&self, resource: &'static str) {
+        let slot = self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(resource)
+            .cloned();
+        if let Some(slot) = slot {
+            slot.lock().await.token = None;
+        }
+    }
+
+    async fn fetch(&self, resource: &str) -> Result<(Secret, SystemTime), TokenError> {
         let mut url = Url::parse(&self.endpoint)
             .map_err(|_| TokenError::Unreachable("identity endpoint is not a URL".into()))?;
         url.query_pairs_mut()
-            .append_pair("resource", ASSERTION_AUDIENCE)
+            .append_pair("resource", resource)
             .append_pair("api-version", IDENTITY_API_VERSION)
             .append_pair("client_id", &self.identity_client_id);
         let unreachable = |e: reqwest::Error| {
@@ -200,26 +250,34 @@ impl AssertionSource {
 #[derive(Clone)]
 pub enum Credential {
     Secret(Secret),
-    Assertion(Arc<AssertionSource>),
+    Assertion(Arc<ManagedIdentityTokens>),
 }
 
 impl Credential {
-    /// Build from the configuration. Make this once and share it, so the
-    /// assertion is cached once.
+    /// Build from the configuration, with a token source of its own. For
+    /// tests; [`crate::AppState`] uses [`Credential::with_identity`] so the
+    /// audit sink shares the one source.
     pub fn new(config: &Config) -> Result<Self, HttpError> {
-        Ok(match &config.credential {
-            ClientCredential::Secret(secret) => Self::Secret(secret.clone()),
-            ClientCredential::ManagedIdentity {
-                identity_client_id,
-                endpoint,
-                header,
-            } => Self::Assertion(Arc::new(AssertionSource::new(
-                endpoint.clone(),
-                header.clone(),
-                identity_client_id.clone(),
-                local_client()?,
-            ))),
-        })
+        let identity = config
+            .managed_identity
+            .as_ref()
+            .map(ManagedIdentityTokens::for_identity)
+            .transpose()?
+            .map(Arc::new);
+        Ok(Self::with_identity(config, identity))
+    }
+
+    /// Build from the configuration and the shared token source. With a
+    /// client secret configured, the secret is the credential and the
+    /// identity (if any) is only for the audit sink.
+    pub fn with_identity(config: &Config, identity: Option<Arc<ManagedIdentityTokens>>) -> Self {
+        match (&config.credential, identity) {
+            (ClientCredential::Secret(secret), _) => Self::Secret(secret.clone()),
+            (ClientCredential::ManagedIdentity, Some(tokens)) => Self::Assertion(tokens),
+            (ClientCredential::ManagedIdentity, None) => {
+                unreachable!("Config only picks the managed identity credential when one is set")
+            }
+        }
     }
 
     /// The client secret, when that is the credential.
