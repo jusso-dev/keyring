@@ -155,6 +155,17 @@ jobs:
             az bicep build-params --file "$copy" --stdout > /dev/null || status=1
             rm "$copy"
           done
+          # Each host template again with the audit sink on (the examples
+          # above leave it off), so the audit-sink module is built as used.
+          for t in app-service container-apps; do
+            p="$t/audit-ci.bicepparam"
+            { sed '/^param auditWorkspaceId/d' "$t/main.example.bicepparam"
+              echo "param auditWorkspaceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sentinel/providers/Microsoft.OperationalInsights/workspaces/law-sentinel'"
+              echo "param auditRequired = true"
+            } > "$p"
+            az bicep build-params --file "$p" --stdout > /dev/null || status=1
+            rm "$p"
+          done
           exit $status
 
   docker:

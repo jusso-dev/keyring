@@ -277,6 +277,71 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
     "vault",
 ];
 
+/// The audit sink's columns, `COLUMNS` in `src/audit/sink.rs`, are the one
+/// list: the Bicep stream and table must match it, and every schema field
+/// must have a column. Fails if any of the three drift apart.
+#[test]
+fn sink_columns_match_the_bicep_and_the_schema() {
+    use keyring::audit::sink::{COLUMNS, WRITER};
+    let bicep = include_str!("../infra/modules/audit-sink.bicep");
+    // `{ name: 'X', type: 'y' }` lines in the stream declaration.
+    let start = bicep.find("var streamColumns = [").expect("streamColumns");
+    let end = start + bicep[start..].find("\n]").expect("end of streamColumns");
+    let declared: Vec<(String, String)> = bicep[start..end]
+        .lines()
+        .filter_map(|l| {
+            let name = l.split("name: '").nth(1)?.split('\'').next()?;
+            let kind = l.split("type: '").nth(1)?.split('\'').next()?;
+            Some((name.to_owned(), kind.to_owned()))
+        })
+        .collect();
+    let ours: Vec<(String, String)> = COLUMNS
+        .iter()
+        .map(|c| (c.stream.to_owned(), c.kind.to_owned()))
+        .collect();
+    assert_eq!(
+        declared, ours,
+        "infra/modules/audit-sink.bicep streamColumns"
+    );
+    // The table is the stream with `time` as TimeGenerated.
+    assert!(bicep.contains("[{ name: 'TimeGenerated', type: 'datetime' }]"));
+    assert!(bicep.contains("filter(streamColumns, c => c.name != 'time')"));
+    assert!(bicep.contains("source | extend TimeGenerated = todatetime(time) | project-away time"));
+    let time = COLUMNS.iter().find(|c| c.field == "time").unwrap();
+    assert_eq!((time.name, time.stream), ("TimeGenerated", "time"));
+    for c in COLUMNS.iter().filter(|c| c.field != "time") {
+        assert_eq!(c.name, c.stream, "only time is renamed");
+    }
+
+    // Every schema field has a column, and every column is a schema field
+    // or the writer. `kind`, `level` and `message` are log line fields.
+    let fields: Vec<&str> = COLUMNS
+        .iter()
+        .map(|c| c.field)
+        .filter(|f| *f != WRITER)
+        .collect();
+    let mut want: Vec<&str> = SCHEMA_V1_FIELDS
+        .iter()
+        .copied()
+        .filter(|f| !matches!(*f, "kind" | "level" | "message"))
+        .collect();
+    let mut got = fields.clone();
+    want.sort_unstable();
+    got.sort_unstable();
+    assert_eq!(got, want, "COLUMNS and SCHEMA_V1_FIELDS");
+    // The writer and actor columns the issue names.
+    for name in [
+        "WriterIdentityClientId",
+        "KeyringInstance",
+        "KeyringVersion",
+        "ActorObjectId",
+        "ActorTenantId",
+        "ActorUpn",
+    ] {
+        assert!(COLUMNS.iter().any(|c| c.name == name), "{name}");
+    }
+}
+
 #[tokio::test]
 async fn audited_routes_write_exactly_one_event() {
     let capture = Capture::default();

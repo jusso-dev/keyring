@@ -107,6 +107,17 @@ param useFederatedCredential bool = false
 @description('Only when moving an existing app to useFederatedCredential: keep the entra-client-secret entry defined (the container no longer reads it), because Container Apps refuses to remove a secret an active revision still uses. Deploy once with this true, then again with it false once the old revision is inactive. See docs/deploy.md.')
 param keepClientSecretEntry bool = false
 
+@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
+param auditWorkspaceId string = ''
+
+@description('Days the KeyringAudit_CL table keeps rows.')
+@minValue(30)
+@maxValue(730)
+param auditRetentionInDays int = 365
+
+@description('Refuse reveals and private key downloads while the audit sink has been failing for over a minute. Needs auditWorkspaceId.')
+param auditRequired bool = false
+
 param tags object = {}
 
 var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infrastructureSubnetId) && !empty(vaultPrivateDnsZoneId))
@@ -120,11 +131,17 @@ var identityName = '${name}-id'
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
 
 // How Keyring proves itself to Entra: the client secret, or (with
-// useFederatedCredential) the app's managed identity. Never both: Keyring
-// refuses to start with both set.
-var credentialEnv = useFederatedCredential
-  ? [{ name: 'KEYRING_FEDERATED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
-  : [{ name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }]
+// useFederatedCredential) the app's managed identity. Keyring's one managed
+// identity is also what the audit sink writes with, so it is named
+// whenever either needs it.
+var useAuditSink = !empty(auditWorkspaceId)
+var auditCheck = useAuditSink || !auditRequired ? 'ok' : fail('auditRequired needs auditWorkspaceId.')
+var credentialEnv = concat(
+  useFederatedCredential || useAuditSink
+    ? [{ name: 'KEYRING_MANAGED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
+    : [],
+  useFederatedCredential ? [] : [{ name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }]
+)
 
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
@@ -140,6 +157,37 @@ module config '../modules/config-vault.bicep' = {
     tags: tags
   }
 }
+
+// The audit sink, in the workspace's own resource group and subscription,
+// which may be an existing Sentinel workspace elsewhere.
+var auditWorkspaceParts = split(useAuditSink ? auditWorkspaceId : '/subscriptions/none/resourceGroups/none/providers/Microsoft.OperationalInsights/workspaces/none', '/')
+resource auditWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (useAuditSink) {
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  name: auditWorkspaceParts[8]
+}
+
+module audit '../modules/audit-sink.bicep' = if (useAuditSink) {
+  name: '${name}-audit-sink${auditCheck == 'ok' ? '' : '-invalid'}'
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  params: {
+    workspaceName: auditWorkspaceParts[8]
+    location: auditWorkspace!.location
+    ruleName: '${name}-audit'
+    identityPrincipalId: config.outputs.identityPrincipalId
+    retentionInDays: auditRetentionInDays
+    tags: tags
+  }
+}
+
+// Where the sink writes, from the module, and whether reads need it.
+var auditSettings = useAuditSink
+  ? [
+      { name: 'KEYRING_AUDIT_INGESTION_ENDPOINT', value: audit!.outputs.ingestionEndpoint }
+      { name: 'KEYRING_AUDIT_DCR_ID', value: audit!.outputs.ruleImmutableId }
+      { name: 'KEYRING_AUDIT_STREAM', value: audit!.outputs.streamName }
+      { name: 'KEYRING_AUDIT_REQUIRED', value: string(auditRequired) }
+    ]
+  : []
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (!configOnly) {
   name: '${name}-logs'
@@ -261,7 +309,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
             empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
             empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
             empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
-            [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }]
+            [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
+            auditSettings
           )
           probes: [
             {
@@ -309,6 +358,8 @@ output fqdn string = configOnly ? '' : app!.properties.configuration.ingress.fqd
 output defaultDomain string = configOnly ? '' : env!.properties.defaultDomain
 @description('The environment\'s address: private with internal ingress, public with external.')
 output staticIp string = configOnly ? '' : env!.properties.staticIp
-output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck}'
+output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck} ${auditCheck}'
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
+@description('The audit data collection rule\'s immutable ID, when the audit sink is on.')
+output auditRuleId string = useAuditSink ? audit!.outputs.ruleImmutableId : ''

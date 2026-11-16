@@ -15,7 +15,9 @@
 //!   Bodies are gzipped.
 //! - **Failure.** 429 and 5xx are retried with backoff, honouring
 //!   `Retry-After`. A 401 or 403 drops the cached token and is retried. A
-//!   batch any other 4xx refuses is dropped and counted. The queue is
+//!   batch any other 4xx refuses (or a redirect) is dropped and counted.
+//!   The sink is degraded once retries have gone on for
+//!   [`Tuning::degraded_after`] with no success. The queue is
 //!   bounded and drops the oldest event when full. Every event has already
 //!   gone to standard output, so the platform's console log still has it.
 //! - **Shutdown.** [`AuditSink::shutdown`] sends what is queued, for up to
@@ -85,8 +87,11 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(300);
 /// One column of the `KeyringAudit_CL` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Column {
-    /// The column, as in `infra/modules/audit-sink.bicep`.
+    /// The table's column, as in `infra/modules/audit-sink.bicep`.
     pub name: &'static str,
+    /// The same column in the stream Keyring sends. Only `time` differs:
+    /// the rule's transform makes it `TimeGenerated`.
+    pub stream: &'static str,
     /// Its Log Analytics type.
     pub kind: &'static str,
     /// The schema version 1 field it holds, or [`WRITER`].
@@ -97,16 +102,26 @@ pub struct Column {
 pub const WRITER: &str = "writer";
 
 const fn col(name: &'static str, kind: &'static str, field: &'static str) -> Column {
-    Column { name, kind, field }
+    Column {
+        name,
+        stream: name,
+        kind,
+        field,
+    }
 }
 
 /// Every column, in order. The one source of truth for the table: the
-/// Bicep module's `columns` and the event's field names are both checked
-/// against this (`tests/audit_events.rs`). `TimeGenerated` is the event's
-/// `time`. The actor columns name the person who acted and are empty only
+/// Bicep module's stream and table columns and the event's field names are
+/// all checked against this (`tests/audit_events.rs`). `TimeGenerated` is
+/// the event's `time`, sent as `time` and renamed by the rule's transform. The actor columns name the person who acted and are empty only
 /// for events with nobody signed in. The writer columns name Keyring.
 pub const COLUMNS: &[Column] = &[
-    col("TimeGenerated", "datetime", "time"),
+    Column {
+        name: "TimeGenerated",
+        stream: "time",
+        kind: "datetime",
+        field: "time",
+    },
     col("EventId", "string", "event_id"),
     col("SchemaVersion", "int", "schema_version"),
     col("Action", "string", "action"),
@@ -160,12 +175,12 @@ fn value(ev: &AuditEvent, field: &str, writer: &str) -> Option<Value> {
     }
 }
 
-/// One event as a table row, JSON.
+/// One event as a row of the stream, JSON.
 pub fn row(ev: &AuditEvent, writer: &str) -> Vec<u8> {
     let mut m = Map::new();
     for c in COLUMNS {
         if let Some(v) = value(ev, c.field, writer) {
-            m.insert(c.name.to_owned(), v);
+            m.insert(c.stream.to_owned(), v);
         }
     }
     serde_json::to_vec(&Value::Object(m)).unwrap_or_default()
@@ -301,26 +316,39 @@ impl AuditSink {
     pub async fn shutdown(&self) {
         let _ = self.stop.send(true);
         let task = lock(&self.task).take();
-        if let Some(task) = task {
-            let _ = task.await;
+        let Some(mut task) = task else { return };
+        if tokio::time::timeout(self.tuning.shutdown_grace, &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+            let left = std::mem::take(&mut *lock(&self.queue)).len();
+            self.count_shutdown_drop(left);
+            tracing::warn!(
+                dropped = left,
+                "audit sink: shutdown grace ran out; events still queued were only written to standard output"
+            );
         }
     }
 
     async fn run(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
-        loop {
-            tokio::select! {
-                () = tokio::time::sleep(self.tuning.flush_every) => {}
-                () = self.wake.notified() => {}
+        'outer: loop {
+            // On the timer, send everything. When woken by a full batch,
+            // send only full batches and leave the rest for the timer.
+            let timed = tokio::select! {
+                () = tokio::time::sleep(self.tuning.flush_every) => true,
+                () = self.wake.notified() => false,
                 _ = stop.wait_for(|s| *s) => break,
-            }
-            while let Some(batch) = self.next_batch() {
-                let full = batch.len() >= self.tuning.batch_max;
-                if !self.deliver(batch, None, &mut stop).await {
+            };
+            loop {
+                if !timed && lock(&self.queue).len() < self.tuning.batch_max {
                     break;
                 }
-                // A partial batch empties the queue; a full one may not.
-                if !full {
+                let Some(batch) = self.next_batch() else {
                     break;
+                };
+                if !self.deliver(batch, None, &mut stop).await {
+                    break 'outer;
                 }
             }
             if *stop.borrow() {
@@ -389,7 +417,20 @@ impl AuditSink {
         };
         let mut backoff = self.tuning.backoff_first;
         loop {
-            match self.send(&body).await {
+            let sent = match deadline {
+                None => self.send(&body).await,
+                Some(d) => {
+                    let left = d.saturating_duration_since(Instant::now());
+                    match tokio::time::timeout(left, self.send(&body)).await {
+                        Ok(sent) => sent,
+                        Err(_) => {
+                            self.count_shutdown_drop(batch.len());
+                            return false;
+                        }
+                    }
+                }
+            };
+            match sent {
                 Sent::Ok => {
                     *lock(&self.failing_since) = None;
                     self.counts
@@ -398,7 +439,9 @@ impl AuditSink {
                     return true;
                 }
                 Sent::Rejected => {
-                    self.note_failure();
+                    // Counted, but not a sign the sink is down: one bad
+                    // batch shouldn't hold up reveals for good.
+                    self.counts.failed_attempts.fetch_add(1, Ordering::Relaxed);
                     self.counts
                         .dropped_rejected
                         .fetch_add(batch.len() as u64, Ordering::Relaxed);
@@ -545,7 +588,7 @@ mod tests {
         let row: Value = serde_json::from_slice(&row(&ev, "w")).unwrap();
         let obj = row.as_object().unwrap();
         assert_eq!(obj.len(), COLUMNS.len());
-        assert_eq!(obj["TimeGenerated"], ev.time.as_str());
+        assert_eq!(obj["time"], ev.time.as_str());
         assert_eq!(obj["SchemaVersion"], SCHEMA_VERSION);
         assert_eq!(obj["WriterIdentityClientId"], "w");
         assert_eq!(obj["Action"], "secret.reveal");

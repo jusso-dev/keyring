@@ -95,6 +95,17 @@ param logAnalyticsWorkspaceId string = ''
 @description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
 param useFederatedCredential bool = false
 
+@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
+param auditWorkspaceId string = ''
+
+@description('Days the KeyringAudit_CL table keeps rows.')
+@minValue(30)
+@maxValue(730)
+param auditRetentionInDays int = 365
+
+@description('Refuse reveals and private key downloads while the audit sink has been failing for over a minute. Needs auditWorkspaceId.')
+param auditRequired bool = false
+
 param tags object = {}
 
 // A private config vault is only reachable from inside the VNet, so the
@@ -122,6 +133,37 @@ module config '../modules/config-vault.bicep' = {
   }
 }
 
+// The audit sink, in the workspace's own resource group and subscription,
+// which may be an existing Sentinel workspace elsewhere.
+var auditWorkspaceParts = split(useAuditSink ? auditWorkspaceId : '/subscriptions/none/resourceGroups/none/providers/Microsoft.OperationalInsights/workspaces/none', '/')
+resource auditWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (useAuditSink) {
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  name: auditWorkspaceParts[8]
+}
+
+module audit '../modules/audit-sink.bicep' = if (useAuditSink) {
+  name: '${name}-audit-sink${auditCheck == 'ok' ? '' : '-invalid'}'
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  params: {
+    workspaceName: auditWorkspaceParts[8]
+    location: auditWorkspace!.location
+    ruleName: '${name}-audit'
+    identityPrincipalId: config.outputs.identityPrincipalId
+    retentionInDays: auditRetentionInDays
+    tags: tags
+  }
+}
+
+// Where the sink writes, from the module, and whether reads need it.
+var auditSettings = useAuditSink
+  ? [
+      { name: 'KEYRING_AUDIT_INGESTION_ENDPOINT', value: audit!.outputs.ingestionEndpoint }
+      { name: 'KEYRING_AUDIT_DCR_ID', value: audit!.outputs.ruleImmutableId }
+      { name: 'KEYRING_AUDIT_STREAM', value: audit!.outputs.streamName }
+      { name: 'KEYRING_AUDIT_REQUIRED', value: string(auditRequired) }
+    ]
+  : []
+
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: '${name}-plan'
   location: location
@@ -141,11 +183,17 @@ var clientSecretRef = '@Microsoft.KeyVault(VaultName=${config.outputs.vaultName}
 var sessionSecretRef = '@Microsoft.KeyVault(VaultName=${config.outputs.vaultName};SecretName=session-secret)'
 
 // How Keyring proves itself to Entra: the client secret, or (with
-// useFederatedCredential) the app's managed identity. Never both: Keyring
-// refuses to start with both set.
-var credentialSettings = useFederatedCredential
-  ? [{ name: 'KEYRING_FEDERATED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
-  : [{ name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }]
+// useFederatedCredential) the app's managed identity. Keyring's one managed
+// identity is also what the audit sink writes with, so it is named
+// whenever either needs it.
+var useAuditSink = !empty(auditWorkspaceId)
+var auditCheck = useAuditSink || !auditRequired ? 'ok' : fail('auditRequired needs auditWorkspaceId.')
+var credentialSettings = concat(
+  useFederatedCredential || useAuditSink
+    ? [{ name: 'KEYRING_MANAGED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
+    : [],
+  useFederatedCredential ? [] : [{ name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }]
+)
 
 resource site 'Microsoft.Web/sites@2024-04-01' = {
   name: name
@@ -195,7 +243,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
         empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
         empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
-        [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }]
+        [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
+        auditSettings
       )
     }
   }
@@ -272,7 +321,9 @@ module inbound '../modules/private-endpoint.bicep' = if (!publicInbound) {
 }
 
 output appName string = site.name
-output checks string = privateVaultCheck
+output checks string = '${privateVaultCheck} ${auditCheck}'
 output defaultHostName string = site.properties.defaultHostName
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
+@description('The audit data collection rule\'s immutable ID, when the audit sink is on.')
+output auditRuleId string = useAuditSink ? audit!.outputs.ruleImmutableId : ''
