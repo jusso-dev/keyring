@@ -328,6 +328,8 @@ struct DetailPage {
     /// What happens if it's deleted, in a sentence.
     recovery: String,
     used_by: crate::routes::used_by::UsedBy,
+    /// What the rotation tags claim, if any are set.
+    rotation: Option<crate::rotation::Rotation>,
     access: crate::routes::access::Access,
 }
 
@@ -360,6 +362,7 @@ pub(super) async fn detail(
     };
     let now = now_ts();
     let a = &item.attributes;
+    let row = SecretRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now);
     Ok(render(&DetailPage {
         version: item.version().to_owned(),
         created: a.created.map(dates::format_datetime).unwrap_or_default(),
@@ -370,7 +373,8 @@ pub(super) async fn detail(
             a.recoverable_days,
         )
         .sentence(Kind::Secret),
-        row: SecretRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now),
+        rotation: crate::rotation::Rotation::from_tags(&row.tags),
+        row,
         shell,
         vault,
         used_by,

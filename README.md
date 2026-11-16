@@ -126,6 +126,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Rotation status** from tags: a secret's page shows what its `rotation`, `rotation-last` and `rotation-status` tags say about its last rotation, and the expiry dashboard lists secrets whose rotation failed. Keyring reads the tags only; see [docs/rotation.md](docs/rotation.md).
 - **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
@@ -399,6 +400,7 @@ While a request waits for its issuer, the certificate's page shows it as pending
 - **Hosting under a path.** Keyring must be at the root of its host.
 - **Certificates signed outside Key Vault.** No `Unknown` issuer, signing request download or merge. See [Certificate issuers](#certificate-issuers).
 - **Managing issuers.** Set them up in the Azure portal.
+- **Rotating secrets on the system they belong to.** A new value set in Keyring changes Key Vault only. Use Azure's own pattern (Event Grid and a Function with its own identity), or better, remove the credential. See [docs/rotation.md](docs/rotation.md).
 
 ## Deploying to Azure
 
