@@ -1,0 +1,9 @@
+// One person denied by Key Vault in several vaults: probing for access.
+// Set by main.bicep: window, probingVaults, probingDenied
+KeyringAudit_CL
+| where TimeGenerated > ago(window)
+| where Outcome == "denied" and isnotempty(Vault)
+| summarize Denied = count(), VaultCount = dcount(Vault), Vaults = make_set(Vault, 20),
+    Actions = make_set(Action, 10), ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn)
+    by ActorObjectId
+| where VaultCount >= probingVaults and Denied >= probingDenied

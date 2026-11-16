@@ -374,6 +374,8 @@ A **Pin** button under the heading of each vault list (secrets, certificates, ke
 
 Expiry alerts are optional. Since Keyring stores nothing and has no identity of its own, alerts are delivered by Azure-native means (Event Grid `SecretNearExpiry` and `CertificateNearExpiry` events), set up through the deploy templates. The app itself never runs background jobs with stored credentials.
 
+Sentinel content for Keyring's own audit table is optional as well (`infra/sentinel`, [sentinel.md](sentinel.md)). Its rules are Sentinel Scheduled rules, run by Sentinel, created turned off. Two of them compare Keyring's table with Key Vault's log, which needs Keyring's outbound addresses: Keyring can't know them, so they are a parameter, and without it those rules aren't created.
+
 Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor log search alert rules on the vault's Log Analytics workspace: a read of a watched secret, any purge, or more than N refusals from one caller in 15 minutes. Each rule runs its query as its own system-assigned identity with Log Analytics Reader on the workspace. That identity belongs to Azure Monitor, has no role on any vault, and is never used by Keyring. The rules read the same columns and operation names as the audit view (`tests/alert_queries.rs` checks).
 
 ## Deploy
@@ -382,6 +384,7 @@ Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor l
 - `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references, and, with `auditWorkspaceId`, send rows through the one audit data collection rule (Monitoring Metrics Publisher, from `infra/modules/audit-sink.bicep`). It has no role on any other vault or on any workspace's data, so it can't be used to reach user data. With `useFederatedCredential`, the app registration also trusts this identity as a federated credential, so there is no client secret to read.
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
 - `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events, and optional log search alerts for reads of watched secrets, purges and repeated refusals (`docs/alerts.md`).
+- `infra/sentinel`: optional Microsoft Sentinel content for `KeyringAudit_CL`: the ASIM Audit Event parser `vimAuditEventKeyring`, analytic rules (each created turned off, and each turned on by its own parameter), hunting queries and a workbook (`docs/sentinel.md`). Sentinel runs the rules as itself. `tests/sentinel.rs` checks every column they read against `sink::COLUMNS`, and every action, outcome and reason code against the ones Keyring writes.
 - CI runs `az bicep build` on every template and example parameter file, and on each example copied next to its template the way the docs say. Nothing is deployed from this repository.
 
 ## Threat model

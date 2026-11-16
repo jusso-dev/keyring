@@ -1,0 +1,10 @@
+// Many secret reveals or private key downloads by one person in a short time.
+// Set by main.bicep: window, revealThreshold
+KeyringAudit_CL
+| where TimeGenerated > ago(window)
+| where Action in ("secret.reveal", "certificate.download_private_key") and Outcome == "success"
+| summarize Reveals = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
+    ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),
+    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated)
+    by ActorObjectId
+| where Reveals >= revealThreshold

@@ -1,0 +1,16 @@
+// Key Vault's log and Keyring's log side by side for one vault: every Key
+// Vault call next to the Keyring event whose KvRequestId matches its
+// CorrelationId. Calls with no Keyring event came from somewhere else (the
+// portal, the CLI, an app). Change AZKVAuditLogs to AzureDiagnostics, and the
+// columns as in docs/sentinel.md, if the vault logs there. The CorrelationId
+// match is still to be confirmed on a real vault.
+let vaultName = "kv-app-prod";
+let Keyring = KeyringAudit_CL
+| where Vault =~ vaultName and isnotempty(KvRequestId)
+| project KvRequestId, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket;
+AZKVAuditLogs
+| where _ResourceId endswith strcat("/vaults/", tolower(vaultName))
+| extend CorrelationId = tostring(column_ifexists("CorrelationId", ""))
+| join kind=leftouter Keyring on $left.CorrelationId == $right.KvRequestId
+| project TimeGenerated, OperationName, ResultSignature, CallerIpAddress, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket
+| order by TimeGenerated desc

@@ -1,0 +1,15 @@
+// A purge, private key download or other watched action outside working
+// hours, in the organisation's own time zone. An action counts if it is in
+// watchedActions, or one of the parts of its name (split at "." and "_")
+// is in watchedTerms, so "bulk" catches secret.bulk_update or bulk.tag.set
+// whatever the bulk change actions end up named.
+// Set by main.bicep: window, watchedActions, watchedTerms, utcOffset, workStart, workEnd, workDays
+KeyringAudit_CL
+| where TimeGenerated > ago(window)
+| extend Parts = split(replace_string(Action, "_", "."), ".")
+| where Action in (watchedActions) or array_length(set_intersect(Parts, watchedTerms)) > 0
+| extend LocalTime = TimeGenerated + utcOffset
+| extend LocalHour = hourofday(LocalTime), LocalDay = toint(dayofweek(LocalTime) / 1d)
+| where LocalHour < workStart or LocalHour >= workEnd or LocalDay !in (workDays)
+| project TimeGenerated, LocalTime, Action, Outcome, ReasonCode, ActorObjectId, ActorUpn,
+    ClientIp, Vault, ItemKind, ItemName, KvRequestId

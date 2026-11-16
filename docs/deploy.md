@@ -308,6 +308,8 @@ and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_AUDIT_INGESTION_ENDPOINT
 
 **Requiring it.** With `auditRequired` (`KEYRING_AUDIT_REQUIRED=true`), Keyring refuses reveals and private key downloads while the sink is degraded, with a page that says auditing is unavailable. The refusal is itself an audit event (`reason_code` `audit_unavailable`). Off by default.
 
+**Sentinel.** `infra/sentinel` adds an ASIM parser, analytic rules (all off by default), hunting queries and a workbook for this table. See [sentinel.md](sentinel.md).
+
 **Other hosts.** AKS workload identity and Azure VMs (IMDS) are still a managed identity but get tokens another way, and aren't supported yet. Hosts without a managed identity can't use the sink; their events still go to standard output.
 
 ```kusto

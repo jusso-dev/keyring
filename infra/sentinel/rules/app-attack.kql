@@ -1,0 +1,11 @@
+// Requests Keyring refused as a forged form or a cross-site post: a possible
+// attack on Keyring itself.
+// Set by main.bicep: window, attackThreshold
+KeyringAudit_CL
+| where TimeGenerated > ago(window)
+| where Outcome == "refused" and ReasonCode in ("csrf", "cross_site")
+| summarize Refused = count(), Reasons = make_set(ReasonCode, 5), Actions = make_set(Action, 10),
+    UserAgents = make_set(UserAgent, 5), ActorObjectId = take_any(ActorObjectId),
+    ActorUpn = take_any(ActorUpn), LastTime = max(TimeGenerated)
+    by ClientIp
+| where Refused >= attackThreshold

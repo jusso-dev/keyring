@@ -1,0 +1,6 @@
+// Everything one person did through Keyring. Set who first.
+let who = "name@example.com";
+KeyringAudit_CL
+| where ActorUpn has who or ActorObjectId == who
+| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, SessionRef, Reason, Ticket
+| order by TimeGenerated desc

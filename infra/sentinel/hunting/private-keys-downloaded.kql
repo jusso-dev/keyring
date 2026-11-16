@@ -1,0 +1,7 @@
+// Certificate private keys downloaded through Keyring.
+let who = "";
+KeyringAudit_CL
+| where Action == "certificate.download_private_key"
+| where isempty(who) or ActorUpn has who or ActorObjectId == who
+| project TimeGenerated, ActorUpn, ActorObjectId, Vault, ItemName, Outcome, ReasonCode, ClientIp, KvRequestId, Reason, Ticket
+| order by TimeGenerated desc

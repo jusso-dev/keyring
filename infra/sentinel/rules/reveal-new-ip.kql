@@ -1,0 +1,18 @@
+// A reveal or private key download from an address not seen for that
+// person in the 14 days before. Only for people seen before, so a first
+// sign-in doesn't alert. The rule looks back 14 days.
+// Set by main.bicep: window
+let Known = KeyringAudit_CL
+| where TimeGenerated between (ago(14d) .. ago(window))
+| where isnotempty(ActorObjectId) and isnotempty(ClientIp)
+| summarize by ActorObjectId, ClientIp;
+let People = Known | summarize by ActorObjectId;
+KeyringAudit_CL
+| where TimeGenerated > ago(window)
+| where Action in ("secret.reveal", "certificate.download_private_key") and Outcome == "success"
+| where isnotempty(ActorObjectId) and isnotempty(ClientIp)
+| join kind=leftsemi People on ActorObjectId
+| join kind=leftanti Known on ActorObjectId, ClientIp
+| summarize Reads = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
+    ActorUpn = take_any(ActorUpn), UserAgent = take_any(UserAgent), LastTime = max(TimeGenerated)
+    by ActorObjectId, ClientIp

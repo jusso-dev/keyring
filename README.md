@@ -424,6 +424,7 @@ Bicep templates for App Service and Container Apps are in `infra/`, with optiona
 - [docs/deploy.md](docs/deploy.md): step-by-step deployment
 - [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
 - [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid, and emails when a watched secret is read, something is purged or a caller is refused again and again
+- [docs/sentinel.md](docs/sentinel.md): optional Microsoft Sentinel content for Keyring's own audit table: an ASIM parser, analytic rules (all off until you turn them on), hunting queries and a workbook
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
 - [docs/real-vault-checklist.md](docs/real-vault-checklist.md): what to check on the first run against a real tenant and vault
 
