@@ -500,12 +500,45 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         ..Draft::default()
     };
     let draft = Arc::new(Mutex::new(draft));
+    let mut pending = Pending {
+        draft: draft.clone(),
+        done: false,
+    };
     let res = CTX.scope(draft.clone(), next.run(req)).await;
+    pending.done = true;
     let d = std::mem::take(&mut *lock(&draft));
     if let Some(ev) = finish(d, res.status()) {
         record(ev);
     }
     res
+}
+
+/// Writes the event for a request that was dropped before it answered,
+/// such as when the browser closed the connection. Key Vault may already
+/// have been called by then, so the request still gets its event.
+struct Pending {
+    draft: Arc<Mutex<Draft>>,
+    done: bool,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        let d = std::mem::take(&mut *lock(&self.draft));
+        if let Some(ev) = finish_cancelled(d) {
+            record(ev);
+        }
+    }
+}
+
+/// The event for a request dropped before it answered: `failed` with
+/// `cancelled`, unless a guard had already said how it ended.
+fn finish_cancelled(mut d: Draft) -> Option<AuditEvent> {
+    d.outcome
+        .get_or_insert((Outcome::Failed, "cancelled".to_owned()));
+    finish(d, axum::http::StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// Turn a finished request's draft into its event. `None` if the request
@@ -761,6 +794,17 @@ mod tests {
             (ev.outcome, ev.reason_code.as_deref()),
             (Outcome::Failed, Some("timeout"))
         );
+        // Dropped before it answered: still an event, and a refusal a
+        // guard had already made is kept.
+        assert!(finish_cancelled(draft(None)).is_none());
+        let ev = finish_cancelled(draft(Some(Action::SecretDelete))).unwrap();
+        assert_eq!(
+            (ev.outcome, ev.reason_code.as_deref()),
+            (Outcome::Failed, Some("cancelled"))
+        );
+        let mut d = draft(Some(Action::SecretDelete));
+        d.outcome = Some((Outcome::Refused, "csrf".into()));
+        assert_eq!(finish_cancelled(d).unwrap().outcome, Outcome::Refused);
         let ev = finish(draft(Some(Action::KeyRotate)), StatusCode::BAD_REQUEST).unwrap();
         assert_eq!(
             (ev.outcome, ev.reason_code.as_deref()),

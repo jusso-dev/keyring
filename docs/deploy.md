@@ -231,7 +231,7 @@ Schema version 1. Field names don't change without a new `schema_version` and a 
 | `event_id` | A random UUID for this event |
 | `action` | What was done (list below) |
 | `outcome` | `success`; `denied` (Azure said 401 or 403); `refused` (Keyring's own check said no); `failed` (anything else) |
-| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`. Also `timeout`, `server_error`, `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
+| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`. Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
 | `actor_oid`, `actor_tid` | The person's Entra object ID and tenant ID, from the verified ID token. The same IDs as in Entra's sign-in logs and Key Vault's diagnostic log |
 | `actor_upn` | The person's sign-in name, if the ID token has one |
 | `session_ref` | A keyed hash of the session ID, so one session's events join up. The cookie value is never logged. The key comes from `SESSION_SECRET`, so it changes when that is rotated |

@@ -2,9 +2,7 @@
 //!
 //! Each request gets one line with its method, path (never the query
 //! string), status and duration. Headers, bodies and query strings are never
-//! logged, because they can carry secret values or tokens. Action lines,
-//! such as "secret value revealed", also name the vault and the item, and
-//! who did it by Entra object ID and tenant ID.
+//! logged, because they can carry secret values or tokens.
 //!
 //! Keyring's own audit events (see [`crate::audit`]) are log lines too,
 //! under the `keyring::audit` target. With `KEYRING_LOG_FORMAT=json` every
