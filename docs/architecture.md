@@ -244,12 +244,14 @@ The dashboard reads secrets, certificates and keys from every vault the person c
 
 Expiry alerts are optional. Since Keyring stores nothing and has no identity of its own, alerts are delivered by Azure-native means (Event Grid `SecretNearExpiry` and `CertificateNearExpiry` events), set up through the deploy templates. The app itself never runs background jobs with stored credentials.
 
+Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor log search alert rules on the vault's Log Analytics workspace: a read of a watched secret, any purge, or more than N refusals from one caller in 15 minutes. Each rule runs its query as its own system-assigned identity with Log Analytics Reader on the workspace. That identity belongs to Azure Monitor, has no role on any vault, and is never used by Keyring. The rules read the same columns and operation names as the audit view (`tests/alert_queries.rs` checks).
+
 ## Deploy
 
 - The Docker image described above.
 - `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references. It has no role on any other vault, so it can't be used to reach user data. With `useFederatedCredential`, the app registration also trusts this identity as a federated credential, so there is no client secret to read.
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
-- `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events (`docs/alerts.md`).
+- `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events, and optional log search alerts for reads of watched secrets, purges and repeated refusals (`docs/alerts.md`).
 - CI runs `az bicep build` on every template and example parameter file, and on each example copied next to its template the way the docs say. Nothing is deployed from this repository.
 
 ## Threat model
