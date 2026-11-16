@@ -228,6 +228,8 @@ async fn headers_on_every_kind_of_response() {
         "/v/kv-test/certificates",
         "/v/kv-test/keys",
         "/expiry",
+        "/vault-health",
+        "/vault-health.csv",
         "/search?q=db",
         "/generator",
         "/v/kv-test/audit",

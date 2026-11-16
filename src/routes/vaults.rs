@@ -24,11 +24,23 @@ pub(super) struct SubscriptionOption {
     pub selected: bool,
 }
 
+/// What the vault list shows about a vault's audit logs.
+pub(super) enum AuditBadge {
+    /// Sent to a Log Analytics workspace, so the audit view works.
+    On,
+    /// Sent somewhere, but not to a workspace Keyring can read.
+    Elsewhere,
+    /// No diagnostic setting sends them anywhere.
+    Off,
+    /// Couldn't be read, with the reason.
+    Unknown(String),
+}
+
 #[derive(Template)]
 #[template(path = "vaults/list.html")]
 struct VaultList {
     shell: Shell,
-    vaults: Vec<Vault>,
+    vaults: Vec<(Vault, AuditBadge)>,
     total: usize,
     shown_from: usize,
     filter: VaultFilter,
@@ -104,6 +116,20 @@ pub(super) async fn list(
         .into_iter()
         .skip(shown_from)
         .take(PER_PAGE)
+        .collect();
+    let mut audit = super::vault_health::audit_status(&state, &session, &vaults).await;
+    let vaults = vaults
+        .into_iter()
+        .map(|v| {
+            let badge = match audit.remove(&v.name) {
+                Some(Ok(s)) if s.workspaces > 0 => AuditBadge::On,
+                Some(Ok(s)) if s.any > 0 => AuditBadge::Elsewhere,
+                Some(Ok(_)) => AuditBadge::Off,
+                Some(Err(why)) => AuditBadge::Unknown(why),
+                None => AuditBadge::Unknown("Not checked in time".into()),
+            };
+            (v, badge)
+        })
         .collect();
 
     let page_view = VaultList {
