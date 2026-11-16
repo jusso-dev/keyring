@@ -214,7 +214,7 @@ If something's wrong, see [troubleshooting.md](troubleshooting.md).
 Keyring writes to standard output, one line per entry:
 
 - one line per request: method, path (never the query string), status and time taken. A 5xx is logged at `warn`
-- one **audit event** for each thing a person does through Keyring: every reveal, private key download, create, change, delete, recover and purge, sign-in, failed sign-in, sign-out and session expiry. Refusals and failures get one too: a 403 from Key Vault, a refused form token, a cross-site post, a typed name that didn't match, a purge while purge is off. These are Keyring's own audit events, written by `src/audit.rs`. They are not Key Vault's audit log, which the audit pages read
+- one **audit event** for each thing a person does through Keyring: every reveal, private key download, create, change, delete, recover and purge, sign-in, failed sign-in, sign-out and session expiry. Refusals and failures get one too: a 403 from Key Vault, a refused form token, a cross-site post, a typed name that didn't match, a purge while purge is off. These are Keyring's own audit events, written by `src/audit/mod.rs`. They are not Key Vault's audit log, which the audit pages read
 
 Secret values, tokens, passwords, headers, query strings and Azure's error messages are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`). Audit events are written at every level, so `warn` or `error` can't drop them. Keyring won't start with any other level, including `off`.
 
@@ -284,7 +284,7 @@ The audit sink also sends Keyring's own audit events straight to a custom table,
 
 Three things are easy to mix up:
 
-- **Keyring's own audit events**: what Keyring writes for each action (`src/audit.rs`), always to standard output.
+- **Keyring's own audit events**: what Keyring writes for each action (`src/audit/mod.rs`), always to standard output.
 - **The audit sink**: the same events, also sent to `KeyringAudit_CL`. Optional.
 - **Key Vault's audit log**: what Key Vault writes for every call it receives, which Keyring's audit pages read as you.
 
