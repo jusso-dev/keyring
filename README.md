@@ -386,11 +386,11 @@ While a request waits for its issuer, the certificate's page shows it as pending
 
 ## Deploying to Azure
 
-Bicep templates for App Service and Container Apps are in `infra/`, with optional private networking and expiry alerts. See:
+Bicep templates for App Service and Container Apps are in `infra/`, with optional private networking, expiry alerts and access alerts. See:
 
 - [docs/deploy.md](docs/deploy.md): step-by-step deployment
 - [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
-- [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid
+- [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid, and emails when a watched secret is read, something is purged or a caller is refused again and again
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
 - [docs/real-vault-checklist.md](docs/real-vault-checklist.md): what to check on the first run against a real tenant and vault
 
