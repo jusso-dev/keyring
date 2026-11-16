@@ -128,6 +128,7 @@ fn pfx_view(vault: &str, name: &str, pem: bool) -> ConfirmView {
             "Only use this if you need the key outside Key Vault. Apps on Azure can usually read the certificate straight from the vault instead.".into(),
         ),
         error: None,
+        reveals: true,
     }
 }
 

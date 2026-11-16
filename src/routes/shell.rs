@@ -92,6 +92,25 @@ pub struct Shell {
     pub section: Option<Section>,
     pub vault: Option<ShellVault>,
     pub flash: Option<Flash>,
+    /// `KEYRING_REQUIRE_REASON`, for the reason fields on forms.
+    pub reason: ReasonAsk,
+}
+
+/// What the reason fields on a form need to know.
+#[derive(Default)]
+pub struct ReasonAsk {
+    pub require: crate::reason::RequireReason,
+    /// `KEYRING_REASON_TICKET_PATTERN`, as written, when set.
+    pub ticket_pattern: Option<String>,
+}
+
+impl ReasonAsk {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            require: config.reason.require,
+            ticket_pattern: config.reason.ticket.as_ref().map(|t| t.source().to_owned()),
+        }
+    }
 }
 
 impl Shell {
@@ -163,6 +182,22 @@ impl Shell {
             .unwrap_or_default()
     }
 
+    /// True when a form for a reveal or private key download should ask
+    /// for a reason.
+    pub fn asks_reason_to_reveal(&self) -> bool {
+        self.reason.require != crate::reason::RequireReason::Off
+    }
+
+    /// True when a form that changes something should ask for a reason.
+    pub fn asks_reason_to_change(&self) -> bool {
+        self.reason.require == crate::reason::RequireReason::All
+    }
+
+    /// The ticket pattern, or empty when no ticket is asked for.
+    pub fn ticket_pattern(&self) -> &str {
+        self.reason.ticket_pattern.as_deref().unwrap_or_default()
+    }
+
     /// Seconds without a request before sign-out, for the idle warning
     /// script. Empty when signed out.
     pub fn idle_seconds(&self) -> String {
@@ -185,6 +220,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Shell {
             None => Shell::anonymous(),
         };
         shell.flash = parts.extensions.get::<Flash>().cloned();
+        if let Some(config) = parts
+            .extensions
+            .get::<std::sync::Arc<crate::config::Config>>()
+        {
+            shell.reason = ReasonAsk::from_config(config);
+        }
         Ok(shell)
     }
 }

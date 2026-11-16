@@ -346,6 +346,20 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - When it can't be read: an empty state with the reason and a "What to ask
   for" hint, never an empty table.
 
+### Reason (KEYRING_REQUIRE_REASON)
+
+- When a reason is asked for, the reveal form and each confirmation page get
+  a plain text field, "Reason", with field help that says it's recorded with
+  the person's name and not to type secrets, passwords or personal details.
+  A "Ticket" field follows only when a ticket pattern is set, showing the
+  pattern in mono.
+- A form that reaches an action without it gets one narrow panel asking
+  "Why ...?", with the usual error summary, the same button words as the
+  form it came from, and Cancel. It never shows a secret value: a form that
+  held one sends the person back to it instead.
+- No new colours, badges or script. It works as a form post without
+  JavaScript.
+
 ### Rollback, rotate
 
 Read as "make a new version". The primary button is the accent, never danger.

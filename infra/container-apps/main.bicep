@@ -99,6 +99,19 @@ param stepUpAuthContext string = ''
 @maxValue(720)
 param stepUpMaxAge int = 0
 
+@description('Ask for a reason before a secret value is shown or a private key downloaded (reveal), or before every change too (all). The reason goes on Keyring\'s audit event. Not a hard control: the CLI needs no reason (see docs/deploy.md, "A reason before a value is shown").')
+@allowed([
+  ''
+  'off'
+  'reveal'
+  'all'
+])
+param requireReason string = ''
+
+@description('Regular expression a ticket reference must match as a whole, such as (INC|CHG)[0-9]{7}. Shape only. Needs requireReason. Leave empty to ask for a reason only.')
+@maxLength(200)
+param reasonTicketPattern string = ''
+
 @description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
 @minValue(0)
 @maxValue(8)
@@ -326,6 +339,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
             [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
             empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],
             stepUpMaxAge == 0 ? [] : [{ name: 'KEYRING_STEP_UP_MAX_AGE', value: string(stepUpMaxAge) }],
+            empty(requireReason) ? [] : [{ name: 'KEYRING_REQUIRE_REASON', value: requireReason }],
+            empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
             auditSettings
           )
           probes: [

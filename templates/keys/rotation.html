@@ -50,6 +50,7 @@
   </div>
   {% include "_field_error.html" %}
   {% endif %}
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions"><button type="submit">Save policy</button><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Cancel</a></div>
 </form>
 {% endblock %}
