@@ -176,6 +176,10 @@ KeyringAudit_CL
 | project TimeGenerated, ActorUpn, ItemName, ClientIp, CallerIpAddress, ResultSignature
 ```
 
+## Keyring activity on the audit page
+
+With `KEYRING_AUDIT_WORKSPACE_ID` set (the templates set it from `auditWorkspaceId`), each vault's audit page gains a **Keyring activity** view of this table's rows for that vault, read as the signed-in person with their own Log Analytics token. Each person needs Log Analytics Reader on the workspace. See [deploy.md](deploy.md#keyring-activity).
+
 ## Later
 
 Showing the reason and ticket from #205 next to Key Vault's row in an item's "Who used it" needs the `kv_request_id` to `CorrelationId` join confirmed on a real vault first. It isn't done yet.

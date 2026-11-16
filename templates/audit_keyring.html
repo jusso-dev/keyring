@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Keyring activity for {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>Audit <span class="muted">for {{ vault }}</span></h1>
+<nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring" aria-current="page">Keyring activity</a></p></nav>
+<p>What people did in this vault through Keyring, from Keyring's own audit table, including what Keyring refused before Key Vault was asked. Read as you. Up to 500 of the most recent events. Times are in UTC.</p>
+
+{% call ui::error_summary(errors) %}{% endcall %}
+
+<form class="filters" method="get" action="{{ shell.vault_prefix() }}/audit/keyring" role="search">
+  <div>
+    <label for="range">When</label>
+    <select id="range" name="range">
+      {% for r in ranges %}<option value="{{ r.slug() }}"{% if *r == range %} selected{% endif %}>{{ r.label() }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    {% let field_name = "item" %}
+    <label for="item">Item name <span class="muted">(optional)</span></label>
+    <input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}>
+    {% include "_field_error.html" %}
+  </div>
+  <div>
+    {% let field_name = "action" %}
+    <label for="action">Action</label>
+    <select id="action" name="action"{% call ui::aria("action") %}{% endcall %}>
+      <option value="">Any action</option>
+      {% for a in actions %}<option value="{{ a }}"{% if filter.action == *a %} selected{% endif %}>{{ a }}</option>{% endfor %}
+    </select>
+    {% include "_field_error.html" %}
+  </div>
+  <div>
+    {% let field_name = "person" %}
+    <label for="person">Person <span class="muted">(optional)</span></label>
+    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
+    <input id="person" name="person" type="text" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
+  </div>
+  <div class="filters-submit">
+    <button type="submit">Filter</button>
+  </div>
+</form>
+
+{% if no_access %}
+<div class="empty-state">
+  <p><strong>Keyring's own audit events go to a Log Analytics workspace you can't read.</strong></p>
+  <p class="hint"><strong>What to ask for:</strong> the Log Analytics Reader role on the workspace that holds Keyring's audit table (KeyringAudit_CL).</p>
+</div>
+{% elif rows.is_empty() && errors.is_empty() %}
+<div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
+{% elif !rows.is_empty() %}
+{% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
+{% call ui::table_wrap("keyring-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="keyring-caption">Keyring activity for {{ vault }}</caption>
+  <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">Why</th><th scope="col">From</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="small">{{ r.time }}</td>
+      <td>{{ r.who }}</td>
+      <th scope="row" class="mono">{{ r.action }}</th>
+      <td class="mono">{{ ui::or_none(r.item) }}</td>
+      <td>{% if r.outcome == "success" %}<span class="result-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %}<br><span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
+      <td>{% if r.reason.is_empty() && r.ticket.is_empty() %}<span class="muted">None</span>{% else %}{{ r.reason }}{% if !r.ticket.is_empty() %}<br><span class="muted small">Ticket {{ r.ticket }}</span>{% endif %}{% endif %}</td>
+      <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% endblock %}

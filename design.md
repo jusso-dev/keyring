@@ -297,6 +297,14 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - One ledger table. When, Who, What, Item, Result, From. Times are tabular and
   don't wrap. Allowed is ok-coloured text with a check glyph; Refused is an
   error badge; Unknown stays muted.
+- With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
+  "Key Vault's log" and "Keyring activity", the open one with
+  `aria-current="page"`, as on the expiry views. Keyring activity is the
+  same ledger with When, Who, What (the action name in mono), Item, Result,
+  Why, From. Result: Done is ok-coloured text; "Denied by Azure" and
+  "Refused by Keyring" are error badges; Failed is a muted badge; the
+  reason code sits muted and mono under it. Why is the reason, with
+  "Ticket ..." muted under it, or muted "None".
 - Across vaults (`/audit`): the fixed reports first, as a `.card-list` of
   links. The open one has `aria-current="page"`, the accent tint, an accent
   border and an underline, so it isn't colour alone. Then the same ledger

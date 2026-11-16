@@ -144,7 +144,7 @@ App Service (`infra/app-service/main.bicep`):
 | `stepUpMaxAge` | Sets `KEYRING_STEP_UP_MAX_AGE` in minutes (see Step-up) | `0` (off) |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
-| `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription (see Logs, "Audit sink") | None (off) |
+| `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription, and the audit page's Keyring activity view, which reads it (see Logs, "Audit sink" and "Keyring activity") | None (off) |
 | `auditRetentionInDays` | How long `KeyringAudit_CL` keeps rows | `365` |
 | `auditRequired` | Sets `KEYRING_AUDIT_REQUIRED`: refuse reveals and private key downloads while the sink is degraded. Needs `auditWorkspaceId` | `false` |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
@@ -296,7 +296,7 @@ Three things are easy to mix up:
 - a data collection rule of kind `Direct`, so no separate data collection endpoint is needed, with a stream for the table and a transform that sets `TimeGenerated` from the event's `time`
 - **Monitoring Metrics Publisher** on that one rule for Keyring's managed identity (`<name>-id`). Nothing else, and no role for any person
 
-and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_AUDIT_INGESTION_ENDPOINT`, `KEYRING_AUDIT_DCR_ID`, `KEYRING_AUDIT_STREAM` and `KEYRING_AUDIT_REQUIRED` on the app. Whoever deploys needs to be able to assign roles on the rule (Owner or User Access Administrator on that resource group). Role assignments can take a few minutes to apply, so the first events may be retried until it does.
+and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_AUDIT_INGESTION_ENDPOINT`, `KEYRING_AUDIT_DCR_ID`, `KEYRING_AUDIT_STREAM`, `KEYRING_AUDIT_REQUIRED` and `KEYRING_AUDIT_WORKSPACE_ID` on the app. Whoever deploys needs to be able to assign roles on the rule (Owner or User Access Administrator on that resource group). Role assignments can take a few minutes to apply, so the first events may be retried until it does.
 
 **Who writes and who is named.** Keyring writes every row as its managed identity, and nothing else: no client secret, no second app registration, and never the signed-in person's token. Each row names the person who acted in `ActorObjectId`, `ActorTenantId` and `ActorUpn`, taken from Keyring's verified session at the moment of the action. They are empty only when nobody was signed in, such as a failed sign-in. `WriterIdentityClientId`, `KeyringInstance` and `KeyringVersion` name the writer. Only Keyring's identity can add rows, and no identity Keyring has can read, change or delete them.
 
@@ -307,6 +307,16 @@ and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_AUDIT_INGESTION_ENDPOINT
 **Health.** `/healthz/audit` needs no sign-in and shows only `status=ok`, `status=degraded` or `status=off` and counts since start (`queued`, `sent`, `dropped_queue_full`, `dropped_rejected`, `dropped_at_shutdown`, `failed_attempts`). It answers 503 while degraded: the sink has been failing for over a minute with no success. A batch Azure refuses outright (a 400, such as after the table's columns were changed) is dropped and counted in `dropped_rejected`, and counts as a failure too, so refusals one after another with nothing accepted in between also mean degraded. Point an availability test or alert at it. `/healthz` stays a liveness check and doesn't change.
 
 **Requiring it.** With `auditRequired` (`KEYRING_AUDIT_REQUIRED=true`), Keyring refuses reveals and private key downloads while the sink is degraded, with a page that says auditing is unavailable. The refusal is itself an audit event (`reason_code` `audit_unavailable`). Off by default.
+
+### Keyring activity
+
+With `KEYRING_AUDIT_WORKSPACE_ID` set to the resource ID of the workspace that holds `KeyringAudit_CL` (the templates set it from `auditWorkspaceId`), each vault's audit page has two views: **Key Vault's log**, as before, and **Keyring activity**, the table's rows for that vault (`/v/<vault>/audit/keyring`). It shows what Keyring refused before Key Vault was asked, and the reason and ticket a person gave (#205), which Key Vault's log can't.
+
+- It is read as the signed-in person, with their own Log Analytics token, the same as Key Vault's log. Keyring's managed identity can only write to the table and is never used to read it. Each person needs **Log Analytics Reader** on that workspace (or a table-level read role on `KeyringAudit_CL`); without it, the view says so and what to ask for.
+- The same time ranges, filters (item, action, person), escaping and 500-row limit as the rest of the audit page.
+- Without the setting, the view and its link aren't there, and nothing else changes.
+
+Use a different workspace from the sink only if the table is copied there; Keyring reads the one you name.
 
 **Sentinel.** `infra/sentinel` adds an ASIM parser, analytic rules (all off by default), hunting queries and a workbook for this table. See [sentinel.md](sentinel.md).
 
