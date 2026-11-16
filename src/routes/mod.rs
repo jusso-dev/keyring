@@ -1,5 +1,6 @@
 //! HTTP routes.
 
+mod access;
 mod age;
 pub mod assets;
 mod audit;
@@ -269,6 +270,8 @@ fn vault_routes() -> Router<AppState> {
         )
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
+        .route("/access", get(access::page))
+        .route("/access.csv", get(access::csv))
         // A change to a vault drops the list search keeps for it.
         .route_layer(middleware::from_fn(every_vault::forget_on_change))
 }
@@ -287,6 +290,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/certificates/{*rest}", any(moved::legacy))
         .route("/keys", any(moved::legacy))
         .route("/keys/{*rest}", any(moved::legacy))
+        .route("/access", get(moved::legacy))
         // Across every vault. An old per-vault address is still sent on.
         .route("/audit", get(audit_across::page))
         .route("/audit.csv", get(audit_across::csv))

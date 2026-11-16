@@ -196,7 +196,7 @@ impl AuditPage {
 /// Resource Graph. The session keeps one ID, for the vault last used, so
 /// the copy is only used (or stored) while that is this vault: another tab
 /// may have moved on to a different one.
-async fn vault_id(
+pub(super) async fn vault_id(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
