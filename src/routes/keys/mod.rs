@@ -20,6 +20,7 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, NextStep, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
+use crate::routes::hints::Action;
 use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
@@ -174,6 +175,7 @@ impl KeyFilter {
 #[derive(Template)]
 #[template(path = "keys/list.html")]
 struct ListPage {
+    hints: crate::routes::hints::Hints,
     shell: Shell,
     vault: String,
     rows: Vec<KeyRow>,
@@ -190,7 +192,12 @@ pub(super) async fn list(
     Query(filter): Query<KeyFilter>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
-    let items = match api(&state, &session, &vault).list().await {
+    let list_api = api(&state, &session, &vault);
+    let (items, hints) = tokio::join!(
+        list_api.list(),
+        crate::routes::hints::for_vault(&state, &session, &vault),
+    );
+    let items = match items {
         Ok(i) => i,
         Err(e) => {
             return Err(azure_problem(
@@ -217,6 +224,7 @@ pub(super) async fn list(
         filter.page_url(&vault, p)
     });
     Ok(render(&ListPage {
+        hints,
         pager,
         shell,
         vault,
@@ -269,7 +277,9 @@ struct DetailPage {
     /// Set when the rotation policy couldn't be read.
     rotation_note: Option<String>,
     hsm: bool,
+    used_by: crate::routes::used_by::UsedBy,
     access: crate::routes::access::Access,
+    hints: crate::routes::hints::Hints,
 }
 
 /// Plain names for permitted operations.
@@ -309,11 +319,13 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let keys = api(&state, &session, &vault);
-    let (bundle, versions, rotation, access) = tokio::join!(
+    let (bundle, versions, rotation, used_by, access, hints) = tokio::join!(
         keys.get(&name, None),
         keys.versions(&name),
         keys.rotation_policy(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Key, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Key, &name),
+        crate::routes::hints::for_item(&state, &session, &vault, Kind::Key, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -374,9 +386,11 @@ pub(super) async fn detail(
         versions_note,
         rotation,
         rotation_note,
+        used_by,
         shell,
         vault,
         access,
+        hints,
     })
     .into_response())
 }
@@ -391,12 +405,17 @@ pub(super) async fn disable_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
+    let (checked, used_by) = tokio::join!(
+        unmanaged_key(&state, &session, &vault, &name, shell),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Key, &name),
+    );
+    let (_, shell) = checked?;
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Key,
+        Kind::Key,
         &name,
+        used_by,
     ))
 }
 

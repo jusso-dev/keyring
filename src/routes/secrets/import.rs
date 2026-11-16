@@ -642,7 +642,7 @@ pub(crate) async fn confirm(
     let vault_url = state.config.vault_url(&vault);
     let results = write_rows(
         rows,
-        ItemEvents::for_request(Action::SecretImport),
+        ItemEvents::for_request(Action::SecretImport, state.audit_sink.clone()),
         Deadlines::STANDARD,
         move |row: PendingSecret| {
             let azure = azure.clone();
@@ -753,7 +753,7 @@ mod tests {
         let calls = sent.clone();
         let results = write_rows(
             rows,
-            ItemEvents::for_request(Action::SecretImport),
+            ItemEvents::for_request(Action::SecretImport, None),
             Deadlines {
                 start: Duration::from_millis(200),
                 stop: Duration::from_millis(500),
@@ -794,7 +794,7 @@ mod tests {
         let rows: Vec<PendingSecret> = (0..6).map(|i| row(&format!("s{i}"))).collect();
         let results = write_rows(
             rows,
-            ItemEvents::for_request(Action::SecretImport),
+            ItemEvents::for_request(Action::SecretImport, None),
             Deadlines::STANDARD,
             |r: PendingSecret| async move {
                 if r.name == "s3" {

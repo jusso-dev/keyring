@@ -99,6 +99,7 @@ pub(crate) async fn reveal(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
+    let shell = crate::routes::audit_gate::require_audit(&state, shell)?;
     let version = form.version.trim();
     if !version.is_empty() && !is_valid_version(version) {
         crate::audit::refuse(crate::audit::Refusal::InvalidRequest);

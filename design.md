@@ -183,6 +183,7 @@ One size, one shape, one vocabulary.
 | Disabled, Not active yet, Managed by a certificate | `badge badge-muted` | neutral | ring |
 | No expiry | `badge badge-none` | neutral | dash |
 | Health check: Pass / Warn / Unknown | `badge-ok` / `badge-warn` / `badge-muted` | ok / warn / neutral | circle / triangle / ring |
+| Rotation: OK / Failed / Unknown | `badge-ok` / `badge-error` / `badge-muted` | ok / danger / neutral | circle / diamond / ring |
 
 "None" in an empty cell stays plain muted text, so an empty cell doesn't look
 like a status.
@@ -254,6 +255,11 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   count, not a status, and keeps the badge's glyph so the tone isn't colour
   alone.
 - Then a ledger table per group, most urgent first. No charts, no score.
+- Before the groups, a "Rotation failed" ledger table (Name with the Failed
+  badge, Vault, Rotated by, Last attempt, Open), only when a secret's
+  `rotation-status` tag is `failed`, with a muted line saying it is what the
+  tags say. On a secret's page the same tags show as one "Rotation" row in
+  the fact list, after Tags, with the status badge and a muted note.
 - Two views share the Expiry section: "By expiry date" (`/expiry`) and "By
   time since the value changed" (`/expiry/age`). A `p.view-switch` under the
   heading links the two, inside a `nav` labelled "Expiry views". The open
@@ -313,6 +319,18 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - On the vault list, the Audit logs column is plain "On", a warn badge
   "Off", or muted "Unknown" with the reason.
 
+### Used by in the last 30 days
+
+- A section at the foot of an item's page, and under the form on Set a new
+  value, Roll back, Disable, Rotate and Delete, so the form comes first.
+- One ledger table: Who (sign-in name or app ID, mono), Kind, Object ID,
+  Last, Reads (Uses for a key), From (IP in mono, client info muted under
+  it). Latest first.
+- Nothing found is an empty state: "No reads in the last 30 days, so
+  nothing should break." A log that can't be read is an empty state that
+  says why and "You can still go ahead", with a "What to ask for" hint. It
+  is never an error notice, because it never stops the action.
+- Workspaces left out are a warn notice under the table.
 ### Access
 
 - The vault's Access page: heading, a Download CSV link, a muted line saying

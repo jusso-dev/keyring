@@ -83,3 +83,25 @@
 {%- macro optional_note() -%}
 <p class="muted">Every field is needed unless it says optional.</p>
 {%- endmacro -%}
+
+{#- Permission hints (src/routes/hints.rs). `needs` is the role to name, or
+    None to leave the control as it is. A control the person can't use stays
+    visible: a link becomes a real disabled button, with the role as visible
+    text tied to it by aria-describedby. Key Vault still decides. -#}
+{%- macro link_button(needs, id, href, class, label) -%}
+{%- if let Some(role) = needs -%}
+<span class="needs"><button type="button" class="{{ class }}" disabled aria-describedby="{{ id }}-needs">{{ label }}</button> <span class="needs-role" id="{{ id }}-needs">Needs {{ role }}</span></span>
+{%- else -%}
+<a class="{{ class }}" href="{{ href }}">{{ label }}</a>
+{%- endif -%}
+{%- endmacro -%}
+
+{#- For a submit button in a form: put needs_attrs inside the button tag
+    and needs_note straight after it. -#}
+{%- macro needs_attrs(needs, id) -%}
+{%- if let Some(_role) = needs %} disabled aria-describedby="{{ id }}-needs"{% endif -%}
+{%- endmacro -%}
+
+{%- macro needs_note(needs, id) -%}
+{%- if let Some(role) = needs %} <span class="needs-role" id="{{ id }}-needs">Needs {{ role }}</span>{% endif -%}
+{%- endmacro -%}
