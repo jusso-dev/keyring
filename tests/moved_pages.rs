@@ -124,7 +124,7 @@ async fn an_item_called_new_opens_instead_of_the_old_redirect() {
         let (status, html) = w.page(&format!("/v/kv-test/secrets/{name}")).await;
         assert_eq!(status, StatusCode::OK, "{name}");
         assert!(
-            html.contains(&format!("<h1 class=\"mono\">{name}</h1>")),
+            html.contains(&format!("data-pin-name=\"{name}\">{name}</h1>")),
             "{name}"
         );
     }

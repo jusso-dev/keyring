@@ -3,7 +3,7 @@
 {% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
-<h1 class="mono">{{ row.name }}</h1>
+<h1 class="mono" data-pin="key" data-pin-vault="{{ vault }}" data-pin-name="{{ row.name }}">{{ row.name }}</h1>
 <p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</p>
 <div class="actions">
   {% if !row.managed %}

@@ -3,6 +3,8 @@
 {% block title %}Vaults - Keyring{% endblock %}
 {% block content %}
 <h1>Vaults</h1>
+{#- Pinned and recently opened, filled in by static/pins.js. -#}
+<div class="pins-box" data-pins hidden></div>
 {% if total == 0 %}
 <div class="empty-state">
   <p><strong>You can't see any vaults yet.</strong></p>

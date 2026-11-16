@@ -1,11 +1,37 @@
 // Hand-written stand-ins for the parts of the browser that static/app.js
-// uses: a few DOM elements, a clock with timers, the clipboard and fetch.
+// and static/pins.js use: a few DOM elements, a clock with timers, the clipboard and fetch.
 // No packages. Only as much as the script needs.
 
 import fs from "node:fs";
 import vm from "node:vm";
 
-const SCRIPT = fs.readFileSync(new URL("../../static/app.js", import.meta.url), "utf8");
+const read = (name) => fs.readFileSync(new URL(`../../static/${name}`, import.meta.url), "utf8");
+const SCRIPTS = { "app.js": read("app.js"), "pins.js": read("pins.js") };
+
+// localStorage. `refuse` makes every call throw, as private modes and
+// policies do; `full` makes writes throw, as a full quota does.
+export class Storage {
+  constructor(items = {}, { refuse = false, full = false } = {}) {
+    this.items = new Map(Object.entries(items));
+    this.refuse = refuse;
+    this.full = full;
+  }
+  check(write) {
+    if (this.refuse || (write && this.full)) throw new Error("SecurityError");
+  }
+  getItem(k) {
+    this.check(false);
+    return this.items.has(k) ? this.items.get(k) : null;
+  }
+  setItem(k, v) {
+    this.check(true);
+    this.items.set(k, String(v));
+  }
+  removeItem(k) {
+    this.check(false);
+    this.items.delete(k);
+  }
+}
 
 // One compound selector, such as `tr[data-filter-text]`, `.pager` or
 // `input[type="search"]`.
@@ -209,8 +235,11 @@ export class Clipboard {
 }
 
 // Build a page. `build(h)` returns the children of <main>; `h(tag, attrs,
-// children)` makes an element. Then run app.js against it.
-export function page(build, { clipboard = new Clipboard(), body = {}, opener = null, fetch } = {}) {
+// children)` makes an element. Then run app.js (or `script`) against it.
+export function page(
+  build,
+  { clipboard = new Clipboard(), body = {}, opener = null, fetch, script = "app.js", storage } = {},
+) {
   const clock = new Clock();
   const doc = {
     activeElement: null,
@@ -240,6 +269,7 @@ export function page(build, { clipboard = new Clipboard(), body = {}, opener = n
     listeners: {},
     opener,
     closed: false,
+    localStorage: storage,
     location: { origin: "https://keyring.example", assign: (u) => assigned.push(u) },
     close() {
       this.closed = true;
@@ -263,7 +293,7 @@ export function page(build, { clipboard = new Clipboard(), body = {}, opener = n
     setInterval: (fn, ms) => clock.add(fn, ms, true),
     clearInterval: (id) => clock.clear(id),
   });
-  vm.runInContext(SCRIPT, ctx, { filename: "static/app.js" });
+  vm.runInContext(SCRIPTS[script], ctx, { filename: `static/${script}` });
   return { doc, win, main, body: bodyEl, clock, clipboard, assigned, fetches, h };
 }
 

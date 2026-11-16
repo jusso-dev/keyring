@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% block title %}Certificates in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Certificates <span class="muted">in {{ vault }}</span></h1>
+<h1 data-pin="vault" data-pin-vault="{{ vault }}">Certificates <span class="muted">in {{ vault }}</span></h1>
 <p class="actions"><a class="button" href="{{ shell.vault_prefix() }}/certificates/-/upload">Upload a certificate</a> <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/-/new">Create a certificate</a> <a href="{{ shell.vault_prefix() }}/certificates/-/deleted">Deleted certificates</a></p>
 
 {% if total == 0 %}

@@ -332,6 +332,22 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 
 Read as "make a new version". The primary button is the accent, never danger.
 
+### Pinned and recently opened
+
+- Kept in the browser by `static/pins.js`, never on the server. Without
+  JavaScript, or when the browser refuses `localStorage`, nothing shows and
+  nothing changes.
+- A small secondary **Pin** button (`button.pin-button`) sits under the
+  heading of each vault list page (secrets, certificates, keys) and each
+  secret, certificate and key page. It has `aria-pressed`, a visually hidden
+  item name, and a CSS star glyph: an outline when off, filled with an
+  accent border and tint when pinned, so state isn't colour alone.
+- The home page and the vault list show **Pinned** and **Recently opened**
+  (last 10) above everything else, each an `h2` and a plain list of mono
+  links with the kind and vault muted after them. Only when non-empty.
+- Under them a muted line says the list is kept in this browser only and is
+  cleared on sign-out, with a **Clear** text button.
+
 ## Motion
 
 Only colour changes on hover, 120ms ease-out. No transforms, no reveals.

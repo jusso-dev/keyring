@@ -825,6 +825,9 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
      keeps a system colour and an underline. */
   .side-nav a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
   .card-list a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
+  .pin-button::before { forced-color-adjust: none; background: CanvasText; }
+  .pin-button[aria-pressed="false"]::before { background: Canvas; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .pin-button[aria-pressed="true"] { border: 2px solid Highlight; }
 }
 
 /* Facts stack on narrow screens so long labels don't push values off. */
@@ -836,6 +839,27 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 
 /* Scrollable tables can be reached and scrolled with a keyboard. */
 .table-wrap:focus-visible { outline-offset: 0; }
+
+/* Pinned and recently opened (static/pins.js). The Pin button's glyph is a
+   CSS star: an outline when off, filled when pressed, so state isn't colour
+   alone. The label stays "Pin" and aria-pressed carries the state. */
+.pin-row { margin: calc(-1 * var(--space-2xs)) 0 var(--space-sm); }
+.pin-button::before {
+  content: "";
+  display: inline-block;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-right: var(--space-3xs);
+  vertical-align: -0.125rem;
+  background: currentColor;
+  clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+.pin-button[aria-pressed="false"]::before { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.pin-button[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-tint); }
+.pins-box { margin-bottom: var(--space-md); }
+.pins h2 { font-size: var(--text-base); margin: var(--space-sm) 0 var(--space-2xs); }
+.pin-list { margin: 0; padding-left: var(--space-md); }
+.pin-list li { margin-bottom: var(--space-3xs); }
 
 /* The idle sign-out notice stays in view while the page scrolls. */
 .idle-status { position: sticky; top: 0; z-index: 5; }

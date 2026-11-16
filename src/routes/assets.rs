@@ -21,6 +21,7 @@ use serde::Deserialize;
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
+const PINS_JS: &str = include_str!("../../static/pins.js");
 
 /// Font files, by the name `style.css` asks for. Latin subset only.
 const FONTS: [(&str, &[u8]); 4] = [
@@ -59,6 +60,7 @@ fn lookup(file: &str) -> Option<(&'static str, &'static str)> {
     match file {
         "style.css" => Some((STYLE_CSS, "text/css; charset=utf-8")),
         "app.js" => Some((APP_JS, "text/javascript; charset=utf-8")),
+        "pins.js" => Some((PINS_JS, "text/javascript; charset=utf-8")),
         _ => None,
     }
 }
@@ -71,11 +73,13 @@ fn hash(body: &str) -> String {
 
 static STYLE_VERSION: LazyLock<String> = LazyLock::new(|| hash(STYLE_CSS));
 static APP_VERSION: LazyLock<String> = LazyLock::new(|| hash(APP_JS));
+static PINS_VERSION: LazyLock<String> = LazyLock::new(|| hash(PINS_JS));
 
 fn version(file: &str) -> Option<&'static str> {
     match file {
         "style.css" => Some(STYLE_VERSION.as_str()),
         "app.js" => Some(APP_VERSION.as_str()),
+        "pins.js" => Some(PINS_VERSION.as_str()),
         _ => None,
     }
 }
@@ -174,6 +178,8 @@ mod tests {
         assert_eq!(v.len(), 16);
         assert!(v.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_ne!(version("style.css"), version("app.js"));
+        assert_ne!(version("app.js"), version("pins.js"));
+        assert!(url("pins.js").starts_with("/static/pins.js?v="));
         assert_eq!(url("nope.js"), "/static/nope.js");
     }
 
