@@ -6,7 +6,7 @@ Releases are tagged `vX.Y.Z`, and each tag's image is built by `.github/workflow
 
 ## Unreleased
 
-- **Access alerts** (#PR): `infra/alerts/access.bicep` adds optional Azure Monitor alerts for a read of a watched secret, any purge, and more than N refusals from one caller in 15 minutes, with who, what and IP but never a value. Azure runs them; Keyring is unchanged. See `docs/alerts.md`. #213.
+- **Access alerts** (#226): `infra/alerts/access.bicep` adds optional Azure Monitor alerts for a read of a watched secret, any purge, and more than N refusals from one caller in 15 minutes, with who, what and IP but never a value. Azure runs them; Keyring is unchanged. See `docs/alerts.md`. #213.
 - **Clipboard cleared on every way out**: after Copy on a revealed secret or a generated value, Back, the side nav, the top bar and Sign out now wait for the clipboard clear (or a second and a half if the browser is stuck on a paste prompt) before they leave, as Hide already did. Before, only Hide waited, and a clear started as the page closed could be cut off. Links that open a new tab or stay on the page aren't held up.
 
 - **IBM Plex type**: the UI is set in IBM Plex Sans, with IBM Plex Mono for names and values, in place of the system fonts. Keyring serves the four font files itself (about 90 KB, SIL Open Font License), so the CSP only gains `font-src 'self'`.
