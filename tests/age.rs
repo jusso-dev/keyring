@@ -34,6 +34,13 @@ fn seed_items(kv: &KvState) {
         v.updated = n - DAY;
     });
     kv.add_cert("tls", false, "CERT-VALUE");
+    // The mock dates a new certificate from a fixed clock. Date it from
+    // now, like the rest, so its band doesn't move as real time passes.
+    if let Some(c) = kv.certs.lock().unwrap().get_mut("tls") {
+        for v in &mut c.versions {
+            v.created = n - 20 * DAY;
+        }
+    }
     kv.add_key_with("signer", "RSA", |v| v.created = n - 500 * DAY);
 }
 
