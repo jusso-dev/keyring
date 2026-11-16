@@ -225,7 +225,7 @@ impl Range {
         }
     }
     /// KQL timespan. A fixed constant, never user text.
-    fn kql(self) -> &'static str {
+    pub(crate) fn kql(self) -> &'static str {
         match self {
             Self::Hour => "1h",
             Self::Day => "24h",
@@ -261,7 +261,7 @@ pub struct AuditQuery {
 pub struct BadFilter(pub &'static str);
 
 /// Letters, digits and `@ . _ -` only: enough for UPNs, emails and GUIDs.
-fn is_person(s: &str) -> bool {
+pub(crate) fn is_person(s: &str) -> bool {
     (1..=256).contains(&s.len())
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'@' | b'.' | b'_' | b'-'))

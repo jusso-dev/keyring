@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{% if let Some(r) = report %}{{ r.title() }} across vaults{% else %}Audit across vaults{% endif %} - Keyring{% endblock %}
+{% block content %}
+<h1>Audit <span class="muted">across vaults</span></h1>
+<p>Fixed reports over every vault you can see, from their diagnostic logs in Log Analytics, read as you. Up to 500 rows. Times are in UTC. To see one vault's events with your own filters, open its audit page from a row or <a href="/vaults">from your vaults</a>.</p>
+
+<nav aria-label="Reports">
+<ul class="card-list">
+  {% for r in reports %}
+  <li><a href="/audit?report={{ r.slug() }}&amp;range={{ r.default_range().slug() }}"{% if is_report(r) %} aria-current="page"{% endif %}>{{ r.title() }}</a></li>
+  {% endfor %}
+</ul>
+</nav>
+
+{% if let Some(r) = report %}
+<h2>{{ r.title() }}</h2>
+<p>{{ r.about() }}</p>
+
+{% call ui::error_summary(errors) %}{% endcall %}
+
+<form class="filters" method="get" action="/audit" role="search">
+  <input type="hidden" name="report" value="{{ r.slug() }}">
+  <div>
+    <label for="range">When</label>
+    <select id="range" name="range">
+      {% for g in ranges %}<option value="{{ g.slug() }}"{% if *g == range %} selected{% endif %}>{{ g.label() }}</option>{% endfor %}
+    </select>
+  </div>
+  {% if is_person_report() %}
+  <div>
+    {% let field_name = "person" %}
+    <label for="person">Person</label>
+    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
+    <input id="person" name="person" type="text" value="{{ filter.person }}" required{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
+    {% include "_field_error.html" %}
+  </div>
+  {% endif %}
+  <div class="filters-submit">
+    <button type="submit">Run report</button>
+    {% if ran %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+  </div>
+</form>
+
+{% if ran %}
+<p class="muted">Covers {{ vaults_read }} {% if vaults_read == 1 %}vault{% else %}vaults{% endif %} through {{ workspaces_read }} Log Analytics {% if workspaces_read == 1 %}workspace{% else %}workspaces{% endif %}.</p>
+
+{% if capped_vaults %}<p class="notice notice-warn">You can see {{ vaults_total }} vaults, so this covers the first {{ max_vaults }} by name. Open a vault's own audit page to see others.</p>{% endif %}
+
+{% if !workspaces_not_read.is_empty() %}
+<div class="notice notice-warn">
+  <p><strong>Some Log Analytics workspaces couldn't be read</strong>, so their vaults' events are missing:</p>
+  <ul>{% for w in workspaces_not_read %}<li><span class="mono">{{ w.name }}</span> (for <span class="mono">{{ w.vaults }}</span>): {{ w.reason }}.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if !settings_not_read.is_empty() %}
+<div class="notice notice-warn">
+  <p><strong>Keyring couldn't find where these vaults send their logs</strong>, so they aren't included:</p>
+  <ul>{% for v in settings_not_read %}<li><span class="mono">{{ v.name }}</span>: {{ v.reason }}.</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if !no_logging.is_empty() %}
+<div class="notice">
+  <p><strong>{{ no_logging.len() }} {% if no_logging.len() == 1 %}vault doesn't{% else %}vaults don't{% endif %} send audit logs to Log Analytics</strong>, so there is nothing to report for {% if no_logging.len() == 1 %}it{% else %}them{% endif %}: <span class="mono">{{ no_logging|join(", ") }}</span>.</p>
+  <p class="hint"><strong>What to ask for:</strong> a diagnostic setting on each that sends the "audit" log category to a Log Analytics workspace.</p>
+</div>
+{% endif %}
+
+{% if capped %}<p class="notice notice-warn">Showing the first 500 rows. Pick a shorter time range to see the rest.</p>{% endif %}
+
+{% if is_grouped() %}
+{% if refusals.is_empty() %}
+<div class="empty-state"><p>No refused requests in this time range. New events can take a few minutes to arrive.</p></div>
+{% else %}
+{% call ui::table_wrap("report-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="report-caption">{{ r.title() }} across vaults</caption>
+  <thead><tr><th scope="col">Who</th><th scope="col">Vault</th><th scope="col">Refused</th><th scope="col">Latest</th><th scope="col">Actions</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
+  <tbody>
+    {% for x in refusals %}
+    <tr>
+      <th scope="row">{{ x.who }}</th>
+      <td class="mono">{{ ui::or_none(x.vault) }}</td>
+      <td><span class="badge badge-error">{{ x.count }}</span></td>
+      <td class="small nowrap">{{ x.last }}</td>
+      <td class="mono small">{{ ui::or_none(x.operations) }}</td>
+      <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.vault }}</span></a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% else %}
+{% if rows.is_empty() %}
+<div class="empty-state"><p>Nothing in this time range. Try a longer one. New events can take a few minutes to arrive.</p></div>
+{% else %}
+{% call ui::table_wrap("report-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="report-caption">{{ r.title() }} across vaults</caption>
+  <thead><tr><th scope="col">When</th><th scope="col">Vault</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
+  <tbody>
+    {% for x in rows %}
+    <tr>
+      <td class="small nowrap">{{ x.event.time }}</td>
+      <td class="mono">{{ ui::or_none(x.vault) }}</td>
+      <td>{{ x.event.who }}</td>
+      <th scope="row">{{ x.event.what }}{% if x.event.operation != x.event.what %}<br><span class="muted small mono">{{ x.event.operation }}</span>{% endif %}</th>
+      <td class="mono">{{ ui::or_none(x.event.item) }}</td>
+      <td>{% if x.event.unknown %}<span class="muted">Unknown</span>{% elif x.event.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ x.event.result }})</span>{% endif %}</td>
+      <td class="mono small">{{ ui::or_none(x.event.client_ip) }}</td>
+      <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.event.item }} in {{ x.vault }}</span></a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% endif %}
+{% elif needs_person %}
+<div class="empty-state"><p>Enter part of a person's sign-in name, email or ID, then run the report.</p></div>
+{% endif %}
+{% else %}
+<div class="empty-state"><p>Pick a report. Each one reads every vault you can see, so it can take up to a minute.</p></div>
+{% endif %}
+{% endblock %}

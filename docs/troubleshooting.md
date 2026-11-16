@@ -28,6 +28,7 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | Entra says the person isn't assigned to the app (AADSTS50105) | The app's enterprise application has **Assignment required** on. Assign the person, or a group they're in, under **Users and groups** |
 | After signing out you're left on Microsoft's "You signed out" page | Add `APP_BASE_URL` + `/auth/signed-out` as a **Web** redirect URI in the app registration |
 | "Your organisation needs to approve Keyring" | An admin needs to select **Grant admin consent** on the app's API permissions page |
+| Audit across vaults lists vaults or workspaces it couldn't read | Each says why: no diagnostic setting, no Reader role on the vault to see its settings, or no Log Analytics Reader on the workspace. "Not read in time" means it took too long; open that vault's own audit page |
 | "Your organisation needs to approve Keyring" on the audit page only (AADSTS65001) | The app registration is missing the delegated **Log Analytics API > Data.Read** permission, or it hasn't been consented to. Add it and grant admin consent |
 | "Microsoft sign-in didn't finish" | Entra stopped the sign-in. Try again; if it keeps happening, check the app registration and its redirect URI |
 | "Microsoft sign-in said no" with `invalid_scope` (AADSTS65005 or 70011) | The `access_as_user` scope isn't exposed, or `ENTRA_API_SCOPE` doesn't match it |

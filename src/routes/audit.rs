@@ -63,7 +63,7 @@ pub(super) struct EventRow {
 }
 
 impl EventRow {
-    fn from(e: &Event) -> Self {
+    pub(super) fn from(e: &Event) -> Self {
         Self {
             time: e
                 .time
