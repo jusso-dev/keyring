@@ -236,6 +236,10 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/expiry".into(),
         "/generator".into(),
         "/v/kv-test/audit".into(),
+        "/audit".into(),
+        "/audit?report=reads".into(),
+        "/audit?report=refused".into(),
+        "/audit?report=person".into(),
         "/auth/sign-in".into(),
         "/no-such-page".into(),
     ];

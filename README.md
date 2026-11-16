@@ -124,7 +124,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Generator** for passwords, GUIDs and API keys.
-- **Audit view** built from Key Vault diagnostic logs, per vault and per item.
+- **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
 - Deletes need you to type the item's name first.
 
 ## How access works
@@ -251,6 +251,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | Create, rotate, enable or disable, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
 | See where a vault sends its logs (audit view) | Reader | Vault or resource group |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
+| Audit reports across vaults | Reader and Log Analytics Reader, as above | Each vault, and each workspace they log to. Vaults and workspaces you can't read are listed, not hidden |
 
 These roles apply to the whole vault unless you assign them on a single item. **Key Vault Certificate User and Key Vault Secrets User can both read secret values.** Certificate User needs to, because a certificate's private key is kept in its backing secret, but at vault scope it can read every secret in the vault. Where that matters, assign it on the one certificate (its scope is `<vault ID>/certificates/<name>`, or `<vault ID>/secrets/<name>` for the backing secret) instead of the vault.
 

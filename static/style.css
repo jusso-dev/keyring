@@ -372,6 +372,13 @@ tbody th { min-width: 10rem; }
   transition: background-color var(--dur) var(--ease-out);
 }
 .card-list a:hover { background: var(--color-accent-tint); }
+/* The report open on the audit page across vaults. */
+.card-list a[aria-current="page"] {
+  background: var(--color-accent-tint);
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+  text-decoration: underline;
+}
 
 .empty-state {
   border: 1px solid var(--color-rule);
@@ -799,6 +806,7 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   /* Forced colours can flatten the accent border, so the current page
      keeps a system colour and an underline. */
   .side-nav a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
+  .card-list a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
 }
 
 /* Facts stack on narrow screens so long labels don't push values off. */

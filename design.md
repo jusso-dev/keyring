@@ -256,6 +256,14 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - One ledger table. When, Who, What, Item, Result, From. Times are tabular and
   don't wrap. Allowed is ok-coloured text with a check glyph; Refused is an
   error badge; Unknown stays muted.
+- Across vaults (`/audit`): the fixed reports first, as a `.card-list` of
+  links. The open one has `aria-current="page"`, the accent tint, an accent
+  border and an underline, so it isn't colour alone. Then the same ledger
+  table with a Vault column and a "Vault audit" link per row to that
+  vault's own page. The refused report counts by person and vault, with the
+  count in an error badge. Vaults and workspaces left out are warn notices
+  listing each with its reason; vaults with no logging are a plain notice
+  with a "What to ask for" hint.
 
 ### Rollback, rotate
 

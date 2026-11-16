@@ -528,6 +528,15 @@ pub(crate) struct ArmState {
     pub audit_fail_workspace: Mutex<Vec<(String, u16)>>,
     /// KQL queries received.
     pub audit_queries: Mutex<Vec<String>>,
+    /// The path of each Log Analytics query, which names the workspace.
+    pub audit_paths: Mutex<Vec<String>>,
+    /// Diagnostic settings for one vault, keyed by its name. Takes the
+    /// place of `diagnostics` for that vault. `None` means 403.
+    pub diagnostics_for: Mutex<Vec<(String, Option<serde_json::Value>)>>,
+    /// Raw audit events in each workspace, keyed by the end of its
+    /// resource ID (`/workspaces/logs`), for the reports across vaults.
+    /// See [`answer_report`].
+    pub workspace_events: Mutex<Vec<(String, Vec<RawEvent>)>>,
     pub audit_bearers: Mutex<Vec<String>>,
 }
 
@@ -565,6 +574,9 @@ pub(crate) async fn start_arm() -> MockArm {
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
         audit_queries: Mutex::new(Vec::new()),
+        audit_paths: Mutex::new(Vec::new()),
+        diagnostics_for: Mutex::new(Vec::new()),
+        workspace_events: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
     });
     let app = Router::new()
@@ -645,7 +657,14 @@ async fn arm_fallback(
     {
         s.bearers.lock().unwrap().push(bearer);
         s.diagnostics_paths.lock().unwrap().push(path.clone());
-        return match s.diagnostics.lock().unwrap().clone() {
+        let own = s
+            .diagnostics_for
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(v, _)| path.contains(&format!("/vaults/{v}/")))
+            .map(|(_, d)| d.clone());
+        return match own.unwrap_or_else(|| s.diagnostics.lock().unwrap().clone()) {
             Some(v) => json_response(StatusCode::OK, v),
             None => json_response(
                 StatusCode::FORBIDDEN,
@@ -656,10 +675,9 @@ async fn arm_fallback(
     if method == axum::http::Method::POST && path.starts_with("/v1/") && path.ends_with("/query") {
         s.audit_bearers.lock().unwrap().push(bearer);
         let body: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-        s.audit_queries
-            .lock()
-            .unwrap()
-            .push(body["query"].as_str().unwrap_or_default().to_owned());
+        let query = body["query"].as_str().unwrap_or_default().to_owned();
+        s.audit_queries.lock().unwrap().push(query.clone());
+        s.audit_paths.lock().unwrap().push(path.clone());
         let one_fails = s
             .audit_fail_workspace
             .lock()
@@ -684,6 +702,17 @@ async fn arm_fallback(
                 json!({"error": {"code": "InsufficientAccessError", "message": "x"}}),
             );
         }
+        if query.starts_with("let vault0 = ") {
+            let events = s
+                .workspace_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            return json_response(StatusCode::OK, answer_report(&query, &events));
+        }
         let rows: Vec<serde_json::Value> = s
             .audit_rows
             .lock()
@@ -704,6 +733,169 @@ async fn arm_fallback(
         StatusCode::NOT_FOUND,
         json!({"error": {"code": "NotFound", "message": "x"}}),
     )
+}
+
+/// One Key Vault audit event as it sits in a workspace, for the mock.
+#[derive(Clone, Debug)]
+pub(crate) struct RawEvent {
+    pub vault_id: String,
+    pub time: String,
+    pub who: String,
+    pub operation: String,
+    pub item: String,
+    pub status: u16,
+}
+
+impl RawEvent {
+    pub(crate) fn new(
+        vault: &str,
+        time: &str,
+        who: &str,
+        op: &str,
+        item: &str,
+        status: u16,
+    ) -> Self {
+        Self {
+            vault_id: format!(
+                "/subscriptions/sub-a/resourceGroups/rg-{vault}/providers/Microsoft.KeyVault/vaults/{vault}"
+            ),
+            time: time.into(),
+            who: who.into(),
+            operation: op.into(),
+            item: item.into(),
+            status,
+        }
+    }
+
+    fn signature(&self) -> &'static str {
+        match self.status {
+            200..=299 => "OK",
+            403 => "Forbidden",
+            _ => "Error",
+        }
+    }
+}
+
+/// The string in `let <name> = "...";`, unescaped.
+fn let_literal(query: &str, name: &str) -> Option<String> {
+    let start = format!("let {name} = \"");
+    let line = query.lines().find(|l| l.starts_with(&start))?;
+    let lit = line.strip_prefix(&start)?.strip_suffix("\";")?;
+    Some(lit.replace("\\\"", "\"").replace("\\\\", "\\"))
+}
+
+/// Answer a report query across vaults the way Log Analytics would, for
+/// the handful of fixed reports in `src/azure/audit_across.rs`: only the
+/// vaults named in the `let vaultN` lines, then each report's own filter,
+/// picked out by its fixed text.
+pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Value {
+    let vaults: Vec<String> = (0..)
+        .map_while(|i| let_literal(query, &format!("vault{i}")))
+        .map(|v| v.to_ascii_lowercase())
+        .collect();
+    let who = let_literal(query, "who").unwrap_or_default();
+    let mine: Vec<&RawEvent> = events
+        .iter()
+        .filter(|e| vaults.contains(&e.vault_id.to_ascii_lowercase()))
+        .collect();
+    let allowed = |e: &&RawEvent| (200..300).contains(&e.status);
+    let picked: Vec<&RawEvent> = if query.contains("summarize Refused = count()") {
+        let mut groups: Vec<(String, String, u64, String, Vec<String>)> = Vec::new();
+        for e in mine.iter().filter(|e| e.status == 403) {
+            match groups
+                .iter_mut()
+                .find(|g| g.0 == e.vault_id && g.1 == e.who)
+            {
+                Some(g) => {
+                    g.2 += 1;
+                    if e.time > g.3 {
+                        g.3 = e.time.clone();
+                    }
+                    if !g.4.contains(&e.operation) {
+                        g.4.push(e.operation.clone());
+                    }
+                }
+                None => groups.push((
+                    e.vault_id.clone(),
+                    e.who.clone(),
+                    1,
+                    e.time.clone(),
+                    vec![e.operation.clone()],
+                )),
+            }
+        }
+        groups.sort_by_key(|g| std::cmp::Reverse(g.2));
+        let rows: Vec<serde_json::Value> = groups
+            .into_iter()
+            .map(|(v, w, n, t, ops)| json!([v, w, n, t, ops.join(", ")]))
+            .collect();
+        return json!({"tables": [{"name": "PrimaryResult", "columns": [
+            {"name": "VaultId"}, {"name": "Who"}, {"name": "Refused"}, {"name": "LastSeen"}, {"name": "Operations"}
+        ], "rows": rows}]});
+    } else if query.contains("join kind=leftsemi certificates") {
+        mine.iter()
+            .filter(|e| e.operation == "SecretGet" && allowed(e))
+            .filter(|e| {
+                mine.iter().any(|c| {
+                    c.operation.starts_with("Certificate")
+                        && c.vault_id == e.vault_id
+                        && c.item.eq_ignore_ascii_case(&e.item)
+                })
+            })
+            .copied()
+            .collect()
+    } else if query.contains("| where OperationName == 'SecretGet'") {
+        mine.iter()
+            .filter(|e| e.operation == "SecretGet" && allowed(e))
+            .copied()
+            .collect()
+    } else if query.contains("| where OperationName in ('SecretDelete'") {
+        mine.iter()
+            .filter(|e| {
+                ["Delete", "Purge", "Recover"]
+                    .iter()
+                    .any(|s| e.operation.ends_with(s))
+            })
+            .copied()
+            .collect()
+    } else if query.contains("| where Who contains who") {
+        mine.iter()
+            .filter(|e| e.who.to_lowercase().contains(&who.to_lowercase()))
+            .copied()
+            .collect()
+    } else {
+        panic!("the mock doesn't know this report: {query}");
+    };
+    let mut picked = picked;
+    picked.sort_by(|a, b| b.time.cmp(&a.time));
+    let rows: Vec<serde_json::Value> = picked
+        .iter()
+        .map(|e| {
+            json!([
+                e.time,
+                e.vault_id,
+                e.who,
+                e.operation,
+                e.item,
+                e.signature(),
+                "203.0.113.5",
+                e.status
+            ])
+        })
+        .collect();
+    json!({"tables": [{"name": "PrimaryResult", "columns": [
+        {"name": "TimeGenerated"}, {"name": "VaultId"}, {"name": "Who"}, {"name": "OperationName"},
+        {"name": "Item"}, {"name": "ResultSignature"}, {"name": "CallerIpAddress"}, {"name": "Status"}
+    ], "rows": rows}]})
+}
+
+/// Diagnostic settings sending audit logs to the workspace `name`.
+pub(crate) fn settings_to(name: &str, dedicated: bool) -> serde_json::Value {
+    json!({"value": [{"properties": {
+        "workspaceId": format!("/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/{name}"),
+        "logAnalyticsDestinationType": if dedicated { json!("Dedicated") } else { json!(null) },
+        "logs": [{"categoryGroup": "audit", "enabled": true}]
+    }}]})
 }
 
 pub(crate) fn audit_settings(dedicated: bool) -> serde_json::Value {

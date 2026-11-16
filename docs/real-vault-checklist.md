@@ -82,6 +82,10 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Check | Do this | Expected | Code | Result |
 | --- | --- | --- | --- | --- |
 | Throttling across many vaults | Open the expiry dashboard in a tenant with many vaults | Six vaults at a time draws few or no 429s from Key Vault or ARM. Note any | `src/azure/fanout.rs` (`CONCURRENCY`) | |
+| Two vaults, one workspace | Send two test vaults' audit logs to the same workspace, read a secret in each, then open Audit with no vault and run "Secret values read" | Both reads show, each with its vault, and the workspace's activity log or query history shows one query for both | `src/routes/audit_across.rs`, `src/azure/audit_across.rs` (`group`) | |
+| Each report on AzureDiagnostics | With a vault logging to `AzureDiagnostics`, read a secret, download a certificate's `.pfx` in Keyring, delete and recover a secret, and be refused once (as someone without a data role). Run each of the five reports | Each report shows its rows: the reads, the `.pfx` under private keys, the delete and recovery, the refusal counted under the right person and vault, and all of it under the person report | `src/azure/audit_across.rs` | |
+| Each report on AZKVAuditLogs | Repeat the row above with the vault logging to `AZKVAuditLogs` (destination type Dedicated) | The same rows. Note whether `HttpStatusCode` is filled in | `src/azure/audit_across.rs` | |
+| Workspace you can't read, across vaults | Remove your Log Analytics Reader on one workspace and run a report across vaults | That workspace is listed with its vaults and "You don't have the Log Analytics Reader role on it". The other workspaces' rows still show | `src/routes/audit_across.rs` | |
 | A workspace in another tenant or deleted | Point a vault's diagnostic setting at two workspaces, one you can't read, and open the audit page | Events from the readable one show, with a note that one was left out. Note the status Log Analytics gave (403, 404 or other) | `src/routes/audit.rs` | |
 
 ## Deployment
