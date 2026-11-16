@@ -114,6 +114,18 @@ async fn values_never_reach_the_logs() {
     assert!(html.contains(">db-password<"), "found by search");
     assert!(!html.contains("Sup3r-S3cret"), "search never shows a value");
 
+    // "Used by" on Set a new value, with a workspace that fails: the
+    // failure is logged, but never the query or Azure's message.
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::settings_to("logs", true));
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs".into(), 500)];
+    let res = w.get("/v/kv-test/secrets/db-password/value").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    assert!(html.contains("Used by in the last 30 days"));
+    assert!(
+        !html.contains("Sup3r-S3cret"),
+        "the form never shows the value"
+    );
     // The audit sink: a world that sends events to Log Analytics with the
     // managed identity, through a refusal, a retry and a success. Neither
     // the identity's token, its header nor a row's body reaches the log.
@@ -175,6 +187,13 @@ async fn values_never_reach_the_logs() {
         "value leaked into logs:\n{logs}"
     );
     assert!(!logs.contains("QUERYLEAK"), "query string leaked:\n{logs}");
+    assert!(
+        logs.contains("used-by workspace query failed"),
+        "the failed panel read is logged: {logs}"
+    );
+    for kql in ["let vaultName", "summarize Reads", "itemName"] {
+        assert!(!logs.contains(kql), "KQL leaked into logs:\n{logs}");
+    }
     assert!(
         logs.lines().any(|l| l.contains("request")
             && l.contains("method=GET")

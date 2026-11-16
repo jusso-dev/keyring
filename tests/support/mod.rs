@@ -961,6 +961,17 @@ async fn arm_fallback(
                 json!({"error": {"code": "InsufficientAccessError", "message": "x"}}),
             );
         }
+        if query.contains("| summarize Reads = count(), LastRead = max(TimeGenerated)") {
+            let events = s
+                .workspace_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            return json_response(StatusCode::OK, answer_used_by(&query, &events));
+        }
         if query.starts_with("let vault0 = ") {
             let events = s
                 .workspace_events
@@ -1003,6 +1014,14 @@ pub(crate) struct RawEvent {
     pub operation: String,
     pub item: String,
     pub status: u16,
+    /// The caller's app and object IDs. A person (`who` with an `@`) has
+    /// their sign-in name as well.
+    pub app_id: String,
+    pub object_id: String,
+    /// The token was a managed identity's.
+    pub managed: bool,
+    pub client_info: String,
+    pub ip: String,
 }
 
 impl RawEvent {
@@ -1023,7 +1042,24 @@ impl RawEvent {
             operation: op.into(),
             item: item.into(),
             status,
+            app_id: "04b07795-8ddb-461a-bbee-02f9e1bf7b46".into(),
+            object_id: format!("oid-{who}"),
+            managed: false,
+            client_info: "Mozilla/5.0".into(),
+            ip: "203.0.113.5".into(),
         }
+    }
+
+    /// The same event made by an app, not a person: `who` is empty and
+    /// the app ID is `app_id`.
+    pub(crate) fn by_app(mut self, app_id: &str, object_id: &str, managed: bool) -> Self {
+        self.who = String::new();
+        self.app_id = app_id.into();
+        self.object_id = object_id.into();
+        self.managed = managed;
+        self.client_info = "azsdk-net-Security.KeyVault.Secrets/4.6.0".into();
+        self.ip = "10.0.0.4".into();
+        self
     }
 
     fn signature(&self) -> &'static str {
@@ -1145,6 +1181,98 @@ pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Val
     json!({"tables": [{"name": "PrimaryResult", "columns": [
         {"name": "TimeGenerated"}, {"name": "VaultId"}, {"name": "Who"}, {"name": "OperationName"},
         {"name": "Item"}, {"name": "ResultSignature"}, {"name": "CallerIpAddress"}, {"name": "Status"}
+    ], "rows": rows}]})
+}
+
+/// Answer a "used by" query from `src/azure/used_by.rs` the way Log
+/// Analytics would: allowed uses of the named item in the named vault,
+/// summarised by caller.
+pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Value {
+    let vault = let_literal(query, "vaultName")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let item = let_literal(query, "itemName").unwrap_or_default();
+    let ops: &[&str] = if query.contains("'KeySign'") {
+        &[
+            "KeySign",
+            "KeyVerify",
+            "KeyWrap",
+            "KeyUnwrap",
+            "KeyEncrypt",
+            "KeyDecrypt",
+        ]
+    } else {
+        &["SecretGet"]
+    };
+    struct Group {
+        key: (String, String, String),
+        reads: u64,
+        last: String,
+        managed: u64,
+        clients: Vec<String>,
+        ips: Vec<String>,
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    for e in events.iter().filter(|e| {
+        e.vault_id
+            .to_ascii_lowercase()
+            .ends_with(&format!("/vaults/{vault}"))
+            && e.item.eq_ignore_ascii_case(&item)
+            && ops.contains(&e.operation.as_str())
+            && (200..300).contains(&e.status)
+    }) {
+        let upn = if e.who.contains('@') {
+            e.who.clone()
+        } else {
+            String::new()
+        };
+        let key = (e.object_id.clone(), e.app_id.clone(), upn);
+        let i = match groups.iter().position(|g| g.key == key) {
+            Some(i) => i,
+            None => {
+                groups.push(Group {
+                    key,
+                    reads: 0,
+                    last: String::new(),
+                    managed: 0,
+                    clients: Vec::new(),
+                    ips: Vec::new(),
+                });
+                groups.len() - 1
+            }
+        };
+        let g = &mut groups[i];
+        g.reads += 1;
+        if e.time > g.last {
+            g.last = e.time.clone();
+        }
+        g.managed += u64::from(e.managed);
+        if !g.clients.contains(&e.client_info) && g.clients.len() < 3 {
+            g.clients.push(e.client_info.clone());
+        }
+        if !g.ips.contains(&e.ip) && g.ips.len() < 3 {
+            g.ips.push(e.ip.clone());
+        }
+    }
+    groups.sort_by(|a, b| b.last.cmp(&a.last));
+    let rows: Vec<serde_json::Value> = groups
+        .into_iter()
+        .map(|g| {
+            json!([
+                g.key.0,
+                g.key.1,
+                g.key.2,
+                g.reads,
+                g.last,
+                g.managed,
+                g.clients.join(", "),
+                g.ips.join(", ")
+            ])
+        })
+        .collect();
+    json!({"tables": [{"name": "PrimaryResult", "columns": [
+        {"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"}, {"name": "Reads"},
+        {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"}
     ], "rows": rows}]})
 }
 

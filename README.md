@@ -132,6 +132,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
+- **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, it says why and you can still go ahead.
 - Deletes need you to type the item's name first.
 
 ## How access works
