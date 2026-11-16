@@ -229,7 +229,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 12] = [
+    pub const ALL: [Refusal; 13] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
