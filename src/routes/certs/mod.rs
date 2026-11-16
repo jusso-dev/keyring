@@ -20,6 +20,7 @@ use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::ToggleForm;
+use crate::routes::hints::Action;
 use crate::routes::keys::section_note;
 use crate::routes::lifecycle::{Kind, redirect_with};
 use crate::routes::paging::{Pager, paginate};
@@ -196,6 +197,7 @@ pub(super) struct ShowOption {
 #[derive(Template)]
 #[template(path = "certs/list.html")]
 struct ListPage {
+    hints: crate::routes::hints::Hints,
     shell: Shell,
     vault: String,
     rows: Vec<CertRow>,
@@ -216,7 +218,12 @@ pub(super) async fn list(
     Query(filter): Query<CertFilter>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
-    let items = match api(&state, &session, &vault).list().await {
+    let list_api = api(&state, &session, &vault);
+    let (items, hints) = tokio::join!(
+        list_api.list(),
+        crate::routes::hints::for_vault(&state, &session, &vault),
+    );
+    let items = match items {
         Ok(i) => i,
         Err(err) => {
             return Err(azure_problem(
@@ -256,6 +263,7 @@ pub(super) async fn list(
     })
     .collect();
     Ok(render(&ListPage {
+        hints,
         pager,
         shell,
         vault,
@@ -400,6 +408,7 @@ struct DetailPage {
     /// Set when the versions couldn't be read.
     versions_note: Option<String>,
     access: crate::routes::access::Access,
+    hints: crate::routes::hints::Hints,
 }
 
 pub(super) async fn detail(
@@ -413,11 +422,12 @@ pub(super) async fn detail(
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    let (bundle, versions, pending, access) = tokio::join!(
+    let (bundle, versions, pending, access, hints) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
         api.pending(&name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Certificate, &name),
+        crate::routes::hints::for_item(&state, &session, &vault, Kind::Certificate, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -471,6 +481,7 @@ pub(super) async fn detail(
         shell,
         vault,
         access,
+        hints,
     })
     .into_response())
 }

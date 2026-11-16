@@ -18,6 +18,7 @@ use crate::azure::secrets::{ExpiryState, SecretItem, SecretsApi, now_ts};
 use crate::dates;
 use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageResult};
+use crate::routes::hints::Action;
 use crate::routes::lifecycle::Kind;
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::{Section, Shell};
@@ -206,6 +207,7 @@ pub(super) struct ShowOption {
 #[derive(Template)]
 #[template(path = "secrets/list.html")]
 struct ListPage {
+    hints: crate::routes::hints::Hints,
     shell: Shell,
     vault: String,
     rows: Vec<SecretRow>,
@@ -254,7 +256,12 @@ pub(super) async fn list(
     Query(filter): Query<SecretFilter>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
-    let items = match api(&state, &session, &vault).list().await {
+    let list_api = api(&state, &session, &vault);
+    let (items, hints) = tokio::join!(
+        list_api.list(),
+        crate::routes::hints::for_vault(&state, &session, &vault),
+    );
+    let items = match items {
         Ok(items) => items,
         Err(err) => {
             return Err(azure_problem(
@@ -297,6 +304,7 @@ pub(super) async fn list(
     .collect();
 
     Ok(render(&ListPage {
+        hints,
         pager,
         shell,
         vault,
@@ -328,6 +336,7 @@ struct DetailPage {
     /// What happens if it's deleted, in a sentence.
     recovery: String,
     access: crate::routes::access::Access,
+    hints: crate::routes::hints::Hints,
 }
 
 pub(super) async fn detail(
@@ -340,9 +349,10 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let secrets = api(&state, &session, &vault);
-    let (item, access) = tokio::join!(
+    let (item, access, hints) = tokio::join!(
         secrets.properties(&name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Secret, &name),
+        crate::routes::hints::for_item(&state, &session, &vault, Kind::Secret, &name),
     );
     let item = match item {
         Ok(item) => item,
@@ -372,6 +382,7 @@ pub(super) async fn detail(
         shell,
         vault,
         access,
+        hints,
     })
     .into_response())
 }
