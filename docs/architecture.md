@@ -5,8 +5,8 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 ## Principles
 
 - **Act as the user.** Every Azure call uses a token obtained through the on-behalf-of (OBO) flow. Keyring has no identity of its own with data-plane or control-plane access.
-- **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk. The only list Keyring keeps is the names and properties of each vault's items, in the session's memory, for a minute (see [Search](#search)).
-- **Let Key Vault decide.** Authorisation is Key Vault RBAC (or access policies on older vaults). Keyring shows what Azure allows and explains clearly when it doesn't.
+- **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk. The only list Keyring keeps is the names and properties of each vault's items, in the session's memory, for a minute (see [Search](#search)), and the person's own permissions at each scope for five minutes (see [Permission hints](#permission-hints)).
+- **Let Key Vault decide.** Authorisation is Key Vault RBAC (or access policies on older vaults). Keyring shows what Azure allows and explains clearly when it doesn't. Disabled buttons ([Permission hints](#permission-hints)) are only a hint; Key Vault still answers every request.
 - **Safe by default.** Purge is off. Deletes need typed confirmation. Secret values are hidden until revealed, and Keyring tries to clear the clipboard after a copy.
 
 ## Request flow
@@ -265,6 +265,18 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - **Time limits.** The vault page gives the reads 20 seconds. An item's page runs them beside its own Key Vault reads with a 5 second limit, so a slow or failing ARM read never slows or breaks the item page: the section shows the reason instead.
 - **CSV.** `/v/{vault}/access.csv` has one line per assignment or policy (object ID, type, role or permissions, active, eligible or access policy, where it comes from, scope, can grant itself access, condition), with formula guarding, and `NOT READ` lines for anything left out.
 - All calls use the person's on-behalf-of Management token. Nothing uses Keyring's managed identity, and no new token resource or permission is needed. The page only reads, so it writes no audit event.
+
+## Permission hints
+
+Buttons the person's roles don't allow are disabled, with the role they need as visible text beside them ("Needs Key Vault Secrets Officer"), the same role the 403 page names. They are never hidden. Code: `src/routes/hints.rs`, with the ARM call in `src/azure/authz.rs` (`permissions`).
+
+- **The read.** `GET {scope}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01` with the person's on-behalf-of Management token. It gives `actions`, `notActions`, `dataActions` and `notDataActions` for each of their roles at that scope. The vault's access model comes from `GET {vault ID}` at the same time.
+- **Matching.** Each Keyring action maps to the Key Vault data actions it needs, listed in the code beside the action (`Action::data_actions`). Patterns match without regard to case, and `*` matches any run of characters. A role allows an action when one of its `dataActions` matches and none of its `notDataActions` does; any one role allowing it is enough, since `notDataActions` aren't a deny.
+- **Scope.** Lists ask at the vault's scope. Item pages (and a deleted item's page) ask at the item's own scope (`{vault ID}/secrets/{name}` and so on), never only at the vault's, so a role given on one item isn't missed. "Download with private key" is never hinted, because it reads the backing secret, whose own scope isn't asked.
+- **Kept.** Each scope's answer is kept in the session's memory for five minutes and dropped by the session sweep or with the session. Nothing is written anywhere.
+- **Fails open.** If the read fails, is refused, can't be read, or takes more than 2 seconds (it runs beside the page's own reads), or the vault uses access policies (which `permissions` doesn't cover), every button stays enabled.
+- **Only a hint.** Key Vault decides. No handler reads hints, every POST route is unchanged, and a person whose button was disabled can still post the form and gets Key Vault's own answer. Only reads, so it writes no audit event.
+- **PIM.** Activation of an eligible role (#203) is meant to build on `Hints::needs`, beside the role it names. Nothing offers it yet.
 
 ## Expiry dashboard
 

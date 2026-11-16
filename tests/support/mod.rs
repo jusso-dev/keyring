@@ -583,10 +583,10 @@ pub(crate) struct AuthzMock {
     /// `{scope}/providers/Microsoft.Authorization/permissions` at any
     /// scope: one (dataActions, notDataActions) pair per role. `None`
     /// answers 403, so tests that don't set it see every button enabled.
-    pub permissions: Option<Vec<(Vec<String>, Vec<String>)>>,
+    pub permissions: Option<Vec<RolePerms>>,
     /// Permissions at one scope (compared without regard to case), in
     /// place of `permissions` there.
-    pub permissions_at: Vec<(String, Vec<(Vec<String>, Vec<String>)>)>,
+    pub permissions_at: Vec<(String, Vec<RolePerms>)>,
     /// Answer this status to every `permissions` read.
     pub permissions_status: Option<u16>,
     /// Answer `permissions` with a body Keyring can't read.
@@ -606,9 +606,12 @@ pub(crate) const OWNER_ROLE: &str = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635";
 pub(crate) const READER_ROLE: &str = "acdd72a7-3385-48ef-bd42-f606fba81ae7";
 pub(crate) const CERT_OFFICER: &str = "a4417e6f-fecd-4de8-b567-7b0420556985";
 
+/// One role's (dataActions, notDataActions).
+pub(crate) type RolePerms = (Vec<String>, Vec<String>);
+
 /// Data actions of built-in roles, as Microsoft defines them, for
 /// [`AuthzMock::permissions`].
-pub(crate) fn role_data_actions(role: &str) -> (Vec<String>, Vec<String>) {
+pub(crate) fn role_data_actions(role: &str) -> RolePerms {
     let actions: &[&str] = match role {
         "Key Vault Reader" => &[
             "Microsoft.KeyVault/vaults/*/read",

@@ -110,6 +110,18 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Access: PIM eligible | On a tenant with PIM, make someone eligible for a Key Vault role on the vault, open **Access** | They're listed with "Eligible". On a tenant without PIM, the page is unchanged apart from at most a note. Note the status `roleEligibilityScheduleInstances` gives without PIM | `src/azure/authz.rs` (`eligible_assignments`) | |
 | Access: access policy vault | Open **Access** on a vault using access policies | Each policy shows by object ID with its permissions in plain words. Note the case Azure uses for the permission names | `src/azure/authz.rs` (`vault_authorisation`), `src/routes/access.rs` (`op_words`) | |
 
+## Permission hints
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| Hints: vault scope, Secrets User | As someone with only Key Vault Secrets User on an RBAC vault, call `GET {vault ID}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01` (for example with `az rest`), then open a secret | ARM lists `dataActions` `secrets/getSecret/action` and `secrets/readMetadata/action`. On the page, Show value is enabled; Set a new value, Edit details, Delete and Disable are disabled with "Needs Key Vault Secrets Officer" | `src/azure/authz.rs` (`permissions`), `src/routes/hints.rs` | |
+| Hints: vault scope, Secrets Officer | Repeat as someone with Key Vault Secrets Officer | ARM lists `secrets/*`. Every secret button is enabled; key and certificate change buttons are disabled with their Officer role | `src/routes/hints.rs` | |
+| Hints: vault scope, Reader | Repeat as someone with Key Vault Reader and Reader | ARM lists `vaults/*/read` and `secrets/readMetadata/action`. Every change button and Show value is disabled with the role, and none is hidden | `src/routes/hints.rs` | |
+| Hints: item scope | Give someone Key Vault Secrets Officer on one secret only, and Key Vault Reader on the vault. Call `permissions` at `{vault ID}/secrets/{name}`, then open that secret and another | The call works at the item scope and lists `secrets/*`. The first secret's buttons are enabled; the second's are disabled. If the call fails or is refused at an item scope, note the status: Keyring then leaves item buttons enabled | `src/azure/authz.rs` (`item_scope`, `permissions`), `src/routes/hints.rs` | |
+| Hints: no false disables, secrets | As someone whose Set a new value, Delete or Show value is disabled, post the form anyway (for example from a page loaded before the role was removed) | Key Vault refuses each with 403 and Keyring shows its 403 page naming the same role. If Key Vault allows one, the hint is wrong: open an issue | `src/routes/hints.rs` (`Action`) | |
+| Hints: no false disables, certificates | Repeat for a certificate's Delete and Disable, and Upload and Create on the list | Key Vault refuses each with 403 | `src/routes/hints.rs` (`Action`) | |
+| Hints: no false disables, keys | Repeat for a key's Rotate now, Delete and Disable, and Create on the list | Key Vault refuses each with 403 | `src/routes/hints.rs` (`Action`) | |
+
 ## Deployment
 
 These need an Azure subscription you can deploy to. `az deployment group what-if` shows what a deployment would do without making anything.

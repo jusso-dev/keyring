@@ -268,6 +268,8 @@ For access-policy vaults, the matching permissions are: secrets Get and List for
 
 Role changes can take a few minutes to apply.
 
+Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
+
 ## Configuration
 
 Set these as environment variables. Don't commit them.
