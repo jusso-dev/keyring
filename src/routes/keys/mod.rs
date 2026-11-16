@@ -277,6 +277,7 @@ struct DetailPage {
     /// Set when the rotation policy couldn't be read.
     rotation_note: Option<String>,
     hsm: bool,
+    used_by: crate::routes::used_by::UsedBy,
     access: crate::routes::access::Access,
     hints: crate::routes::hints::Hints,
 }
@@ -318,10 +319,11 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let keys = api(&state, &session, &vault);
-    let (bundle, versions, rotation, access, hints) = tokio::join!(
+    let (bundle, versions, rotation, used_by, access, hints) = tokio::join!(
         keys.get(&name, None),
         keys.versions(&name),
         keys.rotation_policy(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Key, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Key, &name),
         crate::routes::hints::for_item(&state, &session, &vault, Kind::Key, &name),
     );
@@ -384,6 +386,7 @@ pub(super) async fn detail(
         versions_note,
         rotation,
         rotation_note,
+        used_by,
         shell,
         vault,
         access,
@@ -402,12 +405,17 @@ pub(super) async fn disable_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
+    let (checked, used_by) = tokio::join!(
+        unmanaged_key(&state, &session, &vault, &name, shell),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Key, &name),
+    );
+    let (_, shell) = checked?;
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Key,
+        Kind::Key,
         &name,
+        used_by,
     ))
 }
 

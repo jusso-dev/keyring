@@ -134,12 +134,16 @@ pub(crate) async fn delete_form<L: Lifecycle>(
     let (name, shell) = checked_name(&name, shell)?;
     // Check first, so a missing item gets its own page before the name is
     // asked for, and the warning can give the vault's real retention.
-    let (shell, recovery) =
-        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form).await?;
-    Ok(super::confirm_page(
+    // Who used it loads beside the check, within its own time limit.
+    let (checked, used_by) = tokio::join!(
+        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form),
+        crate::routes::used_by::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    let (shell, recovery) = checked?;
+    Ok(super::delete_page(
         shell,
         super::delete_view_for(L::KIND, &vault, &name, recovery),
-        StatusCode::OK,
+        used_by,
     ))
 }
 

@@ -407,6 +407,7 @@ struct DetailPage {
     versions: Vec<CertRow>,
     /// Set when the versions couldn't be read.
     versions_note: Option<String>,
+    used_by: crate::routes::used_by::UsedBy,
     access: crate::routes::access::Access,
     hints: crate::routes::hints::Hints,
 }
@@ -422,10 +423,11 @@ pub(super) async fn detail(
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    let (bundle, versions, pending, access, hints) = tokio::join!(
+    let (bundle, versions, pending, used_by, access, hints) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
         api.pending(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Certificate, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Certificate, &name),
         crate::routes::hints::for_item(&state, &session, &vault, Kind::Certificate, &name),
     );
@@ -478,6 +480,7 @@ pub(super) async fn detail(
         pending_note,
         versions,
         versions_note,
+        used_by,
         shell,
         vault,
         access,
@@ -498,14 +501,20 @@ pub(super) async fn disable_form(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+    let certs = api(&state, &session, &vault);
+    let (got, used_by) = tokio::join!(
+        certs.get_cert(&name, None),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Certificate, &name),
+    );
+    if let Err(e) = got {
         return Err(azure_problem(shell, &e, Need::ReadCertificates, &path));
     }
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Certificate,
+        Kind::Certificate,
         &name,
+        used_by,
     ))
 }
 

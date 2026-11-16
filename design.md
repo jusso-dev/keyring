@@ -319,6 +319,18 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - On the vault list, the Audit logs column is plain "On", a warn badge
   "Off", or muted "Unknown" with the reason.
 
+### Used by in the last 30 days
+
+- A section at the foot of an item's page, and under the form on Set a new
+  value, Roll back, Disable, Rotate and Delete, so the form comes first.
+- One ledger table: Who (sign-in name or app ID, mono), Kind, Object ID,
+  Last, Reads (Uses for a key), From (IP in mono, client info muted under
+  it). Latest first.
+- Nothing found is an empty state: "No reads in the last 30 days, so
+  nothing should break." A log that can't be read is an empty state that
+  says why and "You can still go ahead", with a "What to ask for" hint. It
+  is never an error notice, because it never stops the action.
+- Workspaces left out are a warn notice under the table.
 ### Access
 
 - The vault's Access page: heading, a Download CSV link, a muted line saying

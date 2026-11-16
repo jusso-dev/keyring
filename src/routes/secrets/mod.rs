@@ -335,6 +335,7 @@ struct DetailPage {
     not_before: String,
     /// What happens if it's deleted, in a sentence.
     recovery: String,
+    used_by: crate::routes::used_by::UsedBy,
     /// What the rotation tags claim, if any are set.
     rotation: Option<crate::rotation::Rotation>,
     access: crate::routes::access::Access,
@@ -351,8 +352,9 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let secrets = api(&state, &session, &vault);
-    let (item, access, hints) = tokio::join!(
+    let (item, used_by, access, hints) = tokio::join!(
         secrets.properties(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::hints::for_item(&state, &session, &vault, Kind::Secret, &name),
     );
@@ -385,6 +387,7 @@ pub(super) async fn detail(
         row,
         shell,
         vault,
+        used_by,
         access,
         hints,
     })
