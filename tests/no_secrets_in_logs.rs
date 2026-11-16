@@ -87,6 +87,44 @@ async fn values_never_reach_the_logs() {
         .await;
     assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
 
+    // A secrets import, a write refused part way, and a CSV parse error
+    // on a row holding a value.
+    let quoted = VALUE.replace('"', "\\\"");
+    let env = format!("IMPORT_ONE=\"{quoted}\"\nIMPORT_TWO=Imp0rtLeak-2\n");
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", env.as_bytes())],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(!html.contains("Sup3r-S3cret") && !html.contains("Imp0rtLeak"));
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
+    *w.kv.state.fail_path.lock().unwrap() = Some("IMPORT-TWO".into());
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    let html = support::body_text(res).await;
+    *w.kv.state.fail.lock().unwrap() = None;
+    *w.kv.state.fail_path.lock().unwrap() = None;
+    assert!(html.contains("Imported 1 secret"), "{html}");
+    assert!(!html.contains("Sup3r-S3cret") && !html.contains("Imp0rtLeak"));
+    assert_eq!(w.kv.state.current("IMPORT-ONE").unwrap().value, VALUE);
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                "a.csv",
+                b"name,value\nx,Imp0rtLeak-3,extra\n",
+            )],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(html.contains("Line 2 has 3 fields"), "{html}");
+    assert!(!html.contains("Imp0rtLeak"));
+
     // A generated value.
     let res = w
         .post(
@@ -183,6 +221,12 @@ async fn values_never_reach_the_logs() {
         "the reveal itself is logged: {logs}"
     );
     assert!(
+        logs.contains("action=secret.import outcome=success")
+            && logs.contains("item_name=IMPORT-ONE"),
+        "the import is logged per secret: {logs}"
+    );
+    assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
+    assert!(
         !logs.contains("Sup3r-S3cret"),
         "value leaked into logs:\n{logs}"
     );
@@ -249,6 +293,7 @@ async fn values_never_reach_the_logs() {
         "QUERYLEAK",
         "Upl0ad-Passw0rd",
         "GENLEAK_",
+        "Imp0rtLeak",
         "user-api-token",
         "obo:",
         support::MI_MONITOR_TOKEN,
@@ -269,6 +314,13 @@ async fn values_never_reach_the_logs() {
             .iter()
             .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
         "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.import"
+            && l["item_name"] == "IMPORT-TWO"
+            && l["outcome"] == "failed"),
+        "a failed import write is an audit event"
     );
     assert!(
         lines.iter().any(|l| l["kind"] == "log"

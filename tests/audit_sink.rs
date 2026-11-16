@@ -625,3 +625,38 @@ async fn healthz_audit_is_off_without_the_sink() {
     assert_eq!(support::body_text(res).await, "status=off\n");
     assert!(w.state.audit_sink.is_none());
 }
+
+#[tokio::test]
+async fn an_import_sends_one_row_for_each_secret_it_writes() {
+    let ingest = ingestion::start().await;
+    let identity = support::start_identity().await;
+    let w = sink_world(&ingest, &identity, false).await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"ONE=v1\nTWO=v2\n")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    let id = support::hidden_value(&html, "import_id").expect("import id on the preview");
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let sink = w.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    let rows = ingest.state.rows();
+    let mut names: Vec<String> = rows
+        .iter()
+        .filter(|r| r["Action"] == "secret.import" && r["ItemName"].is_string())
+        .map(|r| r["ItemName"].as_str().unwrap().to_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["ONE", "TWO"], "{rows:#?}");
+    assert!(
+        !format!("{rows:?}").contains("v1"),
+        "a value in the audit rows"
+    );
+}

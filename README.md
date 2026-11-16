@@ -121,7 +121,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 
 - **Sign in with Entra ID** (OpenID Connect).
 - **Find your vaults** across every subscription you can see, using Azure Resource Graph.
-- **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
+- **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover, and import many at once from a `.env` or CSV file after a preview of names (never values). Purge is off unless an admin turns it on. There is no export.
 - **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, change what happens near expiry, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.

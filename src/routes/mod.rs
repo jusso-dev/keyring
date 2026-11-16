@@ -87,6 +87,19 @@ fn vault_routes() -> Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
         .route(
+            "/secrets/-/import",
+            get(secrets::import::form)
+                .post(secrets::import::preview)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    secrets::import_file::MAX_BODY_BYTES,
+                )),
+        )
+        .route(
+            "/secrets/-/import/confirm",
+            audited(Action::SecretImport, secrets::import::confirm),
+        )
+        .route("/secrets/-/import/cancel", post(secrets::import::cancel))
+        .route(
             "/secrets/-/deleted",
             get(lifecycle::handlers::list_deleted::<secrets::delete::Secrets>),
         )
@@ -332,8 +345,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(state.clone(), flash::layer))
         .layer(middleware::from_fn_with_state(state.clone(), origin::layer))
-        // Small forms only by default. The certificate upload route sets
-        // its own larger limit.
+        // Small forms only by default. The certificate upload and secrets
+        // import routes set their own larger limits.
         .layer(axum::extract::DefaultBodyLimit::max(MAX_FORM_BYTES))
         // A panic in any handler becomes a 500 page for that request
         // instead of ending the process. Inside the headers layer, so the
