@@ -111,7 +111,7 @@ async fn values_never_reach_the_logs() {
 
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     assert!(
-        logs.contains("secret value revealed"),
+        logs.contains("action=secret.reveal outcome=success"),
         "the reveal itself is logged: {logs}"
     );
     assert!(
@@ -137,7 +137,7 @@ async fn values_never_reach_the_logs() {
     );
     // Actions name the person by Entra object and tenant ID.
     assert!(
-        logs.contains("subject=oid:aaaaaaaa-0000-0000-0000-000000000001,tid:"),
+        logs.contains("actor_oid=aaaaaaaa-0000-0000-0000-000000000001 actor_tid="),
         "{logs}"
     );
     // Headers are never logged: no cookies, no session ID.

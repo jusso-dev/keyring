@@ -86,7 +86,7 @@ pub async fn serve_with(
         };
         let stream = tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((s, _)) => s,
+                Ok(accepted) => accepted,
                 Err(e) => {
                     // Usually too many open files; back off briefly.
                     tracing::warn!(error = %e, "accept failed");
@@ -96,16 +96,18 @@ pub async fn serve_with(
             },
             () = &mut shutdown => break,
         };
+        let (stream, peer) = stream;
         let _ = stream.set_nodelay(true);
         let app = app.clone();
         let service = TowerToHyperService::new(tower::service_fn(move |req: Request<Incoming>| {
             let app = app.clone();
             async move {
-                Ok::<_, Infallible>(
-                    app.oneshot(req.map(axum::body::Body::new))
-                        .await
-                        .unwrap_or_else(|e| match e {}),
-                )
+                // The socket peer, for Keyring's audit events. Behind a
+                // proxy this is the proxy (see KEYRING_TRUSTED_PROXY_HOPS).
+                let mut req = req.map(axum::body::Body::new);
+                req.extensions_mut()
+                    .insert(axum::extract::ConnectInfo(peer));
+                Ok::<_, Infallible>(app.oneshot(req).await.unwrap_or_else(|e| match e {}))
             }
         }));
         let conn = builder.serve_connection(TokioIo::new(stream), service);

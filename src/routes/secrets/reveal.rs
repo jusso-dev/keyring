@@ -62,6 +62,7 @@ impl RevealedPage {
 /// The page shown when someone tries to read or change a certificate's
 /// backing secret directly.
 pub(crate) fn managed_problem(shell: Shell, vault: &str, name: &str) -> crate::routes::error::Halt {
+    crate::audit::refuse(crate::audit::Refusal::ManagedItem);
     PageError::new(
         shell,
         Problem::new(
@@ -100,6 +101,7 @@ pub(crate) async fn reveal(
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &form.csrf, shell)?;
     let version = form.version.trim();
     if !version.is_empty() && !is_valid_version(version) {
+        crate::audit::refuse(crate::audit::Refusal::InvalidRequest);
         return Err(PageError::new(shell, Problem::not_found()).into());
     }
     let path = vault_path(&vault, &format!("/secrets/{name}"));
@@ -121,9 +123,8 @@ pub(crate) async fn reveal(
         Ok(b) => b,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
     };
-    // Who read which secret is useful to the person running Keyring; the
-    // value never is.
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, version = %bundle.item.version(), "secret value revealed");
+    // Which version was read goes on the audit event. The value never does.
+    crate::audit::note_version(bundle.item.version());
     let now = now_ts();
     let page = RevealedPage {
         version: bundle.item.version().to_owned(),

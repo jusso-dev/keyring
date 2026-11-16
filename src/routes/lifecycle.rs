@@ -308,6 +308,7 @@ pub(crate) fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Resul
     if state.config.allow_purge {
         return Ok(shell);
     }
+    crate::audit::refuse(crate::audit::Refusal::PurgeDisabled);
     let role = kind.officer_role();
     Err(PageError::new(
         shell,

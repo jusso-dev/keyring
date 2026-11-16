@@ -414,7 +414,10 @@ pub(crate) async fn create(
     let certs = api(&state, &session, &vault);
     let issuers = load_issuers(&certs).await;
     let (name, body) = match build(&f, &issuers.names) {
-        Ok(ok) => ok,
+        Ok(ok) => {
+            crate::audit::note_item(&ok.0);
+            ok
+        }
         Err(errors) => return Ok(page(shell, vault, f, errors, issuers, None)),
     };
     // Creating over an existing name adds a version. Refuse, like secrets.
@@ -440,7 +443,6 @@ pub(crate) async fn create(
     let self_signed = body.policy.issuer_name() == "Self";
     match certs.create(&name, &body).await {
         Ok(op) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate created");
             let done = op
                 .status
                 .as_deref()
@@ -496,14 +498,11 @@ pub(crate) async fn cancel_pending(
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let path = vault_path(&vault, &format!("/certificates/{name}"));
     match api(&state, &session, &vault).cancel_pending(&name).await {
-        Ok(()) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, "certificate request cancelled");
-            Ok(redirect_with(
-                &state,
-                &path,
-                format!("Cancelled the request for {name}."),
-            ))
-        }
+        Ok(()) => Ok(redirect_with(
+            &state,
+            &path,
+            format!("Cancelled the request for {name}."),
+        )),
         Err(e) => Err(azure_problem(shell, &e, Need::ManageCertificates, &path)),
     }
 }
