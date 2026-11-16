@@ -356,6 +356,7 @@ struct RotatePage {
     shell: Shell,
     vault: String,
     name: String,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 pub(crate) async fn rotate_form(
@@ -366,8 +367,24 @@ pub(crate) async fn rotate_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
-    Ok(render(&RotatePage { shell, vault, name }).into_response())
+    let (checked, used_by) = tokio::join!(
+        unmanaged_key(&state, &session, &vault, &name, shell),
+        crate::routes::used_by::for_item(
+            &state,
+            &session,
+            &vault,
+            crate::routes::lifecycle::Kind::Key,
+            &name
+        ),
+    );
+    let (_, shell) = checked?;
+    Ok(render(&RotatePage {
+        shell,
+        vault,
+        name,
+        used_by,
+    })
+    .into_response())
 }
 
 pub(crate) async fn rotate(

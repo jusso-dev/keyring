@@ -327,6 +327,7 @@ struct DetailPage {
     not_before: String,
     /// What happens if it's deleted, in a sentence.
     recovery: String,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 pub(super) async fn detail(
@@ -338,7 +339,12 @@ pub(super) async fn detail(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let item = match api(&state, &session, &vault).properties(&name).await {
+    let secrets = api(&state, &session, &vault);
+    let (item, used_by) = tokio::join!(
+        secrets.properties(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+    );
+    let item = match item {
         Ok(item) => item,
         Err(err) => {
             if let Some(res) =
@@ -365,6 +371,7 @@ pub(super) async fn detail(
         row: SecretRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now),
         shell,
         vault,
+        used_by,
     })
     .into_response())
 }

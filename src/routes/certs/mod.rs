@@ -399,6 +399,7 @@ struct DetailPage {
     versions: Vec<CertRow>,
     /// Set when the versions couldn't be read.
     versions_note: Option<String>,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 pub(super) async fn detail(
@@ -412,10 +413,11 @@ pub(super) async fn detail(
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    let (bundle, versions, pending) = tokio::join!(
+    let (bundle, versions, pending, used_by) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
-        api.pending(&name)
+        api.pending(&name),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Certificate, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -466,6 +468,7 @@ pub(super) async fn detail(
         pending_note,
         versions,
         versions_note,
+        used_by,
         shell,
         vault,
     })
@@ -484,14 +487,20 @@ pub(super) async fn disable_form(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    if let Err(e) = api(&state, &session, &vault).get_cert(&name, None).await {
+    let certs = api(&state, &session, &vault);
+    let (got, used_by) = tokio::join!(
+        certs.get_cert(&name, None),
+        crate::routes::used_by::for_item(&state, &session, &vault, Kind::Certificate, &name),
+    );
+    if let Err(e) = got {
         return Err(azure_problem(shell, &e, Need::ReadCertificates, &path));
     }
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Certificate,
+        Kind::Certificate,
         &name,
+        used_by,
     ))
 }
 

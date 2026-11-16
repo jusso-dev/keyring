@@ -25,6 +25,7 @@ mod rejection;
 pub mod search;
 mod secrets;
 pub(crate) mod shell;
+pub(crate) mod used_by;
 pub(crate) mod vault_ctx;
 mod vault_health;
 mod vaults;

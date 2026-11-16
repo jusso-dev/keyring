@@ -122,6 +122,7 @@ struct RollbackPage {
     current: VersionRow,
     /// The current expiry has passed, so the new version won't have one.
     expiry_dropped: bool,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 /// The current version's expiry, if it hasn't passed. A new version with
@@ -184,9 +185,22 @@ pub(crate) async fn confirm(
     Path((vault, name)): Path<(String, String)>,
     Query(q): Query<RollbackQuery>,
 ) -> PageResult {
-    let (vault, shell, name, items) = load_versions(&state, &session, shell, &vault, &name).await?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let (fetched, used_by) = tokio::join!(
+        fetch_versions(&state, &session, shell, &vault, &name),
+        crate::routes::used_by::for_item(
+            &state,
+            &session,
+            &vault,
+            crate::routes::lifecycle::Kind::Secret,
+            &name
+        ),
+    );
+    let (shell, items) = fetched?;
     let (shell, target) = pick(&items, &q.version, shell, &vault, &name)?;
     Ok(render(&RollbackPage {
+        used_by,
         target: VersionRow::from_item(target, false),
         current: VersionRow::from_item(&items[0], true),
         expiry_dropped: items[0].attributes.expires.is_some()
