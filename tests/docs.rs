@@ -203,3 +203,20 @@ fn relative_doc_links_point_at_files_that_exist() {
         }
     }
 }
+
+#[test]
+fn search_limits_match_the_architecture_doc() {
+    use keyring::auth::session::LIST_TTL;
+    use keyring::routes::search::{MAX_QUERY_CHARS, MAX_RESULTS};
+    has(
+        ARCHITECTURE,
+        "architecture.md",
+        &format!("capped at {MAX_QUERY_CHARS} characters, and the page at {MAX_RESULTS} results"),
+    );
+    has(
+        ARCHITECTURE,
+        "architecture.md",
+        &format!("kept in the session for {} seconds", LIST_TTL.as_secs()),
+    );
+    has(CHECKLIST, "real-vault-checklist.md", "within 60 seconds");
+}

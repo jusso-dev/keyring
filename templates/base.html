@@ -20,6 +20,11 @@
       <a href="/vaults">Choose a vault</a>
       {% endif %}
     </div>
+    <form class="site-search" method="get" action="/search" role="search">
+      <label for="site-search-q" class="visually-hidden">Search every vault</label>
+      <input id="site-search-q" name="q" type="search" maxlength="{{ crate::routes::search::MAX_QUERY_CHARS }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button type="submit" class="button-small">Search</button>
+    </form>
     <div class="account">
       <span class="account-name">{{ user.name }}</span>
       <form method="post" action="/auth/sign-out">
