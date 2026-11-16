@@ -231,3 +231,30 @@ async fn list_page_links_to_import_and_form_needs_no_script() {
     assert!(html.contains("<button type=\"submit\">Check the file</button>"));
     assert!(!html.contains("<script>"), "no inline script");
 }
+
+#[tokio::test]
+async fn a_csv_without_a_header_never_shows_its_first_line() {
+    let w = support::world().await;
+    let (status, html) = preview(&w, b"PASSWORD=TopSecret42\nB=2\n", "secrets.csv").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(html.contains("column 1"), "{html}");
+    assert!(!html.to_ascii_lowercase().contains("topsecret42"), "{html}");
+}
+
+#[tokio::test]
+async fn a_second_file_is_refused() {
+    let w = support::world().await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[
+                Part::File("file", ".env", b"A=1\n"),
+                Part::File("file", ".env", b"B=2\n"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let html = body_text(res).await;
+    assert!(html.contains("one file"), "{html}");
+    assert!(hidden_value(&html, "import_id").is_none(), "nothing kept");
+}

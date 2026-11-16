@@ -19,7 +19,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::AppState;
 use crate::audit::{Action, ItemEvents, Outcome};
@@ -222,26 +222,20 @@ pub(crate) async fn cancel(
     Ok(res)
 }
 
-/// The posted form.
+/// The posted form. The file is wiped when dropped.
 #[derive(Default)]
 struct Posted {
     csrf: String,
-    file: Option<Vec<u8>>,
+    file: Option<Zeroizing<Vec<u8>>>,
     file_name: String,
     too_big: bool,
-}
-
-impl Drop for Posted {
-    fn drop(&mut self) {
-        if let Some(f) = &mut self.file {
-            f.zeroize();
-        }
-    }
 }
 
 enum ReadError {
     TooBig,
     Broken,
+    /// More than one file part. The form has one.
+    TwoFiles,
 }
 
 impl From<axum::extract::multipart::MultipartError> for ReadError {
@@ -255,18 +249,36 @@ impl From<axum::extract::multipart::MultipartError> for ReadError {
 }
 
 async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadError> {
+    let mut seen_file = false;
     while let Some(mut field) = mp.next_field().await? {
         let name = field.name().unwrap_or_default().to_owned();
         match name.as_str() {
             "file" => {
+                if seen_file {
+                    return Err(ReadError::TwoFiles);
+                }
+                seen_file = true;
                 p.file_name = field.file_name().unwrap_or_default().to_owned();
-                let mut buf: Vec<u8> = Vec::new();
+                // Zeroising from the start, so a read that fails part way
+                // still wipes what came before it.
+                let mut buf: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::new());
                 while let Some(chunk) = field.chunk().await? {
                     if p.too_big || buf.len() + chunk.len() > MAX_FILE_BYTES {
                         p.too_big = true;
                         buf.zeroize();
                         buf.clear();
                         continue;
+                    }
+                    if buf.capacity() < buf.len() + chunk.len() {
+                        // Grow by hand, so the old allocation is wiped
+                        // rather than left behind by a reallocation.
+                        let mut bigger = Zeroizing::new(Vec::with_capacity(
+                            (buf.len() + chunk.len())
+                                .max(buf.capacity() * 2)
+                                .min(MAX_FILE_BYTES),
+                        ));
+                        bigger.extend_from_slice(&buf);
+                        buf = bigger;
                     }
                     buf.extend_from_slice(&chunk);
                 }
@@ -331,13 +343,14 @@ pub(crate) async fn preview(
     let file_error = match (read, p.too_big, &p.file) {
         (Err(ReadError::TooBig), _, _) | (_, true, _) => Some(too_big_message()),
         (Err(ReadError::Broken), _, _) => Some("The upload didn't come through. Try again.".into()),
+        (Err(ReadError::TwoFiles), _, _) => Some("Choose one file to import at a time.".into()),
         (Ok(()), false, None) => Some("Choose a file to import.".into()),
         _ => None,
     };
     if let Some(m) = file_error {
         return Ok(import_page(shell, vault, FieldErrors::one("file", m)));
     }
-    let bytes = p.file.as_deref().unwrap_or_default();
+    let bytes = p.file.as_deref().map(Vec::as_slice).unwrap_or_default();
     let rows = match import_file::parse(bytes, Format::from_file_name(&p.file_name), now_ts()) {
         Ok(rows) => rows,
         Err(m) => return Ok(import_page(shell, vault, FieldErrors::one("file", m))),
