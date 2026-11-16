@@ -68,6 +68,9 @@ async fn several_vaults_and_skipped_ones() {
     assert_eq!(html.matches(">shared-name<").count(), 3);
     assert!(html.contains(">kv-a<") && html.contains(">kv-b<"));
 
+    // A fresh session: the first one keeps each vault's list for a minute.
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-a", "kv-b", "kv-test"]);
     *w.kv.state.fail.lock().unwrap() = Some((403, "Forbidden"));
     let (status, html) = w.page("/expiry").await;
     assert_eq!(

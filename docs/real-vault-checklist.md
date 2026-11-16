@@ -82,6 +82,8 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Check | Do this | Expected | Code | Result |
 | --- | --- | --- | --- | --- |
 | Throttling across many vaults | Open the expiry dashboard in a tenant with many vaults | Six vaults at a time draws few or no 429s from Key Vault or ARM. Note any | `src/azure/fanout.rs` (`CONCURRENCY`) | |
+| Search across many vaults | Search from the top bar in a tenant with many vaults | Results come back within the limits (20 seconds a vault, a minute in all), and Key Vault and ARM give few or no 429s. Note any, and the time taken | `src/routes/search.rs`, `src/routes/every_vault.rs` | |
+| Second search reuses the lists | Search, then search again for something else within 60 seconds, with Key Vault diagnostic logs on | The second search makes no new `SecretList`, `CertificateList` or `KeyList` calls. A search after a minute does | `src/auth/session.rs` (`LIST_TTL`) | |
 | A workspace in another tenant or deleted | Point a vault's diagnostic setting at two workspaces, one you can't read, and open the audit page | Events from the readable one show, with a note that one was left out. Note the status Log Analytics gave (403, 404 or other) | `src/routes/audit.rs` | |
 
 ## Deployment

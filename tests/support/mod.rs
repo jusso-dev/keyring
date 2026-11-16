@@ -475,9 +475,19 @@ fn other_grant(s: &IdpState, form: &[(String, String)], grant: &str) -> Response
 
 /// An app plus a cookie for a session that's already signed in.
 pub(crate) fn signed_in_app(config: Config) -> (keyring::AppState, axum::Router, String) {
+    signed_in_app_with(config, None)
+}
+
+fn signed_in_app_with(
+    config: Config,
+    limits: Option<keyring::azure::fanout::Limits>,
+) -> (keyring::AppState, axum::Router, String) {
     use keyring::auth::session::{User, UserTokens};
     use keyring::secret::Secret;
-    let state = keyring::AppState::new(config);
+    let mut state = keyring::AppState::new(config);
+    if let Some(limits) = limits {
+        state.fanout = limits;
+    }
     let id = state.sessions.create(
         User {
             name: "Alex Example".into(),
@@ -746,9 +756,30 @@ pub(crate) struct World {
 }
 
 pub(crate) async fn world_with(extra: &[(&'static str, &'static str)]) -> World {
+    world_over(keyvault::start().await, extra, None).await
+}
+
+/// A world whose Key Vault mock serves each named vault from its own
+/// state, with the cross-vault reads held to `limits`. `kv` in the result
+/// is the first vault.
+pub(crate) async fn world_of_vaults(
+    vaults: Vec<(&'static str, Arc<keyvault::KvState>)>,
+    limits: keyring::azure::fanout::Limits,
+) -> World {
+    let names: Vec<&str> = vaults.iter().map(|(n, _)| *n).collect();
+    let rows = names.iter().map(|n| vault_row(n, "sub-a", true)).collect();
+    let w = world_over(keyvault::start_several(vaults).await, &[], Some(limits)).await;
+    *w.arm.state.vaults.lock().unwrap() = rows;
+    w
+}
+
+async fn world_over(
+    kv: keyvault::MockKeyVault,
+    extra: &[(&'static str, &'static str)],
+    limits: Option<keyring::azure::fanout::Limits>,
+) -> World {
     let idp = start_idp().await;
     let arm = start_arm().await;
-    let kv = keyvault::start().await;
     let mut env: std::collections::HashMap<&'static str, String> =
         std::collections::HashMap::from([
             ("ENTRA_TENANT_ID", TENANT.to_owned()),
@@ -768,7 +799,7 @@ pub(crate) async fn world_with(extra: &[(&'static str, &'static str)]) -> World 
         env.insert(k, (*v).to_owned());
     }
     let config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
-    let (state, app, cookie) = signed_in_app(config);
+    let (state, app, cookie) = signed_in_app_with(config, limits);
     let id = cookie.split('=').nth(1).unwrap().to_owned();
     let session = state.sessions.get(&id).unwrap();
     session.select_vault("kv-test".into());
