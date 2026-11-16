@@ -25,7 +25,7 @@ Keyring works with the Azure public cloud only: these hosts, `login.microsoftonl
 
 | Part | Job |
 | --- | --- |
-| Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry, generator and audit |
+| Web server | Axum on Tokio. Routes for vaults, secrets, certificates, keys, expiry, generator, audit and access |
 | Pages | Askama templates compiled into the binary. Plain hand-written CSS |
 | Browser script | One small hand-written vanilla JS file for copy to clipboard, clearing it again, and similar extras. Pages work without it |
 | Sign-in | `openidconnect` crate, authorisation code flow with PKCE |
@@ -241,6 +241,20 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - The old addresses from before the vault was in the path (`/audit?item=...`, `/audit.csv` with no report) still go to the vault last used.
 - The page only reads, so it writes no action line.
 
+## Access
+
+`/v/{vault}/access` shows who can reach a vault's contents, and each secret, certificate and key page has an Access section for that item. Code: `src/azure/authz.rs` (the ARM calls) and `src/routes/access.rs` (page, section and CSV).
+
+- **RBAC vaults.** `GET {scope}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01`, where the scope is the vault's ARM ID, or `{vault ID}/secrets/{name}` (and `/certificates/{name}`, `/keys/{name}`) for an item. ARM returns assignments at, above and below the scope. Keyring keeps the ones at or above it, and says where each comes from: this item, the vault, the resource group, the subscription, a management group or the whole tenant.
+- **Eligible assignments.** `roleEligibilityScheduleInstances` with `$filter=atScope()` at the same scope (api-version 2020-10-01), shown with an "Eligible" badge. If that call fails (a tenant without PIM, or no permission), the active ones still show, with a note.
+- **Roles.** Each role used is read once from `roleDefinitions/{id}` at the vault's scope, six at a time, up to 50 roles a page. Only roles with a `Microsoft.KeyVault/` data action (or `*`) are listed, plus Owner, Contributor and User Access Administrator, which are flagged "Can grant itself access": they don't reach the contents, but can add a role or policy that does. Reader and other control-plane roles are left out. A role that can't be read is listed as "Role not read", never dropped.
+- **Access policy vaults.** `GET {vault ID}?api-version=2023-07-01` gives `enableRbacAuthorization` and `properties.accessPolicies`. Each policy is shown by object ID with its permissions in plain words ("read values, list"), and a "Reads secret values" badge where it allows secret `get`. On an item's page only the policies for that kind of item show, since policies apply to the whole vault. Data roles don't apply on these vaults, so only the roles that can grant access are listed.
+- **Principals** are shown by object ID and type (User, Group, App or managed identity), with a link to the object in the Azure portal. Keyring doesn't call Microsoft Graph, so it has no names for them, and group members aren't expanded: the page says "Group" and links to it. Adding names would need a Graph permission and a new consent, and is left for later.
+- **When it can't be read.** A 403 on role assignments or the vault resource gives a plain explanation and the role to ask for (Reader on the vault, its resource group or subscription), never an empty table. The CSV answers 403 with the same explanation instead of an empty file.
+- **Time limits.** The vault page gives the reads 20 seconds. An item's page runs them beside its own Key Vault reads with a 5 second limit, so a slow or failing ARM read never slows or breaks the item page: the section shows the reason instead.
+- **CSV.** `/v/{vault}/access.csv` has one line per assignment or policy (object ID, type, role or permissions, active, eligible or access policy, where it comes from, scope, can grant itself access, condition), with formula guarding, and `NOT READ` lines for anything left out.
+- All calls use the person's on-behalf-of Management token. Nothing uses Keyring's managed identity, and no new token resource or permission is needed. The page only reads, so it writes no action line.
+
 ## Expiry dashboard
 
 The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, and the reading of each vault's lists in `src/routes/every_vault.rs`, shared with search.
@@ -328,7 +342,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name. A certificate's backing secret can't be revealed, rolled back, changed or deleted through the secrets pages |
 | Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed. Across vaults, the vaults' resource IDs go in the same way, one `let` line each |
 | CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
-| Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault |
+| Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault, and ARM `nextLink`s on the Access page only on ARM's own host |
 | Large or slow requests | Request headers must arrive within 10 seconds (slow-header clients are cut off). 64 KB body limit on forms (256 KB on the two forms that carry a secret value, and 272 KB for a certificate upload of up to 256 KB). 90 second limit per request. At most 512 connections at once; past that, new ones wait in the listen backlog. Each connection is asked to close after 5 minutes and cut off 2 minutes later. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |
 | Supply chain | Few crates, all from crates.io, licence allow-list, `cargo deny` and `cargo audit` on every change and weekly, `Cargo.lock` and toolchain pinned, actions pinned by SHA, images pinned by digest, SBOM per build. No npm |
 | Memory safety | `unsafe` code is forbidden in the crate |
@@ -339,6 +353,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 - **Sessions are in memory.** A restart signs everyone out, and several copies need sticky sessions. Anyone who can read the server's memory can read active tokens.
 - **The session secret** only protects short-lived cookies (sign-in state and flash messages), which the server also refuses once they're past their age limit. Pending certificate uploads are kept in the server-side session. Rotating it means a restart, which signs everyone out (sessions are in memory), and cancels sign-ins in progress.
 - Keyring trusts Azure's answers. A compromised Entra tenant or Key Vault is out of scope.
+- **Access shows object IDs, not names.** Keyring has no Microsoft Graph permission, so the Access page can't name people, groups or apps, or list a group's members. It links to each in the portal instead.
 - **The connection cap is shared** by every client, and idle keep-alive connections and slow request bodies aren't limited beyond the 90 second request limit and the 5 minute connection age. A front-end proxy or the platform's load balancer normally covers this.
 - **Zeroising covers Keyring's own copies.** Copies of tokens held inside `openidconnect` and `reqwest` aren't zeroised.
 - **A panic** gives that one request a 500 page. Sessions survive it, since release builds unwind.

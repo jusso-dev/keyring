@@ -97,6 +97,17 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Second search reuses the lists | Search, then search again for something else within 60 seconds, with Key Vault diagnostic logs on | The second search makes no new `SecretList`, `CertificateList` or `KeyList` calls. A search after a minute does | `src/auth/session.rs` (`LIST_TTL`) | |
 | A workspace in another tenant or deleted | Point a vault's diagnostic setting at two workspaces, one you can't read, and open the audit page | Events from the readable one show, with a note that one was left out. Note the status Log Analytics gave (403, 404 or other) | `src/routes/audit.rs` | |
 
+## Access
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| Access: vault scope | Open **Access** on an RBAC vault with roles given on the vault, its resource group and its subscription | Each assignment shows once with the right "Comes from". Note that ARM returned assignments below the vault too, and that Keyring left them out | `src/azure/authz.rs` (`role_assignments`, `applies_at`), `src/routes/access.rs` | |
+| Access: item scope | Give someone Key Vault Secrets User on one secret only (scope `{vault ID}/secrets/{name}`), open that secret and another | The first shows them under "This item"; the second doesn't. Inherited assignments show on both | `src/azure/authz.rs` (`item_scope`) | |
+| Access: Reader is enough | As someone with only Reader on the vault, open **Access** | The assignments list loads, with role names. Note whether `roleDefinitions` reads work for a custom role | `src/azure/authz.rs` (`role_definition`) | |
+| Access: no Reader | As someone with a Key Vault data role but no Reader, open **Access** | "You can't read ..." with Reader to ask for, not an empty table. Note the status ARM gave (403 expected) | `src/routes/access.rs` | |
+| Access: PIM eligible | On a tenant with PIM, make someone eligible for a Key Vault role on the vault, open **Access** | They're listed with "Eligible". On a tenant without PIM, the page is unchanged apart from at most a note. Note the status `roleEligibilityScheduleInstances` gives without PIM | `src/azure/authz.rs` (`eligible_assignments`) | |
+| Access: access policy vault | Open **Access** on a vault using access policies | Each policy shows by object ID with its permissions in plain words. Note the case Azure uses for the permission names | `src/azure/authz.rs` (`vault_authorisation`), `src/routes/access.rs` (`op_words`) | |
+
 ## Deployment
 
 These need an Azure subscription you can deploy to. `az deployment group what-if` shows what a deployment would do without making anything.

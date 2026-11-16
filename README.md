@@ -125,6 +125,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
+- **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
 - Deletes need you to type the item's name first.
