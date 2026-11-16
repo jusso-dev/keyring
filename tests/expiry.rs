@@ -161,6 +161,19 @@ async fn no_vaults() {
 }
 
 #[tokio::test]
+async fn points_to_the_app_credentials_doc() {
+    let w = support::world().await;
+    let (status, html) = w.page("/expiry").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(
+        "This covers Key Vault only, not secrets and certificates on app registrations."
+    ));
+    assert!(html.contains(
+        "href=\"https://github.com/jusso-dev/keyring/blob/main/docs/app-credentials.md\""
+    ));
+}
+
+#[tokio::test]
 async fn partly_readable_vaults_say_what_is_missing() {
     let w = support::world().await;
     seed_vaults(&w, &["kv-test"]);
