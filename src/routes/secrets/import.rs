@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use askama::Template;
@@ -467,6 +468,111 @@ pub(crate) struct ConfirmForm {
     import_id: String,
 }
 
+/// When writes stop starting, and when Keyring stops waiting for them.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Deadlines {
+    pub start: Duration,
+    pub stop: Duration,
+}
+
+impl Deadlines {
+    pub(crate) const STANDARD: Self = Self {
+        start: START_DEADLINE,
+        stop: STOP_DEADLINE,
+    };
+}
+
+/// Write each row with `write`, [`CONCURRENCY`] at a time, and say how each
+/// went, in the same order. A row whose write began writes one `secret.import`
+/// event (`cancelled` if Keyring stopped waiting for it). A row that never
+/// reached Key Vault, because no write could start before `start`, writes no
+/// event and is [`Written::NotStarted`]. Only a write cut off in flight is
+/// [`Written::Unknown`].
+pub(crate) async fn write_rows<F, Fut>(
+    rows: Vec<PendingSecret>,
+    events: ItemEvents,
+    deadlines: Deadlines,
+    write: F,
+) -> Vec<(Written, String)>
+where
+    F: Fn(PendingSecret) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), AzureError>> + Send + 'static,
+{
+    let started = tokio::time::Instant::now();
+    let start_by = started + deadlines.start;
+    let permits = Arc::new(Semaphore::new(CONCURRENCY));
+    // Set just before a row's write begins, so a row whose task was cut
+    // off before then is known not to have been sent.
+    let began: Arc<Vec<AtomicBool>> =
+        Arc::new((0..rows.len()).map(|_| AtomicBool::new(false)).collect());
+    let mut set = JoinSet::new();
+    let mut results: Vec<Option<(Written, String)>> = vec![None; rows.len()];
+    for (i, row) in rows.into_iter().enumerate() {
+        let permits = permits.clone();
+        let events = events.clone();
+        let began = began.clone();
+        let write = write.clone();
+        set.spawn(async move {
+            // Waiting for a permit stops at the start deadline too, so a
+            // row queued behind slow writes is reported as not sent.
+            let Ok(Ok(_permit)) = tokio::time::timeout_at(start_by, permits.acquire_owned()).await
+            else {
+                return (i, (Written::NotStarted, String::new()));
+            };
+            if tokio::time::Instant::now() >= start_by {
+                return (i, (Written::NotStarted, String::new()));
+            }
+            let name = row.name.clone();
+            let exists = row.exists;
+            began[i].store(true, Ordering::SeqCst);
+            let res = events.run(&name, write(row)).await;
+            (i, outcome_of(&res, exists))
+        });
+    }
+    let stop = started + deadlines.stop;
+    loop {
+        match tokio::time::timeout_at(stop, set.join_next()).await {
+            Ok(Some(Ok((i, r)))) => results[i] = Some(r),
+            // A task that panicked: its result depends on whether it began.
+            Ok(Some(Err(_))) => {}
+            Ok(None) => break,
+            Err(_) => {
+                // Dropping the tasks writes a `cancelled` event for each
+                // write still in flight, and none for a row not begun.
+                set.abort_all();
+                while let Some(done) = set.join_next().await {
+                    if let Ok((i, r)) = done {
+                        results[i] = Some(r);
+                    }
+                }
+                break;
+            }
+        }
+    }
+    results
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let (result, why) = match r {
+                Some(r) => r,
+                None if began[i].load(Ordering::SeqCst) => (
+                    Written::Unknown,
+                    "Keyring stopped waiting for Key Vault. Open the secret to see whether it was written.".into(),
+                ),
+                None => (Written::NotStarted, String::new()),
+            };
+            if result == Written::NotStarted {
+                (
+                    result,
+                    "Not sent: the import ran out of time. Import the rest in a smaller file.".into(),
+                )
+            } else {
+                (result, why)
+            }
+        })
+        .collect()
+}
+
 /// What one write came to, and the reason code for the results page.
 fn outcome_of(res: &Result<(), AzureError>, exists: bool) -> (Written, String) {
     match res {
@@ -527,83 +633,50 @@ pub(crate) async fn confirm(
         .into());
     };
     let PendingImport { rows, skipped, .. } = import;
-    let events = ItemEvents::for_request(Action::SecretImport);
-    let started = tokio::time::Instant::now();
-    let permits = Arc::new(Semaphore::new(CONCURRENCY));
-    let mut set = JoinSet::new();
-    let mut results: Vec<Option<(Written, String)>> = vec![None; rows.len()];
-    let mut names: Vec<(String, String)> = Vec::with_capacity(rows.len());
-    for (i, row) in rows.into_iter().enumerate() {
-        names.push((row.original.clone(), row.name.clone()));
-        let permits = permits.clone();
-        let events = events.clone();
-        let azure = state.azure.clone();
-        let session = session.0.clone();
-        let vault_url = state.config.vault_url(&vault);
-        set.spawn(async move {
-            let _permit = permits.acquire_owned().await;
-            if started.elapsed() >= START_DEADLINE {
-                return (i, (Written::NotStarted, String::new()));
+    let names: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| (r.original.clone(), r.name.clone()))
+        .collect();
+    let azure = state.azure.clone();
+    let session_arc = session.0.clone();
+    let vault_url = state.config.vault_url(&vault);
+    let results = write_rows(
+        rows,
+        ItemEvents::for_request(Action::SecretImport),
+        Deadlines::STANDARD,
+        move |row: PendingSecret| {
+            let azure = azure.clone();
+            let session = session_arc.clone();
+            let vault_url = vault_url.clone();
+            async move {
+                let api = SecretsApi {
+                    azure: &azure,
+                    session: &session,
+                    vault_url,
+                };
+                let body = SetSecret {
+                    value: row.value,
+                    content_type: row.content_type,
+                    attributes: Attributes {
+                        enabled: Some(true),
+                        expires: row.expires,
+                        ..Attributes::default()
+                    },
+                    tags: Some(row.tags),
+                };
+                api.set(&row.name, &body).await.map(|_| ())
             }
-            let api = SecretsApi {
-                azure: &azure,
-                session: &session,
-                vault_url,
-            };
-            let body = SetSecret {
-                value: row.value,
-                content_type: row.content_type,
-                attributes: Attributes {
-                    enabled: Some(true),
-                    expires: row.expires,
-                    ..Attributes::default()
-                },
-                tags: Some(row.tags),
-            };
-            let res = events
-                .run(&row.name, async {
-                    api.set(&row.name, &body).await.map(|_| ())
-                })
-                .await;
-            (i, outcome_of(&res, row.exists))
-        });
-    }
-    let stop = started + STOP_DEADLINE;
-    loop {
-        match tokio::time::timeout_at(stop, set.join_next()).await {
-            Ok(Some(Ok((i, r)))) => results[i] = Some(r),
-            // A task that panicked: its result stays unknown.
-            Ok(Some(Err(_))) => {}
-            Ok(None) => break,
-            Err(_) => {
-                // Dropping the tasks writes a `cancelled` event for each
-                // write still in flight.
-                set.abort_all();
-                while set.join_next().await.is_some() {}
-                break;
-            }
-        }
-    }
-
+        },
+    )
+    .await;
     let mut out: Vec<ResultRow> = names
         .into_iter()
         .zip(results)
-        .map(|((original, name), r)| {
-            let (result, why) = r.unwrap_or((
-                Written::Unknown,
-                "Keyring stopped waiting for Key Vault. Open the secret to see whether it was written.".into(),
-            ));
-            let why = if result == Written::NotStarted {
-                "Not sent: the import ran out of time. Import the rest in a smaller file.".into()
-            } else {
-                why
-            };
-            ResultRow {
-                original,
-                name,
-                result,
-                why,
-            }
+        .map(|((original, name), (result, why))| ResultRow {
+            original,
+            name,
+            result,
+            why,
         })
         .collect();
     let written = out.iter().filter(|r| r.result.ok()).count();
@@ -655,6 +728,99 @@ mod tests {
     fn deadlines_sit_inside_the_request_limit() {
         assert!(START_DEADLINE < STOP_DEADLINE);
         assert!(STOP_DEADLINE + Duration::from_secs(15) <= crate::routes::headers::REQUEST_TIMEOUT);
+    }
+
+    fn row(name: &str) -> PendingSecret {
+        PendingSecret {
+            original: name.into(),
+            name: name.into(),
+            value: crate::secret::Secret::new("v"),
+            content_type: None,
+            expires: None,
+            tags: Default::default(),
+            exists: false,
+        }
+    }
+
+    // Each row's audit event comes from `ItemEvents::run` around its
+    // write, so a row whose write was never called writes no event, and
+    // one cut off in flight writes `cancelled` (tested in `audit`).
+    #[tokio::test]
+    async fn rows_queued_past_the_start_deadline_are_not_sent_and_not_unknown() {
+        let sent = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let rows: Vec<PendingSecret> = (0..10).map(|i| row(&format!("s{i}"))).collect();
+        // Every write hangs, so the four permits are never given back.
+        let calls = sent.clone();
+        let results = write_rows(
+            rows,
+            ItemEvents::for_request(Action::SecretImport),
+            Deadlines {
+                start: Duration::from_millis(200),
+                stop: Duration::from_millis(500),
+            },
+            move |r: PendingSecret| {
+                calls.lock().unwrap().push(r.name.clone());
+                async {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), CONCURRENCY, "only four writes began");
+        let kinds: Vec<Written> = results.iter().map(|r| r.0).collect();
+        assert_eq!(
+            kinds.iter().filter(|k| **k == Written::Unknown).count(),
+            CONCURRENCY,
+            "{kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter(|k| **k == Written::NotStarted).count(),
+            10 - CONCURRENCY,
+            "{kinds:?}"
+        );
+        for (i, (k, why)) in results.iter().enumerate() {
+            let name = format!("s{i}");
+            assert_eq!(*k == Written::Unknown, sent.contains(&name), "{name}");
+            if *k == Written::NotStarted {
+                assert!(why.starts_with("Not sent"), "{why}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_that_finish_are_reported_in_order() {
+        let rows: Vec<PendingSecret> = (0..6).map(|i| row(&format!("s{i}"))).collect();
+        let results = write_rows(
+            rows,
+            ItemEvents::for_request(Action::SecretImport),
+            Deadlines::STANDARD,
+            |r: PendingSecret| async move {
+                if r.name == "s3" {
+                    Err(AzureError::Status {
+                        status: 403,
+                        code: None,
+                        message: None,
+                    })
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await;
+        let kinds: Vec<Written> = results.iter().map(|r| r.0).collect();
+        assert_eq!(
+            kinds,
+            [
+                Written::Created,
+                Written::Created,
+                Written::Created,
+                Written::Denied,
+                Written::Created,
+                Written::Created
+            ]
+        );
     }
 
     #[test]
