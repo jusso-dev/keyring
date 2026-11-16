@@ -367,7 +367,15 @@ async fn sink_world(
     identity: &MockIdentity,
     required: bool,
 ) -> support::World {
-    let mut extra = vec![
+    let mut extra = sink_settings(ingest, identity);
+    if required {
+        extra.push(("KEYRING_AUDIT_REQUIRED", "true".to_owned()));
+    }
+    sink_world_with(extra).await
+}
+
+fn sink_settings(ingest: &MockIngestion, identity: &MockIdentity) -> Vec<(&'static str, String)> {
+    vec![
         (
             "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
             IDENTITY_CLIENT_ID.to_owned(),
@@ -380,10 +388,10 @@ async fn sink_world(
         ),
         ("KEYRING_AUDIT_DCR_ID", DCR_ID.to_owned()),
         ("KEYRING_TEST_AUDIT_INGESTION_URL", ingest.url()),
-    ];
-    if required {
-        extra.push(("KEYRING_AUDIT_REQUIRED", "true".to_owned()));
-    }
+    ]
+}
+
+async fn sink_world_with(extra: Vec<(&'static str, String)>) -> support::World {
     support::world_configured(extra, |c| {
         c.audit_sink.as_mut().unwrap().tuning = quick();
     })
@@ -624,4 +632,98 @@ async fn healthz_audit_is_off_without_the_sink() {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(support::body_text(res).await, "status=off\n");
     assert!(w.state.audit_sink.is_none());
+}
+
+#[tokio::test]
+async fn an_import_sends_one_row_for_each_secret_it_writes() {
+    let ingest = ingestion::start().await;
+    let identity = support::start_identity().await;
+    let w = sink_world(&ingest, &identity, false).await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"ONE=v1\nTWO=v2\n")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    let id = support::hidden_value(&html, "import_id").expect("import id on the preview");
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let sink = w.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    let rows = ingest.state.rows();
+    let mut names: Vec<String> = rows
+        .iter()
+        .filter(|r| r["Action"] == "secret.import" && r["ItemName"].is_string())
+        .map(|r| r["ItemName"].as_str().unwrap().to_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["ONE", "TWO"], "{rows:#?}");
+    assert!(
+        !format!("{rows:?}").contains("v1"),
+        "a value in the audit rows"
+    );
+}
+
+#[tokio::test]
+async fn an_import_with_a_reason_puts_it_on_each_secrets_row() {
+    let ingest = ingestion::start().await;
+    let identity = support::start_identity().await;
+    let mut extra = sink_settings(&ingest, &identity);
+    extra.push(("KEYRING_REQUIRE_REASON", "all".to_owned()));
+    let w = sink_world_with(extra).await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"ONE=v1\nTWO=v2\n")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    // The preview's own form asks for the reason.
+    assert!(html.contains("name=\"reason\""), "{html}");
+    let id = support::hidden_value(&html, "import_id").expect("import id on the preview");
+
+    // Without one, nothing is written.
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let writes = |w: &support::World| {
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("PUT"))
+            .count()
+    };
+    assert_eq!(writes(&w), 0);
+
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/import/confirm",
+            &[("import_id", &id), ("reason", "Moving the app's settings")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(writes(&w), 2);
+
+    let sink = w.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    let rows = ingest.state.rows();
+    let per_secret: Vec<&Value> = rows
+        .iter()
+        .filter(|r| {
+            r["Action"] == "secret.import" && r["ItemName"].is_string() && r["Outcome"] == "success"
+        })
+        .collect();
+    assert_eq!(per_secret.len(), 2, "{rows:#?}");
+    for r in per_secret {
+        assert_eq!(r["Reason"], "Moving the app's settings", "{r:#?}");
+    }
 }

@@ -58,6 +58,9 @@ pub enum Action {
     SecretDelete,
     SecretRecover,
     SecretPurge,
+    /// A file of secrets imported. One event for the request, and one per
+    /// secret written, with that secret's name and outcome.
+    SecretImport,
     CertificateDownloadPrivateKey,
     CertificateUpload,
     CertificateCreate,
@@ -85,7 +88,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 30] = [
+    pub const ALL: [Action; 31] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -95,6 +98,7 @@ impl Action {
         Self::SecretDelete,
         Self::SecretRecover,
         Self::SecretPurge,
+        Self::SecretImport,
         Self::CertificateDownloadPrivateKey,
         Self::CertificateUpload,
         Self::CertificateCreate,
@@ -129,6 +133,7 @@ impl Action {
             Self::SecretDelete => "secret.delete",
             Self::SecretRecover => "secret.recover",
             Self::SecretPurge => "secret.purge",
+            Self::SecretImport => "secret.import",
             Self::CertificateDownloadPrivateKey => "certificate.download_private_key",
             Self::CertificateUpload => "certificate.upload",
             Self::CertificateCreate => "certificate.create",
@@ -538,6 +543,106 @@ pub fn note_azure_error(err: &AzureError) {
         AzureError::Unreadable => (Outcome::Failed, "unreadable".into()),
     };
     note(|d| d.azure = Some((outcome, safe_code(&code))));
+}
+
+/// Who and where the request in progress came from, kept so a request
+/// that changes many items can write an event for each one. Taken inside
+/// the request, then usable from tasks spawned by it (which don't see the
+/// request's own draft).
+#[derive(Debug, Clone)]
+pub struct ItemEvents {
+    action: Action,
+    actor_oid: Option<String>,
+    actor_tid: Option<String>,
+    actor_upn: Option<String>,
+    session_ref: Option<String>,
+    client_ip: Option<String>,
+    user_agent: Option<String>,
+    vault: Option<String>,
+    /// The reason and ticket given for the request, repeated on each
+    /// item's event.
+    reason: Option<String>,
+    ticket: Option<String>,
+    /// The audit sink, so each item's event is sent as the request's is.
+    sink: Option<Arc<sink::AuditSink>>,
+}
+
+impl ItemEvents {
+    /// The person, session, browser and vault of the request in progress.
+    /// `sink` is the app's audit sink, if one is set.
+    pub fn for_request(action: Action, sink: Option<Arc<sink::AuditSink>>) -> Self {
+        let mut me = Self {
+            action,
+            sink,
+            actor_oid: None,
+            actor_tid: None,
+            actor_upn: None,
+            session_ref: None,
+            client_ip: None,
+            user_agent: None,
+            vault: None,
+            reason: None,
+            ticket: None,
+        };
+        note(|d| {
+            me.actor_oid.clone_from(&d.actor_oid);
+            me.actor_tid.clone_from(&d.actor_tid);
+            me.actor_upn.clone_from(&d.actor_upn);
+            me.session_ref.clone_from(&d.session_ref);
+            me.client_ip.clone_from(&d.client_ip);
+            me.user_agent.clone_from(&d.user_agent);
+            me.vault.clone_from(&d.vault);
+            me.reason.clone_from(&d.reason);
+            me.ticket.clone_from(&d.ticket);
+        });
+        me
+    }
+
+    /// Run `work` on one item and write one event for it: `success` if it
+    /// returns `Ok`, otherwise what its failed Azure call said. The event
+    /// carries the item name, and the `kv_request_id` of `work`'s own last
+    /// Key Vault call. If `work` is dropped before it finishes, the event
+    /// says `failed` with `cancelled`. `item` must be a checked name.
+    pub async fn run<T, E>(
+        &self,
+        item: &str,
+        work: impl std::future::Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
+        let draft = Arc::new(Mutex::new(Draft {
+            action: Some(self.action),
+            actor_oid: self.actor_oid.clone(),
+            actor_tid: self.actor_tid.clone(),
+            actor_upn: self.actor_upn.clone(),
+            session_ref: self.session_ref.clone(),
+            client_ip: self.client_ip.clone(),
+            user_agent: self.user_agent.clone(),
+            vault: self.vault.clone(),
+            reason: self.reason.clone(),
+            ticket: self.ticket.clone(),
+            item_name: Some(item.to_owned()),
+            ..Draft::default()
+        }));
+        let mut pending = Pending {
+            draft: draft.clone(),
+            sink: self.sink.clone(),
+            done: false,
+        };
+        let res = CTX.scope(draft.clone(), work).await;
+        pending.done = true;
+        let mut d = std::mem::take(&mut *lock(&draft));
+        let status = if res.is_ok() {
+            axum::http::StatusCode::OK
+        } else {
+            // A failure that wasn't an Azure call (none today) still counts.
+            d.azure
+                .get_or_insert((Outcome::Failed, "failed".to_owned()));
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        };
+        if let Some(ev) = finish(d, status) {
+            record(ev, self.sink.as_deref());
+        }
+        res
+    }
 }
 
 /// Middleware, outside everything but the request log: hold a draft for
