@@ -14,10 +14,10 @@
 <div class="actions">
   <form method="post" action="{{ kind.deleted_url(vault, row.name) }}/recover">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-    <button type="submit">Recover {{ row.name }}</button>
+    <button type="submit"{{ ui::needs_attrs(hints.needs(Action::recover(*kind)), "recover") }}>Recover {{ row.name }}</button>{{ ui::needs_note(hints.needs(Action::recover(*kind)), "recover") }}
   </form>
   {% if allow_purge && !row.recovery.purge_protected %}
-  <a class="button button-danger" href="{{ kind.deleted_url(vault, row.name) }}/purge">Permanently delete</a>
+  {{ ui::link_button(hints.needs(Action::purge(*kind)), "purge", "{}/purge"|format(kind.deleted_url(vault, row.name)), "button button-danger", "Permanently delete") }}
   {% endif %}
 </div>
 {% endblock %}

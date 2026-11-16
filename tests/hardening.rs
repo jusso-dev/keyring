@@ -18,6 +18,9 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/secrets/db-password/delete",
     "/v/kv-test/secrets/-/deleted/old-secret/recover",
     "/v/kv-test/secrets/-/deleted/old-secret/purge",
+    "/v/kv-test/secrets/-/import",
+    "/v/kv-test/secrets/-/import/confirm",
+    "/v/kv-test/secrets/-/import/cancel",
     "/v/kv-test/certificates/-/upload",
     "/v/kv-test/certificates/-/upload/confirm",
     "/v/kv-test/certificates/-/upload/cancel",
@@ -143,7 +146,16 @@ async fn every_mutating_route_refuses_a_forged_token() {
     let before = kv_snapshot(&w);
     let reads_before = w.kv.state.value_reads().len();
     for path in MUTATING {
-        let status = if *path == "/v/kv-test/certificates/-/upload" {
+        let status = if *path == "/v/kv-test/secrets/-/import" {
+            // Multipart, with a real file, so only the token is wrong.
+            w.post_multipart_with_csrf(
+                "forged-token",
+                path,
+                &[support::Part::File("file", ".env", b"NEW_ONE=x\n")],
+            )
+            .await
+            .status()
+        } else if *path == "/v/kv-test/certificates/-/upload" {
             // Multipart, with a real file, so only the token is wrong.
             let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
             w.post_multipart_with_csrf(

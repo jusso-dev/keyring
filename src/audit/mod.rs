@@ -7,7 +7,9 @@
 //! Keyring refused, and the `x-ms-client-request-id` that joins an event to
 //! Key Vault's own row.
 //!
-//! Every event goes through [`record`]. During a request, [`layer`] keeps a
+//! Every event goes through [`record`], which writes it to standard output
+//! and, when the audit sink ([`sink`]) is set, queues it to be sent to Log
+//! Analytics as well. During a request, [`layer`] keeps a
 //! draft that the route, the guards (form token, origin, typed name, purge
 //! off, managed item) and the Azure client add to. When the request
 //! finishes, the layer writes exactly one event if the request was for an
@@ -18,6 +20,8 @@
 //! version bump and a CHANGELOG line (`tests/audit_events.rs` pins them).
 //! Never put a value, token, password, query string or Azure's error
 //! message in an event.
+
+pub mod sink;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -54,6 +58,9 @@ pub enum Action {
     SecretDelete,
     SecretRecover,
     SecretPurge,
+    /// A file of secrets imported. One event for the request, and one per
+    /// secret written, with that secret's name and outcome.
+    SecretImport,
     CertificateDownloadPrivateKey,
     CertificateUpload,
     CertificateCreate,
@@ -81,7 +88,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 30] = [
+    pub const ALL: [Action; 31] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -91,6 +98,7 @@ impl Action {
         Self::SecretDelete,
         Self::SecretRecover,
         Self::SecretPurge,
+        Self::SecretImport,
         Self::CertificateDownloadPrivateKey,
         Self::CertificateUpload,
         Self::CertificateCreate,
@@ -125,6 +133,7 @@ impl Action {
             Self::SecretDelete => "secret.delete",
             Self::SecretRecover => "secret.recover",
             Self::SecretPurge => "secret.purge",
+            Self::SecretImport => "secret.import",
             Self::CertificateDownloadPrivateKey => "certificate.download_private_key",
             Self::CertificateUpload => "certificate.upload",
             Self::CertificateCreate => "certificate.create",
@@ -209,6 +218,9 @@ pub enum Refusal {
     StaleSignIn,
     /// Entra's ID token failed Keyring's checks.
     IdTokenRejected,
+    /// `KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded, so a
+    /// reveal or private key download was refused.
+    AuditUnavailable,
     /// A sensitive action needs a stronger or more recent sign-in
     /// (`KEYRING_STEP_UP_*`). The person was asked to confirm it's them.
     StepUpRequired,
@@ -219,7 +231,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 11] = [
+    pub const ALL: [Refusal; 12] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -229,6 +241,7 @@ impl Refusal {
         Self::InvalidRequest,
         Self::StaleSignIn,
         Self::IdTokenRejected,
+        Self::AuditUnavailable,
         Self::StepUpRequired,
         Self::StepUpNotMet,
     ];
@@ -244,6 +257,7 @@ impl Refusal {
             Self::InvalidRequest => "invalid_request",
             Self::StaleSignIn => "stale_sign_in",
             Self::IdTokenRejected => "id_token_rejected",
+            Self::AuditUnavailable => "audit_unavailable",
             Self::StepUpRequired => "step_up_required",
             Self::StepUpNotMet => "step_up_not_met",
         }
@@ -342,8 +356,10 @@ fn opt(v: &Option<String>) -> Option<tracing::field::DisplayValue<&str>> {
     v.as_deref().map(tracing::field::display)
 }
 
-/// Write one audit event. The only way an event is written.
-pub fn record(ev: AuditEvent) {
+/// Write one audit event to standard output and, with the audit sink set,
+/// queue it for Log Analytics. The only way an event is written. The actor
+/// is already on the event, from the verified session.
+pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
     // Fields from Keyring or checked on the way in are written as they are.
     // The user agent, UPN and the free text of #205 are written as plain
     // strings, which the text format quotes and escapes, so a crafted
@@ -374,6 +390,9 @@ pub fn record(ev: AuditEvent) {
         instance = tracing::field::display(instance()),
         "audit"
     );
+    if let Some(sink) = sink {
+        sink.enqueue(&ev);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -505,6 +524,96 @@ pub fn note_azure_error(err: &AzureError) {
     note(|d| d.azure = Some((outcome, safe_code(&code))));
 }
 
+/// Who and where the request in progress came from, kept so a request
+/// that changes many items can write an event for each one. Taken inside
+/// the request, then usable from tasks spawned by it (which don't see the
+/// request's own draft).
+#[derive(Debug, Clone)]
+pub struct ItemEvents {
+    action: Action,
+    actor_oid: Option<String>,
+    actor_tid: Option<String>,
+    actor_upn: Option<String>,
+    session_ref: Option<String>,
+    client_ip: Option<String>,
+    user_agent: Option<String>,
+    vault: Option<String>,
+    /// The audit sink, so each item's event is sent as the request's is.
+    sink: Option<Arc<sink::AuditSink>>,
+}
+
+impl ItemEvents {
+    /// The person, session, browser and vault of the request in progress.
+    /// `sink` is the app's audit sink, if one is set.
+    pub fn for_request(action: Action, sink: Option<Arc<sink::AuditSink>>) -> Self {
+        let mut me = Self {
+            action,
+            sink,
+            actor_oid: None,
+            actor_tid: None,
+            actor_upn: None,
+            session_ref: None,
+            client_ip: None,
+            user_agent: None,
+            vault: None,
+        };
+        note(|d| {
+            me.actor_oid.clone_from(&d.actor_oid);
+            me.actor_tid.clone_from(&d.actor_tid);
+            me.actor_upn.clone_from(&d.actor_upn);
+            me.session_ref.clone_from(&d.session_ref);
+            me.client_ip.clone_from(&d.client_ip);
+            me.user_agent.clone_from(&d.user_agent);
+            me.vault.clone_from(&d.vault);
+        });
+        me
+    }
+
+    /// Run `work` on one item and write one event for it: `success` if it
+    /// returns `Ok`, otherwise what its failed Azure call said. The event
+    /// carries the item name, and the `kv_request_id` of `work`'s own last
+    /// Key Vault call. If `work` is dropped before it finishes, the event
+    /// says `failed` with `cancelled`. `item` must be a checked name.
+    pub async fn run<T, E>(
+        &self,
+        item: &str,
+        work: impl std::future::Future<Output = Result<T, E>>,
+    ) -> Result<T, E> {
+        let draft = Arc::new(Mutex::new(Draft {
+            action: Some(self.action),
+            actor_oid: self.actor_oid.clone(),
+            actor_tid: self.actor_tid.clone(),
+            actor_upn: self.actor_upn.clone(),
+            session_ref: self.session_ref.clone(),
+            client_ip: self.client_ip.clone(),
+            user_agent: self.user_agent.clone(),
+            vault: self.vault.clone(),
+            item_name: Some(item.to_owned()),
+            ..Draft::default()
+        }));
+        let mut pending = Pending {
+            draft: draft.clone(),
+            sink: self.sink.clone(),
+            done: false,
+        };
+        let res = CTX.scope(draft.clone(), work).await;
+        pending.done = true;
+        let mut d = std::mem::take(&mut *lock(&draft));
+        let status = if res.is_ok() {
+            axum::http::StatusCode::OK
+        } else {
+            // A failure that wasn't an Azure call (none today) still counts.
+            d.azure
+                .get_or_insert((Outcome::Failed, "failed".to_owned()));
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        };
+        if let Some(ev) = finish(d, status) {
+            record(ev, self.sink.as_deref());
+        }
+        res
+    }
+}
+
 /// Middleware, outside everything but the request log: hold a draft for
 /// the request and write its event when the request finishes, if the
 /// request was for an audited action.
@@ -522,13 +631,14 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     let draft = Arc::new(Mutex::new(draft));
     let mut pending = Pending {
         draft: draft.clone(),
+        sink: state.audit_sink.clone(),
         done: false,
     };
     let res = CTX.scope(draft.clone(), next.run(req)).await;
     pending.done = true;
     let d = std::mem::take(&mut *lock(&draft));
     if let Some(ev) = finish(d, res.status()) {
-        record(ev);
+        record(ev, state.audit_sink.as_deref());
     }
     res
 }
@@ -538,6 +648,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
 /// have been called by then, so the request still gets its event.
 struct Pending {
     draft: Arc<Mutex<Draft>>,
+    sink: Option<Arc<sink::AuditSink>>,
     done: bool,
 }
 
@@ -548,7 +659,7 @@ impl Drop for Pending {
         }
         let d = std::mem::take(&mut *lock(&self.draft));
         if let Some(ev) = finish_cancelled(d) {
-            record(ev);
+            record(ev, self.sink.as_deref());
         }
     }
 }

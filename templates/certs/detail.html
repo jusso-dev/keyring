@@ -31,14 +31,14 @@
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/download-key">Download with private key</a>
   {% endif %}{% endif %}
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=certificate">Who used it</a>
-  <a class="button button-danger" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/delete">Delete</a>
+  {{ ui::link_button(hints.needs(Action::DeleteCertificate), "delete", "{}/certificates/{}/delete"|format(shell.vault_prefix(), row.name), "button button-danger", "Delete") }}
   {% if row.enabled %}
-  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/disable">Disable</a>
+  {{ ui::link_button(hints.needs(Action::UpdateCertificate), "disable", "{}/certificates/{}/disable"|format(shell.vault_prefix(), row.name), "button button-secondary", "Disable") }}
   {% else %}
   <form method="post" action="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="state" value="on">
-    <button type="submit" class="button-secondary">Enable</button>
+    <button type="submit" class="button-secondary"{{ ui::needs_attrs(hints.needs(Action::UpdateCertificate), "enable") }}>Enable</button>{{ ui::needs_note(hints.needs(Action::UpdateCertificate), "enable") }}
   </form>
   {% endif %}
 </div>
@@ -104,6 +104,7 @@
   {% endif %}
 </section>
 
+{% include "_used_by.html" %}
 <section aria-labelledby="access-heading">
   <h2 id="access-heading">Access</h2>
   <p>Who can reach this certificate, including role assignments on the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>

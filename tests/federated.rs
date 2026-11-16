@@ -304,7 +304,7 @@ async fn callers_queued_behind_a_failed_fetch_share_its_failure() {
     // 30 second timeout is too long for a test, so the service closes the
     // connection after 300 ms instead (below).
     let http = keyring::http::local_client().unwrap();
-    let source = Arc::new(keyring::auth::assertion::AssertionSource::new(
+    let source = Arc::new(keyring::auth::assertion::ManagedIdentityTokens::new(
         format!("http://{addr}/msi/token"),
         Secret::new("header"),
         support::IDENTITY_CLIENT_ID.into(),

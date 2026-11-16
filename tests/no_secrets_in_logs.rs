@@ -87,6 +87,44 @@ async fn values_never_reach_the_logs() {
         .await;
     assert_eq!(w.kv.state.imports.lock().unwrap().len(), 1);
 
+    // A secrets import, a write refused part way, and a CSV parse error
+    // on a row holding a value.
+    let quoted = VALUE.replace('"', "\\\"");
+    let env = format!("IMPORT_ONE=\"{quoted}\"\nIMPORT_TWO=Imp0rtLeak-2\n");
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", env.as_bytes())],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(!html.contains("Sup3r-S3cret") && !html.contains("Imp0rtLeak"));
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
+    *w.kv.state.fail_path.lock().unwrap() = Some("IMPORT-TWO".into());
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    let html = support::body_text(res).await;
+    *w.kv.state.fail.lock().unwrap() = None;
+    *w.kv.state.fail_path.lock().unwrap() = None;
+    assert!(html.contains("Imported 1 secret"), "{html}");
+    assert!(!html.contains("Sup3r-S3cret") && !html.contains("Imp0rtLeak"));
+    assert_eq!(w.kv.state.current("IMPORT-ONE").unwrap().value, VALUE);
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                "a.csv",
+                b"name,value\nx,Imp0rtLeak-3,extra\n",
+            )],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(html.contains("Line 2 has 3 fields"), "{html}");
+    assert!(!html.contains("Imp0rtLeak"));
+
     // A generated value.
     let res = w
         .post(
@@ -114,6 +152,63 @@ async fn values_never_reach_the_logs() {
     assert!(html.contains(">db-password<"), "found by search");
     assert!(!html.contains("Sup3r-S3cret"), "search never shows a value");
 
+    // "Used by" on Set a new value, with a workspace that fails: the
+    // failure is logged, but never the query or Azure's message.
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::settings_to("logs", true));
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs".into(), 500)];
+    let res = w.get("/v/kv-test/secrets/db-password/value").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    assert!(html.contains("Used by in the last 30 days"));
+    assert!(
+        !html.contains("Sup3r-S3cret"),
+        "the form never shows the value"
+    );
+    // The audit sink: a world that sends events to Log Analytics with the
+    // managed identity, through a refusal, a retry and a success. Neither
+    // the identity's token, its header nor a row's body reaches the log.
+    let ingest = support::ingestion::start().await;
+    let identity = support::start_identity().await;
+    let sw = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", identity.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_AUDIT_INGESTION_ENDPOINT",
+                "https://keyring-audit.australiaeast-1.ingest.monitor.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_AUDIT_DCR_ID",
+                support::ingestion::DCR_ID.to_owned(),
+            ),
+            ("KEYRING_TEST_AUDIT_INGESTION_URL", ingest.url()),
+        ],
+        |c| {
+            let t = &mut c.audit_sink.as_mut().unwrap().tuning;
+            t.backoff_first = std::time::Duration::from_millis(10);
+        },
+    )
+    .await;
+    sw.kv.state.put("db-password", VALUE);
+    {
+        let mut script = ingest.state.script.lock().unwrap();
+        script.push_back((403, None));
+        script.push_back((500, None));
+        script.push_back((400, None));
+    }
+    for _ in 0..2 {
+        let res = sw.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
+        let _ = support::body_text(res).await;
+    }
+    let sink = sw.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    assert!(ingest.state.violations().is_empty());
+    assert!(sink.health().dropped_rejected >= 1, "{:?}", sink.health());
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -126,10 +221,23 @@ async fn values_never_reach_the_logs() {
         "the reveal itself is logged: {logs}"
     );
     assert!(
+        logs.contains("action=secret.import outcome=success")
+            && logs.contains("item_name=IMPORT-ONE"),
+        "the import is logged per secret: {logs}"
+    );
+    assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
+    assert!(
         !logs.contains("Sup3r-S3cret"),
         "value leaked into logs:\n{logs}"
     );
     assert!(!logs.contains("QUERYLEAK"), "query string leaked:\n{logs}");
+    assert!(
+        logs.contains("used-by workspace query failed"),
+        "the failed panel read is logged: {logs}"
+    );
+    for kql in ["let vaultName", "summarize Reads", "itemName"] {
+        assert!(!logs.contains(kql), "KQL leaked into logs:\n{logs}");
+    }
     assert!(
         logs.lines().any(|l| l.contains("request")
             && l.contains("method=GET")
@@ -157,6 +265,23 @@ async fn values_never_reach_the_logs() {
     assert!(!logs.contains("user-api-token"), "token leaked into logs");
     assert!(!logs.contains("obo:"), "token leaked into logs");
     assert!(
+        !logs.contains(support::MI_MONITOR_TOKEN),
+        "identity token leaked"
+    );
+    assert!(
+        !logs.contains(support::IDENTITY_HEADER),
+        "identity header leaked"
+    );
+    assert!(
+        !logs.contains("WriterIdentityClientId"),
+        "a sink row was logged"
+    );
+    assert!(
+        logs.contains("audit sink: ingestion refused a batch; dropped status=400")
+            || logs.contains("status=400"),
+        "the sink logs the status: {logs}"
+    );
+    assert!(
         !logs.contains("private detail"),
         "Azure message leaked into logs"
     );
@@ -168,8 +293,12 @@ async fn values_never_reach_the_logs() {
         "QUERYLEAK",
         "Upl0ad-Passw0rd",
         "GENLEAK_",
+        "Imp0rtLeak",
         "user-api-token",
         "obo:",
+        support::MI_MONITOR_TOKEN,
+        support::IDENTITY_HEADER,
+        "WriterIdentityClientId",
         "private detail",
         w.cookie.as_str(),
         w.csrf.as_str(),
@@ -185,6 +314,13 @@ async fn values_never_reach_the_logs() {
             .iter()
             .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
         "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.import"
+            && l["item_name"] == "IMPORT-TWO"
+            && l["outcome"] == "failed"),
+        "a failed import write is an audit event"
     );
     assert!(
         lines.iter().any(|l| l["kind"] == "log"

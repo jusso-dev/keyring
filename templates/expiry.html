@@ -6,6 +6,7 @@
 <nav aria-label="Expiry views"><p class="view-switch"><a href="/expiry" aria-current="page">By expiry date</a> <a href="/expiry/age">By time since the value changed</a></p></nav>
 <p>Secrets, certificates and keys across your vaults, by when they expire. Only names and dates are read, never values.</p>
 <p class="muted">To get an email before things expire, ask whoever runs Keyring to set up <a href="https://github.com/jusso-dev/keyring/blob/main/docs/alerts.md" rel="noopener noreferrer">expiry alerts</a>.</p>
+<p class="muted">This covers Key Vault only, not secrets and certificates on app registrations. See <a href="https://github.com/jusso-dev/keyring/blob/main/docs/app-credentials.md" rel="noopener noreferrer">app registration credentials</a>.</p>
 
 <form class="filters" method="get" action="/expiry" role="search">
   <div>
@@ -51,6 +52,30 @@
   {% endfor %}
 </ul>
 </nav>
+
+{% if !failed.is_empty() %}
+<section aria-labelledby="rotation-failed">
+  <h2 id="rotation-failed">Rotation failed <span class="muted">({{ failed.len() }})</span></h2>
+  <p class="muted">Secrets whose <span class="mono">rotation-status</span> tag says <span class="mono">failed</span>. This is what the tags say, not something Keyring checked. See <a href="https://github.com/jusso-dev/keyring/blob/main/docs/rotation.md" rel="noopener noreferrer">rotation</a>.</p>
+  {% call ui::table_wrap("rotation-failed-caption") %}
+  <table class="ledger">
+    <caption class="visually-hidden" id="rotation-failed-caption">Rotation failed</caption>
+    <thead><tr><th scope="col">Name</th><th scope="col">Vault</th><th scope="col">Rotated by</th><th scope="col">Last attempt</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <tbody>
+      {% for f in failed %}
+      <tr>
+        <th scope="row" class="mono">{{ f.name }} <span class="{{ f.rotation.status.css() }}">{{ f.rotation.status.label() }}</span></th>
+        <td class="mono">{{ f.vault }}</td>
+        <td class="mono">{{ f.rotation.by }}</td>
+        <td class="nowrap">{{ f.rotation.last }}</td>
+        <td><a class="button button-small" href="/v/{{ f.vault }}/secrets/{{ f.name }}">Open<span class="visually-hidden"> {{ f.name }} in {{ f.vault }}</span></a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+</section>
+{% endif %}
 
 {% if unknown_vault %}
 <div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry">Show all vaults</a></p></div>

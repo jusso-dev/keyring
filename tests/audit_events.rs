@@ -40,6 +40,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "forgets the file held in memory; nothing sent to Key Vault",
     ),
     (
+        "/v/{vault}/secrets/-/import",
+        "preview: reads the file of secrets and holds it in memory; only lists names in Key Vault, nothing written or read back",
+    ),
+    (
+        "/v/{vault}/secrets/-/import/cancel",
+        "forgets the file of secrets held in memory; nothing sent to Key Vault",
+    ),
+    (
         "/v/{vault}/secrets/{name}",
         "only redirects an old form address",
     ),
@@ -277,6 +285,71 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
     "vault",
 ];
 
+/// The audit sink's columns, `COLUMNS` in `src/audit/sink.rs`, are the one
+/// list: the Bicep stream and table must match it, and every schema field
+/// must have a column. Fails if any of the three drift apart.
+#[test]
+fn sink_columns_match_the_bicep_and_the_schema() {
+    use keyring::audit::sink::{COLUMNS, WRITER};
+    let bicep = include_str!("../infra/modules/audit-sink.bicep");
+    // `{ name: 'X', type: 'y' }` lines in the stream declaration.
+    let start = bicep.find("var streamColumns = [").expect("streamColumns");
+    let end = start + bicep[start..].find("\n]").expect("end of streamColumns");
+    let declared: Vec<(String, String)> = bicep[start..end]
+        .lines()
+        .filter_map(|l| {
+            let name = l.split("name: '").nth(1)?.split('\'').next()?;
+            let kind = l.split("type: '").nth(1)?.split('\'').next()?;
+            Some((name.to_owned(), kind.to_owned()))
+        })
+        .collect();
+    let ours: Vec<(String, String)> = COLUMNS
+        .iter()
+        .map(|c| (c.stream.to_owned(), c.kind.to_owned()))
+        .collect();
+    assert_eq!(
+        declared, ours,
+        "infra/modules/audit-sink.bicep streamColumns"
+    );
+    // The table is the stream with `time` as TimeGenerated.
+    assert!(bicep.contains("[{ name: 'TimeGenerated', type: 'datetime' }]"));
+    assert!(bicep.contains("filter(streamColumns, c => c.name != 'time')"));
+    assert!(bicep.contains("source | extend TimeGenerated = todatetime(time) | project-away time"));
+    let time = COLUMNS.iter().find(|c| c.field == "time").unwrap();
+    assert_eq!((time.name, time.stream), ("TimeGenerated", "time"));
+    for c in COLUMNS.iter().filter(|c| c.field != "time") {
+        assert_eq!(c.name, c.stream, "only time is renamed");
+    }
+
+    // Every schema field has a column, and every column is a schema field
+    // or the writer. `kind`, `level` and `message` are log line fields.
+    let fields: Vec<&str> = COLUMNS
+        .iter()
+        .map(|c| c.field)
+        .filter(|f| *f != WRITER)
+        .collect();
+    let mut want: Vec<&str> = SCHEMA_V1_FIELDS
+        .iter()
+        .copied()
+        .filter(|f| !matches!(*f, "kind" | "level" | "message"))
+        .collect();
+    let mut got = fields.clone();
+    want.sort_unstable();
+    got.sort_unstable();
+    assert_eq!(got, want, "COLUMNS and SCHEMA_V1_FIELDS");
+    // The writer and actor columns the issue names.
+    for name in [
+        "WriterIdentityClientId",
+        "KeyringInstance",
+        "KeyringVersion",
+        "ActorObjectId",
+        "ActorTenantId",
+        "ActorUpn",
+    ] {
+        assert!(COLUMNS.iter().any(|c| c.name == name), "{name}");
+    }
+}
+
 #[tokio::test]
 async fn audited_routes_write_exactly_one_event() {
     let capture = Capture::default();
@@ -310,7 +383,7 @@ async fn audited_routes_write_exactly_one_event() {
         ev.kv_request_id = Some("11111111-2222-4333-8444-555555555555".into());
         ev.reason = Some("why".into());
         ev.ticket = Some("CHG-1".into());
-        record(ev.clone());
+        record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");
         let got = capture.one_event("golden");
@@ -331,7 +404,10 @@ async fn audited_routes_write_exactly_one_event() {
         assert_eq!(got["event_id"], ev.event_id.as_str());
         assert_eq!(got["keyring_version"], env!("CARGO_PKG_VERSION"));
         // Absent fields are left out, not null.
-        record(AuditEvent::new(Action::SessionSignOut, Outcome::Success));
+        record(
+            AuditEvent::new(Action::SessionSignOut, Outcome::Success),
+            None,
+        );
         let bare = capture.one_event("bare");
         let keys: Vec<&str> = bare
             .as_object()
@@ -500,6 +576,89 @@ async fn audited_routes_write_exactly_one_event() {
         (ev["action"].as_str(), ev["outcome"].as_str()),
         (Some("key.delete"), Some("success"))
     );
+
+    // --- An import: one event for the request, one per secret written ---
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                ".env",
+                b"NEW_ONE=a\ndb-password=b\nold-secret=c\n",
+            )],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert_eq!(
+        capture.take_events(),
+        Vec::<Value>::new(),
+        "preview writes none"
+    );
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    let status = post(
+        &w,
+        "/v/kv-test/secrets/-/import/confirm",
+        &w.csrf,
+        &[("import_id", &id)],
+        &[SAME_SITE, ("user-agent", "ImportBrowser/1.0")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let events = capture.take_events();
+    assert_eq!(events.len(), 3, "two secrets and the request: {events:#?}");
+    assert!(events.iter().all(|e| e["action"] == "secret.import"));
+    assert!(events.iter().all(|e| e["actor_oid"] == OID
+        && e["session_ref"].is_string()
+        && e["user_agent"] == "ImportBrowser/1.0"
+        && e["vault"] == "kv-test"
+        && e["outcome"] == "success"));
+    let mut items: Vec<&str> = events
+        .iter()
+        .filter_map(|e| e["item_name"].as_str())
+        .collect();
+    items.sort_unstable();
+    assert_eq!(
+        items,
+        ["NEW-ONE", "db-password"],
+        "old-secret is blocked, so not sent"
+    );
+    assert!(
+        events
+            .iter()
+            .filter(|e| e.get("item_name").is_some())
+            .all(|e| e["kv_request_id"].is_string())
+    );
+    // A refused write: its own event says denied, and so does the request.
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"A=1\n")],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    *w.kv.state.fail.lock().unwrap() = Some((403, "ForbiddenByRbac"));
+    let _ = post(
+        &w,
+        "/v/kv-test/secrets/-/import/confirm",
+        &w.csrf,
+        &[("import_id", &id)],
+        &[SAME_SITE],
+    )
+    .await;
+    *w.kv.state.fail.lock().unwrap() = None;
+    let events = capture.take_events();
+    assert_eq!(events.len(), 2, "{events:#?}");
+    let item = events.iter().find(|e| e["item_name"] == "A").unwrap();
+    assert_eq!(item["outcome"], "denied");
+    assert_eq!(item["reason_code"], "ForbiddenByRbac");
+    let whole = events
+        .iter()
+        .find(|e| e.get("item_name").is_none())
+        .unwrap();
+    assert_eq!(whole["outcome"], "denied");
+    assert_eq!(whole["reason_code"], "none_written");
+    assert!(!format!("{events:?}").contains("private detail"));
 
     // --- A managed item -------------------------------------------------
     w.kv.state.put("managed-one", "x");

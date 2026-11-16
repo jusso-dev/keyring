@@ -121,17 +121,19 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 
 - **Sign in with Entra ID** (OpenID Connect).
 - **Find your vaults** across every subscription you can see, using Azure Resource Graph.
-- **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover. Purge is off unless an admin turns it on.
+- **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create, edit, view versions and roll back, enable or disable, set expiry and tags, soft-delete and recover, and import many at once from a `.env` or CSV file after a preview of names (never values). Purge is off unless an admin turns it on. There is no export.
 - **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, change what happens near expiry, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Rotation status** from tags: a secret's page shows what its `rotation`, `rotation-last` and `rotation-status` tags say about its last rotation, and the expiry dashboard lists secrets whose rotation failed. Keyring reads the tags only; see [docs/rotation.md](docs/rotation.md).
 - **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
 - **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Access**: who can reach a vault and each item in it, from Azure role assignments (including ones made on the resource group or subscription, and PIM eligible ones) or a vault's access policies, with CSV export. People, groups and apps are shown by object ID and type with a link to the portal; Keyring doesn't look up names, so it needs no Microsoft Graph permission. Reader on the vault is enough.
 - **Pinned and recently opened**: pin a vault, secret, certificate or key with the **Pin** button under its heading. The home page and the vault list show what you've pinned and the last 10 items you opened. Kept in your browser only (names and paths, never values), cleared when you sign out, with a Clear button. Pages work the same without it.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
+- **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, it says why and you can still go ahead.
 - Deletes need you to type the item's name first.
 
 ## How access works
@@ -142,7 +144,13 @@ Browser ──OIDC──> Keyring ──on-behalf-of──> Entra ID ──token
 
 1. You sign in with Entra ID. Keyring gets an access token for its own API.
 2. Keyring swaps that token for Key Vault and Azure Resource Manager tokens using the [on-behalf-of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow).
-3. Each request goes to Azure as you. Keyring has no managed identity or service principal with vault access of its own. (A deployment can use its managed identity to prove to Entra that it is the Keyring app, in place of a client secret. That identity still has no access to any vault. See [step 2](#2-choose-how-keyring-proves-it-is-this-app).)
+3. Each request goes to Azure as you. Keyring has no managed identity or service principal with vault access of its own.
+
+Exactly who makes each call:
+
+- **As you (on-behalf-of):** everything that reads or changes Key Vault, Resource Graph, ARM or Log Analytics data on your behalf.
+- **As Keyring's managed identity:** proving to Entra that it is the Keyring app, in place of a client secret (the federated credential, [step 2](#2-choose-how-keyring-proves-it-is-this-app)), and writing rows to the audit sink (Keyring's own audit events, sent to a Log Analytics table, [docs/deploy.md](docs/deploy.md#audit-sink)). Nothing else, and never a client secret or a second identity for these.
+- **The identity's roles:** reading Keyring's own config secrets, and Monitoring Metrics Publisher on the one audit data collection rule. No role on any vault, and no read access to any workspace.
 
 That's why Keyring uses OIDC and not SAML. A SAML assertion can't be exchanged for a downstream token.
 
@@ -205,7 +213,7 @@ On App Service or Container Apps, the app registration can trust the user-assign
    az ad app federated-credential create --id <app client ID> --parameters credential.json
    ```
 
-4. Set `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` to the identity's client ID, and leave `ENTRA_CLIENT_SECRET` unset. With the Bicep templates, set `useFederatedCredential` to `true`. Keyring also needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set themselves once a managed identity is assigned.
+4. Set `KEYRING_MANAGED_IDENTITY_CLIENT_ID` to the identity's client ID, and leave `ENTRA_CLIENT_SECRET` unset. With the Bicep templates, set `useFederatedCredential` to `true`. Keyring also needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set themselves once a managed identity is assigned.
 
 Entra accepts a wrong issuer, subject or audience when you create the credential and only fails later, at sign-in. If sign-in fails after this, check those three values first. The audience above is for the global Entra cloud.
 
@@ -269,6 +277,8 @@ For access-policy vaults, the matching permissions are: secrets Get and List for
 
 Role changes can take a few minutes to apply.
 
+Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
+
 ## Configuration
 
 Set these as environment variables. Don't commit them.
@@ -277,8 +287,13 @@ Set these as environment variables. Don't commit them.
 | --- | --- |
 | `ENTRA_TENANT_ID` | Directory (tenant) ID, a GUID |
 | `ENTRA_CLIENT_ID` | Application (client) ID, a GUID |
-| `ENTRA_CLIENT_SECRET` | The client secret value from step 2, option A. Required unless `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` is set. Setting both stops Keyring starting |
-| `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` | Optional. The client ID (a GUID) of the user-assigned managed identity that the app registration trusts, from step 2, option B. Replaces `ENTRA_CLIENT_SECRET`. Needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set for you. Keyring won't start if they're missing, or if `IDENTITY_ENDPOINT` isn't a plain `http://` address on `localhost`, `127.0.0.1` or `169.254.0.0/16` |
+| `ENTRA_CLIENT_SECRET` | The client secret value from step 2, option A. Required unless `KEYRING_MANAGED_IDENTITY_CLIENT_ID` is set |
+| `KEYRING_MANAGED_IDENTITY_CLIENT_ID` | Optional. The client ID (a GUID) of Keyring's one user-assigned managed identity, used for Keyring's own calls only: the federated credential (step 2, option B) and the audit sink. Without `ENTRA_CLIENT_SECRET`, it replaces the secret. With it, the secret signs Keyring in to Entra and the identity is only for the audit sink. Needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service and Container Apps set for you. Keyring won't start if they're missing, or if `IDENTITY_ENDPOINT` isn't a plain `http://` address on `localhost`, `127.0.0.1` or `169.254.0.0/16` |
+| `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` | Deprecated: the old name for `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, still read for one release with a warning at start. Setting it with `ENTRA_CLIENT_SECRET` stops Keyring starting, as before. Setting both names to different identities stops Keyring starting |
+| `KEYRING_AUDIT_INGESTION_ENDPOINT` | Optional. The audit sink: the data collection rule's logs ingestion endpoint, `https://<rule>.<region>.ingest.monitor.azure.com`. Set with `KEYRING_AUDIT_DCR_ID`, or neither. Needs `KEYRING_MANAGED_IDENTITY_CLIENT_ID`: the sink writes only as that identity. See [Audit sink](docs/deploy.md#audit-sink) |
+| `KEYRING_AUDIT_DCR_ID` | Optional. The rule's immutable ID, `dcr-` and 32 hexadecimal digits |
+| `KEYRING_AUDIT_STREAM` | Optional. The rule's stream. Defaults to `Custom-KeyringAudit_CL` |
+| `KEYRING_AUDIT_REQUIRED` | Optional. `true` to refuse reveals and private key downloads while the audit sink has been failing for over a minute. Off by default. Needs the audit sink |
 | `APP_BASE_URL` | Public URL of this app, used for redirects and to check that form posts come from Keyring. Must be `https://` except for `http://localhost`. Scheme, host and port only: Keyring must be at the root of its host, not under a path like `/keyring` |
 | `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. Keyring won't start if it's shorter, still the `replace-me` placeholder, or an unresolved Key Vault reference. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
@@ -291,7 +306,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_STEP_UP_MAX_AGE` | Optional. Minutes, 1 to 720, since the person last signed in for those same actions to go ahead. Older, and Keyring asks for a fresh sign-in. For tenants without Conditional Access. Checked at start |
 | `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
 
-Four more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL` and `KEYRING_TEST_LOGANALYTICS_URL`. They send people's tokens (and, for the authority host, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
+Five more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL`, `KEYRING_TEST_LOGANALYTICS_URL` and `KEYRING_TEST_AUDIT_INGESTION_URL`. They send people's tokens (and, for the authority host and the audit ingestion URL, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
 Sessions live in memory, so restarting Keyring signs everyone out. A request that hits a bug (a panic) gets an error page; other people's sessions carry on. If you run more than one copy, use sticky sessions. A session ends after one hour without a request, or 12 hours after sign-in. With JavaScript on, the page warns a few minutes before the hour runs out and offers to keep you signed in.
 
@@ -399,6 +414,8 @@ While a request waits for its issuer, the certificate's page shows it as pending
 - **Hosting under a path.** Keyring must be at the root of its host.
 - **Certificates signed outside Key Vault.** No `Unknown` issuer, signing request download or merge. See [Certificate issuers](#certificate-issuers).
 - **Managing issuers.** Set them up in the Azure portal.
+- **Rotating secrets on the system they belong to.** A new value set in Keyring changes Key Vault only. Use Azure's own pattern (Event Grid and a Function with its own identity), or better, remove the credential. See [docs/rotation.md](docs/rotation.md).
+- **App registration secrets and certificates.** The expiry dashboard covers Key Vault only. See [docs/app-credentials.md](docs/app-credentials.md) for Entra's own tools.
 
 ## Deploying to Azure
 

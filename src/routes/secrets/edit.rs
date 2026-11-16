@@ -15,10 +15,12 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::{FieldErrors, ToggleForm};
+use crate::routes::lifecycle::Kind;
 use crate::routes::secrets::form::{self, SecretForm};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::used_by::{self, UsedBy};
 use crate::routes::vault_ctx::check_csrf;
 use crate::routes::vault_ctx::vault_path;
 
@@ -111,6 +113,8 @@ struct FormPage {
     errors: FieldErrors,
     /// Set when a create clashed with a soft-deleted secret of the same name.
     deleted_clash: Option<String>,
+    /// Who read the secret lately, on Set a new value.
+    used_by: Option<UsedBy>,
 }
 
 impl FormPage {
@@ -162,6 +166,18 @@ fn form_page(
     errors: FieldErrors,
     deleted_clash: Option<String>,
 ) -> Response {
+    form_page_with(shell, vault, mode, form, errors, deleted_clash, None)
+}
+
+fn form_page_with(
+    shell: Shell,
+    vault: String,
+    mode: Mode,
+    form: FormView,
+    errors: FieldErrors,
+    deleted_clash: Option<String>,
+    used_by: Option<UsedBy>,
+) -> Response {
     let status = if errors.is_empty() && deleted_clash.is_none() {
         StatusCode::OK
     } else {
@@ -178,6 +194,7 @@ fn form_page(
                 form,
                 errors,
                 deleted_clash,
+                used_by,
             }),
         )
             .into_response(),
@@ -344,14 +361,22 @@ pub(crate) async fn value_form(
     shell: Shell,
     Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &vault, &name).await?;
-    Ok(form_page(
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    // Who used it loads beside the secret, within its own time limit.
+    let (fetched, used_by) = tokio::join!(
+        fetch(&state, &session, shell, &vault, &name),
+        used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+    );
+    let (shell, item) = fetched?;
+    Ok(form_page_with(
         shell,
         vault,
         Mode::NewValue,
         FormView::from_item(&item),
         FieldErrors::new(),
         None,
+        Some(used_by),
     ))
 }
 
@@ -514,12 +539,17 @@ pub(crate) async fn disable_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
+    let (fetched, used_by) = tokio::join!(
+        fetch(&state, &session, shell, &vault, &name),
+        used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+    );
+    let (shell, item) = fetched?;
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Secret,
+        Kind::Secret,
         item.name(),
+        used_by,
     ))
 }
 

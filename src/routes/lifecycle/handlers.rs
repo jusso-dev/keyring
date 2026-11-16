@@ -134,12 +134,16 @@ pub(crate) async fn delete_form<L: Lifecycle>(
     let (name, shell) = checked_name(&name, shell)?;
     // Check first, so a missing item gets its own page before the name is
     // asked for, and the warning can give the vault's real retention.
-    let (shell, recovery) =
-        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form).await?;
-    Ok(super::confirm_page(
+    // Who used it loads beside the check, within its own time limit.
+    let (checked, used_by) = tokio::join!(
+        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form),
+        crate::routes::used_by::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    let (shell, recovery) = checked?;
+    Ok(super::delete_page(
         shell,
         super::delete_view_for(L::KIND, &vault, &name, recovery),
-        StatusCode::OK,
+        used_by,
     ))
 }
 
@@ -204,8 +208,21 @@ pub(crate) async fn deleted_detail<L: DeletedPages>(
 ) -> PageResult {
     let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    match L::get_deleted(&state, &session, &vault, &name, now_ts()).await {
-        Ok(row) => Ok(super::deleted_detail(&state, shell, vault, L::KIND, &row)),
+    // Asked at the item's scope like the other item pages, never only at
+    // the vault's: an item-level role may still apply to a deleted item.
+    let (row, hints) = tokio::join!(
+        L::get_deleted(&state, &session, &vault, &name, now_ts()),
+        crate::routes::hints::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    match row {
+        Ok(row) => Ok(super::deleted_detail(
+            &state,
+            shell,
+            vault,
+            L::KIND,
+            &row,
+            hints,
+        )),
         Err(e) => Err(azure_problem(
             shell,
             &e,

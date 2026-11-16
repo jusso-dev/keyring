@@ -265,6 +265,48 @@ async fn pages_have_labels_headings_and_landmarks() {
 }
 
 #[tokio::test]
+async fn disabled_buttons_keep_their_label_and_say_why() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    w.arm.state.authz.lock().unwrap().permissions =
+        Some(vec![support::role_data_actions("Key Vault Reader")]);
+    let s = &w.kv.state;
+    s.put("db-password", "x");
+    s.add_cert("web-tls", true, "UEZY");
+    s.add_key_with("app-key", "RSA", |_| {});
+    s.put("old-one", "x");
+    s.soft_delete("old-one");
+    for p in [
+        "/v/kv-test/secrets",
+        "/v/kv-test/secrets/db-password",
+        "/v/kv-test/secrets/-/deleted/old-one",
+        "/v/kv-test/certificates",
+        "/v/kv-test/certificates/web-tls",
+        "/v/kv-test/keys",
+        "/v/kv-test/keys/app-key",
+    ] {
+        let (_, html) = w.page(p).await;
+        page_basics(&html, p);
+        let disabled: Vec<&str> = html
+            .split("<button")
+            .skip(1)
+            .filter(|b| b[..b.find('>').unwrap()].contains(" disabled"))
+            .collect();
+        assert!(!disabled.is_empty(), "{p}: nothing disabled");
+        for b in disabled {
+            let tag = &b[..b.find('>').unwrap()];
+            assert!(tag.contains("aria-describedby=\""), "{p}: {tag}");
+            let label = &b[b.find('>').unwrap() + 1..b.find("</button>").unwrap()];
+            assert!(
+                !label.trim().is_empty(),
+                "{p}: a disabled button keeps its label"
+            );
+        }
+        assert!(html.contains("Needs Key Vault"), "{p}: the role, as text");
+    }
+}
+
+#[tokio::test]
 async fn error_summaries_take_focus_and_link_to_fields() {
     let w = support::world().await;
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
