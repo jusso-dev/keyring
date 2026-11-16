@@ -1,4 +1,5 @@
-//! The reveal and rollback log lines say which version was read.
+//! The reveal and rollback audit events say which version was read or
+//! restored.
 //!
 //! Its own test binary, like `no_secrets_in_logs`: `tracing` caches whether
 //! a line is wanted, and tests running alongside without a subscriber can
@@ -65,16 +66,27 @@ async fn reveal_and_rollback_log_the_version() {
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     let reveals: Vec<&str> = logs
         .lines()
-        .filter(|l| l.contains("secret value revealed"))
+        .filter(|l| l.contains("action=secret.reveal"))
         .collect();
     assert_eq!(reveals.len(), 2, "{logs}");
-    assert!(reveals[0].contains(&format!("version={old}")), "{logs}");
-    assert!(reveals[1].contains(&format!("version={cur}")), "{logs}");
+    assert!(
+        reveals[0].contains(&format!("item_version={old}")),
+        "{logs}"
+    );
+    assert!(
+        reveals[1].contains(&format!("item_version={cur}")),
+        "{logs}"
+    );
     let rollback = logs
         .lines()
-        .find(|l| l.contains("secret rolled back"))
+        .find(|l| l.contains("action=secret.rollback"))
         .unwrap();
-    assert!(rollback.contains(&format!("from_version={old}")));
-    assert!(rollback.contains(&format!("version={new}")));
+    assert!(rollback.contains("outcome=success"), "{rollback}");
+    // The version restored from. The new one is in Key Vault's log.
+    assert!(
+        rollback.contains(&format!("item_version={old}")),
+        "{rollback}"
+    );
+    assert_ne!(old, new);
     assert!(!logs.contains("-Value-Here"), "values never logged");
 }

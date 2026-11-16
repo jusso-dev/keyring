@@ -516,7 +516,6 @@ pub(super) async fn toggle(
     };
     match certs.set_enabled(&name, bundle.version(), enable).await {
         Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, certificate = %name, enabled = enable, "certificate enabled changed");
             let done = if enable { "Enabled" } else { "Disabled" };
             Ok(redirect_with(&state, &path, format!("{done} {name}.")))
         }

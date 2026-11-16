@@ -28,6 +28,7 @@ use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name, va
 /// The page for a key that belongs to a certificate. Key Vault makes and
 /// changes these keys itself, so Keyring won't change them directly.
 pub(super) fn managed_problem(shell: Shell, vault: &str, name: &str) -> Halt {
+    crate::audit::refuse(crate::audit::Refusal::ManagedItem);
     PageError::new(
         shell,
         Problem::new(
@@ -417,7 +418,6 @@ pub(super) async fn toggle(
         .await
     {
         Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, enabled = enable, "key enabled changed");
             let done = if enable { "Enabled" } else { "Disabled" };
             Ok(redirect_with(&state, &path, format!("{done} {name}.")))
         }

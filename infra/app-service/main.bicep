@@ -4,7 +4,7 @@
 // Keyring's own config vault and managed identity (modules/config-vault.bicep).
 // Optional: outbound VNet integration (to reach private vaults), an
 // inbound private endpoint, and sending the container's output (Keyring's
-// action lines) to a Log Analytics workspace.
+// audit events) to a Log Analytics workspace.
 //
 // The managed identity can only read Keyring's two config secrets. It has
 // no access to user vaults. See docs/deploy.md.
@@ -75,6 +75,19 @@ param apiScope string = ''
   'trace'
 ])
 param logLevel string = ''
+
+@description('How log lines are written: text (the default) or json, one JSON object per line with Keyring\'s audit events marked "kind":"audit". Leave empty for text.')
+@allowed([
+  ''
+  'text'
+  'json'
+])
+param logFormat string = ''
+
+@description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
+@minValue(0)
+@maxValue(8)
+param trustedProxyHops int = 1
 
 @description('Days without a new value before secrets, certificates and keys show "Not changed in over a year" (or over N days). 0 for the default, 365.')
 @minValue(0)
@@ -186,7 +199,9 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         ],
         empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
         empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
-        staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }]
+        staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
+        empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
+        [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }]
       )
     }
   }
@@ -209,7 +224,7 @@ resource scm 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01'
   }
 }
 
-// Keyring writes its action lines (who revealed, changed or deleted what) to
+// Keyring writes its audit events (who revealed, changed or deleted what) to
 // standard output. App Service keeps none of it by default, so send it to
 // Log Analytics, or failing that keep a short log on the app's own storage.
 resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceId)) {

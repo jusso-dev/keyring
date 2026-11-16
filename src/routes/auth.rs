@@ -194,8 +194,11 @@ pub(super) async fn callback(
             if let Some(old) = cookies::get(&headers, &session_name) {
                 state.sessions.remove(old);
             }
-            tracing::info!(subject = %user.subject, "signed in");
             let id = state.sessions.create(user, tokens);
+            if let Some(s) = state.sessions.get(&id) {
+                crate::audit::note_session(&s);
+            }
+            crate::audit::set_action(crate::audit::Action::SessionSignIn);
             let mut res = Redirect::to(&return_to).into_response();
             append_cookie(&mut res, &state.cookies.set(&session_name, &id, None));
             if unsaved {
@@ -211,6 +214,8 @@ pub(super) async fn callback(
         }
         Err(err) => {
             tracing::warn!(error = ?err.to_string(), "sign-in failed");
+            crate::audit::set_action(crate::audit::Action::SessionSignInFailed);
+            sign_in_failure(&err);
             let (heading, message, detail) = describe(&err);
             problem(StatusCode::BAD_REQUEST, heading, message, detail, "/")
         }
@@ -235,14 +240,19 @@ pub(super) async fn sign_out(
 ) -> Response {
     let session_name = state.cookies.name(SESSION_COOKIE);
     let Some(id) = cookies::get(&headers, &session_name) else {
+        crate::audit::end(crate::audit::Outcome::Failed, "no_session");
         return Redirect::to("/auth/signed-out").into_response();
     };
     match state.sessions.get(id) {
         // Sign-out doesn't act on a vault, so a form from any vault will do.
         Some(s) if !s.csrf_matches_any(&form.csrf) => {
+            crate::audit::note_session(&s);
+            crate::audit::refuse(crate::audit::Refusal::Csrf);
             return PageError::new(Shell::anonymous(), Problem::stale_form()).into_response();
         }
-        _ => {}
+        Some(s) => crate::audit::note_session(&s),
+        // Already gone: expired, or signed out in another tab.
+        None => crate::audit::end(crate::audit::Outcome::Failed, "no_session"),
     }
     state.sessions.remove(id);
     let target = state
@@ -267,6 +277,19 @@ pub(super) async fn signed_out() -> Response {
         shell: Shell::anonymous(),
     })
     .into_response()
+}
+
+/// Note why a sign-in failed on its audit event. Who it was isn't known:
+/// Keyring only believes the ID token once it has passed every check.
+fn sign_in_failure(err: &SignInError) {
+    use crate::audit::{Outcome, Refusal, end, refuse};
+    match err {
+        SignInError::Stale(_) => refuse(Refusal::StaleSignIn),
+        SignInError::Rejected(_) => refuse(Refusal::IdTokenRejected),
+        // Entra said no, with an OAuth code checked by `safe_code`.
+        SignInError::Provider { code, .. } => end(Outcome::Denied, code),
+        SignInError::Unreachable(_) => end(Outcome::Failed, "entra_unreachable"),
+    }
 }
 
 fn describe(err: &SignInError) -> (&'static str, &'static str, Option<String>) {

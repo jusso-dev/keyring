@@ -138,6 +138,8 @@ App Service (`infra/app-service/main.bicep`):
 | `allowPurge` | Allow permanent deletes | `false` |
 | `apiScope` | Sets `ENTRA_API_SCOPE`, if your app registration's scope isn't `api://<clientId>/access_as_user` | None |
 | `logLevel` | Sets `KEYRING_LOG_LEVEL` | None (`info`) |
+| `logFormat` | Sets `KEYRING_LOG_FORMAT`: `text` or `json` (see Logs) | None (`text`) |
+| `trustedProxyHops` | Sets `KEYRING_TRUSTED_PROXY_HOPS` (see Logs, "Client address") | `1` |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
@@ -156,7 +158,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel` and `staleAfterDays` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops` and `staleAfterDays` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
@@ -204,14 +206,64 @@ If something's wrong, see [troubleshooting.md](troubleshooting.md).
 
 ## Logs
 
-Keyring writes plain text lines to standard output:
+Keyring writes to standard output, one line per entry:
 
-- one line per request: `request method=GET path=/secrets status=200 ms=12`. The path never has the query string. A 5xx is logged at `warn`
-- an action line each time someone reveals, downloads, creates, changes, deletes, recovers or purges something, naming what (vault and item name) and who, as `subject=oid:<object ID>,tid:<tenant ID>`. Those are the same IDs as in Entra's sign-in logs and Key Vault's diagnostic logs, so you can match them up
+- one line per request: method, path (never the query string), status and time taken. A 5xx is logged at `warn`
+- one **audit event** for each thing a person does through Keyring: every reveal, private key download, create, change, delete, recover and purge, sign-in, failed sign-in, sign-out and session expiry. Refusals and failures get one too: a 403 from Key Vault, a refused form token, a cross-site post, a typed name that didn't match, a purge while purge is off. These are Keyring's own audit events, written by `src/audit.rs`. They are not Key Vault's audit log, which the audit pages read
 
-Secret values, tokens, passwords, headers and query strings are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`); `info`, the default, includes the action lines. Keyring won't start with any other value, including `off`.
+Secret values, tokens, passwords, headers, query strings and Azure's error messages are never logged. Vault and item names are. Set the level with `logLevel` (`KEYRING_LOG_LEVEL`). Audit events are written at every level, so `warn` or `error` can't drop them. Keyring won't start with any other level, including `off`.
 
-Where they go:
+### Format
+
+`logFormat` (`KEYRING_LOG_FORMAT`) is `text` (the default) or `json`.
+
+- `text`: `key=value` lines, as before. An audit event reads `audit kind=audit schema_version=1 time=... action=secret.reveal outcome=success ...`. Free text (user agent, UPN) is quoted and escaped, so it can't start a new line.
+- `json`: one JSON object per line, for every line. Each has `time`, `level`, `kind` and `message`. Audit events have `"kind":"audit"`; everything else has `"kind":"log"`. Use `json` if you query the logs: Container Apps and App Service console tables can then parse each line.
+
+### Audit event fields
+
+Schema version 1. Field names don't change without a new `schema_version` and a CHANGELOG line. Fields with no value are left out.
+
+| Field | What it holds |
+| --- | --- |
+| `kind` | `audit` |
+| `schema_version` | `1` |
+| `time` | UTC, RFC 3339 with milliseconds |
+| `event_id` | A random UUID for this event |
+| `action` | What was done (list below) |
+| `outcome` | `success`; `denied` (Azure said 401 or 403); `refused` (Keyring's own check said no); `failed` (anything else) |
+| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`. Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
+| `actor_oid`, `actor_tid` | The person's Entra object ID and tenant ID, from the verified ID token. The same IDs as in Entra's sign-in logs and Key Vault's diagnostic log |
+| `actor_upn` | The person's sign-in name, if the ID token has one |
+| `session_ref` | A keyed hash of the session ID, so one session's events join up. The cookie value is never logged. The key comes from `SESSION_SECRET`, so it changes when that is rotated |
+| `client_ip` | The browser's address. See "Client address" below |
+| `user_agent` | The browser's user agent, cut to 256 characters |
+| `vault`, `item_kind`, `item_name`, `item_version` | What was acted on. `item_version` is the version read on a reveal, or restored from on a rollback |
+| `kv_request_id` | The `x-ms-client-request-id` Keyring sent on its last Key Vault call for this request. Joins the event to Key Vault's diagnostic log |
+| `reason`, `ticket` | Kept for a later change (#205). Always absent for now |
+| `keyring_version` | Keyring's version |
+| `instance` | A random ID for this run of Keyring |
+
+Actions: `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.delete`, `key.recover`, `key.purge`, `session.sign_in`, `session.sign_in_failed`, `session.sign_out`, `session.expired`, and `request.refused` for a form post refused before Keyring knew what it was for (a cross-site post, or one with no session).
+
+`session.sign_in_failed` has no `actor_*` fields: Keyring only believes who someone is once the ID token has passed every check. Entra's own sign-in log has the rest. `session.expired` is written when Keyring finds or sweeps an expired session, up to a minute after it ran out.
+
+Pages that only read names and properties (lists, search, expiry, vault health, the audit pages) write no audit event. Each request is still in the request line.
+
+### Client address
+
+App Service and Container Apps put a front end in front of Keyring, so the address Keyring sees is the front end's. `trustedProxyHops` (`KEYRING_TRUSTED_PROXY_HOPS`) says how many proxies add to `X-Forwarded-For`. Keyring takes the address that many entries from the right of that header.
+
+| Where Keyring runs | Value |
+| --- | --- |
+| App Service | `1` (the templates' default) |
+| Container Apps ingress | `1` (the templates' default) |
+| Another proxy (Front Door, Application Gateway) in front of either | `2` |
+| Nothing in front, or run locally | `0` (Keyring's own default) |
+
+With `0` Keyring ignores the header and records the socket peer, which behind a proxy is the proxy. Too high a value lets a browser choose the address recorded, by sending its own `X-Forwarded-For`. Confirm the value with the real-vault checklist.
+
+### Where they go
 
 | Host | Where | Table |
 | --- | --- | --- |
@@ -221,16 +273,57 @@ Where they go:
 
 Without a workspace, App Service's file log is the only record of who revealed what, and it's short. Use a workspace for anything you'd want to look back on.
 
-Example query, who revealed secret values in the last week:
+### Example queries
+
+Who revealed secret values in the last week. With `json`:
 
 ```kusto
 // Container Apps: ContainerAppConsoleLogs_CL and Log_s.
 // App Service: AppServiceConsoleLogs and ResultDescription.
 ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(7d)
-| where Log_s contains "secret value revealed"
-| project TimeGenerated, Log_s
+| extend e = parse_json(Log_s)
+| where tostring(e.kind) == "audit" and tostring(e.action) == "secret.reveal"
+| project TimeGenerated, actor_oid = tostring(e.actor_oid), vault = tostring(e.vault),
+    item = tostring(e.item_name), outcome = tostring(e.outcome), client_ip = tostring(e.client_ip)
 | order by TimeGenerated desc
+```
+
+With `text`:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| where Log_s has "kind=audit" and Log_s has "action=secret.reveal"
+| extend actor_oid = extract(@"actor_oid=(\S+)", 1, Log_s), vault = extract(@"vault=(\S+)", 1, Log_s),
+    item = extract(@"item_name=(\S+)", 1, Log_s), outcome = extract(@"outcome=(\S+)", 1, Log_s)
+| project TimeGenerated, actor_oid, vault, item, outcome
+| order by TimeGenerated desc
+```
+
+Everything Keyring refused or Azure denied in the last day, with `json`:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1d)
+| extend e = parse_json(Log_s)
+| where tostring(e.kind) == "audit" and tostring(e.outcome) in ("refused", "denied")
+| summarize count() by tostring(e.actor_oid), tostring(e.action), tostring(e.reason_code)
+```
+
+An event joined to Key Vault's own log row by `kv_request_id`, with `json`. Key Vault records the caller's `x-ms-client-request-id` as its correlation ID: the `CorrelationId` column in both `AZKVAuditLogs` and `AzureDiagnostics`. That column is still to be confirmed on a real vault (see the real-vault checklist):
+
+```kusto
+let keyring = ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1d)
+| extend e = parse_json(Log_s)
+| where tostring(e.kind) == "audit" and isnotempty(e.kv_request_id)
+| project TimeGenerated, action = tostring(e.action), kv_request_id = tostring(e.kv_request_id),
+    client_ip = tostring(e.client_ip);
+AZKVAuditLogs
+| where TimeGenerated > ago(1d)
+| join kind=inner keyring on $left.CorrelationId == $right.kv_request_id
+| project TimeGenerated, action, OperationName, ResultSignature, CallerIpAddress, client_ip
 ```
 
 Key Vault's own diagnostic logs (what the audit view reads) are separate and record every call, whether it came through Keyring or not.

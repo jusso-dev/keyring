@@ -225,7 +225,10 @@ pub(crate) async fn create(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match form::for_create(&f, now_ts()) {
-        Ok(ok) => ok,
+        Ok(ok) => {
+            crate::audit::note_item(&ok.0);
+            ok
+        }
         Err(errors) => {
             return Ok(form_page(
                 shell,
@@ -273,14 +276,11 @@ pub(crate) async fn create(
     }
 
     match api.set(&name, &body).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret created");
-            Ok(saved(
-                &state,
-                &vault_path(&vault, &format!("/secrets/{name}")),
-                format!("Created {name}."),
-            ))
-        }
+        Ok(_) => Ok(saved(
+            &state,
+            &vault_path(&vault, &format!("/secrets/{name}")),
+            format!("Created {name}."),
+        )),
         Err(AzureError::Status { status: 409, .. }) if is_soft_deleted(&api, &name).await => {
             Ok(form_page(
                 shell,
@@ -393,14 +393,11 @@ pub(crate) async fn set_value(
         }
     };
     match api(&state, &session, &vault).set(&name, &body).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret value changed");
-            Ok(saved(
-                &state,
-                &vault_path(&vault, &format!("/secrets/{name}")),
-                format!("Saved a new version of {name}. The old value is still in its versions."),
-            ))
-        }
+        Ok(_) => Ok(saved(
+            &state,
+            &vault_path(&vault, &format!("/secrets/{name}")),
+            format!("Saved a new version of {name}. The old value is still in its versions."),
+        )),
         Err(err) => Err(azure_problem(
             shell,
             &err,
@@ -460,7 +457,6 @@ pub(crate) async fn update(
     };
     update_current(&state, &session, shell, &vault, &item, &body).await?;
     let name = item.name();
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret properties changed");
     Ok(saved(
         &state,
         &vault_path(&vault, &format!("/secrets/{name}")),
@@ -552,7 +548,6 @@ pub(crate) async fn toggle(
     };
     update_current(&state, &session, shell, &vault, &item, &body).await?;
     let name = item.name();
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, enabled = enable, "secret enabled changed");
     let done = if enable { "Enabled" } else { "Disabled" };
     Ok(saved(
         &state,

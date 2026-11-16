@@ -49,6 +49,8 @@ pub(crate) struct KvState {
     pub log: Mutex<Vec<String>>,
     /// Bearer tokens seen.
     pub bearers: Mutex<Vec<String>>,
+    /// `x-ms-client-request-id` of each request, empty if it had none.
+    pub client_request_ids: Mutex<Vec<String>>,
     /// If set, every request fails with this status and code.
     pub fail: Mutex<Option<(u16, &'static str)>>,
     /// If set, only requests whose path contains this fail.
@@ -432,6 +434,13 @@ async fn record(
         .lock()
         .unwrap()
         .push(format!("{} {}", req.method(), req.uri().path()));
+    s.client_request_ids.lock().unwrap().push(
+        req.headers()
+            .get("x-ms-client-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
     s.bearers.lock().unwrap().push(
         req.headers()
             .get("authorization")

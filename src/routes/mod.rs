@@ -30,11 +30,14 @@ mod vault_health;
 mod vaults;
 
 use axum::Router;
-use axum::middleware;
+use axum::extract::Request;
+use axum::handler::Handler;
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, post};
+use axum::routing::{MethodRouter, any, get, post};
 
 use crate::AppState;
+use crate::audit::Action;
 use crate::routes::error::{PageError, Problem};
 use crate::routes::shell::Shell;
 
@@ -49,6 +52,23 @@ pub const MAX_FORM_BYTES: usize = 64 * 1024;
 /// value always gets the form's own message, not a 413.
 pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 
+/// A POST route whose every request writes one audit event for `action`,
+/// whatever the outcome. Every POST that can change something in Key
+/// Vault, or reads a value, goes through here. `tests/audit_events.rs`
+/// fails on a POST route that is neither this nor on its exempt list.
+fn audited<H, T>(action: Action, handler: H) -> MethodRouter<AppState>
+where
+    H: Handler<T, AppState>,
+    T: 'static,
+{
+    post(handler).layer(middleware::from_fn(
+        move |req: Request, next: Next| async move {
+            crate::audit::set_action(action);
+            next.run(req).await
+        },
+    ))
+}
+
 /// Every page that works on one vault. Nested under `/v/{vault}`, so the
 /// vault in the address is the one the request acts on. New vault pages go
 /// here and start with `vault_ctx::path_vault`.
@@ -58,7 +78,7 @@ fn vault_routes() -> Router<AppState> {
         .route(
             "/secrets/-/new",
             get(secrets::edit::new_form)
-                .post(secrets::edit::create)
+                .merge(audited(Action::SecretCreate, secrets::edit::create))
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
         .route(
@@ -71,17 +91,24 @@ fn vault_routes() -> Router<AppState> {
         )
         .route(
             "/secrets/-/deleted/{name}/recover",
-            post(lifecycle::handlers::recover::<secrets::delete::Secrets>),
+            audited(
+                Action::SecretRecover,
+                lifecycle::handlers::recover::<secrets::delete::Secrets>,
+            ),
         )
         .route(
             "/secrets/-/deleted/{name}/purge",
-            get(lifecycle::handlers::purge_form::<secrets::delete::Secrets>)
-                .post(lifecycle::handlers::purge::<secrets::delete::Secrets>),
+            get(lifecycle::handlers::purge_form::<secrets::delete::Secrets>).merge(audited(
+                Action::SecretPurge,
+                lifecycle::handlers::purge::<secrets::delete::Secrets>,
+            )),
         )
         .route(
             "/secrets/{name}/delete",
-            get(lifecycle::handlers::delete_form::<secrets::delete::Secrets>)
-                .post(lifecycle::handlers::delete::<secrets::delete::Secrets>),
+            get(lifecycle::handlers::delete_form::<secrets::delete::Secrets>).merge(audited(
+                Action::SecretDelete,
+                lifecycle::handlers::delete::<secrets::delete::Secrets>,
+            )),
         )
         .route(
             "/secrets/{name}",
@@ -90,21 +117,29 @@ fn vault_routes() -> Router<AppState> {
         .route(
             "/secrets/{name}/value",
             get(secrets::edit::value_form)
-                .post(secrets::edit::set_value)
+                .merge(audited(Action::SecretSet, secrets::edit::set_value))
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
         )
         .route(
             "/secrets/{name}/edit",
-            get(secrets::edit::edit_form).post(secrets::edit::update),
+            get(secrets::edit::edit_form)
+                .merge(audited(Action::SecretUpdate, secrets::edit::update)),
         )
-        .route("/secrets/{name}/enabled", post(secrets::edit::toggle))
+        .route(
+            "/secrets/{name}/enabled",
+            audited(Action::SecretEnabledSet, secrets::edit::toggle),
+        )
         .route("/secrets/{name}/disable", get(secrets::edit::disable_form))
         .route("/secrets/{name}/versions", get(secrets::versions::list))
         .route(
             "/secrets/{name}/rollback",
-            get(secrets::versions::confirm).post(secrets::versions::rollback),
+            get(secrets::versions::confirm)
+                .merge(audited(Action::SecretRollback, secrets::versions::rollback)),
         )
-        .route("/secrets/{name}/reveal", post(secrets::reveal::reveal))
+        .route(
+            "/secrets/{name}/reveal",
+            audited(Action::SecretReveal, secrets::reveal::reveal),
+        )
         .route("/certificates", get(certs::list))
         .route(
             "/certificates/-/upload",
@@ -114,12 +149,13 @@ fn vault_routes() -> Router<AppState> {
         )
         .route(
             "/certificates/-/upload/confirm",
-            post(certs::upload::confirm),
+            audited(Action::CertificateUpload, certs::upload::confirm),
         )
         .route("/certificates/-/upload/cancel", post(certs::upload::cancel))
         .route(
             "/certificates/-/new",
-            get(certs::create::form).post(certs::create::create),
+            get(certs::create::form)
+                .merge(audited(Action::CertificateCreate, certs::create::create)),
         )
         .route(
             "/certificates/-/deleted",
@@ -131,41 +167,58 @@ fn vault_routes() -> Router<AppState> {
         )
         .route(
             "/certificates/-/deleted/{name}/recover",
-            post(lifecycle::handlers::recover::<certs::delete::Certificates>),
+            audited(
+                Action::CertificateRecover,
+                lifecycle::handlers::recover::<certs::delete::Certificates>,
+            ),
         )
         .route(
             "/certificates/-/deleted/{name}/purge",
-            get(lifecycle::handlers::purge_form::<certs::delete::Certificates>)
-                .post(lifecycle::handlers::purge::<certs::delete::Certificates>),
+            get(lifecycle::handlers::purge_form::<certs::delete::Certificates>).merge(audited(
+                Action::CertificatePurge,
+                lifecycle::handlers::purge::<certs::delete::Certificates>,
+            )),
         )
         .route(
             "/certificates/{name}/delete",
-            get(lifecycle::handlers::delete_form::<certs::delete::Certificates>)
-                .post(lifecycle::handlers::delete::<certs::delete::Certificates>),
+            get(lifecycle::handlers::delete_form::<certs::delete::Certificates>).merge(audited(
+                Action::CertificateDelete,
+                lifecycle::handlers::delete::<certs::delete::Certificates>,
+            )),
         )
         .route(
             "/certificates/{name}",
             get(certs::detail).post(moved::post_item),
         )
-        .route("/certificates/{name}/enabled", post(certs::toggle))
+        .route(
+            "/certificates/{name}/enabled",
+            audited(Action::CertificateEnabledSet, certs::toggle),
+        )
         .route("/certificates/{name}/disable", get(certs::disable_form))
         .route(
             "/certificates/{name}/renewal",
-            get(certs::renewal::form).post(certs::renewal::save),
+            get(certs::renewal::form)
+                .merge(audited(Action::CertificateRenewalSet, certs::renewal::save)),
         )
         .route(
             "/certificates/{name}/pending/cancel",
-            post(certs::create::cancel_pending),
+            audited(
+                Action::CertificatePendingCancel,
+                certs::create::cancel_pending,
+            ),
         )
         .route("/certificates/{name}/cer", get(certs::download::cer))
         .route(
             "/certificates/{name}/download-key",
-            get(certs::download::pfx_form).post(certs::download::pfx),
+            get(certs::download::pfx_form).merge(audited(
+                Action::CertificateDownloadPrivateKey,
+                certs::download::pfx,
+            )),
         )
         .route("/keys", get(keys::list))
         .route(
             "/keys/-/new",
-            get(keys::edit::create_form).post(keys::edit::create),
+            get(keys::edit::create_form).merge(audited(Action::KeyCreate, keys::edit::create)),
         )
         .route(
             "/keys/-/deleted",
@@ -177,28 +230,41 @@ fn vault_routes() -> Router<AppState> {
         )
         .route(
             "/keys/-/deleted/{name}/recover",
-            post(lifecycle::handlers::recover::<keys::delete::Keys>),
+            audited(
+                Action::KeyRecover,
+                lifecycle::handlers::recover::<keys::delete::Keys>,
+            ),
         )
         .route(
             "/keys/-/deleted/{name}/purge",
-            get(lifecycle::handlers::purge_form::<keys::delete::Keys>)
-                .post(lifecycle::handlers::purge::<keys::delete::Keys>),
+            get(lifecycle::handlers::purge_form::<keys::delete::Keys>).merge(audited(
+                Action::KeyPurge,
+                lifecycle::handlers::purge::<keys::delete::Keys>,
+            )),
         )
         .route("/keys/{name}", get(keys::detail).post(moved::post_item))
-        .route("/keys/{name}/enabled", post(keys::toggle))
+        .route(
+            "/keys/{name}/enabled",
+            audited(Action::KeyEnabledSet, keys::toggle),
+        )
         .route("/keys/{name}/disable", get(keys::disable_form))
         .route(
             "/keys/{name}/rotate",
-            get(keys::edit::rotate_form).post(keys::edit::rotate),
+            get(keys::edit::rotate_form).merge(audited(Action::KeyRotate, keys::edit::rotate)),
         )
         .route(
             "/keys/{name}/rotation",
-            get(keys::edit::rotation_form).post(keys::edit::save_rotation),
+            get(keys::edit::rotation_form).merge(audited(
+                Action::KeyRotationPolicySet,
+                keys::edit::save_rotation,
+            )),
         )
         .route(
             "/keys/{name}/delete",
-            get(lifecycle::handlers::delete_form::<keys::delete::Keys>)
-                .post(lifecycle::handlers::delete::<keys::delete::Keys>),
+            get(lifecycle::handlers::delete_form::<keys::delete::Keys>).merge(audited(
+                Action::KeyDelete,
+                lifecycle::handlers::delete::<keys::delete::Keys>,
+            )),
         )
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
@@ -246,7 +312,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/start", get(auth::start))
         .route("/auth/callback", get(auth::callback))
-        .route("/auth/sign-out", post(auth::sign_out))
+        .route(
+            "/auth/sign-out",
+            audited(Action::SessionSignOut, auth::sign_out),
+        )
         .route("/auth/signed-out", get(auth::signed_out));
 
     protected
@@ -264,6 +333,12 @@ pub fn router(state: AppState) -> Router<AppState> {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             headers::layer,
+        ))
+        // Outside the time limit and the origin and session checks, so a
+        // request that times out or is refused still gets its audit event.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::audit::layer,
         ))
         // Outermost, so the logged status includes timeouts and panics.
         .layer(middleware::from_fn(crate::telemetry::request_log))

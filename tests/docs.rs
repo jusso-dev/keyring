@@ -226,3 +226,20 @@ fn search_limits_match_the_architecture_doc() {
     );
     has(CHECKLIST, "real-vault-checklist.md", "within 60 seconds");
 }
+
+#[test]
+fn audit_actions_and_reasons_are_in_the_deploy_doc() {
+    use keyring::audit::{Action, Refusal};
+    for a in Action::ALL {
+        has(DEPLOY, "deploy.md", &format!("`{}`", a.as_str()));
+    }
+    for r in Refusal::ALL {
+        has(DEPLOY, "deploy.md", &format!("`{}`", r.as_str()));
+    }
+    has(
+        DEPLOY,
+        "deploy.md",
+        &format!("cut to {} characters", keyring::audit::MAX_USER_AGENT),
+    );
+    has(README, "README.md", "`KEYRING_TRUSTED_PROXY_HOPS`");
+}

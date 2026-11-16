@@ -58,12 +58,23 @@ Rules for the codebase:
 
 Static files are compiled in rather than read from disk, so the container needs no writable or readable app directory and nothing can be swapped at run time.
 
-Logging uses `tracing`, as plain text lines on standard output. Two kinds of line are written:
+Logging uses `tracing` on standard output, as `key=value` text or, with `KEYRING_LOG_FORMAT=json`, one JSON object per line (a small formatter in `src/telemetry.rs`). Two kinds of line are written:
 
 - one per request, `request method=GET path=/secrets status=200 ms=12`. The path never has the query string. Requests that end in a 5xx are logged at `warn`, the rest at `info`.
-- an action line for each change or read of a value, naming who did it and what (vault and item name). The person is `subject=oid:<object ID>,tid:<tenant ID>` from the ID token, the same IDs Entra's sign-in logs and Key Vault's diagnostic logs use. Without those claims it falls back to `sub:<subject>`.
+- one of Keyring's own **audit events** for each audited request (below).
 
-Request and response bodies, headers, query strings, secret values, tokens and Azure's error messages are never logged. Vault and item names do appear. `KEYRING_LOG_LEVEL` is checked at start against `error`, `warn`, `info`, `debug` and `trace`; `off` and filter strings are refused, so the action lines can't be turned off by mistake. Where the lines end up on each host is in [deploy.md](deploy.md#logs).
+Request and response bodies, headers, query strings, secret values, tokens and Azure's error messages are never logged. Vault and item names do appear. `KEYRING_LOG_LEVEL` is checked at start against `error`, `warn`, `info`, `debug` and `trace`; `off` and filter strings are refused. Audit events are written at every level. Where the lines end up on each host is in [deploy.md](deploy.md#logs).
+
+### Keyring's own audit events
+
+Key Vault's audit log (the Audit section below) records every call Key Vault receives, but sees Keyring's outbound address, not the browser's, and nothing Keyring refuses before calling it. Keyring's own audit events, in `src/audit.rs`, fill that in. The schema (version 1) and example queries are in [deploy.md](deploy.md#audit-event-fields).
+
+- **One way out.** Every event is an `AuditEvent` written by `audit::record`. A test fails if any source file writes its own `tracing::...!(subject = ...)` action line.
+- **One event per request.** `audit::layer` sits outside the time limit, the origin check and the session check, and holds a draft for the request in a task-local. The router marks each audited POST with `audited(Action, handler)`. Guards add a refusal reason (form token, typed name, purge off, managed item, cross-site, no session), the session check adds who, the vault and name checks add what, and `AzureClient::send` adds any Azure failure (status and code, never the message). When the request finishes, the layer writes one event if an action was set. The first refusal wins; otherwise a 2xx or 3xx is `success`, then the last Azure failure, then the status. A request dropped before it answers, such as when the browser closes the connection, still gets its event, as `failed` with `cancelled`. So a route can't finish without its event, whatever path it took.
+- **Coverage is tested.** `tests/audit_events.rs` reads every POST route from `src/routes/mod.rs`. Each must be `audited(...)` or on an exempt list with a reason (choosing a vault, the generator, the upload preview and cancel, redirects of old addresses: none of them touch Key Vault). It then posts a forged token to every audited route and checks for exactly one `refused` event, with nothing reaching Key Vault.
+- **Joining to Key Vault's log.** Each Key Vault call carries a new UUID as `x-ms-client-request-id`; the event's `kv_request_id` is the last one sent for the request.
+- **Who and from where.** `actor_oid`, `actor_tid` and `actor_upn` come from the verified ID token. `session_ref` is an HMAC of the session ID with a key derived from `SESSION_SECRET`, so a session's events join up without the cookie value in the log. `client_ip` is the socket peer unless `KEYRING_TRUSTED_PROXY_HOPS` is set, when it is that many entries from the right of `X-Forwarded-For`. Too high a value lets a browser choose its address, so the default is 0.
+- **Outside a request.** Session expiry found by the sweep is recorded directly, with no browser details. Read-only pages write no event; the request line covers them.
 
 Release builds unwind on a panic rather than abort, so one request that hits a bug gets a 500 page and every other session carries on. Keyring's own panic hook logs only where the panic happened, never its message, since that can hold request data.
 
@@ -239,7 +250,7 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - Up to 500 rows, newest first, across all workspaces (the refused report sums counts by person and vault first). The page and the CSV both list vaults with no diagnostic setting, vaults whose settings couldn't be read, workspaces that couldn't be read (with the vaults they cover and the reason) and any cap, so neither can pass for a full report. CSV fields are formula-guarded as elsewhere.
 - Each row links to the vault's own audit page, filtered to the item (or, for refusals, the person) and the same range.
 - The old addresses from before the vault was in the path (`/audit?item=...`, `/audit.csv` with no report) still go to the vault last used.
-- The page only reads, so it writes no action line.
+- The page only reads, so it writes no audit event.
 
 ## Expiry dashboard
 
@@ -260,7 +271,7 @@ The dashboard reads secrets, certificates and keys from every vault the person c
 `/search?q=...`, and the box in the top bar, find secrets, certificates and keys across every vault the person can see. It reads the same lists as the expiry dashboard, with the same limits and the same notes for vaults it couldn't read, and never a value: only the list calls are made (`GET /secrets`, `/certificates` and `/keys`), never `GET /secrets/{name}` or a version.
 
 - The text matches a name, a tag as `name=value`, or a secret's content type, as a case-insensitive substring: the same match as each vault's own list filter. Certificates and keys have no content type in their list calls. Filters narrow by type, vault and status (expires within 30 days, expired, disabled).
-- The text is capped at 100 characters, and the page at 500 results. It is a query string, so like every query string it is never logged. Search only reads, so it writes no action line.
+- The text is capped at 100 characters, and the page at 500 results. It is a query string, so like every query string it is never logged. Search only reads, so it writes no audit event.
 - Results are grouped by vault, with the same status badges as each vault's list, and link to the item's page under `/v/{vault}/...`.
 - It is a plain GET form and works without JavaScript. There is no script for it.
 - **List cache.** Reading every vault on each search would be slow and draw throttling. Each vault read in full is kept in the session for 60 seconds, in memory, and reused by the next search, the expiry dashboard and the age view. It holds names and properties only (the `Item` type has no field for a value). A vault that was only partly read is not kept. A form posted to a vault's pages drops that vault's list, before and after the change, so a change shows straight away. Lists older than a minute are dropped by the session sweep, and every list goes with its session. Nothing is shared between sessions.
@@ -285,7 +296,7 @@ The dashboard reads secrets, certificates and keys from every vault the person c
 - Certificate renewal and key rotation need a call per item, so they only run when one vault is picked. Across all vaults they're shown as "Pick this vault". In one vault, up to 200 certificates and 200 keys are checked, six at a time within 15 seconds. Items past that or not read in time make the check Unknown if nothing else failed it, and are named in the warning if something did.
 - Each warning and unknown is listed under the table with one sentence on why it matters and what to do, and a link to Microsoft's guide for the setting.
 - The CSV export has one line per vault and check (vault, subscription, resource group, check, result, detail, guide), with formula guarding, and `NOT READ` lines for a vault not in the list or vaults past the first 100.
-- Only properties are read: no secret value, no private key. The page changes nothing, so it writes no action line.
+- Only properties are read: no secret value, no private key. The page changes nothing, so it writes no audit event.
 
 ## Alerts
 
@@ -330,8 +341,9 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
 | Cross-site scripting | Askama escapes all output. CSP `default-src 'none'` with scripts, styles and fonts from this site only, no inline code, no `eval`. The one script uses no `innerHTML` (tested) |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |
-| Log forging | OAuth error codes from query strings are only kept if they look like codes; error strings are logged with escaping so a crafted value can't start a new log line |
-| Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`, and are zeroised when dropped. The request log has method, path, status and duration only; action lines add the person's Entra `oid` and `tid` and the vault and item names. A panic logs only its location. A test captures all `tracing` output at TRACE during reveals, uploads, generation and errors and checks no value, token, password or Azure message appears |
+| Log forging | OAuth error codes from query strings are only kept if they look like codes, and audit reason codes must be letters, digits, `_`, `.` and `-`. Free text (error strings, user agent, UPN) is logged with escaping in `text` and JSON encoding in `json`, so a crafted value can't start a new log line |
+| Secret values or tokens in logs | Values and tokens live in `Secret` and `AccessToken`, which print `[redacted]`, and are zeroised when dropped. The request log has method, path, status and duration only; audit events add the person's Entra `oid`, `tid` and UPN, a keyed hash of the session ID (never the ID), the browser's address and user agent, and the vault and item names. A panic logs only its location. A test captures all `tracing` output at TRACE, in both text and JSON, during reveals, uploads, generation and errors and checks no value, token, password, cookie or Azure message appears |
+| Actions with no trace | Every audited route writes one audit event whatever the outcome, including Keyring's own refusals and Azure's 401s and 403s. A test fails on a POST route that is neither audited nor exempt with a reason |
 | Values cached by browsers or proxies | `Cache-Control: no-store` on every HTML page, reveal, download and CSV |
 | Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page. Keyring tries to clear the clipboard if it still holds the value. After a copy, every way off the page in the same tab (Hide, Back, the nav and Sign out) waits for that clear, or a second and a half, before it leaves. Browsers only allow the clear while the tab has focus, so a clear that fails in a background tab is tried again when you come back |
 | Accidental or malicious deletes | Typed-name confirmation checked on the server. Purge is refused by the server unless `KEYRING_ALLOW_PURGE=true` |

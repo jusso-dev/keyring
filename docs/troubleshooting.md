@@ -10,6 +10,9 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | `SESSION_SECRET is not valid` | Use at least 32 random characters, for example `openssl rand -base64 48`. The `replace-me` placeholder from `.env.example` is refused, and so is a Key Vault reference App Service couldn't resolve |
 | `KEYRING_STALE_AFTER_DAYS is not valid` | Use a whole number of days from 1 to 3650, such as `365`. Leave it unset for the default, 365 |
 | `KEYRING_LOG_LEVEL is not valid` | Use `error`, `warn`, `info`, `debug` or `trace`. `off` and filter strings such as `info,keyring=trace` are refused |
+| `KEYRING_LOG_FORMAT is not valid` | Use `text` or `json` |
+| `KEYRING_TRUSTED_PROXY_HOPS is not valid` | Use a whole number from 0 to 8. 1 on App Service or Container Apps. See [deploy.md](deploy.md#client-address) |
+| Every audit event has the same `client_ip` | That is the platform's front end. Set `trustedProxyHops` (`KEYRING_TRUSTED_PROXY_HOPS`) to 1. See [deploy.md](deploy.md#client-address) |
 | App Service shows a Key Vault reference error on the settings page | The managed identity can't read the config vault. Check it has Key Vault Secrets User on the config vault, and that the vault is reachable (private endpoint and DNS if public access is off) |
 | `/healthz` doesn't answer | Check the container logs. App Service needs `WEBSITES_PORT=3000`, which the template sets |
 | A setting you added in the portal is gone after a deployment | The templates list every setting. Use the `apiScope` and `logLevel` parameters instead (see [deploy.md](deploy.md#parameters)) |
