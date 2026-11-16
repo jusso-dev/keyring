@@ -172,6 +172,7 @@ pub(crate) async fn pfx_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
         .policy
@@ -182,6 +183,24 @@ pub(crate) async fn pfx_form(
         confirm: pfx_view(&vault, &name, pem),
     })
     .into_response())
+}
+
+/// Step-up before a private key download. Comes back to the download's
+/// confirmation page.
+fn pfx_step_up(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<Shell, Halt> {
+    crate::routes::step_up::require(
+        state,
+        &session.0,
+        shell,
+        &vault_path(vault, &format!("/certificates/{name}/download-key")),
+        &vault_path(vault, &format!("/certificates/{name}")),
+    )
 }
 
 /// True when `sid` is `{vault}/secrets/{name}/{version}` on this vault:
@@ -232,6 +251,7 @@ pub(crate) async fn pfx(
     // The form token first, so a forged post reaches nothing in Key Vault.
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     let shell = crate::routes::audit_gate::require_audit(&state, shell)?;
+    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
     let pem = bundle
         .policy

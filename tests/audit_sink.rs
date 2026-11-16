@@ -137,7 +137,8 @@ async fn a_full_batch_goes_at_once_and_the_rest_on_the_timer() {
         ["item-0", "item-1", "item-2", "item-3"],
         "in order"
     );
-    assert_eq!(r.sink.health().sent, 4);
+    // The mock records a batch before the sink counts it as sent.
+    until("the count", || r.sink.health().sent == 4).await;
     // One identity token, for the monitor resource, reused.
     assert_eq!(
         *r.identity.state.resources.lock().unwrap(),

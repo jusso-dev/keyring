@@ -140,6 +140,8 @@ App Service (`infra/app-service/main.bicep`):
 | `logLevel` | Sets `KEYRING_LOG_LEVEL` | None (`info`) |
 | `logFormat` | Sets `KEYRING_LOG_FORMAT`: `text` or `json` (see Logs) | None (`text`) |
 | `trustedProxyHops` | Sets `KEYRING_TRUSTED_PROXY_HOPS` (see Logs, "Client address") | `1` |
+| `stepUpAuthContext` | Sets `KEYRING_STEP_UP_AUTH_CONTEXT` (see Step-up) | None (off) |
+| `stepUpMaxAge` | Sets `KEYRING_STEP_UP_MAX_AGE` in minutes (see Step-up) | `0` (off) |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription (see Logs, "Audit sink") | None (off) |
@@ -161,7 +163,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays` and `auditRequired` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays` and `auditRequired` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
@@ -235,7 +237,7 @@ Schema version 1. Field names don't change without a new `schema_version` and a 
 | `event_id` | A random UUID for this event |
 | `action` | What was done (list below) |
 | `outcome` | `success`; `denied` (Azure said 401 or 403); `refused` (Keyring's own check said no); `failed` (anything else) |
-| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
+| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, `step_up_required` (a sensitive action stopped to ask the person to confirm it's them, see [Step-up](#step-up-before-sensitive-actions)), `step_up_not_met` (that sign-in came back without what was asked for), `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
 | `actor_oid`, `actor_tid` | The person's Entra object ID and tenant ID, from the verified ID token. The same IDs as in Entra's sign-in logs and Key Vault's diagnostic log |
 | `actor_upn` | The person's sign-in name, if the ID token has one |
 | `session_ref` | A keyed hash of the session ID, so one session's events join up. The cookie value is never logged. The key comes from `SESSION_SECRET`, so it changes when that is rotated |
@@ -366,6 +368,40 @@ AZKVAuditLogs
 ```
 
 Key Vault's own diagnostic logs (what the audit view reads) are separate and record every call, whether it came through Keyring or not.
+
+## Step-up before sensitive actions
+
+Keyring can ask for a stronger or more recent sign-in before it reveals a secret value, downloads a certificate with its private key, rolls a secret back or purges anything. The person sees "Your organisation asks you to confirm it's you before showing values.", signs in with Microsoft again, and comes back to the same confirmation step. Nothing runs until they confirm again.
+
+Two optional settings, which can be used alone or together. With neither, nothing changes.
+
+- `stepUpAuthContext` (`KEYRING_STEP_UP_AUTH_CONTEXT`): a Conditional Access authentication context ID, `c1` to `c99`. Keyring asks Entra for it with the OpenID Connect `claims` parameter, `{"id_token":{"acrs":{"essential":true,"value":"c1"}}}`, and reads the answer from the `acrs` claim of the verified ID token. Needs Entra ID P1.
+- `stepUpMaxAge` (`KEYRING_STEP_UP_MAX_AGE`): minutes since the person last entered their credentials (the ID token's `auth_time`). Older than that, and Keyring sends them to sign in with `prompt=login` and `max_age`. Works without Conditional Access.
+
+A bad value (`c0`, `c100`, `15m`) stops Keyring at start rather than turning the check off.
+
+**This is a check Keyring makes, not Key Vault.** Key Vault doesn't know about it, so anyone with access can still read the same values with the Azure CLI or the portal. It raises the bar for someone holding a stolen Keyring session cookie, but only while that session's own sign-in doesn't meet the settings. Once a person has confirmed it's them, their session meets an authentication context until it ends (12 hours at most), so a cookie stolen after that passes too. Set `stepUpMaxAge` as well to make it lapse sooner. To make Key Vault itself need the stronger sign-in, use a Conditional Access policy on Azure Key Vault (or Azure management) as a cloud app as well.
+
+### Create the authentication context
+
+1. In the Entra admin centre, go to **Protection > Conditional Access > Authentication contexts** and select **New authentication context**.
+2. Give it a name people will understand, such as "Read secret values", and a description. Tick **Publish to apps**.
+3. Note its ID (`c1` to `c99`). That is the value for `stepUpAuthContext`.
+
+### Create a Conditional Access policy for it
+
+1. Go to **Protection > Conditional Access > Policies** and select **New policy**.
+2. **Users**: the people who use Keyring, or a pilot group first.
+3. **Target resources**: choose **Authentication context** and pick the one you made.
+4. **Grant**: what a sensitive action needs, for example **Require authentication strength** (phishing-resistant MFA) or **Require device to be marked as compliant**.
+5. **Session**: optionally **Sign-in frequency**, **Every time**, so the context is only met by a sign-in made just now.
+6. Start in **Report-only**, check the sign-in logs, then turn it on.
+
+Then set `stepUpAuthContext` and redeploy. Test with an account in the policy and one outside it.
+
+If Entra can't let the person through (an unregistered method, a device that isn't compliant), the sign-in page says the organisation's sign-in rules weren't met, with the AADSTS code. If Entra lets the sign-in through but `acrs` doesn't have the context (for example the context isn't published to apps), Keyring refuses it with "Couldn't confirm it's you" and a link back to the confirmation step. It doesn't send the person round again. Both write an audit event: `step_up_required` when an action is stopped to ask, and `step_up_not_met` on a `session.sign_in_failed` event when the sign-in came back without it.
+
+Not yet confirmed on a real tenant: whether Entra puts `acrs` in the ID token (which is what Keyring reads), the AADSTS code it returns when the policy can't be met, and that `max_age` gives a fresh `auth_time`. See the step-up rows in [real-vault-checklist.md](real-vault-checklist.md).
 
 ## First run against a real tenant
 

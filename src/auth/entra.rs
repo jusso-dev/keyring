@@ -13,6 +13,12 @@ pub enum EntraAdvice {
     SignInAgain,
     /// An admin has to consent to Keyring.
     ConsentNeeded,
+    /// A Conditional Access policy wasn't met and signing in again won't
+    /// change that: a device that isn't compliant, a blocked location, or a
+    /// sign-in method the person hasn't registered. `code` is as in
+    /// [`EntraAdvice::Configuration`]. The numbers come from Microsoft's
+    /// error reference and are not yet confirmed on a real tenant.
+    PolicyNotMet { code: String },
     /// Most likely a setting in Keyring or its app registration. `code` is
     /// the OAuth error with the first Entra error number, for the admin.
     Configuration { code: String },
@@ -39,10 +45,26 @@ const SIGN_IN_AGAIN_CODES: [u64; 12] = [
     700082, // refresh token expired after 90 days without use
 ];
 
+/// Entra error numbers for a Conditional Access policy the sign-in didn't
+/// meet. From Microsoft's AADSTS reference; which of these Entra sends back
+/// to Keyring, rather than showing on its own page, needs a real tenant.
+const POLICY_CODES: [u64; 5] = [
+    53000, // device not compliant
+    53001, // device not domain joined
+    53002, // app not approved for the policy
+    53003, // blocked by Conditional Access
+    53004, // the person must register a sign-in method first
+];
+
 /// Classify an OAuth error code and Entra's error numbers.
 pub fn classify(error: &str, codes: &[u64]) -> EntraAdvice {
     if error == "consent_required" || codes.iter().any(|c| CONSENT_CODES.contains(c)) {
         return EntraAdvice::ConsentNeeded;
+    }
+    if codes.iter().any(|c| POLICY_CODES.contains(c)) {
+        return EntraAdvice::PolicyNotMet {
+            code: describe_code(error, codes),
+        };
     }
     match error {
         "access_denied" => EntraAdvice::Cancelled,
@@ -115,6 +137,28 @@ mod tests {
             EntraAdvice::Configuration {
                 code: "invalid_grant".into()
             }
+        );
+    }
+
+    #[test]
+    fn conditional_access_blocks_are_told_apart() {
+        for (error, n) in [
+            ("access_denied", 53003),
+            ("interaction_required", 53000),
+            ("invalid_grant", 53004),
+        ] {
+            assert_eq!(
+                classify(error, &[n]),
+                EntraAdvice::PolicyNotMet {
+                    code: format!("{error} (AADSTS{n})")
+                },
+                "{error} {n}"
+            );
+        }
+        // Consent still wins.
+        assert_eq!(
+            classify("access_denied", &[65001, 53003]),
+            EntraAdvice::ConsentNeeded
         );
     }
 

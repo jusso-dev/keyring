@@ -216,11 +216,17 @@ pub enum Refusal {
     /// `KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded, so a
     /// reveal or private key download was refused.
     AuditUnavailable,
+    /// A sensitive action needs a stronger or more recent sign-in
+    /// (`KEYRING_STEP_UP_*`). The person was asked to confirm it's them.
+    StepUpRequired,
+    /// A step-up sign-in came back without the authentication context, or
+    /// without a fresh enough sign-in. Refused, not retried.
+    StepUpNotMet,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 10] = [
+    pub const ALL: [Refusal; 12] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -231,6 +237,8 @@ impl Refusal {
         Self::StaleSignIn,
         Self::IdTokenRejected,
         Self::AuditUnavailable,
+        Self::StepUpRequired,
+        Self::StepUpNotMet,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -245,6 +253,8 @@ impl Refusal {
             Self::StaleSignIn => "stale_sign_in",
             Self::IdTokenRejected => "id_token_rejected",
             Self::AuditUnavailable => "audit_unavailable",
+            Self::StepUpRequired => "step_up_required",
+            Self::StepUpNotMet => "step_up_not_met",
         }
     }
 }
@@ -453,6 +463,16 @@ pub fn note_session(session: &Session) {
         d.actor_tid.clone_from(&id.tid);
         d.actor_upn.clone_from(&session.user.username);
         d.session_ref = Some(session.audit_ref.clone());
+    });
+}
+
+/// The person from a verified ID token, before any session is made for
+/// them. Used when a sign-in is refused after the token passed its checks.
+pub fn note_user(user: &crate::auth::session::User) {
+    note(|d| {
+        d.actor_oid.clone_from(&user.subject.oid);
+        d.actor_tid.clone_from(&user.subject.tid);
+        d.actor_upn.clone_from(&user.username);
     });
 }
 

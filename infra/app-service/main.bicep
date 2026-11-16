@@ -84,6 +84,14 @@ param logLevel string = ''
 ])
 param logFormat string = ''
 
+@description('Conditional Access authentication context ID (c1 to c99) that a reveal, private key download, rollback or purge needs. Leave empty to not ask for one (see docs/deploy.md, "Step-up before sensitive actions").')
+param stepUpAuthContext string = ''
+
+@description('Minutes since the person last signed in for a reveal, private key download, rollback or purge to go ahead. 0 turns this off (see docs/deploy.md, "Step-up before sensitive actions").')
+@minValue(0)
+@maxValue(720)
+param stepUpMaxAge int = 0
+
 @description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
 @minValue(0)
 @maxValue(8)
@@ -250,6 +258,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
         empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
         [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
+        empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],
+        stepUpMaxAge == 0 ? [] : [{ name: 'KEYRING_STEP_UP_MAX_AGE', value: string(stepUpMaxAge) }],
         auditSettings
       )
     }
