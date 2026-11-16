@@ -168,10 +168,12 @@ Azure Resource Graph query over every subscription the user can see:
 ```kusto
 resources
 | where type =~ 'microsoft.keyvault/vaults'
-| project id, name, resourceGroup, subscriptionId, location, properties.enableRbacAuthorization, properties.enableSoftDelete, properties.enablePurgeProtection
+| project id, name, resourceGroup, subscriptionId, location, properties.enableRbacAuthorization, properties.enableSoftDelete, properties.enablePurgeProtection, properties.publicNetworkAccess, properties.networkAcls.defaultAction, properties.privateEndpointConnections
 ```
 
-Results are fetched in pages of 1000 (the Resource Graph maximum), following `$skipToken` up to 100 pages. A second query reads subscription names from `resourcecontainers`; if that fails the list still shows, with subscription IDs instead of names. Missing flags take Azure's defaults (soft delete on, RBAC and purge protection off).
+Results are fetched in pages of 1000 (the Resource Graph maximum), following `$skipToken` up to 100 pages. A second query reads subscription names from `resourcecontainers`; if that fails the list still shows, with subscription IDs instead of names. Missing flags take Azure's defaults (soft delete on, RBAC and purge protection off). The network columns are only used by the vault health page.
+
+The list also has an Audit logs column. For the vaults on the page, Keyring reads each vault's diagnostic settings through ARM as the person (Reader), six at a time, 5 seconds each and 10 in all, so the list stays quick. It shows "On" when a setting sends audit logs to a Log Analytics workspace, "On, not in Log Analytics" for a storage account, event hub or partner only, a warning badge "Off" when nothing sends them anywhere (the audit view can't work then), and "Unknown" with the reason when the settings couldn't be read in time.
 
 The list is filtered on the server (name or resource group, subscription, tag as `key` or `key=value`) and shown 200 to a page. The one JavaScript file, `static/app.js`, also filters the visible rows as you type; without it the form submits and the server filters.
 
@@ -229,6 +231,28 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 ## Expiry dashboard
 
 The dashboard reads secrets, certificates and keys from every vault the person can see, six vaults at a time. Each vault has 20 seconds and the whole page 60, so one slow or private vault can't hold up the rest. Vaults that couldn't be read, or ran out of time, are listed with the reason, on the page and in the CSV. The fan-out (how many at once, the limits and the reasons) lives in `src/azure/fanout.rs`, so other cross-vault pages can share it.
+
+## Vault health
+
+`/vault-health` checks how each vault the person can see is set up. One row per vault, and each check is Pass, Warn or Unknown. Unknown always has a reason and is never counted as a pass: a value Azure didn't send, a setting Keyring doesn't recognise, or a read that failed or ran out of time.
+
+| Check | Pass when | Read from | Role |
+| --- | --- | --- | --- |
+| Audit logs | A diagnostic setting sends `AuditEvent` (or the `audit` or `allLogs` group) to a workspace, storage account, event hub or partner | Diagnostic settings, ARM | Reader |
+| Azure RBAC | `enableRbacAuthorization` is true | Resource Graph | Reader |
+| Soft delete | `enableSoftDelete` is true. Missing is Unknown | Resource Graph | Reader |
+| Purge protection | `enablePurgeProtection` is true. Azure leaves it out until it's on, so missing is a warning | Resource Graph | Reader |
+| Network access | `publicNetworkAccess` is `Disabled`, or `networkAcls.defaultAction` is `Deny`. Missing values take Azure's defaults (`Enabled`, `Allow`) and warn. Any other value is Unknown | Resource Graph | Reader |
+| Private endpoint | At least one private endpoint connection is `Approved` | Resource Graph | Reader |
+| Secret expiry | Every enabled secret, other than a certificate's backing secret, has an expiry date | Secrets list | Key Vault Reader |
+| Certificate renewal | Every enabled certificate's policy has an `AutoRenew` action | One policy read per certificate | Key Vault Reader |
+| Key rotation | Every enabled key, other than a certificate's own, has a rotation policy with a Rotate action | One rotation policy read per key | Key Vault Reader |
+
+- Vaults are read through `src/azure/fanout.rs`, as on the expiry dashboard: six at a time, 20 seconds each, a minute in all, and the first 100 by name across all vaults. A vault not read in time shows Unknown for the checks that need a read, with the reason; the Resource Graph checks still show.
+- Certificate renewal and key rotation need a call per item, so they only run when one vault is picked. Across all vaults they're shown as "Pick this vault". In one vault, up to 200 certificates and 200 keys are checked, six at a time within 15 seconds. Items past that or not read in time make the check Unknown if nothing else failed it, and are named in the warning if something did.
+- Each warning and unknown is listed under the table with one sentence on why it matters and what to do, and a link to Microsoft's guide for the setting.
+- The CSV export has one line per vault and check (vault, subscription, resource group, check, result, detail, guide), with formula guarding, and `NOT READ` lines for a vault not in the list or vaults past the first 100.
+- Only properties are read: no secret value, no private key. The page changes nothing, so it writes no action line.
 
 ## Alerts
 

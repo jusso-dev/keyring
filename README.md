@@ -123,6 +123,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, change what happens near expiry, enable or disable, see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view. Raw key material is never exported.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
+- **Vault health** across vaults: audit logs, Azure RBAC, soft delete and purge protection, network access, private endpoints, and secrets without expiry, certificates that don't renew and keys without a rotation policy. Each check is Pass, Warn or Unknown, with what to do and a link to Microsoft's guide, and a CSV export. The vault list flags vaults whose audit logs are off.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item.
 - Deletes need you to type the item's name first.
@@ -249,7 +250,9 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | List the vault's certificate issuers (to offer them when creating a certificate) | Key Vault Certificates Officer (without it, only self-signed is offered) | Vault |
 | List and view keys, copy public keys | Key Vault Reader (or Key Vault Crypto User) | Vault |
 | Create, rotate, enable or disable, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
-| See where a vault sends its logs (audit view) | Reader | Vault or resource group |
+| See where a vault sends its logs (audit view, vault list, vault health) | Reader | Vault or resource group |
+| Vault health: settings checks | Reader | Vault or resource group |
+| Vault health: secret expiry, certificate renewal and key rotation counts | Key Vault Reader | Vault |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
 
 These roles apply to the whole vault unless you assign them on a single item. **Key Vault Certificate User and Key Vault Secrets User can both read secret values.** Certificate User needs to, because a certificate's private key is kept in its backing secret, but at vault scope it can read every secret in the vault. Where that matters, assign it on the one certificate (its scope is `<vault ID>/certificates/<name>`, or `<vault ID>/secrets/<name>` for the backing secret) instead of the vault.

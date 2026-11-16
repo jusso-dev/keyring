@@ -234,6 +234,8 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/v/kv-test/keys/app-key/disable".into(),
         "/v/kv-test/keys/-/deleted".into(),
         "/expiry".into(),
+        "/vault-health".into(),
+        "/vault-health?vault=kv-test".into(),
         "/generator".into(),
         "/v/kv-test/audit".into(),
         "/auth/sign-in".into(),

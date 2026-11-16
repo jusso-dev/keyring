@@ -8,6 +8,7 @@ pub mod config;
 pub mod dates;
 pub(crate) mod expiry;
 pub(crate) mod generator;
+pub(crate) mod health;
 pub mod http;
 pub(crate) mod pkcs12;
 pub mod routes;

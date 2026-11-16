@@ -11,6 +11,7 @@
 </div>
 {% else %}
 <p class="muted">You can see {{ total }} vault{% if total != 1 %}s{% endif %}. Seeing a vault here doesn't always mean you can open its secrets.</p>
+<p class="muted">With audit logs off, nothing records who read or changed what, and Keyring's audit view has nothing to show. <a href="/vault-health">Vault health</a> checks this and more for every vault.</p>
 
 <form class="filters" method="get" action="/vaults" role="search" data-live-filter="vault-table">
   <div>
@@ -54,11 +55,12 @@
       <th scope="col">Access model</th>
       <th scope="col">Soft delete</th>
       <th scope="col">Purge protection</th>
+      <th scope="col">Audit logs</th>
       <th scope="col"><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
   <tbody>
-    {% for v in vaults %}
+    {% for (v, audit) in vaults %}
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="mono">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
       <td>{{ ui::or_none(v.subscription_name) }}</td>
@@ -67,6 +69,7 @@
       <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
       <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>
       <td>{% if v.purge_protection %}On{% else %}Off{% endif %}</td>
+      <td>{% match audit %}{% when AuditBadge::On %}On{% when AuditBadge::Elsewhere %}On, not in Log Analytics{% when AuditBadge::Off %}<span class="badge badge-warn">Off</span>{% when AuditBadge::Unknown(why) %}<span class="muted">Unknown: {{ why }}</span>{% endmatch %}</td>
       <td>
         <form method="post" action="/vaults/select">
           <input type="hidden" name="csrf" value="{{ shell.csrf() }}">

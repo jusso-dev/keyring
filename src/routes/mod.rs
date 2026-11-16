@@ -22,6 +22,7 @@ mod rejection;
 mod secrets;
 pub(crate) mod shell;
 pub(crate) mod vault_ctx;
+mod vault_health;
 mod vaults;
 
 use axum::Router;
@@ -217,6 +218,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/audit.csv", any(moved::legacy))
         .route("/expiry", get(expiry::page))
         .route("/expiry.csv", get(expiry::csv))
+        .route("/vault-health", get(vault_health::page))
+        .route("/vault-health.csv", get(vault_health::csv))
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/auth/keepalive", get(auth::keepalive))
         // Inside the session check, so the error page has the signed-in shell.
