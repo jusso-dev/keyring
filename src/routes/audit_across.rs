@@ -12,7 +12,7 @@
 //! All of it as the signed-in person, with their ARM and Log Analytics
 //! on-behalf-of tokens. Vaults that log nowhere, vaults whose settings
 //! can't be read and workspaces that can't be read are listed, on the page
-//! and in the CSV. This page only reads, so it writes no action line.
+//! and in the CSV. This page only reads, so it writes no audit event.
 
 use std::collections::HashMap;
 

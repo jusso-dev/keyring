@@ -212,6 +212,19 @@ pub enum Refusal {
 }
 
 impl Refusal {
+    /// Every refusal, for tests and docs.
+    pub const ALL: [Refusal; 9] = [
+        Self::Csrf,
+        Self::CrossSite,
+        Self::TypedNameMismatch,
+        Self::PurgeDisabled,
+        Self::ManagedItem,
+        Self::NoSession,
+        Self::InvalidRequest,
+        Self::StaleSignIn,
+        Self::IdTokenRejected,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Csrf => "csrf",
