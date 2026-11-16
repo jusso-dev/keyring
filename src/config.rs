@@ -33,6 +33,9 @@ pub struct Config {
     /// add to `X-Forwarded-For`. 0 (the default) ignores the header and
     /// records the socket peer as the client's address.
     pub trusted_proxy_hops: u8,
+    /// `KEYRING_STEP_UP_AUTH_CONTEXT` and `KEYRING_STEP_UP_MAX_AGE`: what a
+    /// sensitive action needs beyond a live session. Off by default.
+    pub step_up: crate::auth::step_up::StepUpPolicy,
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
@@ -285,6 +288,8 @@ impl Config {
                 })?,
         };
 
+        let step_up = step_up_policy(&get)?;
+
         let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
             None => DEFAULT_STALE_AFTER_DAYS,
             Some(v) => v
@@ -299,6 +304,7 @@ impl Config {
 
         Ok(Self {
             stale_after_days,
+            step_up,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -436,6 +442,40 @@ fn checked_origin(name: &'static str, raw: &str) -> Result<String, ConfigError> 
         ));
     }
     Ok(url.origin().ascii_serialization())
+}
+
+/// `KEYRING_STEP_UP_AUTH_CONTEXT` and `KEYRING_STEP_UP_MAX_AGE`, checked
+/// at start so a bad value stops Keyring instead of turning the check off.
+fn step_up_policy(
+    get: &impl Fn(&str) -> Option<String>,
+) -> Result<crate::auth::step_up::StepUpPolicy, ConfigError> {
+    use crate::auth::step_up::{MAX_AGE_LIMIT_MINUTES, StepUpPolicy, auth_context_id};
+    let auth_context = get("KEYRING_STEP_UP_AUTH_CONTEXT")
+        .map(|v| {
+            auth_context_id(&v).ok_or_else(|| ConfigError::Invalid {
+                name: "KEYRING_STEP_UP_AUTH_CONTEXT",
+                reason: "use an authentication context ID from c1 to c99, as shown in Entra ID under Conditional Access, Authentication contexts".into(),
+            })
+        })
+        .transpose()?;
+    let max_age = get("KEYRING_STEP_UP_MAX_AGE")
+        .map(|v| {
+            v.parse::<u64>()
+                .ok()
+                .filter(|m| (1..=MAX_AGE_LIMIT_MINUTES).contains(m))
+                .map(|m| std::time::Duration::from_secs(m * 60))
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_STEP_UP_MAX_AGE",
+                    reason: format!(
+                        "use a whole number of minutes from 1 to {MAX_AGE_LIMIT_MINUTES}"
+                    ),
+                })
+        })
+        .transpose()?;
+    Ok(StepUpPolicy {
+        auth_context,
+        max_age,
+    })
 }
 
 fn parse_bool(v: &str) -> Option<bool> {
@@ -881,6 +921,48 @@ pub(crate) mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn step_up_is_off_by_default_and_checked_when_set() {
+        let config = load(&sample_env()).unwrap();
+        assert!(!config.step_up.is_on());
+        let mut env = sample_env();
+        env.insert("KEYRING_STEP_UP_AUTH_CONTEXT", "C7".into());
+        env.insert("KEYRING_STEP_UP_MAX_AGE", "15".into());
+        let config = load(&env).unwrap();
+        assert_eq!(config.step_up.auth_context.as_deref(), Some("c7"));
+        assert_eq!(
+            config.step_up.max_age,
+            Some(std::time::Duration::from_secs(15 * 60))
+        );
+        for bad in ["c0", "c100", "acr1", "1"] {
+            env.insert("KEYRING_STEP_UP_AUTH_CONTEXT", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_STEP_UP_AUTH_CONTEXT",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+        env.insert("KEYRING_STEP_UP_AUTH_CONTEXT", "c1".into());
+        for bad in ["0", "-5", "721", "15m", "1.5"] {
+            env.insert("KEYRING_STEP_UP_MAX_AGE", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_STEP_UP_MAX_AGE",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
