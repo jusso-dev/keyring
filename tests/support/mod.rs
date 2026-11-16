@@ -180,6 +180,9 @@ pub(crate) enum TokenBehaviour {
     WrongAudience,
     /// Return an OAuth error.
     Error(&'static str),
+    /// Return an OAuth error with an `AADSTS` number in its description,
+    /// as Entra does.
+    ErrorWithCode(&'static str, u64),
 }
 
 pub(crate) struct MockIdp {
@@ -211,6 +214,11 @@ pub(crate) struct IdpState {
     pub rolled_over: Mutex<bool>,
     /// Delay before answering token requests, so tests can overlap them.
     pub token_delay: Mutex<Duration>,
+    /// `acrs` in the next ID tokens: authentication contexts met. `None`
+    /// leaves the claim out, as Entra does when none was asked for.
+    pub acrs: Mutex<Option<Vec<String>>>,
+    /// `auth_time` in the next ID tokens, Unix seconds. `None` leaves it out.
+    pub auth_time: Mutex<Option<i64>>,
 }
 
 impl IdpState {
@@ -287,6 +295,8 @@ pub(crate) async fn start_idp() -> MockIdp {
         discovery_down: Mutex::new(false),
         rolled_over: Mutex::new(false),
         token_delay: Mutex::new(Duration::ZERO),
+        acrs: Mutex::new(None),
+        auth_time: Mutex::new(None),
     });
     let app = Router::new()
         .route(
@@ -370,6 +380,12 @@ async fn token(
             json!({ "error": code, "error_description": "test" }),
         );
     }
+    if let TokenBehaviour::ErrorWithCode(code, n) = behaviour {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": code, "error_codes": [n], "error_description": format!("AADSTS{n}: test") }),
+        );
+    }
     let nonce = match behaviour {
         TokenBehaviour::WrongNonce => "not-the-nonce".to_owned(),
         _ => s.nonce.lock().unwrap().clone().unwrap_or_default(),
@@ -391,9 +407,16 @@ async fn token(
         keyring::auth::oidc::EntraClaims {
             oid: Some(USER_OID.into()),
             tid: Some(TENANT.into()),
+            acrs: s.acrs.lock().unwrap().clone(),
         },
     )
-    .set_nonce(Some(Nonce::new(nonce)));
+    .set_nonce(Some(Nonce::new(nonce)))
+    .set_auth_time(
+        s.auth_time
+            .lock()
+            .unwrap()
+            .and_then(|t| DateTime::from_timestamp(t, 0)),
+    );
     let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
         TokenBehaviour::WrongKey if rolled => &s.key,

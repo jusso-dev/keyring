@@ -105,6 +105,14 @@ pub(crate) async fn reveal(
         return Err(PageError::new(shell, Problem::not_found()).into());
     }
     let path = vault_path(&vault, &format!("/secrets/{name}"));
+    // Back to the page with the Reveal button: the versions list for an
+    // older version, otherwise the secret's own page.
+    let confirm = if version.is_empty() {
+        path.clone()
+    } else {
+        format!("{path}/versions")
+    };
+    let shell = crate::routes::step_up::require(&state, &session.0, shell, &confirm, &confirm)?;
     // A certificate's backing secret holds its private key. That goes
     // through the certificate's own download, with its warning and typed
     // name, never through reveal. Checked from properties, so no value is
