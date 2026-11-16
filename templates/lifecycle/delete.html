@@ -1,0 +1,5 @@
+{% extends "confirm.html" %}
+{#- The delete confirmation, with who used the item lately under it. -#}
+{% block after_form %}
+{% include "_used_by.html" %}
+{% endblock %}
