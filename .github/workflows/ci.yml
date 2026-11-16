@@ -159,7 +159,7 @@ jobs:
           # above leave it off), so the audit-sink module is built as used.
           for t in app-service container-apps; do
             p="$t/audit-ci.bicepparam"
-            { sed '/^param auditWorkspaceId/d' "$t/main.example.bicepparam"
+            { sed -e '/^param auditWorkspaceId/d' -e '/^param auditRequired/d' "$t/main.example.bicepparam"
               echo "param auditWorkspaceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sentinel/providers/Microsoft.OperationalInsights/workspaces/law-sentinel'"
               echo "param auditRequired = true"
             } > "$p"
