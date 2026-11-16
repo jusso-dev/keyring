@@ -341,7 +341,7 @@ Two optional settings, which can be used alone or together. With neither, nothin
 
 A bad value (`c0`, `c100`, `15m`) stops Keyring at start rather than turning the check off.
 
-**This is a check Keyring makes, not Key Vault.** Key Vault doesn't know about it, so anyone with access can still read the same values with the Azure CLI or the portal. It raises the bar for someone holding a stolen Keyring session cookie. To make Key Vault itself need the stronger sign-in, use a Conditional Access policy on Azure Key Vault (or Azure management) as a cloud app as well.
+**This is a check Keyring makes, not Key Vault.** Key Vault doesn't know about it, so anyone with access can still read the same values with the Azure CLI or the portal. It raises the bar for someone holding a stolen Keyring session cookie, but only while that session's own sign-in doesn't meet the settings. Once a person has confirmed it's them, their session meets an authentication context until it ends (12 hours at most), so a cookie stolen after that passes too. Set `stepUpMaxAge` as well to make it lapse sooner. To make Key Vault itself need the stronger sign-in, use a Conditional Access policy on Azure Key Vault (or Azure management) as a cloud app as well.
 
 ### Create the authentication context
 
