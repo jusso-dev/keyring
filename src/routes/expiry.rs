@@ -20,6 +20,7 @@ use crate::azure::AzureError;
 use crate::azure::fanout::Skipped;
 use crate::azure::secrets::now_ts;
 use crate::expiry::{self, Group, Item, ItemType};
+use crate::rotation::Rotation;
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem};
 use crate::routes::every_vault::{self, MAX_VAULTS};
@@ -116,11 +117,19 @@ pub(super) struct RowView {
     pub tags: String,
 }
 
+/// A secret whose `rotation-status` tag says `failed`.
+pub(super) struct FailedView {
+    pub vault: String,
+    pub name: String,
+    pub rotation: Rotation,
+}
+
 #[derive(Template)]
 #[template(path = "expiry.html")]
 struct ExpiryPage {
     shell: Shell,
     groups: Vec<GroupView>,
+    failed: Vec<FailedView>,
     total: usize,
     skipped: Vec<Skipped>,
     vault_names: Vec<String>,
@@ -157,6 +166,19 @@ pub(super) async fn page(
     expiry::sort(&mut items);
     let counts = expiry::counts(&items, now);
     let total = items.len();
+    // From the tags the list calls already gave: no extra reads.
+    let failed = items
+        .iter()
+        .filter(|i| i.kind == ItemType::Secret)
+        .filter_map(|i| {
+            let rotation = Rotation::from_tags(&i.tags).filter(Rotation::failed)?;
+            Some(FailedView {
+                vault: i.vault.clone(),
+                name: i.name.clone(),
+                rotation,
+            })
+        })
+        .collect();
     let groups = Group::ALL
         .iter()
         .enumerate()
@@ -182,6 +204,7 @@ pub(super) async fn page(
         csv_url: format!("/expiry.csv?{}", filter.query()),
         shell,
         groups,
+        failed,
         total,
         skipped: loaded.skipped,
         vault_names: loaded.vault_names,
