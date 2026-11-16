@@ -440,6 +440,14 @@ input:disabled,
 select:disabled,
 textarea:disabled,
 button[disabled] { opacity: 0.55; cursor: not-allowed; }
+button[disabled]:hover { background: var(--color-accent); border-color: var(--color-accent); }
+button.button-secondary[disabled]:hover { background: var(--color-surface); border-color: var(--color-rule-strong); }
+button.button-danger[disabled],
+button.button-danger[disabled]:hover { background: var(--color-surface); border-color: var(--color-danger); color: var(--color-danger); }
+
+/* A control the person's roles don't allow, with the role it needs. */
+.needs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-3xs) var(--space-2xs); }
+.needs-role { color: var(--color-ink-2); font-size: var(--text-sm); }
 
 .actions {
   display: flex;

@@ -124,13 +124,6 @@ struct DefinitionProps {
     permissions: Vec<PermissionSet>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PermissionSet {
-    #[serde(default)]
-    data_actions: Vec<String>,
-}
-
 /// One entry in a vault's access policies.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -323,6 +316,96 @@ pub async fn vault_authorisation(
     })
 }
 
+/// What the signed-in person may do at one scope, from
+/// `{scope}/providers/Microsoft.Authorization/permissions`. One set per role
+/// they hold there (directly, through a group, or inherited from above).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Permissions {
+    pub sets: Vec<PermissionSet>,
+}
+
+/// One role's permissions, as ARM lists them. Patterns may hold `*`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionSet {
+    #[serde(default)]
+    pub actions: Vec<String>,
+    #[serde(default)]
+    pub not_actions: Vec<String>,
+    #[serde(default)]
+    pub data_actions: Vec<String>,
+    #[serde(default)]
+    pub not_data_actions: Vec<String>,
+}
+
+impl PermissionSet {
+    /// This set allows `action`: one of its `dataActions` matches and none
+    /// of its `notDataActions` does.
+    pub fn allows_data_action(&self, action: &str) -> bool {
+        self.data_actions.iter().any(|p| action_matches(p, action))
+            && !self
+                .not_data_actions
+                .iter()
+                .any(|p| action_matches(p, action))
+    }
+}
+
+impl Permissions {
+    /// True when any one set allows `action`. Azure works the same way:
+    /// `notDataActions` take away from the role they're in, not from the
+    /// person's other roles, so they are not a deny.
+    pub fn allows_data_action(&self, action: &str) -> bool {
+        self.sets.iter().any(|s| s.allows_data_action(action))
+    }
+}
+
+/// True when the action `pattern` from a role covers `action`. Both are
+/// compared without regard to case, and `*` stands for any run of
+/// characters, `/` included, wherever it appears
+/// (`Microsoft.KeyVault/vaults/secrets/*`, `Microsoft.KeyVault/vaults/*/read`
+/// or `*` on its own).
+pub fn action_matches(pattern: &str, action: &str) -> bool {
+    let p = pattern.trim().to_ascii_lowercase();
+    let a = action.trim().to_ascii_lowercase();
+    let mut parts = p.split('*');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = a.strip_prefix(first) else {
+        return false;
+    };
+    let tail: Vec<&str> = parts.collect();
+    let Some((last, middle)) = tail.split_last() else {
+        // No `*`: the whole action must match.
+        return rest.is_empty();
+    };
+    for piece in middle {
+        match rest.find(piece) {
+            Some(i) => rest = &rest[i + piece.len()..],
+            None => return false,
+        }
+    }
+    rest.ends_with(last)
+}
+
+/// The signed-in person's own permissions at `scope`: the vault's ARM ID,
+/// or [`item_scope`] for one item. Follows `nextLink` like the lists.
+pub async fn permissions(
+    azure: &AzureClient,
+    session: &Session,
+    management_url: &str,
+    scope: &str,
+) -> Result<Permissions, AzureError> {
+    if !is_safe_resource_id(scope) {
+        return Err(AzureError::Unreadable);
+    }
+    let url = format!(
+        "{management_url}{scope}/providers/Microsoft.Authorization/permissions?api-version={AUTHORIZATION_API}"
+    );
+    let sets: Vec<PermissionSet> = list_all(azure, session, management_url, url).await?;
+    Ok(Permissions { sets })
+}
+
 /// The ARM scope of one secret, certificate or key, for item-level role
 /// assignments. `collection` is `secrets`, `certificates` or `keys`.
 pub fn item_scope(vault_id: &str, collection: &str, name: &str) -> String {
@@ -441,6 +524,88 @@ mod tests {
         let owner = def(&OWNER.to_ascii_uppercase(), &[]);
         assert!(owner.can_grant_itself_access());
         assert!(!owner.has_key_vault_data_actions());
+    }
+
+    #[test]
+    fn wildcards_match_without_regard_to_case() {
+        let get = "Microsoft.KeyVault/vaults/secrets/getSecret/action";
+        assert!(action_matches(get, get));
+        assert!(action_matches(
+            "microsoft.keyvault/VAULTS/secrets/getsecret/ACTION",
+            get
+        ));
+        assert!(action_matches("Microsoft.KeyVault/vaults/secrets/*", get));
+        assert!(action_matches("Microsoft.KeyVault/vaults/*", get));
+        assert!(action_matches("*", get));
+        assert!(action_matches("Microsoft.KeyVault/*/action", get));
+        assert!(action_matches(
+            "Microsoft.KeyVault/vaults/*/read",
+            "Microsoft.KeyVault/vaults/keys/read"
+        ));
+        assert!(!action_matches(
+            "Microsoft.KeyVault/vaults/*/read",
+            "Microsoft.KeyVault/vaults/keys/delete"
+        ));
+        assert!(!action_matches("Microsoft.KeyVault/vaults/keys/*", get));
+        assert!(
+            !action_matches("Microsoft.KeyVault/vaults/secrets", get),
+            "no star: the whole action"
+        );
+        assert!(
+            !action_matches("Microsoft.KeyVault/vaults/secrets/getSecret", get),
+            "a prefix isn't a match"
+        );
+        assert!(
+            !action_matches("Microsoft.KeyVault/vaults/secretsX/*", get),
+            "a near name isn't a match"
+        );
+        assert!(!action_matches("", get));
+        assert!(action_matches("a*b*c", "aXbYc"));
+        assert!(!action_matches("a*b*c", "aXcYb"));
+    }
+
+    #[test]
+    fn not_data_actions_take_away_from_their_own_role() {
+        let set = |data: &[&str], not: &[&str]| PermissionSet {
+            data_actions: data.iter().map(|a| (*a).into()).collect(),
+            not_data_actions: not.iter().map(|a| (*a).into()).collect(),
+            ..PermissionSet::default()
+        };
+        let get = "Microsoft.KeyVault/vaults/secrets/getSecret/action";
+        let purge = "Microsoft.KeyVault/vaults/secrets/purge/action";
+        let no_purge = set(
+            &["Microsoft.KeyVault/vaults/secrets/*"],
+            &["microsoft.keyvault/vaults/secrets/PURGE/*"],
+        );
+        assert!(no_purge.allows_data_action(get));
+        assert!(!no_purge.allows_data_action(purge));
+        let one = Permissions {
+            sets: vec![no_purge.clone()],
+        };
+        assert!(!one.allows_data_action(purge));
+        // Another role that allows it still does: notDataActions aren't a deny.
+        let two = Permissions {
+            sets: vec![no_purge, set(&["Microsoft.KeyVault/vaults/*"], &[])],
+        };
+        assert!(two.allows_data_action(purge));
+        assert!(!set(&["*"], &["*"]).allows_data_action(get));
+        assert!(!Permissions::default().allows_data_action(get));
+    }
+
+    #[test]
+    fn parses_permissions() {
+        let page: ListPage<PermissionSet> = serde_json::from_value(serde_json::json!({
+            "value": [{
+                "actions": ["Microsoft.KeyVault/vaults/*/read"],
+                "notActions": [],
+                "dataActions": ["Microsoft.KeyVault/vaults/secrets/readMetadata/action"],
+                "notDataActions": []
+            }, {"actions": ["*"]}]
+        }))
+        .unwrap();
+        assert_eq!(page.value.len(), 2);
+        assert_eq!(page.value[0].data_actions.len(), 1);
+        assert!(page.value[1].data_actions.is_empty());
     }
 
     #[test]

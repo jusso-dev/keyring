@@ -19,6 +19,7 @@ use crate::routes::assets::render;
 use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, PageError, Problem};
 use crate::routes::flash::{self, Flash};
+use crate::routes::hints::{Action, Hints};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, vault_path};
@@ -510,6 +511,7 @@ struct DeletedDetail<'a> {
     kind: Kind,
     row: &'a DeletedRow,
     allow_purge: bool,
+    hints: Hints,
 }
 
 impl DeletedDetail<'_> {
@@ -532,6 +534,7 @@ pub(crate) fn deleted_detail(
     vault: String,
     kind: Kind,
     row: &DeletedRow,
+    hints: Hints,
 ) -> Response {
     render(&DeletedDetail {
         shell,
@@ -539,6 +542,7 @@ pub(crate) fn deleted_detail(
         kind,
         row,
         allow_purge: state.config.allow_purge,
+        hints,
     })
     .into_response()
 }

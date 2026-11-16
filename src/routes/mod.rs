@@ -17,6 +17,7 @@ pub(crate) mod forms;
 mod generator;
 mod headers;
 mod health;
+pub(crate) mod hints;
 mod home;
 mod keys;
 pub(crate) mod lifecycle;

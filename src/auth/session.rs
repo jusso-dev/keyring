@@ -27,6 +27,19 @@ pub const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 /// the expiry dashboard before Key Vault is asked again.
 pub const LIST_TTL: Duration = Duration::from_secs(60);
 
+/// How long the signed-in person's own permissions at a scope are reused
+/// to grey out buttons before ARM is asked again. See
+/// [`crate::routes::hints`].
+pub const PERMISSIONS_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// The person's permissions at one scope, as last read. `None` means
+/// "don't hint": an access policy vault, where they don't cover data
+/// access. Memory only, dropped with the session.
+struct CachedPermissions {
+    read_at: Instant,
+    perms: Option<Arc<crate::azure::authz::Permissions>>,
+}
+
 /// One vault's secrets, certificates and keys as last read: names and
 /// properties only, never values. Memory only, dropped with the session.
 struct CachedList {
@@ -149,6 +162,9 @@ pub struct Session {
     pending_upload: Mutex<Option<PendingUpload>>,
     /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
     lists: Mutex<HashMap<String, CachedList>>,
+    /// The person's own permissions by ARM scope (lower case), for
+    /// [`PERMISSIONS_TTL`]. See [`CachedPermissions`].
+    permissions: Mutex<HashMap<String, CachedPermissions>>,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -294,6 +310,41 @@ impl Session {
     /// to change.
     pub fn forget_list(&self, vault: &str) {
         lock(&self.lists).remove(vault);
+    }
+
+    /// The permissions read at `scope` within the last
+    /// [`PERMISSIONS_TTL`]. The outer `None` is "not read"; the inner one is
+    /// "read, and nothing to hint".
+    pub(crate) fn cached_permissions_at(
+        &self,
+        scope: &str,
+        now: Instant,
+    ) -> Option<Option<Arc<crate::azure::authz::Permissions>>> {
+        lock(&self.permissions)
+            .get(&scope.to_ascii_lowercase())
+            .filter(|c| now.saturating_duration_since(c.read_at) < PERMISSIONS_TTL)
+            .map(|c| c.perms.clone())
+    }
+
+    pub(crate) fn keep_permissions_at(
+        &self,
+        scope: &str,
+        perms: Option<Arc<crate::azure::authz::Permissions>>,
+        now: Instant,
+    ) {
+        lock(&self.permissions).insert(
+            scope.to_ascii_lowercase(),
+            CachedPermissions {
+                read_at: now,
+                perms,
+            },
+        );
+    }
+
+    /// Drop permissions older than [`PERMISSIONS_TTL`].
+    fn drop_stale_permissions(&self, now: Instant) {
+        lock(&self.permissions)
+            .retain(|_, c| now.saturating_duration_since(c.read_at) < PERMISSIONS_TTL);
     }
 
     /// Drop lists older than [`LIST_TTL`].
@@ -518,6 +569,7 @@ impl SessionStore {
             sign_in: Mutex::new(SignInFacts::default()),
             pending_upload: Mutex::new(None),
             lists: Mutex::new(HashMap::new()),
+            permissions: Mutex::new(HashMap::new()),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),
@@ -553,7 +605,8 @@ impl SessionStore {
     }
 
     /// Drop expired sessions, and pending uploads older than
-    /// [`PENDING_UPLOAD_TTL`] and vault lists older than [`LIST_TTL`] in
+    /// [`PENDING_UPLOAD_TTL`], vault lists older than [`LIST_TTL`] and
+    /// permissions older than [`PERMISSIONS_TTL`] in
     /// the sessions that are left.
     pub fn sweep_at(&self, now: Instant) {
         let mut map = lock(&self.sessions);
@@ -561,6 +614,7 @@ impl SessionStore {
         for s in map.values() {
             s.drop_stale_upload(now);
             s.drop_stale_lists(now);
+            s.drop_stale_permissions(now);
         }
     }
 
@@ -707,6 +761,42 @@ pub(crate) mod tests {
         assert!(s.cached_list_at("kv-b", t0).is_none());
         store.sweep_at(t0 + LIST_TTL);
         assert!(lock(&s.lists).is_empty(), "stale lists are dropped");
+    }
+
+    #[test]
+    fn permissions_are_kept_a_few_minutes_by_scope_and_swept() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let perms = Arc::new(crate::azure::authz::Permissions::default());
+        s.keep_permissions_at("/subscriptions/S/vaults/KV", Some(perms), t0);
+        s.keep_permissions_at("/subscriptions/s/vaults/policy", None, t0);
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/kv", t0)
+                .is_some_and(|p| p.is_some()),
+            "scopes match without regard to case"
+        );
+        assert_eq!(
+            s.cached_permissions_at("/subscriptions/s/vaults/policy", t0),
+            Some(None),
+            "nothing to hint, remembered as such"
+        );
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/other", t0)
+                .is_none()
+        );
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/kv", t0 + PERMISSIONS_TTL)
+                .is_none()
+        );
+        store.sweep_at(t0 + PERMISSIONS_TTL / 2);
+        assert_eq!(lock(&s.permissions).len(), 2);
+        store.sweep_at(t0 + PERMISSIONS_TTL);
+        assert!(
+            lock(&s.permissions).is_empty(),
+            "stale permissions are dropped"
+        );
     }
 
     #[test]

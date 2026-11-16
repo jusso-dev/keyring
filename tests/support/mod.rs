@@ -626,6 +626,20 @@ pub(crate) struct AuthzMock {
     pub eligible_status: Option<u16>,
     /// Answer 403 to the vault resource.
     pub vault_forbidden: bool,
+    /// The signed-in person's own permissions, for
+    /// `{scope}/providers/Microsoft.Authorization/permissions` at any
+    /// scope: one (dataActions, notDataActions) pair per role. `None`
+    /// answers 403, so tests that don't set it see every button enabled.
+    pub permissions: Option<Vec<RolePerms>>,
+    /// Permissions at one scope (compared without regard to case), in
+    /// place of `permissions` there.
+    pub permissions_at: Vec<(String, Vec<RolePerms>)>,
+    /// Answer this status to every `permissions` read.
+    pub permissions_status: Option<u16>,
+    /// Answer `permissions` with a body Keyring can't read.
+    pub permissions_garbled: bool,
+    /// Wait this long before answering a `permissions` read.
+    pub permissions_delay: Duration,
     /// Wait this long before answering any Access read.
     pub delay: Duration,
     /// Path of every Access read, in order.
@@ -638,6 +652,40 @@ pub(crate) const SECRETS_USER: &str = "4633458b-17de-408a-b874-0445c86b69e6";
 pub(crate) const OWNER_ROLE: &str = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635";
 pub(crate) const READER_ROLE: &str = "acdd72a7-3385-48ef-bd42-f606fba81ae7";
 pub(crate) const CERT_OFFICER: &str = "a4417e6f-fecd-4de8-b567-7b0420556985";
+
+/// One role's (dataActions, notDataActions).
+pub(crate) type RolePerms = (Vec<String>, Vec<String>);
+
+/// Data actions of built-in roles, as Microsoft defines them, for
+/// [`AuthzMock::permissions`].
+pub(crate) fn role_data_actions(role: &str) -> RolePerms {
+    let actions: &[&str] = match role {
+        "Key Vault Reader" => &[
+            "Microsoft.KeyVault/vaults/*/read",
+            "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+        ],
+        "Key Vault Secrets User" => &[
+            "Microsoft.KeyVault/vaults/secrets/getSecret/action",
+            "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+        ],
+        "Key Vault Secrets Officer" => &["Microsoft.KeyVault/vaults/secrets/*"],
+        "Key Vault Certificates Officer" => &[
+            "Microsoft.KeyVault/vaults/certificatecas/*",
+            "Microsoft.KeyVault/vaults/certificates/*",
+            "Microsoft.KeyVault/vaults/certificatecontacts/write",
+        ],
+        "Key Vault Crypto Officer" => &[
+            "Microsoft.KeyVault/vaults/keys/*",
+            "Microsoft.KeyVault/vaults/keyrotationpolicies/*",
+        ],
+        "Key Vault Administrator" => &["Microsoft.KeyVault/vaults/*"],
+        other => panic!("no data actions for {other}"),
+    };
+    (
+        actions.iter().map(|a| (*a).to_owned()).collect(),
+        Vec::new(),
+    )
+}
 
 impl AuthzMock {
     /// The built-in roles the tests use.
@@ -686,19 +734,29 @@ async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> 
     const ASSIGN: &str = "/providers/Microsoft.Authorization/roleAssignments";
     const ELIGIBLE: &str = "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances";
     const DEFS: &str = "/providers/Microsoft.Authorization/roleDefinitions/";
+    const PERMS: &str = "/providers/Microsoft.Authorization/permissions";
     let is_vault = path.contains("/providers/Microsoft.KeyVault/vaults/")
         && path
             .rsplit("/vaults/")
             .next()
             .is_some_and(|n| !n.contains('/'));
-    if !(path.ends_with(ASSIGN) || path.ends_with(ELIGIBLE) || path.contains(DEFS) || is_vault) {
+    if !(path.ends_with(ASSIGN)
+        || path.ends_with(ELIGIBLE)
+        || path.contains(DEFS)
+        || path.ends_with(PERMS)
+        || is_vault)
+    {
         return None;
     }
     let delay = {
         let mut m = s.authz.lock().unwrap();
         m.paths.push(path.to_owned());
         m.bearers.push(bearer);
-        m.delay
+        if path.ends_with(PERMS) {
+            m.delay + m.permissions_delay
+        } else {
+            m.delay
+        }
     };
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
@@ -710,6 +768,38 @@ async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> 
         )
     };
     let m = s.authz.lock().unwrap();
+    if let Some(scope) = path.strip_suffix(PERMS) {
+        assert!(query.contains("api-version=2022-04-01"), "{query}");
+        if let Some(status) = m.permissions_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
+        if m.permissions_garbled {
+            return Some(json_response(
+                StatusCode::OK,
+                json!({"value": "not a list"}),
+            ));
+        }
+        let sets = m
+            .permissions_at
+            .iter()
+            .find(|(at, _)| at.eq_ignore_ascii_case(scope))
+            .map(|(_, sets)| sets)
+            .or(m.permissions.as_ref());
+        let Some(sets) = sets else {
+            return Some(forbidden());
+        };
+        let value: Vec<_> = sets
+            .iter()
+            .map(|(data, not)| {
+                json!({"actions": ["Microsoft.KeyVault/vaults/*/read"], "notActions": [],
+                       "dataActions": data, "notDataActions": not})
+            })
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
     if path.ends_with(ASSIGN) {
         assert!(query.contains("api-version=2022-04-01"), "{query}");
         if m.assignments_forbidden {

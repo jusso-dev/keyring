@@ -208,8 +208,21 @@ pub(crate) async fn deleted_detail<L: DeletedPages>(
 ) -> PageResult {
     let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    match L::get_deleted(&state, &session, &vault, &name, now_ts()).await {
-        Ok(row) => Ok(super::deleted_detail(&state, shell, vault, L::KIND, &row)),
+    // Asked at the item's scope like the other item pages, never only at
+    // the vault's: an item-level role may still apply to a deleted item.
+    let (row, hints) = tokio::join!(
+        L::get_deleted(&state, &session, &vault, &name, now_ts()),
+        crate::routes::hints::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    match row {
+        Ok(row) => Ok(super::deleted_detail(
+            &state,
+            shell,
+            vault,
+            L::KIND,
+            &row,
+            hints,
+        )),
         Err(e) => Err(azure_problem(
             shell,
             &e,
