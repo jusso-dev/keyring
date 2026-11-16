@@ -65,11 +65,20 @@ pub(super) struct CertRow {
     pub expires_note: String,
     pub expiry: CertExpiry,
     pub created: String,
+    pub created_at: Option<i64>,
+    /// The "Not changed in over ..." badge, or empty. Set by `mark_stale`.
+    pub stale: String,
     pub tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
 impl CertRow {
+    /// Set the badge for a value unchanged in more than `after_days`.
+    pub(super) fn mark_stale(mut self, after_days: u32, now: i64) -> Self {
+        self.stale = crate::age::stale_badge(self.created_at, false, after_days, now);
+        self
+    }
+
     pub(super) fn from_item(item: &CertItem, now: i64) -> Self {
         let a = &item.attributes;
         let tags: Vec<(String, String)> = item
@@ -93,6 +102,8 @@ impl CertRow {
                 .unwrap_or_default(),
             expiry: cert_expiry(a.expires, now),
             created: a.created.map(dates::format_datetime).unwrap_or_default(),
+            created_at: a.created,
+            stale: String::new(),
             tags,
             filter_text,
         }
@@ -217,7 +228,11 @@ pub(super) async fn list(
         }
     };
     let now = now_ts();
-    let all: Vec<CertRow> = items.iter().map(|i| CertRow::from_item(i, now)).collect();
+    let after = state.config.stale_after_days;
+    let all: Vec<CertRow> = items
+        .iter()
+        .map(|i| CertRow::from_item(i, now).mark_stale(after, now))
+        .collect();
     let total = all.len();
     let expired = all.iter().filter(|r| r.is_expired()).count();
     let within30 = all.iter().filter(|r| r.within30()).count();
@@ -384,6 +399,7 @@ struct DetailPage {
     versions: Vec<CertRow>,
     /// Set when the versions couldn't be read.
     versions_note: Option<String>,
+    access: crate::routes::access::Access,
 }
 
 pub(super) async fn detail(
@@ -397,10 +413,11 @@ pub(super) async fn detail(
     let (name, shell) = checked_name(&name, shell)?;
     let api = api(&state, &session, &vault);
     let path = vault_path(&vault, &format!("/certificates/{name}"));
-    let (bundle, versions, pending) = tokio::join!(
+    let (bundle, versions, pending, access) = tokio::join!(
         api.get_cert(&name, None),
         api.versions(&name),
-        api.pending(&name)
+        api.pending(&name),
+        crate::routes::access::for_item(&state, &session, &vault, Kind::Certificate, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -444,7 +461,7 @@ pub(super) async fn detail(
         x5t: bundle.x5t.clone(),
     };
     Ok(render(&DetailPage {
-        row: CertRow::from_item(&item, now),
+        row: CertRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now),
         cert: CertView::from_bundle(&bundle),
         policy: bundle.policy.as_ref().map(PolicyView::from_policy),
         pending,
@@ -453,6 +470,7 @@ pub(super) async fn detail(
         versions_note,
         shell,
         vault,
+        access,
     })
     .into_response())
 }

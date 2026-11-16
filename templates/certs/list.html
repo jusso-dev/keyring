@@ -46,7 +46,7 @@
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <th scope="row"><a class="mono" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}</td>
+      <td>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td class="mono small">{{ ui::or_none(row.thumbprint) }}</td>
       <td>{{ ui::tags(row.tags) }}</td>
