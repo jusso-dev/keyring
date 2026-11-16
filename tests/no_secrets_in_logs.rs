@@ -126,6 +126,50 @@ async fn values_never_reach_the_logs() {
         !html.contains("Sup3r-S3cret"),
         "the form never shows the value"
     );
+    // The audit sink: a world that sends events to Log Analytics with the
+    // managed identity, through a refusal, a retry and a success. Neither
+    // the identity's token, its header nor a row's body reaches the log.
+    let ingest = support::ingestion::start().await;
+    let identity = support::start_identity().await;
+    let sw = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", identity.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_AUDIT_INGESTION_ENDPOINT",
+                "https://keyring-audit.australiaeast-1.ingest.monitor.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_AUDIT_DCR_ID",
+                support::ingestion::DCR_ID.to_owned(),
+            ),
+            ("KEYRING_TEST_AUDIT_INGESTION_URL", ingest.url()),
+        ],
+        |c| {
+            let t = &mut c.audit_sink.as_mut().unwrap().tuning;
+            t.backoff_first = std::time::Duration::from_millis(10);
+        },
+    )
+    .await;
+    sw.kv.state.put("db-password", VALUE);
+    {
+        let mut script = ingest.state.script.lock().unwrap();
+        script.push_back((403, None));
+        script.push_back((500, None));
+        script.push_back((400, None));
+    }
+    for _ in 0..2 {
+        let res = sw.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
+        let _ = support::body_text(res).await;
+    }
+    let sink = sw.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    assert!(ingest.state.violations().is_empty());
+    assert!(sink.health().dropped_rejected >= 1, "{:?}", sink.health());
 
     // A crafted sign-in error can't add a line to the log.
     let res = w
@@ -177,6 +221,23 @@ async fn values_never_reach_the_logs() {
     assert!(!logs.contains("user-api-token"), "token leaked into logs");
     assert!(!logs.contains("obo:"), "token leaked into logs");
     assert!(
+        !logs.contains(support::MI_MONITOR_TOKEN),
+        "identity token leaked"
+    );
+    assert!(
+        !logs.contains(support::IDENTITY_HEADER),
+        "identity header leaked"
+    );
+    assert!(
+        !logs.contains("WriterIdentityClientId"),
+        "a sink row was logged"
+    );
+    assert!(
+        logs.contains("audit sink: ingestion refused a batch; dropped status=400")
+            || logs.contains("status=400"),
+        "the sink logs the status: {logs}"
+    );
+    assert!(
         !logs.contains("private detail"),
         "Azure message leaked into logs"
     );
@@ -190,6 +251,9 @@ async fn values_never_reach_the_logs() {
         "GENLEAK_",
         "user-api-token",
         "obo:",
+        support::MI_MONITOR_TOKEN,
+        support::IDENTITY_HEADER,
+        "WriterIdentityClientId",
         "private detail",
         w.cookie.as_str(),
         w.csrf.as_str(),

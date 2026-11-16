@@ -20,3 +20,6 @@ param stepUpAuthContext = '' // c1 to c99: ask for this Conditional Access authe
 param stepUpMaxAge = 0 // minutes since sign-in allowed before a reveal; 0 is off
 param logAnalyticsWorkspaceId = '' // keeps Keyring's audit events; see docs/deploy.md, "Logs"
 param useFederatedCredential = false // true: sign in to Entra with the app's managed identity, no client secret; see the README, step 2 option B
+param auditWorkspaceId = '' // a Log Analytics workspace's resource ID: Keyring also sends its audit events there, as its managed identity; see docs/deploy.md, "Audit sink"
+param auditRetentionInDays = 365 // days the KeyringAudit_CL table keeps rows
+param auditRequired = false // true: refuse reveals and private key downloads while the audit sink is failing

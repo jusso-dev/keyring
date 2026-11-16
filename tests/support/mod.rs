@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod certs;
+pub(crate) mod ingestion;
 pub(crate) mod keys;
 pub(crate) mod keyvault;
 
@@ -42,6 +43,10 @@ pub(crate) const CLIENT_SECRET: &str = "test-client-secret";
 pub(crate) const IDENTITY_CLIENT_ID: &str = "33333333-3333-3333-3333-333333333333";
 pub(crate) const IDENTITY_HEADER: &str = "mock-identity-header";
 pub(crate) const MI_ASSERTION: &str = "mi-assertion";
+/// What the mock token service hands out for `https://monitor.azure.com`.
+/// The mock ingestion endpoint accepts nothing else.
+pub(crate) const MI_MONITOR_TOKEN: &str = "mi-monitor-token";
+pub(crate) const MONITOR_RESOURCE: &str = "https://monitor.azure.com";
 pub(crate) const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
@@ -105,6 +110,8 @@ pub(crate) struct IdentityState {
     pub delay: Mutex<Duration>,
     /// Lifetime in seconds of the token handed out.
     pub expires_in: Mutex<u64>,
+    /// The `resource` of each request that passed the checks, in order.
+    pub resources: Mutex<Vec<String>>,
 }
 
 impl MockIdentity {
@@ -118,6 +125,7 @@ pub(crate) async fn start_identity() -> MockIdentity {
         calls: Mutex::new(0),
         delay: Mutex::new(Duration::ZERO),
         expires_in: Mutex::new(3600),
+        resources: Mutex::new(Vec::new()),
     });
     let app = Router::new()
         .route("/msi/token", get(identity_token))
@@ -140,13 +148,20 @@ async fn identity_token(
     if !header_ok {
         return json_response(StatusCode::UNAUTHORIZED, json!({}));
     }
-    let query_ok = q.get("resource").map(String::as_str) == Some("api://AzureADTokenExchange")
-        && q.get("api-version").map(String::as_str) == Some("2019-08-01")
+    // Only the two resources Keyring's identity is ever used for.
+    let resource = q.get("resource").cloned().unwrap_or_default();
+    let token = match resource.as_str() {
+        "api://AzureADTokenExchange" => MI_ASSERTION,
+        MONITOR_RESOURCE => MI_MONITOR_TOKEN,
+        _ => return json_response(StatusCode::BAD_REQUEST, json!({})),
+    };
+    let query_ok = q.get("api-version").map(String::as_str) == Some("2019-08-01")
         && q.get("client_id").map(String::as_str) == Some(IDENTITY_CLIENT_ID);
     if !query_ok {
         return json_response(StatusCode::BAD_REQUEST, json!({}));
     }
     *s.calls.lock().unwrap() += 1;
+    s.resources.lock().unwrap().push(resource.clone());
     let delay = *s.delay.lock().unwrap();
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
@@ -158,9 +173,9 @@ async fn identity_token(
     json_response(
         StatusCode::OK,
         json!({
-            "access_token": MI_ASSERTION,
+            "access_token": token,
             "expires_on": expires_on.to_string(),
-            "resource": "api://AzureADTokenExchange",
+            "resource": resource,
             "token_type": "Bearer",
             "client_id": IDENTITY_CLIENT_ID,
         }),
@@ -214,6 +229,9 @@ pub(crate) struct IdpState {
     pub rolled_over: Mutex<bool>,
     /// Delay before answering token requests, so tests can overlap them.
     pub token_delay: Mutex<Duration>,
+    /// Sign the next person in as this object ID and user name, instead of
+    /// [`USER_OID`] and alex@example.com.
+    pub user: Mutex<Option<(&'static str, &'static str)>>,
     /// `acrs` in the next ID tokens: authentication contexts met. `None`
     /// leaves the claim out, as Entra does when none was asked for.
     pub acrs: Mutex<Option<Vec<String>>>,
@@ -295,6 +313,7 @@ pub(crate) async fn start_idp() -> MockIdp {
         discovery_down: Mutex::new(false),
         rolled_over: Mutex::new(false),
         token_delay: Mutex::new(Duration::ZERO),
+        user: Mutex::new(None),
         acrs: Mutex::new(None),
         auth_time: Mutex::new(None),
     });
@@ -394,6 +413,11 @@ async fn token(
         TokenBehaviour::WrongAudience => "22222222-2222-2222-2222-222222222222",
         _ => CLIENT_ID,
     };
+    let (oid, upn) = s
+        .user
+        .lock()
+        .unwrap()
+        .unwrap_or((USER_OID, "alex@example.com"));
     let mut name = LocalizedClaim::new();
     name.insert(None, EndUserName::new("Alex Example".into()));
     let claims = openidconnect::IdTokenClaims::new(
@@ -403,9 +427,9 @@ async fn token(
         now_plus(0),
         StandardClaims::new(SubjectIdentifier::new("user-subject".into()))
             .set_name(Some(name))
-            .set_preferred_username(Some(EndUserUsername::new("alex@example.com".into()))),
+            .set_preferred_username(Some(EndUserUsername::new(upn.into()))),
         keyring::auth::oidc::EntraClaims {
-            oid: Some(USER_OID.into()),
+            oid: Some(oid.into()),
             tid: Some(TENANT.into()),
             acrs: s.acrs.lock().unwrap().clone(),
         },
@@ -1427,6 +1451,28 @@ async fn world_over(
     extra: &[(&'static str, &'static str)],
     limits: Option<keyring::azure::fanout::Limits>,
 ) -> World {
+    world_over_with(kv, extra, limits, |_| {}).await
+}
+
+/// A world whose config gets `extra` settings (owned values) and then
+/// `tweak`, before the app state is built.
+pub(crate) async fn world_configured(
+    extra: Vec<(&'static str, String)>,
+    tweak: impl FnOnce(&mut Config),
+) -> World {
+    let leaked: Vec<(&'static str, &'static str)> = extra
+        .into_iter()
+        .map(|(k, v)| (k, &*Box::leak(v.into_boxed_str())))
+        .collect();
+    world_over_with(keyvault::start().await, &leaked, None, tweak).await
+}
+
+async fn world_over_with(
+    kv: keyvault::MockKeyVault,
+    extra: &[(&'static str, &'static str)],
+    limits: Option<keyring::azure::fanout::Limits>,
+    tweak: impl FnOnce(&mut Config),
+) -> World {
     let idp = start_idp().await;
     let arm = start_arm().await;
     let mut env: std::collections::HashMap<&'static str, String> =
@@ -1447,7 +1493,8 @@ async fn world_over(
     for (k, v) in extra {
         env.insert(k, (*v).to_owned());
     }
-    let config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
+    let mut config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
+    tweak(&mut config);
     let (state, app, cookie) = signed_in_app_with(config, limits);
     let id = cookie.split('=').nth(1).unwrap().to_owned();
     let session = state.sessions.get(&id).unwrap();
