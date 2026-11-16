@@ -270,6 +270,7 @@ struct DetailPage {
     rotation_note: Option<String>,
     hsm: bool,
     used_by: crate::routes::used_by::UsedBy,
+    access: crate::routes::access::Access,
 }
 
 /// Plain names for permitted operations.
@@ -309,11 +310,12 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let keys = api(&state, &session, &vault);
-    let (bundle, versions, rotation, used_by) = tokio::join!(
+    let (bundle, versions, rotation, used_by, access) = tokio::join!(
         keys.get(&name, None),
         keys.versions(&name),
         keys.rotation_policy(&name),
         crate::routes::used_by::for_item(&state, &session, &vault, Kind::Key, &name),
+        crate::routes::access::for_item(&state, &session, &vault, Kind::Key, &name),
     );
     let bundle = match bundle {
         Ok(b) => b,
@@ -377,6 +379,7 @@ pub(super) async fn detail(
         used_by,
         shell,
         vault,
+        access,
     })
     .into_response())
 }

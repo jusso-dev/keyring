@@ -7,6 +7,7 @@ pub mod entra;
 pub mod oidc;
 pub mod return_to;
 pub mod session;
+pub mod step_up;
 
 use std::sync::Arc;
 

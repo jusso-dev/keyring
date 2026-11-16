@@ -180,6 +180,9 @@ pub(crate) enum TokenBehaviour {
     WrongAudience,
     /// Return an OAuth error.
     Error(&'static str),
+    /// Return an OAuth error with an `AADSTS` number in its description,
+    /// as Entra does.
+    ErrorWithCode(&'static str, u64),
 }
 
 pub(crate) struct MockIdp {
@@ -211,6 +214,11 @@ pub(crate) struct IdpState {
     pub rolled_over: Mutex<bool>,
     /// Delay before answering token requests, so tests can overlap them.
     pub token_delay: Mutex<Duration>,
+    /// `acrs` in the next ID tokens: authentication contexts met. `None`
+    /// leaves the claim out, as Entra does when none was asked for.
+    pub acrs: Mutex<Option<Vec<String>>>,
+    /// `auth_time` in the next ID tokens, Unix seconds. `None` leaves it out.
+    pub auth_time: Mutex<Option<i64>>,
 }
 
 impl IdpState {
@@ -287,6 +295,8 @@ pub(crate) async fn start_idp() -> MockIdp {
         discovery_down: Mutex::new(false),
         rolled_over: Mutex::new(false),
         token_delay: Mutex::new(Duration::ZERO),
+        acrs: Mutex::new(None),
+        auth_time: Mutex::new(None),
     });
     let app = Router::new()
         .route(
@@ -370,6 +380,12 @@ async fn token(
             json!({ "error": code, "error_description": "test" }),
         );
     }
+    if let TokenBehaviour::ErrorWithCode(code, n) = behaviour {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": code, "error_codes": [n], "error_description": format!("AADSTS{n}: test") }),
+        );
+    }
     let nonce = match behaviour {
         TokenBehaviour::WrongNonce => "not-the-nonce".to_owned(),
         _ => s.nonce.lock().unwrap().clone().unwrap_or_default(),
@@ -391,9 +407,16 @@ async fn token(
         keyring::auth::oidc::EntraClaims {
             oid: Some(USER_OID.into()),
             tid: Some(TENANT.into()),
+            acrs: s.acrs.lock().unwrap().clone(),
         },
     )
-    .set_nonce(Some(Nonce::new(nonce)));
+    .set_nonce(Some(Nonce::new(nonce)))
+    .set_auth_time(
+        s.auth_time
+            .lock()
+            .unwrap()
+            .and_then(|t| DateTime::from_timestamp(t, 0)),
+    );
     let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
         TokenBehaviour::WrongKey if rolled => &s.key,
@@ -554,6 +577,173 @@ pub(crate) struct ArmState {
     /// `workspace_events`.
     pub workspace_delay: Mutex<Vec<(String, Duration)>>,
     pub audit_bearers: Mutex<Vec<String>>,
+    /// Access (role assignments, eligibility, role definitions and the
+    /// vault resource). See [`AuthzMock`].
+    pub authz: Mutex<AuthzMock>,
+}
+
+/// What the mock ARM answers for the Access reads. Like ARM, the
+/// assignment lists come back whatever their scope (at, above and below
+/// the one asked for), so Keyring has to keep the ones that reach it.
+#[derive(Default)]
+pub(crate) struct AuthzMock {
+    /// Active role assignments: (scope, role GUID, principal ID, type).
+    pub assignments: Vec<(String, String, String, String)>,
+    /// PIM eligible assignments, the same shape.
+    pub eligible: Vec<(String, String, String, String)>,
+    /// Role definitions by GUID: (role name, data actions).
+    pub roles: std::collections::HashMap<String, (String, Vec<String>)>,
+    /// Access policies by vault name, for `GET {vault ID}`. A vault's RBAC
+    /// flag comes from its Resource Graph row.
+    pub policies: std::collections::HashMap<String, serde_json::Value>,
+    /// Answer 403 to role assignments.
+    pub assignments_forbidden: bool,
+    /// Answer this status to eligibility, as a tenant without PIM might.
+    pub eligible_status: Option<u16>,
+    /// Answer 403 to the vault resource.
+    pub vault_forbidden: bool,
+    /// Wait this long before answering any Access read.
+    pub delay: Duration,
+    /// Path of every Access read, in order.
+    pub paths: Vec<String>,
+    /// Bearer token of every Access read.
+    pub bearers: Vec<String>,
+}
+
+pub(crate) const SECRETS_USER: &str = "4633458b-17de-408a-b874-0445c86b69e6";
+pub(crate) const OWNER_ROLE: &str = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635";
+pub(crate) const READER_ROLE: &str = "acdd72a7-3385-48ef-bd42-f606fba81ae7";
+pub(crate) const CERT_OFFICER: &str = "a4417e6f-fecd-4de8-b567-7b0420556985";
+
+impl AuthzMock {
+    /// The built-in roles the tests use.
+    pub(crate) fn with_builtin_roles() -> Self {
+        let mut m = Self::default();
+        for (g, name, actions) in [
+            (
+                SECRETS_USER,
+                "Key Vault Secrets User",
+                vec![
+                    "Microsoft.KeyVault/vaults/secrets/getSecret/action",
+                    "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+                ],
+            ),
+            (OWNER_ROLE, "Owner", vec![]),
+            (READER_ROLE, "Reader", vec![]),
+            (
+                CERT_OFFICER,
+                "Key Vault Certificates Officer",
+                vec!["Microsoft.KeyVault/vaults/certificates/*"],
+            ),
+        ] {
+            m.roles.insert(
+                g.into(),
+                (name.into(), actions.into_iter().map(String::from).collect()),
+            );
+        }
+        m
+    }
+}
+
+fn assignment_json(kind: &str, a: &(String, String, String, String)) -> serde_json::Value {
+    json!({
+        "id": format!("{}/providers/Microsoft.Authorization/{kind}/{}", a.0, a.2),
+        "properties": {
+            "scope": a.0,
+            "roleDefinitionId": format!("/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{}", a.1),
+            "principalId": a.2,
+            "principalType": a.3,
+        }
+    })
+}
+
+/// The Access reads, or `None` if `path` isn't one.
+async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> Option<Response> {
+    const ASSIGN: &str = "/providers/Microsoft.Authorization/roleAssignments";
+    const ELIGIBLE: &str = "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances";
+    const DEFS: &str = "/providers/Microsoft.Authorization/roleDefinitions/";
+    let is_vault = path.contains("/providers/Microsoft.KeyVault/vaults/")
+        && path
+            .rsplit("/vaults/")
+            .next()
+            .is_some_and(|n| !n.contains('/'));
+    if !(path.ends_with(ASSIGN) || path.ends_with(ELIGIBLE) || path.contains(DEFS) || is_vault) {
+        return None;
+    }
+    let delay = {
+        let mut m = s.authz.lock().unwrap();
+        m.paths.push(path.to_owned());
+        m.bearers.push(bearer);
+        m.delay
+    };
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let forbidden = || {
+        json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+        )
+    };
+    let m = s.authz.lock().unwrap();
+    if path.ends_with(ASSIGN) {
+        assert!(query.contains("api-version=2022-04-01"), "{query}");
+        if m.assignments_forbidden {
+            return Some(forbidden());
+        }
+        let value: Vec<_> = m
+            .assignments
+            .iter()
+            .map(|a| assignment_json("roleAssignments", a))
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(ELIGIBLE) {
+        assert!(query.contains("atScope()"), "{query}");
+        if let Some(status) = m.eligible_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
+        let value: Vec<_> = m
+            .eligible
+            .iter()
+            .map(|a| assignment_json("roleEligibilityScheduleInstances", a))
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if let Some((_, guid)) = path.split_once(DEFS) {
+        return Some(match m.roles.get(guid) {
+            Some((name, actions)) => json_response(
+                StatusCode::OK,
+                json!({"name": guid, "properties": {"roleName": name, "permissions": [{"actions": [], "dataActions": actions}]}}),
+            ),
+            None => json_response(
+                StatusCode::NOT_FOUND,
+                json!({"error": {"code": "RoleDefinitionDoesNotExist", "message": "x"}}),
+            ),
+        });
+    }
+    assert!(query.contains("api-version=2023-07-01"), "{query}");
+    if m.vault_forbidden {
+        return Some(forbidden());
+    }
+    let name = path.rsplit("/vaults/").next().unwrap_or_default();
+    let row = s
+        .vaults
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == name)
+        .cloned()?;
+    Some(json_response(
+        StatusCode::OK,
+        json!({"id": row["id"], "name": name, "properties": {
+            "enableRbacAuthorization": row["enableRbacAuthorization"],
+            "accessPolicies": m.policies.get(name).cloned().unwrap_or(json!([])),
+        }}),
+    ))
 }
 
 impl MockArm {
@@ -596,6 +786,7 @@ pub(crate) async fn start_arm() -> MockArm {
         workspace_events: Mutex::new(Vec::new()),
         workspace_delay: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
+        authz: Mutex::new(AuthzMock::with_builtin_roles()),
     });
     let app = Router::new()
         .route(
@@ -670,6 +861,12 @@ async fn arm_fallback(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_owned();
+    if method == axum::http::Method::GET
+        && let Some(res) =
+            authz_answer(&s, &path, uri.query().unwrap_or_default(), bearer.clone()).await
+    {
+        return res;
+    }
     if method == axum::http::Method::GET
         && path.ends_with("/providers/Microsoft.Insights/diagnosticSettings")
     {

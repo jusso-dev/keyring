@@ -105,4 +105,10 @@
 </section>
 
 {% include "_used_by.html" %}
+<section aria-labelledby="access-heading">
+  <h2 id="access-heading">Access</h2>
+  <p>Who can reach this certificate, including role assignments on the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
+  {% let prefix = "item-" %}
+  {% include "_access.html" %}
+</section>
 {% endblock %}

@@ -20,10 +20,11 @@ pub enum Section {
     Health,
     Generator,
     Audit,
+    Access,
 }
 
 impl Section {
-    pub const NAV: [Section; 8] = [
+    pub const NAV: [Section; 9] = [
         Section::Vaults,
         Section::Secrets,
         Section::Certificates,
@@ -32,6 +33,7 @@ impl Section {
         Section::Health,
         Section::Generator,
         Section::Audit,
+        Section::Access,
     ];
 
     pub fn label(self) -> &'static str {
@@ -45,6 +47,7 @@ impl Section {
             Self::Health => "Vault health",
             Self::Generator => "Generator",
             Self::Audit => "Audit",
+            Self::Access => "Access",
         }
     }
 
@@ -52,7 +55,7 @@ impl Section {
     pub fn is_vault_scoped(self) -> bool {
         matches!(
             self,
-            Self::Secrets | Self::Certificates | Self::Keys | Self::Audit
+            Self::Secrets | Self::Certificates | Self::Keys | Self::Audit | Self::Access
         )
     }
 
@@ -67,6 +70,7 @@ impl Section {
             Self::Health => "/vault-health",
             Self::Generator => "/generator",
             Self::Audit => "/audit",
+            Self::Access => "/access",
         }
     }
 }

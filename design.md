@@ -23,7 +23,7 @@ decoration: no illustrations, gradients, background art, charts or scores.
     generator): a single column of fields, 40rem wide at most.
   - **Decision pages** (confirm, disable, rotate, rollback, upload preview,
     sign-in, signed out, errors): one narrow panel that ends in its action.
-  - **Ledger pages** (audit, expiry, vault health): the table is the page.
+  - **Ledger pages** (audit, expiry, vault health, access): the table is the page.
     Fully ledger-style.
 
 ## Colour
@@ -325,6 +325,20 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   says why and "You can still go ahead", with a "What to ask for" hint. It
   is never an error notice, because it never stops the action.
 - Workspaces left out are a warn notice under the table.
+### Access
+
+- The vault's Access page: heading, a Download CSV link, a muted line saying
+  principals are object IDs with portal links and names aren't looked up,
+  then one ledger table: Who (object ID in mono, linked to the portal), Type,
+  Role, Comes from. Eligible is a muted badge; "Can grant itself access" is
+  a warn badge. Notes on what wasn't read are warn notices under the table.
+- Access policy vaults: a sentence saying so, then a ledger table of object
+  ID and what each policy allows in plain words, with a warn badge "Reads
+  secret values". Then the roles that can grant access.
+- Each secret, certificate and key page ends with an Access section (`h2`)
+  using the same tables, and a link to the whole vault's Access page.
+- When it can't be read: an empty state with the reason and a "What to ask
+  for" hint, never an empty table.
 
 ### Rollback, rotate
 

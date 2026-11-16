@@ -187,6 +187,7 @@ pub(crate) async fn confirm(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let shell = rollback_step_up(&state, &session, shell, &vault, &name, &q.version)?;
     let (fetched, used_by) = tokio::join!(
         fetch_versions(&state, &session, shell, &vault, &name),
         crate::routes::used_by::for_item(
@@ -212,6 +213,29 @@ pub(crate) async fn confirm(
     .into_response())
 }
 
+/// Step-up before a rollback. Comes back to the rollback's confirmation
+/// page for the same version.
+fn rollback_step_up(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+    version: &str,
+) -> Result<Shell, Halt> {
+    let versions = vault_path(vault, &format!("/secrets/{name}/versions"));
+    // Only a well-formed version goes in the return path.
+    let confirm = if is_valid_version(version) {
+        vault_path(
+            vault,
+            &format!("/secrets/{name}/rollback?version={version}"),
+        )
+    } else {
+        versions.clone()
+    };
+    crate::routes::step_up::require(state, &session.0, shell, &confirm, &versions)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct RollbackForm {
     #[serde(default)]
@@ -230,6 +254,7 @@ pub(crate) async fn rollback(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &f.csrf, shell)?;
+    let shell = rollback_step_up(&state, &session, shell, &vault, &name, &f.version)?;
     let (shell, items) = fetch_versions(&state, &session, shell, &vault, &name).await?;
     if items[0].managed.unwrap_or(false) {
         return Err(crate::routes::secrets::reveal::managed_problem(

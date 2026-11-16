@@ -238,7 +238,9 @@ fn token_error(failure: &TokenFailure) -> TokenError {
     match classify(&error, &failure.error_codes) {
         EntraAdvice::SignInAgain => TokenError::SignInAgain,
         EntraAdvice::ConsentNeeded => TokenError::ConsentNeeded,
-        EntraAdvice::Configuration { code } => TokenError::Refused { code },
+        EntraAdvice::Configuration { code } | EntraAdvice::PolicyNotMet { code } => {
+            TokenError::Refused { code }
+        }
         // Not expected on a back-channel request.
         EntraAdvice::Cancelled => TokenError::Refused { code: error },
     }

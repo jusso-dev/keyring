@@ -328,6 +328,7 @@ struct DetailPage {
     /// What happens if it's deleted, in a sentence.
     recovery: String,
     used_by: crate::routes::used_by::UsedBy,
+    access: crate::routes::access::Access,
 }
 
 pub(super) async fn detail(
@@ -340,9 +341,10 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let secrets = api(&state, &session, &vault);
-    let (item, used_by) = tokio::join!(
+    let (item, used_by, access) = tokio::join!(
         secrets.properties(&name),
         crate::routes::used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+        crate::routes::access::for_item(&state, &session, &vault, Kind::Secret, &name),
     );
     let item = match item {
         Ok(item) => item,
@@ -372,6 +374,7 @@ pub(super) async fn detail(
         shell,
         vault,
         used_by,
+        access,
     })
     .into_response())
 }

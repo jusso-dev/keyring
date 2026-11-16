@@ -31,6 +31,10 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Signing key rollover | Not something you can trigger. If Entra rolls its keys during the test window, sign in once afterwards | Sign-in works first time | `src/auth/oidc.rs` (`forget_metadata`) | |
 | Admin consent missing for Log Analytics | Remove consent for **Log Analytics API > Data.Read**, open the audit page | "Your organisation needs to approve Keyring" on the audit page only, with AADSTS65001 | `src/routes/audit.rs`, `src/auth/entra.rs` | |
 | AADSTS codes in the troubleshooting page | Cause each code in [troubleshooting.md](troubleshooting.md) you safely can (wrong redirect URI, wrong secret value, unassigned user) | The page shows the row's message, and the code matches | `src/routes/auth.rs`, `src/auth/entra.rs` | |
+| Step-up: where `acrs` comes back | Set `KEYRING_STEP_UP_AUTH_CONTEXT` to a published authentication context with a Conditional Access policy on it, reveal a secret, confirm it's you | Note whether `acrs` is in the ID token, the access token for Keyring's API, or both. Keyring reads the ID token only. If it's only in the access token, the round trip fails with "Couldn't confirm it's you" | `src/auth/oidc.rs` (`EntraClaims`, `finish`) | |
+| Step-up: policy can't be met | As someone the policy blocks (no registered method, or a device that isn't compliant), try a reveal | The sign-in page says the organisation's sign-in rules weren't met. Note the AADSTS number Entra sent, and whether it came back to Keyring or stopped on Entra's own page | `src/auth/entra.rs` (`POLICY_CODES`) | |
+| Step-up: `max_age` gives a fresh `auth_time` | Set `KEYRING_STEP_UP_MAX_AGE=5`, sign in, wait six minutes, reveal, confirm it's you | Entra asks for credentials again (`prompt=login`), and the reveal then goes through. The new ID token's `auth_time` is the new sign-in, not the old one | `src/auth/step_up.rs`, `src/auth/oidc.rs` (`begin_with`) | |
+| Step-up: full round trip | With an authentication context and policy set up, reveal, download a private key, roll back and purge | Each asks you to confirm it's you, Entra applies the policy, and you come back to the confirmation step. Keyring's log has `step_up_required` then a `session.sign_in`, then the action's event | `src/routes/step_up.rs` | |
 | Idle warning and keep-alive | Leave a page open, with JavaScript on, until a few minutes before the one hour idle limit | A notice offers more time. Selecting it calls `/auth/keepalive` (204) and the session carries on | `static/app.js` (`idleNotice`), `src/routes/auth.rs` | |
 
 ## Secrets
@@ -103,6 +107,17 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Used by: key operation names | Sign, verify, wrap, unwrap, encrypt and decrypt with a key, then open its page | Each use counts. Confirm Key Vault logs them as `KeySign`, `KeyVerify`, `KeyWrap`, `KeyUnwrap`, `KeyEncrypt` and `KeyDecrypt` | `src/azure/used_by.rs` (`KEY_OPERATIONS`) | |
 | Used by: no reader on the workspace | Remove your Log Analytics Reader on the vault's workspace and open Set a new value on a secret | The panel says you don't have access to the workspace, and saving a new value still works | `src/routes/used_by.rs` | |
 | A workspace in another tenant or deleted | Point a vault's diagnostic setting at two workspaces, one you can't read, and open the audit page | Events from the readable one show, with a note that one was left out. Note the status Log Analytics gave (403, 404 or other) | `src/routes/audit.rs` | |
+
+## Access
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| Access: vault scope | Open **Access** on an RBAC vault with roles given on the vault, its resource group and its subscription | Each assignment shows once with the right "Comes from". Note that ARM returned assignments below the vault too, and that Keyring left them out | `src/azure/authz.rs` (`role_assignments`, `applies_at`), `src/routes/access.rs` | |
+| Access: item scope | Give someone Key Vault Secrets User on one secret only (scope `{vault ID}/secrets/{name}`), open that secret and another | The first shows them under "This item"; the second doesn't. Inherited assignments show on both | `src/azure/authz.rs` (`item_scope`) | |
+| Access: Reader is enough | As someone with only Reader on the vault, open **Access** | The assignments list loads, with role names. Note whether `roleDefinitions` reads work for a custom role | `src/azure/authz.rs` (`role_definition`) | |
+| Access: no Reader | As someone with a Key Vault data role but no Reader, open **Access** | "You can't read ..." with Reader to ask for, not an empty table. Note the status ARM gave (403 expected) | `src/routes/access.rs` | |
+| Access: PIM eligible | On a tenant with PIM, make someone eligible for a Key Vault role on the vault, open **Access** | They're listed with "Eligible". On a tenant without PIM, the page is unchanged apart from at most a note. Note the status `roleEligibilityScheduleInstances` gives without PIM | `src/azure/authz.rs` (`eligible_assignments`) | |
+| Access: access policy vault | Open **Access** on a vault using access policies | Each policy shows by object ID with its permissions in plain words. Note the case Azure uses for the permission names | `src/azure/authz.rs` (`vault_authorisation`), `src/routes/access.rs` (`op_words`) | |
 
 ## Deployment
 
