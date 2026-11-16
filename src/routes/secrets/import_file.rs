@@ -8,6 +8,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use zeroize::Zeroizing;
+
 use crate::dates;
 use crate::routes::forms::name_problem;
 use crate::routes::lifecycle::Kind;
@@ -392,10 +394,6 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
     for (line, mut fields) in records {
         if fields.len() != header.len() {
             let n = fields.len();
-            fields.iter_mut().for_each(|f| {
-                use zeroize::Zeroize;
-                f.zeroize();
-            });
             return Err(format!(
                 "Line {line} has {n} fields, but the first line has {}. Put a value that holds a comma in double quotes.",
                 header.len()
@@ -420,23 +418,27 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
     Ok(out)
 }
 
+/// One CSV record's fields, zeroised when dropped, so a file refused part
+/// way through leaves no values behind.
+type Fields = Zeroizing<Vec<String>>;
+
 /// Split CSV text into records, each with the line it starts on. A record
 /// that is one empty field (a blank line) is skipped.
-fn csv_records(text: &str) -> Result<Vec<(usize, Vec<String>)>, String> {
+fn csv_records(text: &str) -> Result<Vec<(usize, Fields)>, String> {
     let mut out = Vec::new();
-    let mut fields: Vec<String> = Vec::new();
-    let mut field = String::new();
+    let mut fields: Fields = Zeroizing::new(Vec::new());
+    let mut field = Zeroizing::new(String::new());
     let mut line = 1;
     let mut start = 1;
     let mut chars = text.chars().peekable();
     let mut quoted = false;
     let mut field_started = false;
-    let end_record = |fields: &mut Vec<String>,
-                      field: &mut String,
-                      out: &mut Vec<(usize, Vec<String>)>,
+    let end_record = |fields: &mut Fields,
+                      field: &mut Zeroizing<String>,
+                      out: &mut Vec<(usize, Fields)>,
                       start: usize| {
-        fields.push(std::mem::take(field));
-        let record = std::mem::take(fields);
+        fields.push(std::mem::take(&mut **field));
+        let record = std::mem::replace(fields, Zeroizing::new(Vec::new()));
         if !(record.len() == 1 && record[0].is_empty()) {
             out.push((start, record));
         }
@@ -473,7 +475,7 @@ fn csv_records(text: &str) -> Result<Vec<(usize, Vec<String>)>, String> {
                 field_started = true;
             }
             ',' => {
-                fields.push(std::mem::take(&mut field));
+                fields.push(std::mem::take(&mut *field));
                 field_started = false;
             }
             '\r' if chars.peek() == Some(&'\n') => {}
