@@ -168,6 +168,51 @@ impl FormPage {
         self.form.secret_type.map_or("Password", SecretType::label)
     }
 
+    /// Is `field` checked against `KEYRING_PASSWORD_POLICY` on this form?
+    /// `value` for a Password, Login's `password`, while a policy is on.
+    fn has_policy(&self, field: &str) -> bool {
+        let checked = match self.form.secret_type {
+            None => field == "value",
+            Some(t) => t.policy_field() == Some(field),
+        };
+        checked && self.has_value_field() && self.shell.password_policy.is_on()
+    }
+
+    /// What the policy asks for, said before the person types.
+    fn policy_help(&self) -> String {
+        format!(
+            "Keyring's password policy: {}. Checked when you save. The Azure CLI and portal don't apply it.",
+            self.shell.password_policy.describe()
+        )
+    }
+
+    /// The plain Value box's policy line: every plain value counts as a
+    /// password, so a key or connection string is checked too.
+    fn value_policy_help(&self) -> String {
+        format!(
+            "{} Every plain value is checked as a password, so for a key, PEM block or connection string choose its type (SSH private key, API key, Database) or use the Azure CLI.",
+            self.policy_help()
+        )
+    }
+
+    /// The help a typed field's `aria-describedby` names, if any.
+    fn field_help_ids(&self, f: &Field) -> String {
+        let mut ids = Vec::new();
+        if !f.help.is_empty() {
+            ids.push(format!("{}-help", f.name));
+        }
+        if self.has_policy(f.name) {
+            ids.push(format!("{}-policy", f.name));
+        }
+        ids.join(" ")
+    }
+
+    /// `minlength` for a field with a policy, as a hint only: the server
+    /// check is the real one.
+    fn policy_min(&self) -> usize {
+        self.shell.password_policy.min.unwrap_or(0)
+    }
+
     /// The create form's type picker: each type, its link, and whether it
     /// is the one shown.
     fn type_choices(&self) -> Vec<(&'static str, String, bool)> {
@@ -316,7 +361,7 @@ pub(crate) async fn create(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let (name, body) = match form::for_create(&f, now_ts()) {
+    let (name, body) = match form::for_create(&f, now_ts(), &state.config.password_policy) {
         Ok(ok) => {
             crate::audit::note_item(&ok.0);
             ok
@@ -479,7 +524,7 @@ pub(crate) async fn set_value(
         }
     };
     f.name = name.clone();
-    let body = match form::for_new_value(&f, &item, now_ts()) {
+    let body = match form::for_new_value(&f, &item, now_ts(), &state.config.password_policy) {
         Ok(b) => b,
         Err(errors) => {
             return Ok(form_page(

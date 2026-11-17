@@ -746,3 +746,60 @@ async fn an_import_with_a_reason_puts_it_on_each_secrets_row() {
         assert_eq!(r["Reason"], "Moving the app's settings");
     }
 }
+
+#[tokio::test]
+async fn an_import_row_the_password_policy_refuses_has_its_own_refused_row() {
+    let ingest = ingestion::start().await;
+    let identity = support::start_identity().await;
+    let mut extra = sink_settings(&ingest, &identity);
+    extra.push(("KEYRING_PASSWORD_POLICY", "min=14,common".to_owned()));
+    let w = sink_world_with(extra).await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                ".env",
+                b"WEAK=PolLeakShort\nGOOD=PolLeak-Long-Enough-Value\n",
+            )],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    let id = support::hidden_value(&html, "import_id").expect("import id on the preview");
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let sink = w.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    let rows = ingest.state.rows();
+    let item = |name: &str| {
+        rows.iter()
+            .find(|r| r["Action"] == "secret.import" && r["ItemName"] == name)
+            .unwrap_or_else(|| panic!("no row for {name}: {rows:#?}"))
+    };
+    let weak = item("WEAK");
+    assert_eq!(weak["Outcome"], "refused");
+    assert_eq!(weak["ReasonCode"], "password_policy");
+    assert!(weak["KvRequestId"].is_null(), "never sent to Key Vault");
+    let good = item("GOOD");
+    assert_eq!(good["Outcome"], "success");
+    let all = format!("{rows:?}");
+    assert!(!all.contains("PolLeak"), "a value in the audit rows");
+    // Only the fixed code: no rule, length or anything about the value.
+    let keys: Vec<&str> = weak
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for k in ["Reason", "Ticket", "ItemVersion"] {
+        assert!(!keys.contains(&k), "{k} on {weak}");
+    }
+    for word in ["characters", "common", "length"] {
+        assert!(!weak.to_string().contains(word), "{word} in {weak}");
+    }
+    assert!(w.kv.state.current("WEAK").is_none());
+}

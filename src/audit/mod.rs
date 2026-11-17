@@ -290,11 +290,15 @@ pub enum Refusal {
     /// `KEYRING_REQUIRE_REASON` asks for a reason (and maybe a ticket), and
     /// none was given or it didn't meet the rules. The person was asked.
     ReasonRequired,
+    /// A password typed into a Password or Login secret didn't meet
+    /// `KEYRING_PASSWORD_POLICY`. Says nothing about the value or which
+    /// rule it failed.
+    PasswordPolicy,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 14] = [
+    pub const ALL: [Refusal; 15] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -309,6 +313,7 @@ impl Refusal {
         Self::StepUpRequired,
         Self::StepUpNotMet,
         Self::ReasonRequired,
+        Self::PasswordPolicy,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -327,6 +332,7 @@ impl Refusal {
             Self::StepUpRequired => "step_up_required",
             Self::StepUpNotMet => "step_up_not_met",
             Self::ReasonRequired => "reason_required",
+            Self::PasswordPolicy => "password_policy",
         }
     }
 }
@@ -818,6 +824,19 @@ impl ItemEvents {
             record_to(ev, self.sink.as_deref(), observer.as_deref());
         }
         res
+    }
+}
+
+impl ItemEvents {
+    /// Write one `refused` event for an item Keyring didn't send to Key
+    /// Vault, with the fixed reason code only.
+    pub async fn refused(&self, item: &str, why: Refusal) {
+        let _ = self
+            .run(item, async {
+                refuse(why);
+                Ok::<(), ()>(())
+            })
+            .await;
     }
 }
 

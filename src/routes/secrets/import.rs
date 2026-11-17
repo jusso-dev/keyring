@@ -41,6 +41,10 @@ use crate::routes::batch::{self, Deadlines, Ran};
 
 const IMPORT_PATH: &str = "/secrets/-/import";
 
+/// A row whose value misses `KEYRING_PASSWORD_POLICY`. Fixed words: no
+/// rule, no length, nothing about the value.
+pub(crate) const POLICY_PROBLEM: &str = "Its value doesn't meet Keyring's password policy.";
+
 #[derive(Template)]
 #[template(path = "secrets/import.html")]
 struct ImportPage {
@@ -101,6 +105,8 @@ struct PreviewPage {
     /// Deleted secrets couldn't be listed, so a name may still be blocked.
     deleted_unknown: bool,
     import_id: String,
+    /// What `KEYRING_PASSWORD_POLICY` asks for, or empty when it is off.
+    policy: String,
 }
 
 impl PreviewPage {
@@ -363,6 +369,7 @@ pub(crate) async fn preview(
         }
     };
 
+    let policy = &state.config.password_policy;
     let mut shown = Vec::with_capacity(rows.len());
     let mut pending = Vec::new();
     let mut skipped = Vec::new();
@@ -381,6 +388,17 @@ pub(crate) async fn preview(
                 "A deleted secret with this name can still be recovered. Recover or purge it first, or rename this one.".into(),
             ),
             (None, None) => (Plan::New, String::new()),
+        };
+        // Every row that would be written is a plain secret (a Keyring
+        // content type is a row problem), so its value is a Password and
+        // the policy applies. The problem names no rule and nothing about
+        // the value: the preview lists every row's problem.
+        let refused = matches!(plan, Plan::New | Plan::NewVersion)
+            && policy.check("Value", &row.value).is_some();
+        let (plan, why) = if refused {
+            (Plan::Invalid, POLICY_PROBLEM.to_owned())
+        } else {
+            (plan, why)
         };
         shown.push(PreviewRow {
             original: row.original.clone(),
@@ -409,6 +427,7 @@ pub(crate) async fn preview(
                 original: row.original,
                 name: row.name,
                 reason: why,
+                policy: refused,
             });
         }
     }
@@ -446,6 +465,7 @@ pub(crate) async fn preview(
             versions,
             deleted_unknown: have.deleted.is_none(),
             import_id,
+            policy: policy.describe(),
         })
         .into_response(),
     ))
@@ -555,6 +575,14 @@ pub(crate) async fn confirm(
         .into());
     };
     let PendingImport { rows, skipped, .. } = import;
+    // A row the password policy refused gets its own `refused` event,
+    // with the fixed reason code and nothing about the value.
+    let events = ItemEvents::for_request(Action::SecretImport, state.audit_sink.clone());
+    for s in skipped.iter().filter(|s| s.policy) {
+        events
+            .refused(&s.name, crate::audit::Refusal::PasswordPolicy)
+            .await;
+    }
     let names: Vec<(String, String)> = rows
         .iter()
         .map(|r| (r.original.clone(), r.name.clone()))
@@ -564,7 +592,7 @@ pub(crate) async fn confirm(
     let vault_url = state.config.vault_url(&vault);
     let results = write_rows(
         rows,
-        ItemEvents::for_request(Action::SecretImport, state.audit_sink.clone()),
+        events,
         Deadlines::STANDARD,
         move |row: PendingSecret| {
             let azure = azure.clone();
