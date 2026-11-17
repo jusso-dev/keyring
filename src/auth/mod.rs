@@ -56,6 +56,7 @@ pub async fn require_session(
     let id = cookies::get(req.headers(), &cookie_name).map(str::to_owned);
     if let Some(session) = id.as_deref().and_then(|id| state.sessions.get(id)) {
         crate::audit::note_session(&session);
+        crate::audit::keep_session(session.clone());
         req.extensions_mut().insert(CurrentSession(session));
         return next.run(req).await;
     }

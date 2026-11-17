@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{{ n.heading }}</title></head>
+<body style="margin:0;padding:24px;background:#f5f7fa;color:#1c222a;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.5">
+<div style="max-width:40rem;background:#ffffff;border:1px solid #dadee3;padding:24px">
+<h1 style="margin:0 0 12px;font-size:20px;font-weight:600">{{ n.heading }}</h1>
+{% for l in n.lines %}<p style="margin:0 0 12px">{{ l }}</p>
+{% endfor %}
+{%- if !n.facts.is_empty() %}
+<table style="border-collapse:collapse;margin:0 0 16px">
+{%- for (label, value) in n.facts %}
+<tr><th style="text-align:left;padding:2px 16px 2px 0;color:#515963;font-weight:600">{{ label }}</th><td style="padding:2px 0">{{ value }}</td></tr>
+{%- endfor %}
+</table>
+{%- endif %}
+{%- if !n.items.is_empty() %}
+<p style="margin:0 0 4px;font-weight:600">Items changed</p>
+<ul style="margin:0 0 16px">
+{%- for i in n.items %}
+<li>{{ i }}</li>
+{%- endfor %}
+</ul>
+{%- if n.more > 0 %}<p style="margin:0 0 16px">and {{ n.more }} more</p>{% endif %}
+{%- endif %}
+{%- if let Some((url, label)) = n.link %}
+<p style="margin:0 0 16px"><a href="{{ url }}" style="color:#186575">{{ label }}</a></p>
+{%- endif %}
+<p style="margin:16px 0 0;padding-top:12px;border-top:1px solid #dadee3;color:#515963;font-size:13px">Sent by Keyring (activity notices). Keyring never puts a secret value, a reason or a justification in an email.</p>
+</div>
+</body>
+</html>

@@ -23,6 +23,7 @@
 //!   (and so in the audit log line).
 
 pub mod access;
+pub mod activity;
 pub mod expiry;
 pub mod health;
 pub mod rate;
