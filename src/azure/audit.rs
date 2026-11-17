@@ -322,7 +322,8 @@ impl AuditQuery {
                      tostring(Claims['http://schemas.microsoft.com/identity/claims/objectidentifier']),\n\
                      tostring(Claims.oid))\n\
                  | extend Client = tostring(column_ifexists('CallerIpAddress', ''))\n\
-                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client\n",
+                 | extend Status = toint(column_ifexists('HttpStatusCode', int(null)))\n\
+                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client, Status, ResultType = tostring(column_ifexists('ResultType', ''))\n",
                 range = self.range.kql()
             ));
         } else {
@@ -341,7 +342,8 @@ impl AuditQuery {
                      tostring(column_ifexists('identity_claim_http_schemas_microsoft_com_identity_claims_objectidentifier_g', '')),\n\
                      tostring(column_ifexists('identity_claim_oid_g', '')))\n\
                  | extend Client = tostring(column_ifexists('CallerIPAddress', ''))\n\
-                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client\n",
+                 | extend Status = toint(column_ifexists('httpStatusCode_d', real(null)))\n\
+                 | project TimeGenerated, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client, Status, ResultType = tostring(column_ifexists('ResultType', ''))\n",
                 range = self.range.kql()
             ));
         }
@@ -447,8 +449,142 @@ pub struct Event {
     pub who: String,
     pub operation: String,
     pub item: String,
+    /// `ResultSignature`, such as `OK`, `Accepted` or `Forbidden`.
     pub result: String,
     pub client_ip: String,
+    /// The HTTP status Key Vault answered with (`HttpStatusCode` or
+    /// `httpStatusCode_d`), when the row has one.
+    pub status: Option<u16>,
+    /// `ResultType`, such as `Success`.
+    pub result_type: String,
+}
+
+impl Event {
+    /// How the request ended. See [`Outcome::of`].
+    pub fn outcome(&self) -> Outcome {
+        Outcome::of(self.status, &self.result, &self.result_type)
+    }
+}
+
+/// How a Key Vault request in the audit log ended. The page, the CSVs and
+/// the reports across vaults all use this one rule; the reports' KQL
+/// ([`outcome_kql`]) is built from the same lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// Done: 200, 201, 204 or any other 2xx but 202.
+    Allowed,
+    /// 202 Accepted: Key Vault took the request and finishes it shortly,
+    /// as for every certificate create. Never a refusal.
+    Accepted,
+    /// 401 or 403.
+    Refused,
+    /// Any other 4xx or a 5xx, such as 404, 409, 429 or 500.
+    Failed,
+    /// No result, or one this rule doesn't know.
+    Unknown,
+}
+
+/// `ResultSignature` values that mean done, when there is no status.
+const SIGNATURES_ALLOWED: [&str; 3] = ["OK", "Created", "NoContent"];
+/// `ResultSignature` values that mean accepted, when there is no status.
+const SIGNATURES_ACCEPTED: [&str; 1] = ["Accepted"];
+/// `ResultSignature` values that mean refused, when there is no status.
+const SIGNATURES_REFUSED: [&str; 2] = ["Forbidden", "Unauthorized"];
+/// `ResultType` that means done, when nothing above decides.
+const RESULT_TYPE_SUCCESS: &str = "Success";
+
+impl Outcome {
+    /// The rule. The numeric HTTP status wins: it is the status, then a
+    /// `ResultSignature` that is a number. Without one, a known
+    /// `ResultSignature`, then `ResultType` `Success`. Anything else is
+    /// [`Outcome::Unknown`], never a refusal.
+    pub fn of(status: Option<u16>, signature: &str, result_type: &str) -> Self {
+        let signature = signature.trim();
+        if let Some(code) = status.or_else(|| signature.parse().ok()) {
+            return match code {
+                202 => Self::Accepted,
+                200..=299 => Self::Allowed,
+                401 | 403 => Self::Refused,
+                400..=599 => Self::Failed,
+                _ => Self::Unknown,
+            };
+        }
+        let is = |list: &[&str]| list.iter().any(|s| s.eq_ignore_ascii_case(signature));
+        if is(&SIGNATURES_ACCEPTED) {
+            Self::Accepted
+        } else if is(&SIGNATURES_ALLOWED) {
+            Self::Allowed
+        } else if is(&SIGNATURES_REFUSED) {
+            Self::Refused
+        } else if result_type.trim().eq_ignore_ascii_case(RESULT_TYPE_SUCCESS) {
+            Self::Allowed
+        } else {
+            Self::Unknown
+        }
+    }
+
+    /// The word shown on the page and written to the CSV.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Allowed => "Allowed",
+            Self::Accepted => "Accepted",
+            Self::Refused => "Refused",
+            Self::Failed => "Failed",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    /// The value of the `Outcome` column [`outcome_kql`] adds.
+    pub fn kql(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::Accepted => "accepted",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Allowed or accepted: the request went through.
+    pub fn went_through(self) -> bool {
+        matches!(self, Self::Allowed | Self::Accepted)
+    }
+}
+
+/// KQL that adds an `Outcome` column holding [`Outcome::kql`], by the same
+/// rule as [`Outcome::of`]. Needs a `Status` column (int, may be null) and
+/// reads `ResultSignature` and `ResultType` through `column_ifexists`. Fixed
+/// text.
+pub(crate) fn outcome_kql() -> String {
+    let list = |l: &[&str]| {
+        l.iter()
+            .map(|s| format!("'{s}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let sig = "tostring(column_ifexists('ResultSignature', ''))";
+    format!(
+        "| extend ResultCode = coalesce(Status, toint({sig}))\n\
+         | extend Outcome = case(\
+         ResultCode == 202, '{accepted}', \
+         ResultCode between (200 .. 299), '{allowed}', \
+         ResultCode in (401, 403), '{refused}', \
+         ResultCode between (400 .. 599), '{failed}', \
+         isnotnull(ResultCode), '{unknown}', \
+         {sig} in~ ({sig_accepted}), '{accepted}', \
+         {sig} in~ ({sig_allowed}), '{allowed}', \
+         {sig} in~ ({sig_refused}), '{refused}', \
+         tostring(column_ifexists('ResultType', '')) =~ '{RESULT_TYPE_SUCCESS}', '{allowed}', \
+         '{unknown}')\n",
+        accepted = Outcome::Accepted.kql(),
+        allowed = Outcome::Allowed.kql(),
+        refused = Outcome::Refused.kql(),
+        failed = Outcome::Failed.kql(),
+        unknown = Outcome::Unknown.kql(),
+        sig_accepted = list(&SIGNATURES_ACCEPTED),
+        sig_allowed = list(&SIGNATURES_ALLOWED),
+        sig_refused = list(&SIGNATURES_REFUSED),
+    )
 }
 
 #[derive(Deserialize)]
@@ -483,6 +619,7 @@ fn parse_events(result: QueryResult) -> Vec<Event> {
         idx("ResultSignature"),
         idx("CallerIpAddress"),
     );
+    let (si, yi) = (idx("Status"), idx("ResultType"));
     let get = |row: &Vec<Value>, i: Option<usize>| -> String {
         i.and_then(|i| row.get(i))
             .map(|v| match v {
@@ -501,8 +638,23 @@ fn parse_events(result: QueryResult) -> Vec<Event> {
             item: get(r, ii),
             result: get(r, ri),
             client_ip: get(r, ci),
+            status: status(si.and_then(|i| r.get(i))),
+            result_type: get(r, yi),
         })
         .collect()
+}
+
+/// An HTTP status from a query result cell: a number, or a string of one.
+/// Null, empty or anything else is `None`.
+pub(crate) fn status(v: Option<&Value>) -> Option<u16> {
+    match v? {
+        Value::Number(n) => n
+            .as_u64()
+            .or_else(|| n.as_f64().map(|f| f as u64))
+            .and_then(|n| u16::try_from(n).ok()),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
 }
 
 /// Run the query against a workspace, as the user.
@@ -706,6 +858,126 @@ mod tests {
     }
 
     #[test]
+    fn one_rule_for_every_outcome() {
+        use Outcome::*;
+        let cases: &[(Option<u16>, &str, &str, Outcome)] = &[
+            // Numeric status, any signature.
+            (Some(200), "OK", "Success", Allowed),
+            (Some(201), "Created", "Success", Allowed),
+            (Some(202), "Accepted", "Success", Accepted),
+            (Some(204), "NoContent", "Success", Allowed),
+            (Some(401), "Unauthorized", "Failure", Refused),
+            (Some(403), "Forbidden", "Failure", Refused),
+            (Some(404), "NotFound", "Failure", Failed),
+            (Some(409), "Conflict", "Failure", Failed),
+            (Some(429), "TooManyRequests", "Failure", Failed),
+            (Some(500), "InternalServerError", "Failure", Failed),
+            (Some(503), "ServiceUnavailable", "Failure", Failed),
+            // Conflicting fields: the numeric status wins.
+            (Some(403), "OK", "Success", Refused),
+            (Some(202), "Forbidden", "Failure", Accepted),
+            (Some(500), "OK", "Success", Failed),
+            // A status no rule knows is unknown, whatever the text says.
+            (Some(102), "OK", "Success", Unknown),
+            (Some(302), "Forbidden", "", Unknown),
+            // No status: a signature that is a number counts as one.
+            (None, "202", "", Accepted),
+            (None, "204", "", Allowed),
+            (None, "403", "Success", Refused),
+            (None, "429", "", Failed),
+            // No status: known signatures, any case.
+            (None, "OK", "", Allowed),
+            (None, "ok", "", Allowed),
+            (None, "Created", "", Allowed),
+            (None, "Accepted", "", Accepted),
+            (None, "NoContent", "", Allowed),
+            (None, "Forbidden", "", Refused),
+            (None, "Unauthorized", "", Refused),
+            // No status: a signature that is known wins over ResultType.
+            (None, "Forbidden", "Success", Refused),
+            (None, "Accepted", "Failure", Accepted),
+            // Then ResultType Success.
+            (None, "", "Success", Allowed),
+            (None, "SomethingNew", "Success", Allowed),
+            // Absent or unrecognised stays unknown, never refused.
+            (None, "", "", Unknown),
+            (None, "  ", "", Unknown),
+            (None, "SomethingNew", "", Unknown),
+            (None, "SomethingNew", "Failure", Unknown),
+        ];
+        for (status, sig, rt, want) in cases {
+            assert_eq!(
+                Outcome::of(*status, sig, rt),
+                *want,
+                "{status:?} {sig} {rt}"
+            );
+        }
+        assert!(Accepted.went_through() && Allowed.went_through());
+        assert!(!Refused.went_through() && !Failed.went_through() && !Unknown.went_through());
+    }
+
+    /// The reports' KQL is built from the same lists as [`Outcome::of`],
+    /// in the same order: status first, then the signature, then ResultType.
+    #[test]
+    fn outcome_kql_follows_the_same_rule() {
+        let k = outcome_kql();
+        let at = |needle: &str| k.find(needle).unwrap_or_else(|| panic!("{needle} in {k}"));
+        assert!(
+            k.contains("coalesce(Status, toint(tostring(column_ifexists('ResultSignature', ''))))")
+        );
+        assert!(
+            at("ResultCode == 202, 'accepted'") < at("ResultCode between (200 .. 299), 'allowed'")
+        );
+        assert!(
+            at("ResultCode in (401, 403), 'refused'")
+                < at("ResultCode between (400 .. 599), 'failed'")
+        );
+        assert!(at("isnotnull(ResultCode), 'unknown'") < at("in~ ('Accepted'), 'accepted'"));
+        assert!(k.contains("in~ ('OK', 'Created', 'NoContent'), 'allowed'"));
+        assert!(k.contains("in~ ('Forbidden', 'Unauthorized'), 'refused'"));
+        assert!(at("in~ ('Forbidden', 'Unauthorized'), 'refused'") < at("=~ 'Success', 'allowed'"));
+        assert!(k.trim_end().ends_with("'unknown')"));
+        for o in [
+            Outcome::Allowed,
+            Outcome::Accepted,
+            Outcome::Refused,
+            Outcome::Failed,
+            Outcome::Unknown,
+        ] {
+            assert!(k.contains(&format!("'{}'", o.kql())), "{o:?}");
+        }
+    }
+
+    #[test]
+    fn kql_reads_the_status_and_result_type_of_both_tables() {
+        let q = AuditQuery::new("kv-test", Range::Day, "", "", "").unwrap();
+        let rs = q.kql(true);
+        assert!(
+            rs.contains("| extend Status = toint(column_ifexists('HttpStatusCode', int(null)))")
+        );
+        let d = q.kql(false);
+        assert!(
+            d.contains("| extend Status = toint(column_ifexists('httpStatusCode_d', real(null)))")
+        );
+        for k in [rs, d] {
+            assert!(
+                k.contains(", Status, ResultType = tostring(column_ifexists('ResultType', ''))")
+            );
+        }
+    }
+
+    #[test]
+    fn reads_the_status_as_a_number_or_text() {
+        assert_eq!(status(Some(&serde_json::json!(202))), Some(202));
+        assert_eq!(status(Some(&serde_json::json!(202.0))), Some(202));
+        assert_eq!(status(Some(&serde_json::json!("202"))), Some(202));
+        assert_eq!(status(Some(&serde_json::json!(null))), None);
+        assert_eq!(status(Some(&serde_json::json!(""))), None);
+        assert_eq!(status(Some(&serde_json::json!(70000))), None);
+        assert_eq!(status(None), None);
+    }
+
+    #[test]
     fn parses_query_results() {
         let r: QueryResult = serde_json::from_value(serde_json::json!({"tables": [{
             "name": "PrimaryResult",
@@ -716,5 +988,17 @@ mod tests {
         let e = parse_events(r);
         assert_eq!(e[0].who, "alex@example.com");
         assert_eq!(e[0].operation, "SecretGet");
+        assert_eq!((e[0].status, e[0].outcome()), (None, Outcome::Allowed));
+
+        // A certificate create, as Key Vault logs it: queued, not refused.
+        let r: QueryResult = serde_json::from_value(serde_json::json!({"tables": [{
+            "columns": [{"name": "TimeGenerated"}, {"name": "Who"}, {"name": "OperationName"}, {"name": "Item"}, {"name": "ResultSignature"}, {"name": "CallerIpAddress"}, {"name": "Status"}, {"name": "ResultType"}],
+            "rows": [["2026-11-17T03:12:45Z", "alex@example.com", "CertificateCreate", "web-tls", "Accepted", "203.0.113.5", 202, "Success"]]
+        }]}))
+        .unwrap();
+        let e = parse_events(r);
+        assert_eq!(e[0].status, Some(202));
+        assert_eq!(e[0].result_type, "Success");
+        assert_eq!(e[0].outcome(), Outcome::Accepted);
     }
 }

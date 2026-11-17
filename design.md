@@ -301,8 +301,11 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 ### Audit
 
 - One ledger table. When, Who, What, Item, Result, From. Times are tabular and
-  don't wrap. Allowed is ok-coloured text with a check glyph; Refused is an
-  error badge; Unknown stays muted.
+  don't wrap. Allowed and Accepted (202, queued by Key Vault) are ok-coloured
+  text with a check glyph, Accepted with the status muted after it; Refused
+  (401, 403) is an error badge; Failed (other 4xx, 5xx) is a muted badge;
+  Unknown stays muted. One macro, `ui::audit_result`, draws the cell on every
+  audit table.
 - With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
   "Key Vault's log" and "Keyring activity", the open one with
   `aria-current="page"`, as on the expiry views. Keyring activity is the
@@ -340,11 +343,19 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - One ledger table: Who (sign-in name in the UI font; technical IDs in mono), Kind, Object ID,
   Last, Reads (Uses for a key), From (IP in mono, client info muted under
   it). Latest first.
-- Nothing found is an empty state: "No reads in the last 30 days, so
-  nothing should break." A log that can't be read is an empty state that
-  says why and "You can still go ahead", with a "What to ask for" hint. It
-  is never an error notice, because it never stops the action.
-- Workspaces left out are a warn notice under the table.
+- Nothing found is an empty state in neutral words, never a promise: "No
+  secret reads found in the available logs for this period. Logs may be
+  delayed or incomplete; check consumers before changing this secret." (key
+  use or certificate private-key access in place of secret reads). A log
+  that can't be read, or one with no events from the vault yet, is an
+  empty state that says why and "You can still go ahead", with a "What to
+  ask for" hint. It is never an error notice, because it never stops the
+  action.
+- Workspaces left out, workspaces with no events from the vault, and a
+  partial answer are warn notices under the table.
+- Last, in every state, a muted small line: what was looked at (workspaces
+  answered of how many, the 30 days, the newest event) and what the log
+  can't show.
 ### Access
 
 - The vault's Access page: heading, a Download CSV link, a muted line saying

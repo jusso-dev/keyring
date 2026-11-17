@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use support::{RawEvent, body_text, location, settings_to, vault_row};
 
-const EMPTY: &str = "No reads in the last 30 days, so nothing should break.";
+const EMPTY: &str = "No secret reads found in the available logs for this period. Logs may be delayed or incomplete; check consumers before changing this secret.";
+const NOT_ARRIVED: &str =
+    "No audit events from this vault have arrived in its Log Analytics workspace for this period";
+const LIMITS: &str = "Events can take a while to arrive";
 
 /// kv-test logs to the workspace `logs`, resource-specific or not.
 fn setup(w: &support::World, dedicated: bool, events: Vec<RawEvent>) {
@@ -122,14 +125,201 @@ async fn secret_page_lists_who_read_it_from_azurediagnostics() {
     assert!(q.contains("identity_claim_appid_g") && q.contains("clientInfo_s"));
 }
 
+/// Words that would tell someone a change is safe. None may appear in the
+/// panel, whatever the log said.
+const ASSURANCES: [&str; 15] = [
+    "nothing should break",
+    "nothing will break",
+    "won&#39;t break",
+    "will not break",
+    "safe to change",
+    "safe to delete",
+    "safe to disable",
+    "safe to rotate",
+    "safe to roll back",
+    "safe to remove",
+    "is unused",
+    "isn&#39;t used",
+    "not in use",
+    "no one uses",
+    "nobody uses",
+];
+
+fn assert_no_assurance(p: &str) {
+    let lower = p.to_ascii_lowercase();
+    for a in ASSURANCES {
+        assert!(!lower.contains(a), "the panel says {a:?}");
+    }
+}
+
+/// Coverage and the log's limits stay beside the advice.
+fn assert_coverage(p: &str, answered: usize, of: usize) {
+    let noun = if of == 1 { "workspace" } else { "workspaces" };
+    assert!(
+        p.contains(&format!(
+            "Looked at: the last 30 days in {answered} of {of} Log Analytics {noun}"
+        )),
+        "coverage {answered} of {of}"
+    );
+    assert!(p.contains(LIMITS), "the log's limits");
+}
+
+#[test]
+fn no_template_or_panel_code_promises_a_change_is_safe() {
+    let mut files = vec!["src/routes/used_by.rs".to_owned()];
+    let mut dirs = vec![std::path::PathBuf::from("templates")];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "html") {
+                files.push(p.to_string_lossy().into_owned());
+            }
+        }
+    }
+    for f in files {
+        let text = std::fs::read_to_string(&f)
+            .unwrap()
+            .to_ascii_lowercase()
+            .replace("&#39;", "'");
+        for a in ASSURANCES {
+            let a = a.replace("&#39;", "'");
+            assert!(!text.contains(&a), "{f} says {a:?}");
+        }
+    }
+}
+
 #[tokio::test]
-async fn nothing_read_says_nothing_should_break() {
+async fn populated_history_lists_callers_with_its_coverage() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "v");
+    setup(&w, true, secret_reads());
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
+    let p = panel(&html);
+    check_secret_panel(&html);
+    assert_coverage(p, 1, 1);
+    assert!(p.contains("Newest event from this vault: 2026-11-12 08:00:00 UTC."));
+    assert!(!p.contains("notice-warn"));
+    assert_no_assurance(p);
+}
+
+#[tokio::test]
+async fn a_complete_empty_answer_is_neutral_not_a_promise() {
+    let w = support::world().await;
+    w.kv.state.put("quiet", "v");
+    // The vault's logs have arrived (other secrets were read), but not
+    // this one.
+    setup(&w, true, secret_reads());
+    for path in [
+        "/v/kv-test/secrets/quiet",
+        "/v/kv-test/secrets/quiet/value",
+        "/v/kv-test/secrets/quiet/disable",
+        "/v/kv-test/secrets/quiet/delete",
+    ] {
+        let (status, html) = w.page(path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        let p = panel(&html);
+        assert!(p.contains(EMPTY), "{path}");
+        assert_coverage(p, 1, 1);
+        assert_no_assurance(p);
+    }
+}
+
+#[tokio::test]
+async fn a_new_diagnostic_setting_with_no_rows_yet_is_unknown() {
+    let w = support::world().await;
+    let v1 = w.kv.state.put("db-password", "one");
+    w.kv.state.put("db-password", "two");
+    // The setting is on and the table exists, but nothing from this
+    // vault has arrived.
+    setup(
+        &w,
+        true,
+        vec![RawEvent::new(
+            "kv-other",
+            "2026-11-12T08:00:00Z",
+            "kim@example.com",
+            "SecretGet",
+            "db-password",
+            200,
+        )],
+    );
+    for path in [
+        "/v/kv-test/secrets/db-password".to_owned(),
+        "/v/kv-test/secrets/db-password/value".to_owned(),
+        format!("/v/kv-test/secrets/db-password/rollback?version={v1}"),
+        "/v/kv-test/secrets/db-password/disable".to_owned(),
+        "/v/kv-test/secrets/db-password/delete".to_owned(),
+    ] {
+        let (status, html) = w.page(&path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        let p = panel(&html);
+        assert!(p.contains(NOT_ARRIVED), "{path}");
+        assert!(p.contains("can&#39;t tell what uses this secret"), "{path}");
+        assert!(p.contains("You can still go ahead."), "{path}");
+        assert!(!p.contains("No secret reads found"), "{path}");
+        assert_coverage(p, 1, 1);
+        assert_no_assurance(p);
+    }
+    // The confirmed change still goes ahead.
+    let res = w
+        .post(
+            "/v/kv-test/secrets/db-password/value",
+            &[("value", "three"), ("content_type", "")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(w.kv.state.version_count("db-password"), 3);
+}
+
+#[tokio::test]
+async fn a_missing_table_is_unknown_not_empty() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "one");
+    setup(&w, true, secret_reads());
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs".into(), 400)];
+    let (status, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
+    assert_eq!(status, StatusCode::OK);
+    let p = panel(&html);
+    assert!(p.contains(NOT_ARRIVED));
+    assert!(!p.contains("alex@example.com"));
+    assert!(!p.contains("Azure didn&#39;t answer"), "not an error");
+    assert!(!p.contains("Failed to resolve"), "never Azure's message");
+    assert_coverage(p, 1, 1);
+    assert_no_assurance(p);
+}
+
+#[tokio::test]
+async fn a_partial_answer_from_log_analytics_says_so() {
     let w = support::world().await;
     w.kv.state.put("quiet", "v");
     setup(&w, true, secret_reads());
-    let (status, html) = w.page("/v/kv-test/secrets/quiet").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(panel(&html).contains(EMPTY));
+    *w.arm.state.used_by_partial.lock().unwrap() = true;
+    let (_, html) = w.page("/v/kv-test/secrets/quiet/disable").await;
+    let p = panel(&html);
+    assert!(p.contains("Log Analytics returned only part of the answer"));
+    assert!(p.contains("No secret reads found in the logs Keyring could read"));
+    assert!(!p.contains(EMPTY));
+    assert_no_assurance(p);
+
+    // Cut short before the vault's count row: the callers still show.
+    *w.arm.state.used_by_no_summary.lock().unwrap() = true;
+    w.kv.state.put("db-password", "v");
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
+    let p = panel(&html);
+    assert!(p.contains("alex@example.com"));
+    assert!(!p.contains(NOT_ARRIVED));
+    assert!(p.contains("Log Analytics returned only part of the answer"));
+
+    // A partial answer with nothing from the vault keeps its note.
+    setup(&w, true, Vec::new());
+    *w.arm.state.used_by_no_summary.lock().unwrap() = false;
+    let (_, html) = w.page("/v/kv-test/secrets/quiet/delete").await;
+    let p = panel(&html);
+    assert!(p.contains(NOT_ARRIVED));
+    assert!(p.contains("Log Analytics returned only part of the answer"));
+    assert_no_assurance(p);
 }
 
 #[tokio::test]
@@ -168,6 +358,8 @@ async fn a_forbidden_workspace_says_why_and_the_change_still_goes_ahead() {
     assert!(p.contains("You don&#39;t have access to the Log Analytics workspace"));
     assert!(p.contains("You can still go ahead."));
     assert!(p.contains("Log Analytics Reader"));
+    assert_coverage(p, 0, 1);
+    assert_no_assurance(p);
     // The form posts as normal.
     let res = w
         .post(
@@ -218,6 +410,27 @@ async fn one_workspace_of_two_failing_still_shows_the_rest() {
     let p = panel(&html);
     assert!(p.contains("alex@example.com"));
     assert!(p.contains("1 of 2 Log Analytics workspaces this vault logs to couldn&#39;t be read"));
+    assert_coverage(p, 1, 2);
+
+    // Nothing found in the one that answered: still not a clean empty.
+    w.kv.state.put("quiet", "v");
+    let (_, html) = w.page("/v/kv-test/secrets/quiet/delete").await;
+    let p = panel(&html);
+    assert!(p.contains("No secret reads found in the logs Keyring could read"));
+    assert!(p.contains("couldn&#39;t be read"));
+    assert!(!p.contains(EMPTY));
+    assert_coverage(p, 1, 2);
+    assert_no_assurance(p);
+
+    // One workspace with the vault's events, one with none yet.
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![];
+    let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
+    let p = panel(&html);
+    assert!(p.contains("alex@example.com"));
+    assert!(p.contains(
+        "1 of 2 Log Analytics workspaces this vault logs to had no events from this vault"
+    ));
+    assert_coverage(p, 2, 2);
 }
 
 #[tokio::test]
