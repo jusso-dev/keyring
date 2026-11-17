@@ -35,6 +35,7 @@ use crate::auth::oidc::Oidc;
 use crate::auth::session::SessionStore;
 use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
+use crate::notify::expiry::ExpiryHook;
 use crate::notify::sender::{self as notify_sender, Notifier};
 
 /// Shared state handed to every request handler.
@@ -59,6 +60,8 @@ pub struct AppState {
     pub audit_sink: Option<Arc<AuditSink>>,
     /// Sends email through Azure Communication Services, when set.
     pub notifier: Option<Arc<Notifier>>,
+    /// The Event Grid webhook's state, when email is on with `expiry`.
+    pub expiry_hook: Option<Arc<ExpiryHook>>,
 }
 
 impl AppState {
@@ -120,11 +123,24 @@ impl AppState {
             )),
             _ => None,
         };
+        // The webhook only exists with email on and `expiry` in the types.
+        let expiry_hook = config
+            .notify
+            .as_ref()
+            .filter(|n| n.types.contains(&crate::notify::NotifyType::Expiry))
+            .map(|n| {
+                Arc::new(ExpiryHook::new(
+                    config.eventgrid_expect(),
+                    n.hook_tuning,
+                    config.base_url.clone(),
+                ))
+            });
         let sessions = Arc::new(SessionStore::new(&config.session_secret));
         if let Some(sink) = &audit_sink {
             sessions.set_audit_sink(sink.clone());
         }
         Ok(Self {
+            expiry_hook,
             notifier,
             audit_sink,
             sessions,

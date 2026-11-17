@@ -97,6 +97,14 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
 ];
 
+/// POST routes that write their own audit event instead of going through
+/// `audited(...)`, each with the action and why. Covered by their own
+/// tests.
+const SELF_AUDITED: &[(&str, &str)] = &[(
+    "/hooks/eventgrid",
+    "notify.webhook, one per delivery past the rate limit, written by the handler (no session, no form token); tests/eventgrid_webhook.rs and tests/no_secrets_in_logs.rs",
+)];
+
 /// One route in `src/routes/mod.rs` that takes a POST.
 #[derive(Debug)]
 struct PostRoute {
@@ -310,6 +318,7 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
 /// sink column for one goes through `column_ifexists` in the Sentinel
 /// parser, since older tables don't have it.
 const SCHEMA_V1_ADDED: &[&str] = &[
+    "notify_event_count",
     "notify_recipient_count",
     "notify_recipients",
     "notify_type",
@@ -526,6 +535,7 @@ async fn audited_routes_write_exactly_one_event() {
         ev.notify_type = Some("expiry");
         ev.notify_recipient_count = Some(2);
         ev.notify_recipients = Some("a@example.com,b@example.com".into());
+        ev.notify_event_count = Some(3);
         record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");
@@ -597,6 +607,18 @@ async fn audited_routes_write_exactly_one_event() {
             .unwrap_or_else(|| panic!("{path} is exempt but no longer a POST route"));
         assert!(!r.audited, "{path} is audited, so take it off EXEMPT");
     }
+    for (path, why) in SELF_AUDITED {
+        assert!(!why.is_empty());
+        let r = routes
+            .iter()
+            .find(|r| r.path == *path)
+            .unwrap_or_else(|| panic!("{path} is self-audited but no longer a POST route"));
+        assert!(!r.audited);
+    }
+    let routes: Vec<PostRoute> = routes
+        .into_iter()
+        .filter(|r| !SELF_AUDITED.iter().any(|(p, _)| *p == r.path))
+        .collect();
     let audited: Vec<&PostRoute> = routes.iter().filter(|r| r.audited).collect();
     for r in &routes {
         assert!(

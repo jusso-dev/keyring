@@ -132,6 +132,12 @@ pub struct NotifySettings {
     pub per_hour: u32,
     /// Queue and retry timings. Always the defaults outside tests.
     pub tuning: crate::notify::sender::Tuning,
+    /// `KEYRING_EVENTGRID_AUDIENCE`: the `aud` Event Grid's token must
+    /// have. `None` means Keyring's app ID URI, `api://<client ID>`.
+    pub eventgrid_audience: Option<String>,
+    /// The webhook's rate limit and dedupe sizes. Always the defaults
+    /// outside tests.
+    pub hook_tuning: crate::notify::expiry::HookTuning,
 }
 
 /// Largest `KEYRING_NOTIFY_RATE_PER_HOUR`.
@@ -541,6 +547,30 @@ impl Config {
         format!("{}/{}/v2.0", self.authority_host, self.tenant_id)
     }
 
+    /// What Event Grid's bearer token must say: this tenant, its v1 or v2
+    /// issuer, and the audience (`KEYRING_EVENTGRID_AUDIENCE`, or
+    /// `api://<client ID>`).
+    pub fn eventgrid_expect(&self) -> crate::auth::eventgrid::Expect {
+        let audience = self
+            .notify
+            .as_ref()
+            .and_then(|n| n.eventgrid_audience.clone())
+            .unwrap_or_else(|| format!("api://{}", self.client_id));
+        // The v1 issuer's host is fixed by Entra; a test authority stands
+        // in for it so the mock can issue v1 tokens too.
+        let v1_host = if self.authority_host == DEFAULT_AUTHORITY_HOST {
+            "https://sts.windows.net".to_owned()
+        } else {
+            format!("{}/sts", self.authority_host)
+        };
+        crate::auth::eventgrid::Expect {
+            tenant: self.tenant_id.clone(),
+            issuer_v1: format!("{v1_host}/{}/", self.tenant_id),
+            issuer_v2: self.issuer(),
+            audience,
+        }
+    }
+
     /// Where Entra sends the browser back to after sign-in.
     pub fn redirect_url(&self) -> String {
         format!("{}/auth/callback", self.base_url)
@@ -657,7 +687,8 @@ fn notify_settings(
     get: &impl Fn(&str) -> Option<String>,
     has_identity: bool,
 ) -> Result<Option<NotifySettings>, ConfigError> {
-    const OTHERS: [&str; 6] = [
+    const OTHERS: [&str; 7] = [
+        "KEYRING_EVENTGRID_AUDIENCE",
         "KEYRING_NOTIFY_SENDER",
         "KEYRING_NOTIFY_ADMINS",
         "KEYRING_NOTIFY_ALLOWED_DOMAINS",
@@ -737,7 +768,19 @@ fn notify_settings(
                 )
             })?,
     };
+    let eventgrid_audience = get("KEYRING_EVENTGRID_AUDIENCE")
+        .map(|v| checked_audience(&v))
+        .transpose()
+        .map_err(|r| invalid("KEYRING_EVENTGRID_AUDIENCE", r))?;
+    if eventgrid_audience.is_some() && !types.contains(&crate::notify::NotifyType::Expiry) {
+        return Err(invalid(
+            "KEYRING_EVENTGRID_AUDIENCE",
+            "is only used with expiry in KEYRING_NOTIFY_TYPES".into(),
+        ));
+    }
     Ok(Some(NotifySettings {
+        eventgrid_audience,
+        hook_tuning: crate::notify::expiry::HookTuning::default(),
         endpoint,
         sender,
         admins,
@@ -747,6 +790,21 @@ fn notify_settings(
         per_hour,
         tuning: crate::notify::sender::Tuning::default(),
     }))
+}
+
+/// Check `KEYRING_EVENTGRID_AUDIENCE`: an app ID URI (`api://...` or
+/// `https://...`) or a GUID, printable ASCII with no spaces, at most 200
+/// characters. It is compared with the token's `aud` exactly.
+pub fn checked_audience(raw: &str) -> Result<String, String> {
+    let rule = "use Keyring's app ID URI, such as api://<client ID>, or its client ID";
+    let v = raw.trim();
+    let shape = (1..=200).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_graphic());
+    let kind = is_guid(v) || v.starts_with("api://") || v.starts_with("https://");
+    if shape && kind {
+        Ok(v.to_owned())
+    } else {
+        Err(rule.into())
+    }
 }
 
 /// Check the ACS endpoint is `https://<name>.communication.azure.com` (one
@@ -1550,6 +1608,36 @@ pub(crate) mod tests {
             "DoNotReply@mail.example.com".into(),
         );
         env
+    }
+
+    #[test]
+    fn the_eventgrid_audience_is_checked() {
+        let mut env = with_notify(new_identity_env());
+        env.insert("KEYRING_NOTIFY_TYPES", "expiry".into());
+        let c = load(&env).unwrap();
+        let e = c.eventgrid_expect();
+        assert_eq!(e.audience, format!("api://{}", c.client_id));
+        assert_eq!(
+            e.issuer_v1,
+            format!("https://sts.windows.net/{}/", c.tenant_id)
+        );
+        assert_eq!(e.issuer_v2, c.issuer());
+        env.insert("KEYRING_EVENTGRID_AUDIENCE", "api://keyring-events".into());
+        assert_eq!(
+            load(&env).unwrap().eventgrid_expect().audience,
+            "api://keyring-events"
+        );
+        for bad in ["keyring", "api://a b", "http://x"] {
+            env.insert("KEYRING_EVENTGRID_AUDIENCE", bad.into());
+            assert!(load(&env).is_err(), "{bad:?}");
+        }
+        // Only with expiry on, and only with email on.
+        env.insert("KEYRING_EVENTGRID_AUDIENCE", "api://keyring-events".into());
+        env.insert("KEYRING_NOTIFY_TYPES", "health".into());
+        assert!(load(&env).is_err());
+        let mut off = new_identity_env();
+        off.insert("KEYRING_EVENTGRID_AUDIENCE", "api://keyring-events".into());
+        assert!(load(&off).is_err());
     }
 
     #[test]
