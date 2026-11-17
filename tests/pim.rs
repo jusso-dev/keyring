@@ -1020,3 +1020,44 @@ async fn already_on_names_no_duration() {
     assert!(html.contains("was already on"), "{html}");
     assert!(!html.contains("for 1 hour"), "{html}");
 }
+
+#[tokio::test]
+async fn more_roles_than_the_lookup_limit_says_the_list_may_be_incomplete() {
+    let w = world().await;
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        // 60 other roles, all readable and none a Key Vault role, plus an
+        // activated Key Vault role. Only 50 definitions are looked up.
+        let mut active = vec![(
+            VAULT.to_owned(),
+            SECRETS_USER.to_owned(),
+            "Activated".to_owned(),
+            None,
+        )];
+        for n in 0..60 {
+            let guid = format!("aaaaaaaa-0000-0000-0000-{n:012}");
+            m.roles
+                .insert(guid.clone(), (format!("Other role {n}"), vec![]));
+            active.push((VAULT.to_owned(), guid, "Assigned".to_owned(), None));
+        }
+        m.pim.active = active;
+    }
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    // The ten past the limit weren't looked up, and the page says so.
+    assert!(
+        html.contains("This list may be incomplete") && html.contains("10 of your roles"),
+        "{html}"
+    );
+    // The Key Vault role is listed whatever the limit.
+    assert!(
+        html.contains("Key Vault Secrets User <span class=\"badge badge-ok\">Activated</span>"),
+        "{html}"
+    );
+    assert_eq!(html.matches(">Deactivate</button>").count(), 1);
+
+    // At the limit, with every definition read, there is no note.
+    w.arm.state.authz.lock().unwrap().pim.active.truncate(51);
+    let (_, html) = w.page("/v/kv-test/my-access").await;
+    assert!(!html.contains("This list may be incomplete"), "{html}");
+}

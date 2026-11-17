@@ -1125,8 +1125,13 @@ async fn read_mine(
         .collect();
     guids.sort();
     guids.dedup();
-    guids.truncate(crate::routes::access::MAX_ROLES);
+    // Every distinct role is checked for a missing definition below, so
+    // one past the lookup limit still gets the "may be incomplete" note.
+    // The offered Key Vault roles need no lookup, so they don't use up
+    // the limit.
     let wanted = guids.clone();
+    guids.retain(|g| !is_offered_role(g));
+    guids.truncate(crate::routes::access::MAX_ROLES);
     let defs: HashMap<String, RoleDefinition> =
         crate::routes::access::definitions(&state.azure, s, url, &vault_id, guids).await;
     // The built-in Key Vault roles are known by their GUIDs, so they are
