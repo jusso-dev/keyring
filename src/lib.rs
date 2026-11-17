@@ -12,6 +12,7 @@ pub(crate) mod expiry;
 pub(crate) mod generator;
 pub(crate) mod health;
 pub mod http;
+pub mod notify;
 pub(crate) mod pkcs12;
 pub mod reason;
 pub(crate) mod rotation;
@@ -34,6 +35,7 @@ use crate::auth::oidc::Oidc;
 use crate::auth::session::SessionStore;
 use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
+use crate::notify::sender::{self as notify_sender, Notifier};
 
 /// Shared state handed to every request handler.
 #[derive(Clone)]
@@ -55,6 +57,8 @@ pub struct AppState {
     pub fanout: azure::fanout::Limits,
     /// Sends Keyring's own audit events to Log Analytics, when set.
     pub audit_sink: Option<Arc<AuditSink>>,
+    /// Sends email through Azure Communication Services, when set.
+    pub notifier: Option<Arc<Notifier>>,
 }
 
 impl AppState {
@@ -82,7 +86,11 @@ impl AppState {
         let broker = Arc::new(TokenBroker::new(&config, http.clone(), credential));
         // The sink writes with the managed identity only. Config refuses the
         // sink settings without one.
-        let audit_sink = match (config.audit_ingestion_url(), &config.audit_sink, identity) {
+        let audit_sink = match (
+            config.audit_ingestion_url(),
+            &config.audit_sink,
+            identity.clone(),
+        ) {
             (Some(url), Some(settings), Some(identity)) => Some(AuditSink::start(
                 url,
                 settings.tuning,
@@ -91,11 +99,33 @@ impl AppState {
             )),
             _ => None,
         };
+        // Email is sent as the managed identity only. Config refuses the
+        // email settings without one.
+        let notifier = match (config.notify_send_url(), &config.notify, identity) {
+            (Some(send_url), Some(n), Some(identity)) => Some(Notifier::start(
+                notify_sender::Settings {
+                    send_url,
+                    sender: n.sender.clone(),
+                    admins: n.admins.clone(),
+                    allowed_domains: n.allowed_domains.clone(),
+                    types: n.types.clone(),
+                    audit_recipients: n.audit_recipients,
+                    per_hour: n.per_hour,
+                    base_url: config.base_url.clone(),
+                    tuning: n.tuning,
+                },
+                identity,
+                http.clone(),
+                audit_sink.clone(),
+            )),
+            _ => None,
+        };
         let sessions = Arc::new(SessionStore::new(&config.session_secret));
         if let Some(sink) = &audit_sink {
             sessions.set_audit_sink(sink.clone());
         }
         Ok(Self {
+            notifier,
             audit_sink,
             sessions,
             oidc: Arc::new(oidc),

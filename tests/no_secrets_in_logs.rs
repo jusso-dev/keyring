@@ -451,6 +451,140 @@ async fn values_never_reach_the_logs() {
         w.arm.state.authz.lock().unwrap().pim = Default::default();
     }
 
+    // Email through a mock ACS, as the managed identity: one delivered, one
+    // that ACS says failed (with Azure's message in the result), one after
+    // a 429 and a 500 (both with Azure's message in the body), and one with
+    // a hostile item name and free text. The same world revealed the value
+    // with a reason first.
+    let acs = support::acs::start().await;
+    let mi = support::start_identity().await;
+    let we = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", mi.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "expiry,health".to_owned()),
+            ("KEYRING_REQUIRE_REASON", "reveal".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", acs.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.backoff_first = std::time::Duration::from_millis(10);
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    we.kv.state.put("db-password", VALUE);
+    let res = we
+        .post(
+            "/v/kv-test/secrets/db-password/reveal",
+            &[("reason", "MAILREASONLEAK checking")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    {
+        use keyring::notify::{Address, ItemKind, ItemRef, Notice, Notification, NotifyType};
+        let n = we.state.notifier.clone().expect("email is on");
+        let to = |a: &str| vec![Address::parse(a).unwrap()];
+        let mail = |kind, addr: &str, heading: &str| Notification {
+            kind,
+            to: to(addr),
+            item: ItemRef::new("kv-test", ItemKind::Secret, "db-password"),
+            data: Notice::new(heading)
+                .line("It expires in 7 days.\r\nBcc: eve@evil.com <b>bold</b>")
+                .actor("alex@example.com"),
+        };
+        acs.state.statuses.lock().unwrap().push_back("Succeeded");
+        acs.state.statuses.lock().unwrap().push_back("Failed");
+        assert!(
+            n.enqueue(mail(
+                NotifyType::Expiry,
+                "mailone@example.com",
+                "A secret expires soon"
+            ))
+            .is_queued()
+        );
+        assert!(
+            n.enqueue(mail(
+                NotifyType::Expiry,
+                "mailtwo@example.com",
+                "Another expires"
+            ))
+            .is_queued()
+        );
+        let start = std::time::Instant::now();
+        while n.health().delivered + n.health().failed < 2 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "first two"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        {
+            let mut sc = acs.state.script.lock().unwrap();
+            sc.push_back(support::acs::Answer::Status(429, None));
+            sc.push_back(support::acs::Answer::Status(500, None));
+        }
+        assert!(
+            n.enqueue(mail(NotifyType::Health, "mailthree@example.com", "Health"))
+                .is_queued()
+        );
+        // Not on: never sent.
+        let _ = n.enqueue(mail(NotifyType::RoleUse, "mailfour@example.com", "Role"));
+        while n.health().delivered + n.health().failed < 3 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(8),
+                "the third"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(n.health().failed, 1, "one failed result");
+    }
+    let bodies = acs.state.all_bodies();
+    assert_eq!(acs.state.attempts().len(), 5);
+    assert!(
+        acs.state.violations().is_empty(),
+        "{:?}",
+        acs.state.violations()
+    );
+    for leak in [
+        "Sup3r-S3cret",
+        "MAILREASONLEAK",
+        support::acs::AZURE_MESSAGE,
+        "ACSLEAK",
+        support::MI_ACS_TOKEN,
+        support::MI_MONITOR_TOKEN,
+        support::MI_ASSERTION,
+        support::IDENTITY_HEADER,
+        "user-api-token",
+        "obo:",
+        "\\r\\nBcc",
+        "\\nBcc",
+        "mailfour@",
+        we.cookie.as_str(),
+        we.csrf.as_str(),
+    ] {
+        assert!(!bodies.contains(leak), "{leak} reached an email:\n{bodies}");
+    }
+    for a in acs.state.attempts() {
+        let html = a.body["content"]["html"].as_str().unwrap();
+        assert!(!html.contains("<b>bold"), "HTML part not escaped: {html}");
+        assert!(html.contains("&#60;b&#62;bold"), "{html}");
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -552,6 +686,35 @@ async fn values_never_reach_the_logs() {
         "Azure message leaked into logs"
     );
 
+    // Email: no address, Azure message, ACS token or body in any line,
+    // and the reason only on the reveal's audit event.
+    for leak in [
+        "ACSLEAK",
+        support::MI_ACS_TOKEN,
+        "mailone@",
+        "mailtwo@",
+        "mailthree@",
+        "mailfour@",
+        "It expires in 7 days",
+        "plainText",
+    ] {
+        assert!(!logs.contains(leak), "{leak} leaked into logs:\n{logs}");
+    }
+    for line in logs.lines().filter(|l| l.contains("MAILREASONLEAK")) {
+        assert!(
+            line.contains("kind=audit") && line.contains("action=secret.reveal"),
+            "{line}"
+        );
+    }
+    assert!(
+        logs.contains("action=notify.sent") && logs.contains("action=notify.failed"),
+        "email is audited: {logs}"
+    );
+    assert!(
+        logs.contains("notify_type=expiry") && logs.contains("notify_recipient_count=1"),
+        "{logs}"
+    );
+
     // The same rules for the JSON lines, which must each parse.
     let json = String::from_utf8(json.0.lock().unwrap().clone()).unwrap();
     for leak in [
@@ -568,6 +731,10 @@ async fn values_never_reach_the_logs() {
         "private detail",
         "PIMLEAK",
         "%22acrs%22",
+        "ACSLEAK",
+        support::MI_ACS_TOKEN,
+        "mailone@",
+        "mailthree@",
         w.cookie.as_str(),
         w.csrf.as_str(),
     ] {

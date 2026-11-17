@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod acs;
 pub(crate) mod certs;
 pub(crate) mod ingestion;
 pub(crate) mod keys;
@@ -47,6 +48,10 @@ pub(crate) const MI_ASSERTION: &str = "mi-assertion";
 /// The mock ingestion endpoint accepts nothing else.
 pub(crate) const MI_MONITOR_TOKEN: &str = "mi-monitor-token";
 pub(crate) const MONITOR_RESOURCE: &str = "https://monitor.azure.com";
+/// What the mock token service hands out for
+/// `https://communication.azure.com`. The mock ACS accepts nothing else.
+pub(crate) const MI_ACS_TOKEN: &str = "mi-acs-token";
+pub(crate) const ACS_RESOURCE: &str = "https://communication.azure.com";
 pub(crate) const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
@@ -148,11 +153,12 @@ async fn identity_token(
     if !header_ok {
         return json_response(StatusCode::UNAUTHORIZED, json!({}));
     }
-    // Only the two resources Keyring's identity is ever used for.
+    // Only the three resources Keyring's identity is ever used for.
     let resource = q.get("resource").cloned().unwrap_or_default();
     let token = match resource.as_str() {
         "api://AzureADTokenExchange" => MI_ASSERTION,
         MONITOR_RESOURCE => MI_MONITOR_TOKEN,
+        ACS_RESOURCE => MI_ACS_TOKEN,
         _ => return json_response(StatusCode::BAD_REQUEST, json!({})),
     };
     let query_ok = q.get("api-version").map(String::as_str) == Some("2019-08-01")

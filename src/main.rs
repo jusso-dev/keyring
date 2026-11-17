@@ -18,7 +18,7 @@ async fn main() -> ExitCode {
     for name in config.test_overrides() {
         tracing::warn!(
             variable = name,
-            "a test-only override is set; user tokens go to the host it names, not to Microsoft. Unset it outside the test suite"
+            "a test-only override is set; tokens (people's, or Keyring's managed identity's) go to the host it names, not to Microsoft. Unset it outside the test suite"
         );
     }
 
@@ -42,7 +42,23 @@ async fn main() -> ExitCode {
     if state.audit_sink.is_some() {
         tracing::info!("audit sink on: Keyring's audit events also go to Log Analytics");
     }
+    if let Some(n) = &state.notifier {
+        let types: Vec<&str> = state
+            .config
+            .notify
+            .as_ref()
+            .map(|c| c.types.iter().map(|t| t.as_str()).collect())
+            .unwrap_or_default();
+        if types.is_empty() {
+            tracing::info!(
+                "email on, but KEYRING_NOTIFY_TYPES turns no type on, so nothing is sent"
+            );
+        } else {
+            tracing::info!(types = %types.join(","), admins = n.admins().len(), "email on: notices go through Azure Communication Services");
+        }
+    }
     let audit_sink = state.audit_sink.clone();
+    let notifier = state.notifier.clone();
 
     let listener = match tokio::net::TcpListener::bind(listen).await {
         Ok(listener) => listener,
@@ -55,8 +71,12 @@ async fn main() -> ExitCode {
 
     let app = keyring::app(state);
     let served = keyring::serve::serve(listener, app, shutdown_signal()).await;
-    // After the last request, so its event is queued: send what is left,
-    // for up to ten seconds.
+    // After the last request: send queued email first, so its audit
+    // events reach the sink, then the sink's own queue, each for up to ten
+    // seconds.
+    if let Some(n) = notifier {
+        n.shutdown().await;
+    }
     if let Some(sink) = audit_sink {
         sink.shutdown().await;
     }

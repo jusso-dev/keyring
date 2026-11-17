@@ -309,7 +309,14 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
 /// Adding a field means adding it here, on purpose, never silently. A
 /// sink column for one goes through `column_ifexists` in the Sentinel
 /// parser, since older tables don't have it.
-const SCHEMA_V1_ADDED: &[&str] = &["role", "role_duration", "role_scope"];
+const SCHEMA_V1_ADDED: &[&str] = &[
+    "notify_recipient_count",
+    "notify_recipients",
+    "notify_type",
+    "role",
+    "role_duration",
+    "role_scope",
+];
 
 /// Every field a version 1 event can have, sorted.
 fn schema_v1_all() -> Vec<&'static str> {
@@ -516,6 +523,9 @@ async fn audited_routes_write_exactly_one_event() {
         ev.role = Some("4633458b-17de-408a-b874-0445c86b69e6".into());
         ev.role_scope = Some("/subscriptions/s/resourceGroups/rg".into());
         ev.role_duration = Some("PT1H".into());
+        ev.notify_type = Some("expiry");
+        ev.notify_recipient_count = Some(2);
+        ev.notify_recipients = Some("a@example.com,b@example.com".into());
         record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");

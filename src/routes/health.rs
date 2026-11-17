@@ -45,3 +45,44 @@ pub(super) async fn audit(State(state): State<AppState>) -> impl IntoResponse {
         body,
     )
 }
+
+/// The email sender's state, like [`audit`]: `ok`, `degraded` or `off` and
+/// counts since start, nothing else. No addresses. No sign-in. 503 while
+/// degraded.
+pub(super) async fn notify(State(state): State<AppState>) -> impl IntoResponse {
+    let (status, body) = match &state.notifier {
+        None => (StatusCode::OK, "status=off\n".to_owned()),
+        Some(n) => {
+            let h = n.health();
+            (
+                if h.degraded {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::OK
+                },
+                format!(
+                    "status={}\nqueued={}\ndelivered={}\nfailed={}\nunknown={}\ndropped_queue_full={}\ndropped_at_shutdown={}\nrate_limited={}\nnot_allowed={}\ninvalid={}\nfailed_attempts={}\n",
+                    if h.degraded { "degraded" } else { "ok" },
+                    h.queued,
+                    h.delivered,
+                    h.failed,
+                    h.unknown,
+                    h.dropped_queue_full,
+                    h.dropped_at_shutdown,
+                    h.rate_limited,
+                    h.not_allowed,
+                    h.invalid,
+                    h.failed_attempts,
+                ),
+            )
+        }
+    };
+    (
+        status,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+        ],
+        body,
+    )
+}
