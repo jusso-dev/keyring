@@ -11,13 +11,18 @@
 //! is refused with `reason_required`, and a page asks for it, posting the
 //! same form again with the reason added. The reason is never put in an
 //! address.
+//!
+//! The gate fails closed. Once a reason is needed, the only requests it
+//! hands on unchecked are ones the handler is about to refuse anyway for a
+//! bad form token, unmet step-up or purge being off. Anything it can't
+//! place is refused here.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use askama::Template;
 use axum::body::Body;
-use axum::extract::{FromRequest, FromRequestParts, OriginalUri, Request};
+use axum::extract::{FromRequest, FromRequestParts, OriginalUri, RawPathParams, Request};
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::middleware::Next;
@@ -29,6 +34,7 @@ use crate::azure::vaults::is_valid_vault_name;
 use crate::config::Config;
 use crate::reason::Problems;
 use crate::routes::assets::render;
+use crate::routes::error::{PageError, Problem};
 use crate::routes::forms::FieldErrors;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
@@ -63,27 +69,42 @@ struct ReasonPage {
 
 /// Run before an audited route's handler. Does nothing unless the
 /// settings ask for a reason for `action`.
+///
+/// Fails closed: once the settings ask for a reason, a request this gate
+/// can't place (no session, no vault it can check, an action that isn't on
+/// an item) is refused here and never handed to the handler. The vault and
+/// item come from the route's own decoded parameters, the same ones the
+/// handler's `Path` reads, so a percent-encoded segment such as
+/// `/v/%6bv-test/...` is checked as `kv-test` and can't slip past.
 pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
     let Some(config) = req.extensions().get::<Arc<Config>>().cloned() else {
+        // Only the signed-out routes (sign-out) are wired without the
+        // settings. An item action without them is a wiring fault: stop.
+        if action.item_kind().is_some() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "not available").into_response();
+        }
         return next.run(req).await;
     };
     if !config.reason.needs(action) {
         return next.run(req).await;
     }
-    let Some(session) = req.extensions().get::<CurrentSession>().cloned() else {
-        return next.run(req).await;
+    let (mut parts, body) = req.into_parts();
+    let session = parts.extensions.get::<CurrentSession>().cloned();
+    let params = RawPathParams::from_request_parts(&mut parts, &())
+        .await
+        .ok();
+    let target = params.as_ref().and_then(|p| Target::from_route(action, p));
+    let (Some(session), Some(target)) = (session, target) else {
+        return refuse_unplaced(parts).await;
     };
-    let path = req
-        .extensions()
+    let path = parts
+        .extensions
         .get::<OriginalUri>()
-        .map_or_else(|| req.uri().path().to_owned(), |u| u.path().to_owned());
-    let Some(target) = Target::from_path(&path) else {
-        return next.run(req).await;
-    };
+        .map_or_else(|| parts.uri.path().to_owned(), |u| u.path().to_owned());
     // Every audited form is URL-encoded. Anything else can't carry a
     // reason, so it's refused here rather than left for the handler.
-    let is_form = req
-        .headers()
+    let is_form = parts
+        .headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(';').next())
@@ -95,7 +116,6 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
         return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "form expected").into_response();
     }
 
-    let (mut parts, body) = req.into_parts();
     // Read under the route's own body limit. A rejection is plain text, so
     // the rejection layer shows its page.
     let bytes = match axum::body::Bytes::from_request(Request::from_parts(parts.clone(), body), &())
@@ -152,6 +172,16 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
+}
+
+/// The answer for a request the gate can't place: the plain "not found"
+/// page, a `refused` audit event, and nothing passed on.
+async fn refuse_unplaced(mut parts: axum::http::request::Parts) -> Response {
+    crate::audit::refuse(Refusal::InvalidRequest);
+    let shell = Shell::from_request_parts(&mut parts, &())
+        .await
+        .unwrap_or_default();
+    no_store(PageError::new(shell, Problem::not_found()).into_response())
 }
 
 fn is_purge(action: Action) -> bool {
@@ -256,7 +286,8 @@ fn words(action: Action) -> (&'static str, &'static str, &'static str) {
     }
 }
 
-/// The vault and item a request acts on, read from its path.
+/// The vault and item a request acts on, from the route's decoded
+/// parameters and the action.
 struct Target {
     vault: String,
     /// `secrets`, `certificates` or `keys`.
@@ -268,27 +299,33 @@ struct Target {
 }
 
 impl Target {
-    /// `/v/{vault}/{kind}/{name}/...` or `/v/{vault}/{kind}/-/...`.
-    fn from_path(path: &str) -> Option<Self> {
-        let mut segs = path.strip_prefix("/v/")?.split('/');
-        let vault = segs.next().filter(|v| is_valid_vault_name(v))?;
-        let (kind, section) = match segs.next()? {
-            "secrets" => ("secrets", Section::Secrets),
-            "certificates" => ("certificates", Section::Certificates),
-            "keys" => ("keys", Section::Keys),
+    /// `None` when there is no `vault` parameter, it isn't a vault name,
+    /// or the action isn't on a secret, certificate or key. The gate
+    /// refuses those. A missing or malformed item name is not a reason to
+    /// refuse: routes such as `/-/new` have none, and the handler rejects
+    /// a bad one after the reason check.
+    fn from_route(action: Action, params: &RawPathParams) -> Option<Self> {
+        let param = |k: &str| params.iter().find(|(n, _)| *n == k).map(|(_, v)| v);
+        Self::from_parts(action, param("vault")?, param("name"))
+    }
+
+    fn from_parts(action: Action, vault: &str, name: Option<&str>) -> Option<Self> {
+        if !is_valid_vault_name(vault) {
+            return None;
+        }
+        let (kind, section) = match action.item_kind()? {
+            "secret" => ("secrets", Section::Secrets),
+            "certificate" => ("certificates", Section::Certificates),
+            "key" => ("keys", Section::Keys),
             _ => return None,
         };
-        let (name, deleted) = match (segs.next(), segs.next(), segs.next()) {
-            (Some("-"), Some("deleted"), Some(n)) => (Some(n), true),
-            (Some("-"), _, _) | (None, _, _) => (None, false),
-            (Some(n), _, _) => (Some(n), false),
-        };
+        let verb = action.as_str();
         Some(Self {
             vault: vault.to_owned(),
             kind,
             section,
             name: name.filter(|n| is_valid_object_name(n)).map(str::to_owned),
-            deleted,
+            deleted: verb.ends_with(".recover") || verb.ends_with(".purge"),
         })
     }
 
@@ -308,22 +345,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn targets_come_from_the_path() {
-        let t = Target::from_path("/v/kv-test/secrets/db/reveal").unwrap();
+    fn targets_come_from_the_route() {
+        let t = Target::from_parts(Action::SecretReveal, "kv-test", Some("db")).unwrap();
         assert_eq!(
             (t.vault.as_str(), t.kind, t.name.as_deref()),
             ("kv-test", "secrets", Some("db"))
         );
         assert_eq!(t.cancel_url(), "/v/kv-test/secrets/db");
-        let t = Target::from_path("/v/kv-test/keys/-/deleted/old/purge").unwrap();
+        let t = Target::from_parts(Action::KeyPurge, "kv-test", Some("old")).unwrap();
         assert_eq!(t.cancel_url(), "/v/kv-test/keys/-/deleted/old");
-        let t = Target::from_path("/v/kv-test/certificates/-/upload/confirm").unwrap();
-        assert_eq!(t.name, None);
+        let t = Target::from_parts(Action::CertificateUpload, "kv-test", None).unwrap();
         assert_eq!(t.cancel_url(), "/v/kv-test/certificates");
-        let t = Target::from_path("/v/kv-test/secrets/bad%20name/reveal").unwrap();
+        // A bad item name isn't used, but the request is still placed.
+        let t = Target::from_parts(Action::SecretReveal, "kv-test", Some("bad name")).unwrap();
         assert_eq!(t.cancel_url(), "/v/kv-test/secrets");
-        assert!(Target::from_path("/auth/sign-out").is_none());
-        assert!(Target::from_path("/v/x/secrets/db/reveal").is_none());
-        assert!(Target::from_path("/v/kv-test/audit").is_none());
+        // Nothing to place: the gate refuses these.
+        assert!(Target::from_parts(Action::SecretReveal, "x", Some("db")).is_none());
+        assert!(Target::from_parts(Action::SecretReveal, "%6bv-test", Some("db")).is_none());
+        assert!(Target::from_parts(Action::SessionSignOut, "kv-test", None).is_none());
     }
 }

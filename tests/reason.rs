@@ -455,3 +455,80 @@ async fn a_bulk_change_asks_for_the_reason_on_its_review_page() {
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(patches(&w), 2);
 }
+
+/// The gate reads the same decoded vault and item the handler does, so a
+/// percent-encoded segment can't get a value shown without a reason.
+#[tokio::test]
+async fn an_encoded_path_segment_still_needs_a_reason() {
+    let w = seeded(&[ALL]).await;
+    // A third version, so there is an older one to roll back to.
+    let old = w.kv.state.put("db-password", "first-value");
+    w.kv.state.put("db-password", SECRET);
+    let before = kv_calls(&w);
+    // `%6b` is `k`, `%64` is `d`, `%77` is `w`: the handler sees kv-test,
+    // db-password and web-tls.
+    for (path, fields) in [
+        ("/v/%6bv-test/secrets/db-password/reveal", vec![]),
+        ("/v/kv-test/secrets/%64b-password/reveal", vec![]),
+        ("/v/%6Bv-test/secrets/%64b-password/reveal", vec![]),
+        (
+            "/v/%6bv-test/certificates/web-tls/download-key",
+            vec![("confirm_name", "web-tls")],
+        ),
+        (
+            "/v/kv-test/certificates/%77eb-tls/download-key",
+            vec![("confirm_name", "web-tls")],
+        ),
+        (
+            "/v/%6bv-test/secrets/db-password/rollback",
+            vec![("version", old.as_str())],
+        ),
+        (
+            "/v/kv-test/secrets/%64b-password/rollback",
+            vec![("version", old.as_str())],
+        ),
+    ] {
+        let res = w.post(path, &fields).await;
+        // Asked for the reason, as for the plain address.
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
+        let html = body_text(res).await;
+        assert!(html.contains("name=\"reason\""), "{path}: {html}");
+        assert!(!html.contains(SECRET), "{path}");
+        assert!(!html.contains("first-value"), "{path}");
+    }
+    assert_eq!(kv_calls(&w), before, "nothing reached Key Vault");
+    assert_eq!(w.kv.state.version_count("db-password"), 4);
+
+    // With the reason, the encoded address works like the plain one.
+    let res = w
+        .post(
+            "/v/%6bv-test/secrets/db-password/reveal",
+            &[("reason", "Checking the encoded path")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body_text(res).await.contains(SECRET));
+}
+
+/// A request the gate can't place is refused, never handed on.
+#[tokio::test]
+async fn a_path_the_gate_cannot_place_is_refused() {
+    let w = seeded(&[REVEAL]).await;
+    let before = kv_calls(&w);
+    for path in [
+        // Not vault names, encoded or not.
+        "/v/%2e%2e/secrets/db-password/reveal",
+        "/v/kv%20test/secrets/db-password/reveal",
+        "/v/x/secrets/db-password/reveal",
+        "/v/kv-test%2fsecrets/secrets/db-password/reveal",
+        "/v/%00/secrets/db-password/reveal",
+    ] {
+        for fields in [vec![], vec![("reason", "A perfectly good reason")]] {
+            let res = w.post(path, &fields).await;
+            assert!(res.status().is_client_error(), "{path}: {}", res.status());
+            let html = body_text(res).await;
+            assert!(!html.contains(SECRET), "{path}");
+        }
+    }
+    assert_eq!(kv_calls(&w), before, "nothing reached Key Vault");
+}

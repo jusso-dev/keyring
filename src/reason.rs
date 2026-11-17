@@ -160,18 +160,72 @@ pub struct Problems {
 }
 
 /// Characters that never reach the log: controls (line breaks, tabs, the
-/// ANSI escape, C1 controls), and invisible formatting such as bidi
-/// overrides and zero-width spaces that could disguise what was written.
+/// ANSI escape, C1 controls), and invisible formatting that could disguise
+/// what was written or stand in for text: every Unicode format character
+/// (general category Cf, which holds the bidi marks and overrides, the
+/// Arabic letter mark, zero-width spaces and joiners, the soft hyphen and
+/// the tag characters), plus the line and paragraph separators, unassigned
+/// "noncharacters" and private-use code points.
 fn is_unsafe(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{200B}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2060}'..='\u{206F}'
-                | '\u{FEFF}'
-                | '\u{FFF9}'..='\u{FFFB}'
-        )
+    c.is_control() || is_format(c) || is_unprintable(c)
+}
+
+/// Unicode general category Cf (format), listed by range from the Unicode
+/// Character Database, version 16. The standard library has no test for
+/// it, and one more crate isn't worth it for a fixed list.
+fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
+}
+
+/// Other code points that show as nothing or as a box: the line and
+/// paragraph separators, the reserved gap inside the format block,
+/// variation selectors, the Hangul and braille blanks, noncharacters and
+/// the private-use areas.
+fn is_unprintable(c: char) -> bool {
+    let n = c as u32;
+    matches!(
+        c,
+        '\u{2028}'
+            | '\u{2029}'
+            | '\u{2065}'
+            | '\u{034F}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180D}'
+            | '\u{180F}'
+            | '\u{2800}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FFA0}'
+            | '\u{FFFC}'
+            | '\u{E0100}'..='\u{E01EF}'
+            | '\u{E000}'..='\u{F8FF}'
+            | '\u{F0000}'..='\u{10FFFF}'
+            | '\u{FDD0}'..='\u{FDEF}'
+    ) || (n & 0xFFFE) == 0xFFFE
 }
 
 /// The reason as written to the log: each run of spaces, line breaks and
@@ -256,6 +310,46 @@ mod tests {
             clean_reason("a\u{202E}b\u{200B}c\u{2028}d\u{85}e\u{7f}f").as_deref(),
             Some("a b c d e f")
         );
+        // Invisible characters don't count towards the five: a reason
+        // made only of them is no reason.
+        for invisible in [
+            '\u{061C}',
+            '\u{200B}',
+            '\u{200D}',
+            '\u{2060}',
+            '\u{00AD}',
+            '\u{180E}',
+            '\u{FEFF}',
+            '\u{202E}',
+            '\u{2066}',
+            '\u{E0041}',
+            '\u{2800}',
+            '\u{3164}',
+            '\u{FE0F}',
+            '\u{115F}',
+            '\u{E000}',
+            '\u{FFFE}',
+            '\u{1D173}',
+        ] {
+            let only = invisible.to_string().repeat(8);
+            assert_eq!(clean_reason(&only), None, "U+{:04X}", invisible as u32);
+            // Between letters they become one space, and aren't counted.
+            let mixed = format!("ab{invisible}{invisible}c");
+            assert_eq!(clean_reason(&mixed), None, "U+{:04X}", invisible as u32);
+        }
+        assert_eq!(
+            clean_reason("fix\u{061C}the\u{200D}login").as_deref(),
+            Some("fix the login")
+        );
+        // Ordinary text in any script is kept as it is.
+        for kept in [
+            "مرحبا بالعالم",
+            "日本語のテスト",
+            "Größe prüfen",
+            "naïve café",
+        ] {
+            assert_eq!(clean_reason(kept).as_deref(), Some(kept));
+        }
         // 5 to 200 characters, counted in characters.
         assert_eq!(clean_reason("abcd"), None);
         assert_eq!(clean_reason(" \n\t ab \u{1b} "), None);
