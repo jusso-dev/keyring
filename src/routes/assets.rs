@@ -7,9 +7,9 @@
 //! request without it, or with an old one (a page left open across an
 //! upgrade), gets the current file with a short cache.
 //!
-//! The fonts (IBM Plex Sans and Mono, SIL Open Font License, in
-//! `static/fonts/` with `OFL.txt`) carry their release in the file name
-//! instead, so they are always cached for a year. A new release is a new name.
+//! Legacy IBM Plex fonts remain available for cached stylesheets. Their release
+//! is part of the file name, so they are cached for a year. Current pages use
+//! native system fonts and do not request these files.
 
 use std::sync::LazyLock;
 
@@ -23,7 +23,7 @@ const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
 const PINS_JS: &str = include_str!("../../static/pins.js");
 
-/// Font files, by the name `style.css` asks for. Latin subset only.
+/// Legacy font files for cached stylesheets. Latin subset only.
 const FONTS: [(&str, &[u8]); 4] = [
     (
         "ibm-plex-sans-5.3.0.woff2",
@@ -184,14 +184,10 @@ mod tests {
     }
 
     #[test]
-    fn every_font_the_stylesheet_asks_for_is_served() {
-        let asked: Vec<&str> = STYLE_CSS
-            .split("url(\"/static/")
-            .skip(1)
-            .map(|rest| rest.split('"').next().unwrap())
-            .collect();
-        assert_eq!(asked.len(), FONTS.len(), "{asked:?}");
-        for name in asked {
+    fn native_fonts_need_no_downloads_and_legacy_fonts_remain_served() {
+        assert!(!STYLE_CSS.contains("@font-face"));
+        assert!(!STYLE_CSS.contains(".woff"));
+        for (name, _) in FONTS {
             let body = font(name).unwrap_or_else(|| panic!("{name} isn't served"));
             assert!(body.starts_with(b"wOF2"), "{name}");
             assert!(
