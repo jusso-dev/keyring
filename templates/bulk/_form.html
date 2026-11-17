@@ -1,0 +1,36 @@
+{#- "With selected" on a list (src/routes/bulk.rs). The row checkboxes sit
+    in the table and join this form through their form attribute, so it
+    isn't nested in the filter form and works without the script. Set
+    bulk_needs (the role hint) and bulk_expiry before including. -#}
+<form id="bulk-form" class="filters" method="post" action="{{ shell.vault_prefix() }}{{ bulk_base }}/-/bulk">
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <div>
+    <label for="bulk-op">With selected</label>
+    <p class="field-help" id="bulk-op-help">Tick {{ bulk_plural }} below, up to 100. You'll see every change before anything is saved.</p>
+    <select id="bulk-op" name="op" aria-describedby="bulk-op-help">
+      <option value="tag_set">Add or change a tag</option>
+      <option value="tag_remove">Remove a tag</option>
+      {% if bulk_expiry %}<option value="expiry">Set expiry date</option>{% endif %}
+      <option value="enable">Enable</option>
+      <option value="disable">Disable</option>
+    </select>
+  </div>
+  <div>
+    <label for="bulk-tag-name">Tag name</label>
+    <input id="bulk-tag-name" name="tag_name" type="text" maxlength="512"{% call ui::ident() %}{% endcall %}>
+  </div>
+  <div>
+    <label for="bulk-tag-value">Tag value (optional)</label>
+    <input id="bulk-tag-value" name="tag_value" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
+  </div>
+  {% if bulk_expiry %}
+  <div>
+    <label for="bulk-expires">Expiry date</label>
+    <p class="field-help" id="bulk-expires-help">Sets or changes the date. Key Vault can't remove one.</p>
+    <input id="bulk-expires" name="expires" type="date" aria-describedby="bulk-expires-help">
+  </div>
+  {% endif %}
+  <div class="filters-submit">
+    <button type="submit"{{ ui::needs_attrs(bulk_needs, "bulk") }}>Review changes</button>{{ ui::needs_note(bulk_needs, "bulk") }}
+  </div>
+</form>

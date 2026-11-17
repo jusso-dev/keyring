@@ -432,6 +432,16 @@ pub struct UpdateSecret {
     pub tags: Option<BTreeMap<String, String>>,
 }
 
+/// Body for changing attributes and tags of a secret, key or certificate
+/// version, as the bulk change sends it. Only what changes is sent; tags,
+/// when sent, replace the version's tags as a whole.
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateProperties {
+    pub attributes: UpdateAttributes,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<BTreeMap<String, String>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
