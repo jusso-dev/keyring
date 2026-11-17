@@ -32,7 +32,7 @@ use crate::auth::session::Session;
 use crate::azure::authz::{RoleDefinition, applies_at, is_guid};
 use crate::azure::pim::{
     self, Active, BrokenRule, DEFAULT_MAX_MINUTES, Eligibility, HARD_MAX_MINUTES, Outcome, Pending,
-    Policy,
+    Policy, When,
 };
 use crate::azure::{AzureError, TokenError};
 use crate::routes::access::Origin;
@@ -162,9 +162,17 @@ async fn eligible_here(
 /// is used only when nothing nearer is on offer. ARM returned it for a
 /// query at the vault, and ARM refuses the request if it doesn't apply.
 fn pick(all: Vec<Eligibility>, vault_id: &str, role: &str) -> Option<Eligibility> {
+    let now = crate::azure::secrets::now_ts();
     all.into_iter()
+        .filter(|e| started(e, now))
         .filter(|e| e.role.eq_ignore_ascii_case(role) && applies_at(&e.scope, vault_id))
         .min_by_key(|e| nearness(Origin::of(&e.scope, vault_id)))
+}
+
+/// An eligibility that applies now. ARM also lists ones that start later,
+/// and one whose times can't be read is not offered.
+fn started(e: &Eligibility, now: i64) -> bool {
+    e.span.when(now) == When::Now
 }
 
 /// Smaller is nearer the vault. Item-scoped eligibility comes after the
@@ -465,7 +473,10 @@ async fn ready(
         let same = shown.and_then(|s| {
             all.iter()
                 .find(|e| {
-                    s.is(e) && e.role.eq_ignore_ascii_case(role) && applies_at(&e.scope, &vault_id)
+                    s.is(e)
+                        && e.role.eq_ignore_ascii_case(role)
+                        && applies_at(&e.scope, &vault_id)
+                        && started(e, crate::azure::secrets::now_ts())
                 })
                 .cloned()
         });
@@ -976,14 +987,16 @@ pub(crate) struct Row {
     pub role_name: String,
     pub scope: String,
     pub origin: &'static str,
-    /// "Ends 17 Nov 2026, 14:05 UTC (2 hours 10 minutes left)", or empty.
+    /// "Ends 17 Nov 2026, 14:05 UTC (2 hours 10 minutes left)", or for
+    /// one that starts later "Starts 18 Nov 2026, 09:00 UTC".
     pub ends: String,
     /// Turned on through PIM, so it can be turned off.
     pub can_deactivate: bool,
     /// For an eligible row: the activation form.
     pub activate_url: String,
-    /// For an eligible row: already on, or waiting for approval.
-    pub state: &'static str,
+    /// For an eligible row: already on, waiting for approval, or when it
+    /// starts. Empty offers Activate.
+    pub state: String,
 }
 
 #[derive(Template)]
@@ -992,8 +1005,9 @@ struct MyAccessPage {
     shell: Shell,
     vault: String,
     active: Vec<Row>,
+    upcoming: Vec<Row>,
     eligible: Vec<Row>,
-    waiting: usize,
+    waiting: Vec<Row>,
     notes: Vec<String>,
     portal: &'static str,
 }
@@ -1014,6 +1028,14 @@ fn ends_words(ends: Option<i64>, now: i64) -> String {
         )
     } else {
         format!("Ends {}", crate::dates::format_datetime(t))
+    }
+}
+
+fn starts_words(starts: i64, ends: Option<i64>) -> String {
+    let starts = crate::dates::format_datetime(starts);
+    match ends {
+        Some(t) => format!("Starts {starts}, ends {}", crate::dates::format_datetime(t)),
+        None => format!("Starts {starts}, no end date"),
     }
 }
 
@@ -1062,6 +1084,7 @@ pub(super) async fn my_access(
         shell,
         vault,
         active: page.active,
+        upcoming: page.upcoming,
         eligible: page.eligible,
         waiting: page.waiting,
         notes: page.notes,
@@ -1073,8 +1096,11 @@ pub(super) async fn my_access(
 #[derive(Default)]
 struct Mine {
     active: Vec<Row>,
+    /// Assignments ARM lists that haven't started yet.
+    upcoming: Vec<Row>,
     eligible: Vec<Row>,
-    waiting: usize,
+    /// Requests waiting for approval, from the requests themselves.
+    waiting: Vec<Row>,
     notes: Vec<String>,
 }
 
@@ -1114,7 +1140,10 @@ async fn read_mine(
     let pending: Vec<Pending> = match pending {
         Ok(p) => p.into_iter().filter(|p| reaches(&p.scope)).collect(),
         Err(e) => {
-            tracing::info!(error = %e, "PIM requests not read");
+            // Not known is not none: the page says so, so an eligible row
+            // with Activate isn't read as "nothing is waiting".
+            mine.notes
+                .push(arm_note("Requests waiting for approval", &e));
             Vec::new()
         }
     };
@@ -1122,6 +1151,7 @@ async fn read_mine(
         .iter()
         .map(|a| a.role.clone())
         .chain(eligible.iter().map(|e| e.role.clone()))
+        .chain(pending.iter().map(|p| p.role.clone()))
         .collect();
     guids.sort();
     guids.dedup();
@@ -1165,45 +1195,103 @@ async fn read_mine(
         ));
     }
     let now = crate::azure::secrets::now_ts();
+    // A start or end time ARM gave that couldn't be read: never shown as
+    // on, or offered, since Keyring can't tell whether it applies.
+    let mut unclear = 0usize;
+    let mut on_now: Vec<&Active> = Vec::new();
     for a in active.iter().filter(|a| is_kv(&a.role)) {
-        mine.active.push(Row {
+        let mut row = Row {
             role: a.role.clone(),
             role_name: name(&a.role),
             scope: a.scope.clone(),
             origin: Origin::of(&a.scope, &vault_id).label(),
-            ends: ends_words(a.ends, now),
-            can_deactivate: a.activated && is_offered_role(&a.role),
+            ends: String::new(),
+            can_deactivate: false,
             activate_url: String::new(),
-            state: "",
-        });
+            state: String::new(),
+        };
+        match a.span.when(now) {
+            When::Now => {
+                on_now.push(a);
+                row.ends = ends_words(a.span.ends, now);
+                row.can_deactivate = a.activated && is_offered_role(&a.role);
+                mine.active.push(row);
+            }
+            When::Later(t) => {
+                row.ends = starts_words(t, a.span.ends);
+                mine.upcoming.push(row);
+            }
+            When::Over => {}
+            When::Unknown => unclear += 1,
+        }
     }
     let back = vault_path(vault, "/my-access");
     for e in eligible.iter().filter(|e| is_kv(&e.role)) {
-        let on = active
-            .iter()
-            .any(|a| a.activated && a.role == e.role && a.scope.eq_ignore_ascii_case(&e.scope));
-        let waiting = pending
-            .iter()
-            .any(|p| p.role == e.role && p.scope.eq_ignore_ascii_case(&e.scope));
-        mine.waiting += usize::from(waiting);
+        let state = match e.span.when(now) {
+            When::Now => {
+                let on = on_now.iter().any(|a| {
+                    a.activated && a.role == e.role && a.scope.eq_ignore_ascii_case(&e.scope)
+                });
+                let waiting = pending
+                    .iter()
+                    .any(|p| p.role == e.role && p.scope.eq_ignore_ascii_case(&e.scope));
+                if on {
+                    "On now".to_owned()
+                } else if waiting {
+                    "Waiting for approval".to_owned()
+                } else if !is_offered_role(&e.role) {
+                    "Activate in PIM".to_owned()
+                } else {
+                    String::new()
+                }
+            }
+            When::Later(t) => format!("Eligible from {}", crate::dates::format_datetime(t)),
+            When::Over => continue,
+            When::Unknown => {
+                unclear += 1;
+                continue;
+            }
+        };
         mine.eligible.push(Row {
             role: e.role.clone(),
             role_name: name(&e.role),
             scope: e.scope.clone(),
             origin: Origin::of(&e.scope, &vault_id).label(),
-            ends: ends_words(e.ends, now),
+            ends: ends_words(e.span.ends, now),
             can_deactivate: false,
             activate_url: activate_url(vault, &e.role, Some(&Shown::of(e)), &back),
-            state: if on {
-                "On now"
-            } else if waiting {
-                "Waiting for approval"
-            } else if !is_offered_role(&e.role) {
-                "Activate in PIM"
-            } else {
-                ""
-            },
+            state,
         });
+    }
+    // Built from the requests themselves, so one is still shown when the
+    // eligible roles couldn't be read.
+    for p in pending.iter().filter(|p| is_kv(&p.role)) {
+        let seen = mine
+            .waiting
+            .iter()
+            .any(|r| r.role == p.role && r.scope.eq_ignore_ascii_case(&p.scope));
+        if !seen {
+            mine.waiting.push(Row {
+                role: p.role.clone(),
+                role_name: name(&p.role),
+                scope: p.scope.clone(),
+                origin: Origin::of(&p.scope, &vault_id).label(),
+                ends: String::new(),
+                can_deactivate: false,
+                activate_url: String::new(),
+                state: "Waiting for approval".to_owned(),
+            });
+        }
+    }
+    if unclear > 0 {
+        mine.notes.push(format!(
+            "{}: Azure gave a start or end time Keyring couldn't read, so it can't tell whether it applies now.",
+            if unclear == 1 {
+                "One of your roles isn't shown".to_owned()
+            } else {
+                format!("{unclear} of your roles aren't shown")
+            }
+        ));
     }
     Ok(Some(mine))
 }
@@ -1254,8 +1342,10 @@ pub(super) async fn deactivate(
             &vault_id,
         )
         .await?;
+        let now = crate::azure::secrets::now_ts();
         Ok::<_, AzureError>(all.into_iter().find(|a| {
             a.activated
+                && a.span.when(now) == When::Now
                 && a.role == role
                 && a.scope.eq_ignore_ascii_case(scope)
                 && applies_at(&a.scope, &vault_id)
@@ -1378,7 +1468,7 @@ mod tests {
             role: role.into(),
             role_definition_id: format!("/x/roleDefinitions/{role}"),
             schedule_id: "/s".into(),
-            ends: None,
+            span: pim::Span::default(),
         }
     }
 

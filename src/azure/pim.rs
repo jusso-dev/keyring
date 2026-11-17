@@ -37,8 +37,8 @@ pub struct Eligibility {
     pub role_definition_id: String,
     /// What `linkedRoleEligibilityScheduleId` is set to on activation.
     pub schedule_id: String,
-    /// When the eligibility itself ends, Unix seconds.
-    pub ends: Option<i64>,
+    /// When the eligibility itself starts and ends.
+    pub span: Span,
 }
 
 /// A role the signed-in person holds now.
@@ -49,8 +49,64 @@ pub struct Active {
     pub role_definition_id: String,
     /// Turned on through PIM (`Activated`), so it can be turned off.
     pub activated: bool,
-    /// Unix seconds. `None` for a permanent assignment.
+    /// When it starts and ends. ARM lists upcoming ones too.
+    pub span: Span,
+}
+
+/// When an eligibility or assignment applies, from the instance's
+/// `startDateTime` and `endDateTime`. ARM lists current and upcoming
+/// instances, so one may not have started yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    /// Unix seconds. `None` when ARM gave no start: already started.
+    pub starts: Option<i64>,
+    /// Unix seconds. `None` when ARM gave no end (a permanent one).
     pub ends: Option<i64>,
+    /// ARM gave a start or end time that couldn't be read.
+    pub unreadable: bool,
+}
+
+/// Where a [`Span`] is now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum When {
+    /// Started, and not ended.
+    Now,
+    /// Starts at this time, Unix seconds.
+    Later(i64),
+    /// Already ended.
+    Over,
+    /// A time couldn't be read, so Keyring can't tell. Never treated as on.
+    Unknown,
+}
+
+impl Span {
+    fn of(start: Option<&str>, end: Option<&str>) -> Self {
+        let read = |v: Option<&str>| match v {
+            None => (None, false),
+            Some(t) => parse_time(t).map_or((None, true), |t| (Some(t), false)),
+        };
+        let (starts, bad_start) = read(start);
+        let (ends, bad_end) = read(end);
+        Self {
+            starts,
+            ends,
+            unreadable: bad_start || bad_end,
+        }
+    }
+
+    /// On now only when `start <= now < end`; a missing start counts as
+    /// started and a missing end as no end.
+    pub fn when(&self, now: i64) -> When {
+        if self.unreadable {
+            When::Unknown
+        } else if let Some(t) = self.starts.filter(|t| *t > now) {
+            When::Later(t)
+        } else if self.ends.is_some_and(|t| t <= now) {
+            When::Over
+        } else {
+            When::Now
+        }
+    }
 }
 
 /// A request the person made that is still waiting.
@@ -101,6 +157,8 @@ struct InstanceProps {
     role_eligibility_schedule_id: Option<String>,
     #[serde(default)]
     assignment_type: Option<String>,
+    #[serde(default)]
+    start_date_time: Option<String>,
     #[serde(default)]
     end_date_time: Option<String>,
     #[serde(default)]
@@ -167,7 +225,7 @@ pub async fn my_eligibilities(
                 role,
                 role_definition_id: p.role_definition_id,
                 schedule_id,
-                ends: p.end_date_time.as_deref().and_then(parse_time),
+                span: Span::of(p.start_date_time.as_deref(), p.end_date_time.as_deref()),
             })
         })
         .collect())
@@ -203,7 +261,7 @@ pub async fn my_active(
                 activated: p
                     .assignment_type
                     .is_some_and(|t| t.eq_ignore_ascii_case("Activated")),
-                ends: p.end_date_time.as_deref().and_then(parse_time),
+                span: Span::of(p.start_date_time.as_deref(), p.end_date_time.as_deref()),
             })
         })
         .collect())
@@ -833,6 +891,28 @@ mod tests {
         assert_eq!(iso_duration(480), "PT8H");
         assert_eq!(iso_duration(30), "PT30M");
         assert_eq!(iso_duration(90), "PT1H30M");
+    }
+
+    #[test]
+    fn on_now_only_between_start_and_end() {
+        let now = parse_time("2026-11-17T10:00:00Z").unwrap();
+        let span = |start: Option<&str>, end: Option<&str>| Span::of(start, end).when(now);
+        let (past, future) = (Some("2026-11-17T09:59:00Z"), Some("2026-11-17T10:01:00Z"));
+        assert_eq!(span(None, None), When::Now);
+        assert_eq!(span(past, None), When::Now);
+        assert_eq!(span(past, future), When::Now);
+        assert_eq!(span(future, None), When::Later(now + 60));
+        assert_eq!(
+            span(future, Some("2026-11-17T11:00:00Z")),
+            When::Later(now + 60)
+        );
+        assert_eq!(span(None, past), When::Over);
+        let exact = Some("2026-11-17T10:00:00Z");
+        assert_eq!(span(exact, None), When::Now, "start is inclusive");
+        assert_eq!(span(None, exact), When::Over, "end is not");
+        // A time that can't be read is never on now.
+        assert_eq!(span(Some("tomorrow"), None), When::Unknown);
+        assert_eq!(span(past, Some("soon")), When::Unknown);
     }
 
     #[test]

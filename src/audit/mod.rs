@@ -16,8 +16,11 @@
 //! audited action. Session expiry happens outside a request and calls
 //! [`record`] directly.
 //!
-//! The field names are fixed by [`SCHEMA_VERSION`]. Changing one needs a
-//! version bump and a CHANGELOG line (`tests/audit_events.rs` pins them).
+//! The field names are fixed by [`SCHEMA_VERSION`]. Renaming or removing
+//! one, or changing its meaning or type, needs a version bump and a
+//! CHANGELOG line. Adding an optional field, left out when not set, keeps
+//! the version (`tests/audit_events.rs` pins the names and lists the
+//! additions).
 //! Never put a value, token, password, query string or Azure's error
 //! message in an event.
 
