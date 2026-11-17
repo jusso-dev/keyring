@@ -1,0 +1,50 @@
+[
+  {
+    "rule": "many-reveals",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 60m;\nlet revealThreshold = 3;",
+    "rows": 1,
+    "why": "Alex's four reveals in the hour. Blair and Eli have one each"
+  },
+  {
+    "rule": "reveal-new-ip",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 1h;",
+    "rows": 1,
+    "why": "Alex from 198.51.100.7. Blair and Eli were never seen before, so they don't count"
+  },
+  {
+    "rule": "denied-probing",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 60m;\nlet probingVaults = 3;\nlet probingDenied = 5;",
+    "rows": 1,
+    "why": "Casey, denied in three vaults. Dana was denied in two"
+  },
+  {
+    "rule": "off-hours",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 15m;\nlet watchedActions = dynamic([\"secret.purge\", \"certificate.purge\", \"key.purge\", \"certificate.download_private_key\"]);\nlet watchedTerms = dynamic([\"bulk\"]);\nlet utcOffset = 600 * 1m;\nlet workStart = 8;\nlet workEnd = 18;\nlet workDays = dynamic([]);",
+    "rows": 5,
+    "why": "No working days, so any time counts: Eli's purge, download and bulk change, and the two refused purges from 192.0.2.66. Not the reveals"
+  },
+  {
+    "rule": "app-attack",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 15m;\nlet attackThreshold = 5;",
+    "rows": 1,
+    "why": "192.0.2.66, with three csrf and two cross_site. Not the typed name mismatches, and 192.0.2.77 has one"
+  },
+  {
+    "rule": "audit-gap",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet window = 6h;\nlet keyringIps = dynamic([\"203.0.113.10\"]);\nlet KeyVaultCalls = KeyVaultRows;",
+    "rows": 0,
+    "why": "Keyring wrote events in the window"
+  },
+  {
+    "rule": "audit-gap",
+    "lets": "let KeyringAudit_CL = KeyringRows | take 0;\nlet window = 6h;\nlet keyringIps = dynamic([\"203.0.113.10\"]);\nlet KeyVaultCalls = KeyVaultRows;",
+    "rows": 2,
+    "why": "No Keyring events, and Key Vault saw SecretGet from Keyring's address on kv-one and kv-two. kv-three had only a list call"
+  },
+  {
+    "rule": "unmatched-secret-get",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet keyringIps = dynamic([\"203.0.113.10\"]);\nlet KeyVaultCalls = KeyVaultRows;",
+    "rows": 1,
+    "why": "kv-4 on kv-two. kv-1 matches by ID, kv-2 by Alex's rollback, kv-5 isn't Keyring's address, kv-6 is too recent"
+  }
+]
