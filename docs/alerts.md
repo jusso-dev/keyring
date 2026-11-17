@@ -177,7 +177,7 @@ The subscription's validation handshake is answered only with a valid token, and
 
 ### Which subscriptions may send
 
-Set `KEYRING_EVENTGRID_SUBSCRIPTIONS` to the subscription IDs, separated by commas, whose Key Vaults send expiry events to Keyring. Without it, a Key Vault in any subscription in any tenant can send events through a subscription made by someone holding the role above, and Keyring warns about that at start. With it, an event from a vault in another subscription refuses the whole delivery with 400 and `subscription_not_allowed`, and nothing from its `topic` is logged or emailed.
+Set `KEYRING_EVENTGRID_SUBSCRIPTIONS` to the subscription IDs, separated by commas, whose Key Vaults send expiry events to Keyring. Without it, a Key Vault in any subscription in any tenant can send events through a subscription made by someone holding the role above, and Keyring warns about that at start. An empty value is the same as unset. With it, an event from a vault in another subscription refuses the whole delivery with 400 and `subscription_not_allowed`, and nothing from its `topic` is logged or emailed.
 
 The host templates (`infra/app-service` and `infra/container-apps`) set it from `eventGridSubscriptions`, which defaults to the subscription Keyring is deployed in, when `expiry` is in `notifyTypes`. A vault in another subscription needs that subscription's ID added. At most 50 IDs; an entry that isn't a GUID, an empty entry (such as a trailing comma) or more than 50 stops Keyring at start, naming the setting.
 

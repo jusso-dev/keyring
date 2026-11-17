@@ -269,7 +269,7 @@ var notifySettings = useNotify
       empty(notifyAdmins) ? [] : [{ name: 'KEYRING_NOTIFY_ADMINS', value: notifyAdmins }],
       empty(notifyAllowedDomains) ? [] : [{ name: 'KEYRING_NOTIFY_ALLOWED_DOMAINS', value: notifyAllowedDomains }],
       // Keyring refuses the list without expiry in the types.
-      empty(eventGridSubscriptions) || !contains(split(toLower(replace(notifyTypes, ' ', '')), ','), 'expiry')
+      empty(eventGridSubscriptions) || !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry')
         ? []
         : [{ name: 'KEYRING_EVENTGRID_SUBSCRIPTIONS', value: eventGridSubscriptions }]
     )
