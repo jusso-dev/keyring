@@ -77,7 +77,9 @@ pub(crate) struct PreviewRow {
     pub why: String,
     pub content_type: String,
     pub expires: String,
+    /// Tags, without the description.
     pub tags: Vec<(String, String)>,
+    pub description: String,
 }
 
 impl PreviewRow {
@@ -387,11 +389,10 @@ pub(crate) async fn preview(
             why: why.clone(),
             content_type: row.content_type.clone().unwrap_or_default(),
             expires: row.expires.map(dates::format_date).unwrap_or_default(),
-            tags: row
-                .tags
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            tags: crate::description::without(&row.tags).into_iter().collect(),
+            description: crate::description::of(&row.tags)
+                .unwrap_or_default()
+                .to_owned(),
         });
         if matches!(plan, Plan::New | Plan::NewVersion) {
             pending.push(PendingSecret {

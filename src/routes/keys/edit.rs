@@ -20,7 +20,7 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::forms::{CsrfForm, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::parse_tags;
+use crate::routes::secrets::form::{parse_tags, with_note};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
@@ -55,6 +55,8 @@ pub(crate) struct CreateForm {
     pub ops: Vec<String>,
     pub expires: String,
     pub tags: String,
+    /// The note, kept in the `description` tag.
+    pub description: String,
 }
 
 impl CreateForm {
@@ -67,6 +69,7 @@ impl CreateForm {
             ops: Vec::new(),
             expires: String::new(),
             tags: String::new(),
+            description: String::new(),
         };
         for (k, v) in pairs {
             match k.as_str() {
@@ -77,6 +80,7 @@ impl CreateForm {
                 "ops" => f.ops.push(v),
                 "expires" => f.expires = v,
                 "tags" => f.tags = v,
+                "description" => f.description = v,
                 _ => {}
             }
         }
@@ -92,6 +96,7 @@ impl CreateForm {
             ops: Vec::new(),
             expires: String::new(),
             tags: String::new(),
+            description: String::new(),
         }
     }
 }
@@ -166,6 +171,7 @@ pub(crate) fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Fie
         errors.push("tags", m);
         BTreeMap::new()
     });
+    let tags = with_note(&tags, &f.description, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }

@@ -9,13 +9,14 @@ use crate::azure::secrets::{
     Attributes, DateChange, SecretItem, SetSecret, UpdateAttributes, UpdateSecret,
 };
 use crate::dates;
+use crate::description;
 use crate::routes::forms::{FieldError, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
 use crate::secret::Secret;
 use crate::secret_types::{ContentKind, SecretType, TypedValue, classify};
 
-/// Most tags Key Vault allows on one secret.
-pub(crate) const MAX_TAGS: usize = 15;
+/// Most tags Key Vault allows on one item, the description included.
+pub(crate) const MAX_TAGS: usize = crate::description::MAX_TAGS;
 /// Longest tag name and value Key Vault takes, in characters.
 pub(crate) const MAX_TAG_NAME: usize = 512;
 pub(crate) const MAX_TAG_VALUE: usize = 256;
@@ -42,9 +43,12 @@ pub(crate) struct SecretForm {
     /// `YYYY-MM-DD` or empty.
     #[serde(default)]
     pub not_before: String,
-    /// One `key=value` per line.
+    /// One `key=value` per line. Never holds the `description` tag.
     #[serde(default)]
     pub tags: String,
+    /// The note, kept in the `description` tag. Empty removes it.
+    #[serde(default)]
+    pub description: String,
     /// Checkbox: present means on.
     #[serde(default)]
     pub enabled: Option<String>,
@@ -153,12 +157,18 @@ impl std::fmt::Debug for SecretForm {
 
 /// Can these tags go through the `name=value` textarea and come back the
 /// same? Not if a name has an `=`, either side has a line break, or either
-/// side starts or ends with a space, because parsing trims and splits.
+/// side starts or ends with a space, because parsing trims and splits. The
+/// description has its own field, so it isn't looked at.
 pub(crate) fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
     let clean = |s: &str| s == s.trim() && !s.contains(['\n', '\r']);
     tags.iter()
+        .filter(|(k, _)| k.as_str() != description::TAG)
         .all(|(k, v)| !k.is_empty() && !k.contains('=') && clean(k) && clean(v))
 }
+
+/// Said when `description` is typed as an ordinary tag name.
+pub(crate) const DESCRIPTION_IS_A_FIELD: &str =
+    "The description tag is set with the Description field. Put the note there, not in Tags.";
 
 /// Parse tag lines. Blank lines are skipped. A name given twice is an
 /// error, so nothing is dropped without a word.
@@ -173,6 +183,9 @@ pub(crate) fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> 
         let (k, v) = (k.trim(), v.trim());
         if k.is_empty() {
             return Err(format!("Line {} has no tag name before the =.", i + 1));
+        }
+        if description::is_reserved(k) {
+            return Err(format!("Line {}: {DESCRIPTION_IS_A_FIELD}", i + 1));
         }
         if k.len() > MAX_TAG_NAME || v.len() > MAX_TAG_VALUE {
             return Err(format!(
@@ -196,9 +209,10 @@ pub(crate) fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> 
     Ok(tags)
 }
 
-/// Tags back into the textarea format.
+/// Tags back into the textarea format, without the description.
 pub(crate) fn format_tags(tags: &BTreeMap<String, String>) -> String {
     tags.iter()
+        .filter(|(k, _)| k.as_str() != description::TAG)
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("\n")
@@ -223,6 +237,12 @@ pub(crate) fn one_tag(name: &str, value: &str) -> Result<(String, String), Strin
     let (k, v) = (name.trim(), value.trim());
     if k.is_empty() {
         return Err("Give the tag a name.".into());
+    }
+    if description::is_reserved(k) {
+        return Err(
+            "The description tag has its own changes in the list: Set the description, or Remove the description."
+                .into(),
+        );
     }
     if k.contains(['\n', '\r']) || v.contains(['\n', '\r']) {
         return Err("A tag can't have a line break in it.".into());
@@ -307,6 +327,7 @@ fn properties(
         errors.push("tags", m);
         BTreeMap::new()
     });
+    let tags = with_note(&tags, &form.description, errors);
     Properties {
         content_type: (!content_type.is_empty()).then(|| content_type.to_owned()),
         attributes: Attributes {
@@ -316,6 +337,22 @@ fn properties(
             ..Attributes::default()
         },
         tags,
+    }
+}
+
+/// The tags from the form with the posted description merged in. A
+/// problem with the note goes on the `description` field.
+pub(crate) fn with_note(
+    tags: &BTreeMap<String, String>,
+    raw: &str,
+    errors: &mut FieldErrors,
+) -> BTreeMap<String, String> {
+    match description::clean(raw).and_then(|n| description::merge(tags, n.as_deref())) {
+        Ok(t) => t,
+        Err(m) => {
+            errors.push("description", m);
+            tags.clone()
+        }
     }
 }
 
@@ -428,8 +465,8 @@ pub(crate) fn for_new_value(
         keyring_type_typed(props.content_type.as_deref(), current_ct, &mut errors);
     }
     if !tags_editable(current.tags()) {
-        errors.retain(|e| e.field != "tags");
-        props.tags = current.tags().clone();
+        errors.retain(|e| e.field != "tags" && e.field != "description");
+        props.tags = with_note(current.tags(), &form.description, &mut errors);
     }
     match value {
         Some(value) if errors.is_empty() => Ok(SetSecret {
@@ -474,8 +511,12 @@ pub(crate) fn for_update(
             &mut errors,
         );
     }
+    let mut props = props;
     if !editable {
-        errors.retain(|e| e.field != "tags");
+        // The tags the form can't show are kept as they are, with only the
+        // description changed.
+        errors.retain(|e| e.field != "tags" && e.field != "description");
+        props.tags = with_note(item.tags(), &form.description, &mut errors);
     }
     let expires = DateChange::between(current.expires, props.attributes.expires);
     if expires == Some(DateChange::Keep) {
@@ -498,7 +539,7 @@ pub(crate) fn for_update(
                 not_before,
                 expires,
             },
-            tags: (editable && props.tags != *item.tags()).then_some(props.tags),
+            tags: (props.tags != *item.tags()).then_some(props.tags),
         }),
         _ => Err(errors),
     }

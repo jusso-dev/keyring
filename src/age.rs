@@ -146,8 +146,9 @@ pub(crate) fn counts(items: &[Item], now: i64) -> [usize; 5] {
 }
 
 /// The CSV header. [`to_csv`] and [`not_read_row`] line up with it.
-const CSV_HEADER: &str = "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Tags\r\n";
-const CSV_COLUMNS: usize = 8;
+const CSV_HEADER: &str =
+    "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Tags\r\n";
+const CSV_COLUMNS: usize = 9;
 
 /// CSV of items. No values, only names and dates. Every free-text field
 /// goes through [`csv_field`], which stops a spreadsheet reading it as a
@@ -165,6 +166,7 @@ pub(crate) fn to_csv(items: &[Item], now: i64) -> String {
                 .map(|c| days_since(c, now).to_string())
                 .unwrap_or_default(),
             Band::of(i.created, now).label().to_owned(),
+            csv_field(i.description()),
             csv_field(&i.tags_text()),
         ];
         out.push_str(&row.join(","));
@@ -270,11 +272,11 @@ mod tests {
         let lines: Vec<_> = csv.lines().collect();
         assert_eq!(
             lines[0],
-            "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Tags"
+            "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Tags"
         );
         assert_eq!(
             lines[1],
-            "kv,Secret,db-password,Yes,2027-01-05,10,Under 90 days,env=prod"
+            "kv,Secret,db-password,Yes,2027-01-05,10,Under 90 days,,env=prod"
         );
         assert!(
             lines[2].starts_with("kv,Secret,\"'=HYPERLINK(\"\"x\"\")\""),
@@ -283,8 +285,12 @@ mod tests {
         );
         assert!(lines[2].contains(",400,Over a year,"));
         assert!(lines[2].ends_with("\"note=+a,b\""));
+        let mut noted = item("noted", None);
+        noted.tags.push(("description".into(), "@SUM(1)".into()));
+        let csv = to_csv(&[noted], NOW);
+        assert!(csv.contains(",'@SUM(1),env=prod\r\n"), "{csv}");
         let nr = not_read_row("-kv", "a, b");
-        assert_eq!(nr, "'-kv,NOT READ,\"a, b\",,,,,\r\n");
+        assert_eq!(nr, "'-kv,NOT READ,\"a, b\",,,,,,\r\n");
         assert_eq!(nr.matches(',').count() - 1, CSV_COLUMNS - 1);
     }
 }

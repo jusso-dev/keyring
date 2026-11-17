@@ -233,7 +233,7 @@ async fn csv_lists_vaults_it_could_not_read() {
     assert_eq!(lines.len(), 3, "{csv}");
     assert_eq!(
         lines[1],
-        "kv-a,NOT READ,You don't have a Key Vault role on it,,,,"
+        "kv-a,NOT READ,You don't have a Key Vault role on it,,,,,"
     );
     assert!(lines[2].starts_with("kv-test,NOT READ,"));
 }

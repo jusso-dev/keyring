@@ -17,6 +17,7 @@
 <form method="post" action="{{ shell.vault_prefix() }}/keys/-/new" class="stacked" novalidate>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   {% call ui::name_field(form.name, "key") %}{% endcall %}
+  {% call ui::description_field(form.description, "key") %}{% endcall %}
 
   <details class="advanced"{% if !errors.is_empty() || azure_message.is_some() %} open{% endif %}>
     <summary>Key type, operations, expiry and tags</summary>

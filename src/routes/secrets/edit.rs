@@ -41,6 +41,8 @@ pub(crate) struct FormView {
     pub expires: String,
     pub not_before: String,
     pub tags: String,
+    /// The note in the `description` tag, as typed or as it is.
+    pub description: String,
     pub enabled: bool,
     /// Tags the textarea can't show without changing them. When set, the
     /// form lists them and keeps them as they are.
@@ -61,6 +63,7 @@ impl FormView {
             expires: f.expires.clone(),
             not_before: f.not_before.clone(),
             tags: f.tags.clone(),
+            description: f.description.clone(),
             enabled: f.enabled.is_some(),
             locked_tags: None,
             version: f.version.clone(),
@@ -90,6 +93,9 @@ impl FormView {
             expires: a.expires.map(dates::iso_date).unwrap_or_default(),
             not_before: a.not_before.map(dates::iso_date).unwrap_or_default(),
             tags: form::format_tags(item.tags()),
+            description: crate::description::of(item.tags())
+                .unwrap_or_default()
+                .to_owned(),
             enabled: a.is_enabled(),
             locked_tags: None,
             version: item.version().to_owned(),
@@ -105,7 +111,7 @@ impl FormView {
         if !form::tags_editable(item.tags()) {
             self.tags.clear();
             self.locked_tags = Some(
-                item.tags()
+                crate::description::without(item.tags())
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect(),

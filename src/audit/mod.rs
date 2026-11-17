@@ -79,6 +79,9 @@ pub enum Action {
     CertificatePendingCancel,
     CertificateRenewalSet,
     CertificateEnabledSet,
+    /// The description and tags of a certificate's current version changed
+    /// ("Edit details"). The description itself is never in the event.
+    CertificateUpdate,
     CertificateDelete,
     CertificateRecover,
     CertificatePurge,
@@ -88,6 +91,9 @@ pub enum Action {
     KeyRotate,
     KeyRotationPolicySet,
     KeyEnabledSet,
+    /// The description and tags of a key's current version changed ("Edit
+    /// details"). The description itself is never in the event.
+    KeyUpdate,
     KeyDelete,
     KeyRecover,
     KeyPurge,
@@ -108,7 +114,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 38] = [
+    pub const ALL: [Action; 40] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -128,6 +134,7 @@ impl Action {
         Self::CertificatePendingCancel,
         Self::CertificateRenewalSet,
         Self::CertificateEnabledSet,
+        Self::CertificateUpdate,
         Self::CertificateDelete,
         Self::CertificateRecover,
         Self::CertificatePurge,
@@ -136,6 +143,7 @@ impl Action {
         Self::KeyRotate,
         Self::KeyRotationPolicySet,
         Self::KeyEnabledSet,
+        Self::KeyUpdate,
         Self::KeyDelete,
         Self::KeyRecover,
         Self::KeyPurge,
@@ -170,6 +178,7 @@ impl Action {
             Self::CertificatePendingCancel => "certificate.pending.cancel",
             Self::CertificateRenewalSet => "certificate.renewal.set",
             Self::CertificateEnabledSet => "certificate.enabled.set",
+            Self::CertificateUpdate => "certificate.update",
             Self::CertificateDelete => "certificate.delete",
             Self::CertificateRecover => "certificate.recover",
             Self::CertificatePurge => "certificate.purge",
@@ -178,6 +187,7 @@ impl Action {
             Self::KeyRotate => "key.rotate",
             Self::KeyRotationPolicySet => "key.rotation_policy.set",
             Self::KeyEnabledSet => "key.enabled.set",
+            Self::KeyUpdate => "key.update",
             Self::KeyDelete => "key.delete",
             Self::KeyRecover => "key.recover",
             Self::KeyPurge => "key.purge",
