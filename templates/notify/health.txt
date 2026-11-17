@@ -1,0 +1,12 @@
+{{ n.heading }}
+{% for l in n.lines %}
+{{ l }}
+{%- endfor %}
+{% for (label, value) in n.facts %}
+{{ label }}: {{ value }}
+{%- endfor %}
+{% if let Some((url, label)) = n.link %}
+{{ label }}: {{ url }}
+{% endif %}
+--
+Sent by Keyring (health notices) to KEYRING_NOTIFY_ADMINS. Keyring never puts a secret value in an email.

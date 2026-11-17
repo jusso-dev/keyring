@@ -417,7 +417,7 @@ Key Vault's own diagnostic logs (what the audit view reads) are separate and rec
 
 ## Email
 
-Optional. Keyring can send email notices through Azure Communication Services (ACS), as its managed identity. Each kind of notice is added by its own change. So far: `expiry`, pushed by Event Grid to `/hooks/eventgrid` (see [Expiry emails from Keyring](alerts.md#expiry-emails-from-keyring)). Turning on a type that has no notice yet sends nothing.
+Optional. Keyring can send email notices through Azure Communication Services (ACS), as its managed identity. Each kind of notice (expiry, access requests, watched reads, deletes and bulk changes, role use, health) is added by its own change. So far: `expiry`, pushed by Event Grid to `/hooks/eventgrid` (see [Expiry emails from Keyring](alerts.md#expiry-emails-from-keyring)), and health notices to the admins (see [Health notices](#health-notices)). The others send nothing yet.
 
 **Turning it on with the templates.** Set `notifyDomain` to `AzureManaged` or to your own domain name. `infra/modules/notify.bicep` then makes, in Keyring's own resource group (so they aren't shared with any other workload):
 
@@ -445,6 +445,8 @@ and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_NOTIFY_ACS_ENDPOINT`, `K
 | `KEYRING_NOTIFY_RATE_PER_HOUR` | Emails an hour to one recipient for one type, 1 to 1000. Default 20 |
 | `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | `true` to put recipients' addresses on the `notify.*` audit events. Off by default: addresses are personal data |
 | `KEYRING_EVENTGRID_AUDIENCE` | With `expiry` in the types: the `aud` the Event Grid token on `/hooks/eventgrid` must have, compared exactly. An app ID URI (`api://...` or `https://...`) or a GUID. Default: `api://<ENTRA_CLIENT_ID>`. Refused without `expiry` |
+| `KEYRING_NOTIFY_BURST_THRESHOLD` | With `health` on: more than this many refused or denied requests from one person or address in 15 minutes is a burst, 1 to 1000. Default 20. See [Health notices](#health-notices) |
+| `KEYRING_CLIENT_SECRET_EXPIRES` | With `ENTRA_CLIENT_SECRET` only: the secret's expiry date, `YYYY-MM-DD` (Keyring can't read it from Entra). Keyring refuses to start with a malformed date, or with this set and no client secret (signing in with the managed identity has no secret to expire). Without email and `health` on, it is only logged at start |
 
 Each address is parsed strictly: one `name@domain`, no display name, quotes, spaces, commas or line breaks. Keyring refuses to start on one that isn't.
 
@@ -455,6 +457,24 @@ Each address is parsed strictly: one `name@domain`, no display name, quotes, spa
 **Audit.** Each email gets one audit event: `notify.sent` (`success`, or `status_unknown` when its result wasn't known after three checks) or `notify.failed` (`delivery_failed` or `delivery_canceled` from ACS, `rejected`, `gave_up`, `gave_up_maybe_sent` when a try may have reached ACS, `queue_full` or `shutdown`), with `notify_type`, `notify_recipient_count` and the item. A failed result's message from Azure is never read into an event, email or log line: only the status.
 
 **Health.** `/healthz/notify` needs no sign-in and shows `status=ok`, `status=degraded` or `status=off` and counts since start (`queued`, `delivered`, `failed`, `unknown`, `dropped_queue_full`, `dropped_at_shutdown`, `rate_limited`, `not_allowed`, `invalid`, `failed_attempts`). No addresses. It answers 503 while degraded: sending has been failing for over a minute with no success.
+
+### Health notices
+
+With `health` in `KEYRING_NOTIFY_TYPES`, Keyring emails `KEYRING_NOTIFY_ADMINS` (and nobody else) when it is in trouble itself. Each email has the subject `[Keyring] Health`. With `health` on and no admins, nothing is sent and a line at start says so.
+
+| Email | When | What to do |
+| --- | --- | --- |
+| **Keyring's audit sink is failing** | The audit sink has been degraded (see [Audit sink](#audit-sink)) for over five minutes. Says how many events were dropped since then and how many are waiting | Check Keyring's identity still has Monitoring Metrics Publisher on the data collection rule, and that the ingestion endpoint can be reached. `/healthz/audit` shows the current state. With `KEYRING_AUDIT_REQUIRED` on, reveals and private key downloads are refused until it recovers |
+| **Keyring's audit sink has recovered** | The sink is sending again after an incident that was emailed. Says roughly how long it failed and how many events were dropped in that time | Nothing, unless events were dropped: those are missing from `KeyringAudit_CL` but are still in Keyring's standard output log |
+| **Many refused requests in a short time** | More than `KEYRING_NOTIFY_BURST_THRESHOLD` (default 20) audit events with outcome `refused` or `denied` from one person, or, with nobody signed in, from one client address, within 15 minutes. Names the person by sign-in name (or "an unnamed caller") or the address, the count, and the reason codes seen (such as `step_up_required`, `typed_name_mismatch` or Azure's `ForbiddenByRbac`). Links to that person's activity report, or to the refused requests report | Open the report and check whether it was them: a script with the wrong access, someone looking for what they can reach, a stolen session, or a scanner. You won't get another email about the same person or address until they have had no refusal for 15 minutes |
+| **Keyring's client secret expires soon** | `KEYRING_CLIENT_SECRET_EXPIRES` is 30, 14, 7 or 1 days away. One email at each step | Make a new client secret, set `ENTRA_CLIENT_SECRET` and `KEYRING_CLIENT_SECRET_EXPIRES`, and restart (see [Rotating secrets](#rotating-secrets)), or move to the managed identity |
+| **Keyring's client secret has expired** | The date has passed. One email | As above. Nobody can sign in until it is replaced |
+
+Nothing is stored, so after a restart Keyring may send the current step of the secret's expiry once more, and starts each count afresh. A sink incident that began before the restart counts from when Keyring first sees it degraded.
+
+When email itself can't be sent, there is no email about it. Keyring logs one `warn` line when sending starts failing and one `info` line when it works again, and `/healthz/notify` answers 503 meanwhile. Point an HTTP probe at `/healthz/notify` and `/healthz/audit` if you need to hear about either without email.
+
+Refusals are counted in memory as each audit event is written, so this works with the audit sink off. Only `refused` and `denied` events count; email's own `notify.*` events never do. At most 10,000 people and addresses are tracked at once: past that, new ones aren't counted until older ones go quiet, and a `warn` line says so. At most 10 burst emails go out in an hour across everyone, on top of the per-recipient rate limit. The emails never hold a secret value, token, Azure error message or the reason a person typed: only fixed text, counts, dates, reason codes, the sign-in name or address, and a link Keyring built from `APP_BASE_URL`.
 
 ## Step-up before sensitive actions
 
@@ -540,6 +560,8 @@ With a client secret, Entra client secrets expire. When one does, nobody can sig
 4. Check you can sign in, then delete the old secret in the app registration.
 
 Giving the config vault's `entra-client-secret` an expiry date means it shows on Keyring's own expiry dashboard, and in [expiry alerts](alerts.md) if you set them up for the config vault.
+
+Set `KEYRING_CLIENT_SECRET_EXPIRES` to the same date (`YYYY-MM-DD`) as an app setting, and with email and `health` on, the admins get email at 30, 14, 7 and 1 days before it and once it has passed. Keyring can't read the date from Entra, so update the setting each time you rotate. See [Health notices](#health-notices).
 
 ### SESSION_SECRET
 

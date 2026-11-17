@@ -37,6 +37,7 @@ use crate::auth::session::SessionStore;
 use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
 use crate::notify::expiry::ExpiryHook;
+use crate::notify::health::{self as health_notify, HealthWatch, SystemClock};
 use crate::notify::sender::{self as notify_sender, Notifier};
 
 /// Shared state handed to every request handler.
@@ -63,6 +64,10 @@ pub struct AppState {
     pub notifier: Option<Arc<Notifier>>,
     /// The Event Grid webhook's state, when email is on with `expiry`.
     pub expiry_hook: Option<Arc<ExpiryHook>>,
+    /// Emails the admins about Keyring's own health, with email on and
+    /// `health` in `KEYRING_NOTIFY_TYPES`. Watches audit events as they
+    /// are recorded. Its timer is started by `main`.
+    pub health: Option<Arc<HealthWatch>>,
 }
 
 impl AppState {
@@ -136,12 +141,27 @@ impl AppState {
                     config.base_url.clone(),
                 ))
             });
+        let health = match (&notifier, &config.notify) {
+            (Some(n), Some(c)) if n.is_on(notify::NotifyType::Health) => Some(HealthWatch::new(
+                health_notify::Settings {
+                    burst_threshold: c.burst_threshold,
+                    secret_expires: config.client_secret_expires,
+                    base_url: config.base_url.clone(),
+                    tuning: c.health_tuning,
+                },
+                Arc::new(SystemClock),
+                n.clone(),
+                audit_sink.clone(),
+            )),
+            _ => None,
+        };
         let sessions = Arc::new(SessionStore::new(&config.session_secret));
         if let Some(sink) = &audit_sink {
             sessions.set_audit_sink(sink.clone());
         }
         Ok(Self {
             expiry_hook,
+            health,
             notifier,
             audit_sink,
             sessions,
@@ -159,6 +179,11 @@ impl AppState {
 }
 
 impl AppState {
+    /// What watches each request's audit events, if anything does.
+    pub fn audit_observer(&self) -> Option<Arc<dyn audit::Observe>> {
+        self.health.clone().map(|h| h as Arc<dyn audit::Observe>)
+    }
+
     /// The on-behalf-of token broker.
     pub fn azure_broker(&self) -> &TokenBroker {
         self.azure.broker()
