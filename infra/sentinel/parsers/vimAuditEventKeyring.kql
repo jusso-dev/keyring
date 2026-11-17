@@ -16,10 +16,10 @@ KeyringAudit_CL
 | where array_length(newvalue_has_any) == 0
 | extend Verb = tostring(split(Action, ".")[-1])
 | extend EventType = case(
-    Action in ("secret.reveal", "certificate.download_private_key"), "Read",
+    Action in ("secret.reveal", "secret.copy.read", "certificate.download_private_key"), "Read",
     Verb in ("create", "upload", "import", "rotate"), "Create",
     Verb in ("delete", "purge", "cancel"), "Delete",
-    Verb in ("set", "update", "rollback", "bulk_update"), "Set",
+    Verb in ("set", "update", "rollback", "bulk_update", "write"), "Set",
     "Other")
 | where array_length(eventtype_in) == 0 or EventType in~ (eventtype_in)
 | extend EventResult = iff(Outcome == "success", "Success", "Failure")

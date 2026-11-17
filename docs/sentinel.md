@@ -71,7 +71,7 @@ To remove it, delete the rules (named by a GUID; their display names start with 
 
 | ASIM field | From |
 | --- | --- |
-| `EventType` | `Read` for `secret.reveal` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update, rollback and bulk update; `Other` for the rest (enable and disable settings, recover, `request.refused`) |
+| `EventType` | `Read` for `secret.reveal`, `secret.copy.read` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update, rollback, bulk update and the write of a copy (`secret.copy.write`); `Other` for the rest (enable and disable settings, recover, `request.refused`) |
 | `EventSubType` | `Recover` for the recover actions |
 | `EventResult` | `Success` for `success`, otherwise `Failure` |
 | `EventResultDetails` | "Denied by Azure", "Refused by Keyring" or "Failed" |

@@ -1504,6 +1504,21 @@ pub(crate) async fn world_of_vaults(
     w
 }
 
+/// A world over several vaults, as [`world_of_vaults`], with `extra`
+/// settings and the standard cross-vault limits.
+pub(crate) async fn world_of_vaults_with(
+    vaults: Vec<(&'static str, Arc<keyvault::KvState>)>,
+    extra: &[(&'static str, &'static str)],
+) -> World {
+    let rows = vaults
+        .iter()
+        .map(|(n, _)| vault_row(n, "sub-a", true))
+        .collect();
+    let w = world_over(keyvault::start_several(vaults).await, extra, None).await;
+    *w.arm.state.vaults.lock().unwrap() = rows;
+    w
+}
+
 async fn world_over(
     kv: keyvault::MockKeyVault,
     extra: &[(&'static str, &'static str)],

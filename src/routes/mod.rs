@@ -167,6 +167,11 @@ fn vault_routes() -> Router<AppState> {
                 .merge(audited(Action::SecretRollback, secrets::versions::rollback)),
         )
         .route(
+            "/secrets/{name}/copy",
+            get(secrets::copy::page).merge(audited(Action::SecretCopyRead, secrets::copy::apply)),
+        )
+        .route("/secrets/{name}/copy/review", get(secrets::copy::review))
+        .route(
             "/secrets/{name}/reveal",
             audited(Action::SecretReveal, secrets::reveal::reveal),
         )
