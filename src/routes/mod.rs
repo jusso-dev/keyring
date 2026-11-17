@@ -2,6 +2,7 @@
 
 mod access;
 pub(crate) mod access_request;
+mod access_review;
 mod age;
 pub mod assets;
 mod audit;
@@ -339,6 +340,8 @@ fn vault_routes() -> Router<AppState> {
         .route("/audit/keyring", get(audit_keyring::page))
         .route("/access", get(access::page))
         .route("/access.csv", get(access::csv))
+        .route("/access/review", get(access_review::page))
+        .route("/access/review.csv", get(access_review::csv))
         .route("/my-access", get(pim::my_access))
         .route(
             "/my-access/activate",
