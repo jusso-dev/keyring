@@ -2172,6 +2172,7 @@ pub(crate) fn world_notify_settings() -> keyring::config::NotifySettings {
         burst_threshold: 50,
         tuning: keyring::notify::sender::Tuning::default(),
         eventgrid_audience: None,
+        eventgrid_subscriptions: None,
         hook_tuning: keyring::notify::expiry::HookTuning::default(),
         health_tuning: keyring::notify::health::Tuning::default(),
     }
