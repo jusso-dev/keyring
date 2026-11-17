@@ -217,6 +217,9 @@ pub struct Session {
     /// The person's own permissions by ARM scope (lower case), for
     /// [`PERMISSIONS_TTL`]. See [`CachedPermissions`].
     permissions: Mutex<HashMap<String, CachedPermissions>>,
+    /// Goes up each time the permissions are dropped, so a read that
+    /// started before can't put its stale answer back.
+    permissions_generation: std::sync::atomic::AtomicU64,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -423,13 +426,36 @@ impl Session {
             .map(|c| c.perms.clone())
     }
 
+    /// Drop every permission read, after a role was turned on or off.
+    pub(crate) fn forget_permissions(&self) {
+        let mut kept = lock(&self.permissions);
+        self.permissions_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        kept.clear();
+    }
+
+    /// Take this before reading permissions from Azure, and hand it to
+    /// [`Self::keep_permissions_at`] with the answer.
+    pub(crate) fn permissions_generation(&self) -> u64 {
+        self.permissions_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Keep what was read at `scope`, unless the permissions were dropped
+    /// since `generation` was taken: that read began before a role was
+    /// turned on or off, so its answer may be out of date.
     pub(crate) fn keep_permissions_at(
         &self,
         scope: &str,
         perms: Option<Arc<crate::azure::authz::Permissions>>,
         now: Instant,
+        generation: u64,
     ) {
-        lock(&self.permissions).insert(
+        let mut kept = lock(&self.permissions);
+        if generation != self.permissions_generation() {
+            return;
+        }
+        kept.insert(
             scope.to_ascii_lowercase(),
             CachedPermissions {
                 read_at: now,
@@ -677,6 +703,7 @@ impl SessionStore {
             pending_import: Mutex::new(ImportSlot::default()),
             lists: Mutex::new(HashMap::new()),
             permissions: Mutex::new(HashMap::new()),
+            permissions_generation: std::sync::atomic::AtomicU64::new(0),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),
@@ -949,14 +976,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_read_begun_before_the_permissions_were_dropped_is_not_kept() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let scope = "/subscriptions/s/vaults/kv";
+        // A hints read starts, a role is turned on, then the read lands.
+        let before = s.permissions_generation();
+        s.forget_permissions();
+        s.keep_permissions_at(scope, None, t0, before);
+        assert!(
+            s.cached_permissions_at(scope, t0).is_none(),
+            "the stale answer was kept"
+        );
+        // A read begun after is kept as usual.
+        s.keep_permissions_at(scope, None, t0, s.permissions_generation());
+        assert!(s.cached_permissions_at(scope, t0).is_some());
+    }
+
+    #[test]
     fn permissions_are_kept_a_few_minutes_by_scope_and_swept() {
         let store = SessionStore::default();
         let t0 = Instant::now();
         let id = store.create_at(user(), tokens(), t0);
         let s = store.get_at(&id, t0).unwrap();
         let perms = Arc::new(crate::azure::authz::Permissions::default());
-        s.keep_permissions_at("/subscriptions/S/vaults/KV", Some(perms), t0);
-        s.keep_permissions_at("/subscriptions/s/vaults/policy", None, t0);
+        let g = s.permissions_generation();
+        s.keep_permissions_at("/subscriptions/S/vaults/KV", Some(perms), t0, g);
+        s.keep_permissions_at("/subscriptions/s/vaults/policy", None, t0, g);
         assert!(
             s.cached_permissions_at("/subscriptions/s/vaults/kv", t0)
                 .is_some_and(|p| p.is_some()),

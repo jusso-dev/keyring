@@ -135,6 +135,27 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Access: PIM eligible | On a tenant with PIM, make someone eligible for a Key Vault role on the vault, open **Access** | They're listed with "Eligible". On a tenant without PIM, the page is unchanged apart from at most a note. Note the status `roleEligibilityScheduleInstances` gives without PIM | `src/azure/authz.rs` (`eligible_assignments`) | |
 | Access: access policy vault | Open **Access** on a vault using access policies | Each policy shows by object ID with its permissions in plain words. Note the case Azure uses for the permission names | `src/azure/authz.rs` (`vault_authorisation`), `src/routes/access.rs` (`op_words`) | |
 
+## PIM activation
+
+These need a tenant with Entra ID P2 or Governance, PIM for Azure resources, and a test user eligible (not active) for Key Vault Secrets User on a test vault's resource group.
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| PIM: no new consent | As the eligible user, reveal a secret, then use **Activate** | No consent prompt. The calls work with the Azure Service Management `user_impersonation` permission Keyring already has | `src/azure/pim.rs` | |
+| PIM: `asTarget()` lists eligibility | Call `GET {vault ID}/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()` as the user | Lists the resource group eligibility, with `roleEligibilityScheduleId` and `endDateTime`. Note whether it lists eligibility through a group | `src/azure/pim.rs` (`my_eligibilities`) | |
+| PIM: the offer | As the eligible user, reveal a secret | 403 page with "Activate Key Vault Secrets User" under "What to ask for" | `src/routes/pim.rs` (`offer_layer`) | |
+| PIM: no PIM | On a tenant without P2, or a user with no eligibility, reveal a secret | The 403 page as before, no Activate. Note the status `asTarget()` gives without PIM | `src/routes/pim.rs` | |
+| PIM: policy read by an end user | As the eligible user, open the Activate form | The maximum, justification and ticket settings match PIM's settings for the role. If `roleManagementPolicyAssignments` is refused for an end user, note the status: Keyring then offers 8 hours and asks for a reason | `src/azure/pim.rs` (`policy`) | |
+| PIM: activate | Activate for 1 hour with a reason | "Role turned on". After a few minutes Try again shows the value. PIM's own history shows the request with the reason. Note the `status` the PUT returned | `src/azure/pim.rs` (`activate`) | |
+| PIM: approval | With approval required on the role, activate | "Waiting for approval". My access shows it waiting. Note the `status` the PUT returned, and the shape of `asRequestor()` | `src/azure/pim.rs` (`Outcome`, `my_pending`) | |
+| PIM: ticket required | With ticket information required, activate without a ticket, then with one | Keyring asks for it first. With one, PIM's history shows the ticket system and number | `src/routes/pim.rs` (`check`) | |
+| PIM: over the maximum | Edit the form to ask for longer than the maximum | Keyring refuses it before ARM is called | `src/routes/pim.rs` (`check`) | |
+| PIM: MFA or authentication context | With the role set to need MFA or an authentication context, sign in without it and activate | "PIM wants you to confirm it's you", then sign-in with the challenge, and back to the form; activating again works. Note the HTTP status, error code and where the `claims` value sat in ARM's error, and whether PIM needed `xms_cc` `cp1` too | `src/azure/pim.rs` (`claims_challenge`) | |
+| PIM: policy rule refused | Make PIM refuse on a rule (for example lower the maximum after the form loads) | Back on the form with a plain sentence. Note the error code and rule names ARM gave | `src/azure/pim.rs` (`broken_rules`) | |
+| PIM: My access | Open **My access** after activating | The role under "On now" with time left and Deactivate; the eligibility with "On now" | `src/routes/pim.rs` (`my_access`) | |
+| PIM: deactivate | Select **Deactivate** | "Role turned off". PIM shows it ended. Note how soon after activating PIM allows it (PIM has a minimum activation time) and the code it gives if too soon | `src/azure/pim.rs` (`deactivate`) | |
+| PIM: audit columns | With the audit sink on, activate | The `KeyringAudit_CL` row has `Role`, `RoleScope`, `RoleDuration`, `Reason` and `Ticket` | `src/audit/sink.rs` | |
+
 ## Permission hints
 
 | Check | Do this | Expected | Code | Result |

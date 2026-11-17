@@ -140,6 +140,9 @@ pub const COLUMNS: &[Column] = &[
     col("KvRequestId", "string", "kv_request_id"),
     col("Reason", "string", "reason"),
     col("Ticket", "string", "ticket"),
+    col("Role", "string", "role"),
+    col("RoleScope", "string", "role_scope"),
+    col("RoleDuration", "string", "role_duration"),
     col("WriterIdentityClientId", "string", WRITER),
     col("KeyringInstance", "string", "instance"),
     col("KeyringVersion", "string", "keyring_version"),
@@ -168,6 +171,9 @@ fn value(ev: &AuditEvent, field: &str, writer: &str) -> Option<Value> {
         "kv_request_id" => s(&ev.kv_request_id),
         "reason" => s(&ev.reason),
         "ticket" => s(&ev.ticket),
+        "role" => s(&ev.role),
+        "role_scope" => s(&ev.role_scope),
+        "role_duration" => s(&ev.role_duration),
         "instance" => Some(instance().into()),
         "keyring_version" => Some(KEYRING_VERSION.into()),
         WRITER => Some(writer.into()),
@@ -598,6 +604,9 @@ mod tests {
             &mut ev.kv_request_id,
             &mut ev.reason,
             &mut ev.ticket,
+            &mut ev.role,
+            &mut ev.role_scope,
+            &mut ev.role_duration,
         ] {
             *f = Some("x".into());
         }

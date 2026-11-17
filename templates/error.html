@@ -7,6 +7,10 @@
   {% if let Some(hint) = problem.admin_hint %}
   <p class="hint"><strong>{% if problem.hint_is_role %}What to ask for:{% else %}Details:{% endif %}</strong> {{ hint }}</p>
   {% endif %}
+  {%- if let Some(o) = problem.offer %}
+  <p>You're eligible for {{ o.role }} through Privileged Identity Management. You can turn it on yourself.</p>
+  <p><a class="button" href="{{ o.url }}">Activate {{ o.role }}</a></p>
+  {%- endif %}
   <p><a class="button" href="{{ next_url }}">{{ next_label }}</a>{% if let Some((url, label)) = also %} <a href="{{ url }}">{{ label }}</a>{% endif %}</p>
 </div>
 {% endblock %}

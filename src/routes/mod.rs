@@ -27,6 +27,7 @@ pub(crate) mod lifecycle;
 mod moved;
 mod origin;
 pub(crate) mod paging;
+pub(crate) mod pim;
 pub(crate) mod reason;
 mod rejection;
 pub mod search;
@@ -322,6 +323,15 @@ fn vault_routes() -> Router<AppState> {
         .route("/audit/keyring", get(audit_keyring::page))
         .route("/access", get(access::page))
         .route("/access.csv", get(access::csv))
+        .route("/my-access", get(pim::my_access))
+        .route(
+            "/my-access/activate",
+            get(pim::activate_form).merge(audited(Action::RoleActivate, pim::activate)),
+        )
+        .route(
+            "/my-access/deactivate",
+            audited(Action::RoleDeactivate, pim::deactivate),
+        )
         // A change to a vault drops the list search keeps for it.
         .route_layer(middleware::from_fn(every_vault::forget_on_change))
 }
@@ -341,6 +351,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/keys", any(moved::legacy))
         .route("/keys/{*rest}", any(moved::legacy))
         .route("/access", get(moved::legacy))
+        .route("/my-access", get(moved::legacy))
         // Across every vault. An old per-vault address is still sent on.
         .route("/audit", get(audit_across::page))
         .route("/audit.csv", get(audit_across::csv))
@@ -353,6 +364,12 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/search", get(search::page))
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/auth/keepalive", get(auth::keepalive))
+        // Adds "Activate" to a Key Vault RBAC 403 page when the person has
+        // an eligible PIM role for it. Inside the session check.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            pim::offer_layer,
+        ))
         // Inside the session check, so the error page has the signed-in shell.
         .route_layer(middleware::from_fn(rejection::layer))
         // For the reason gate and the reason fields on forms.

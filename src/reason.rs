@@ -167,7 +167,7 @@ pub struct Problems {
 /// Arabic letter mark, zero-width spaces and joiners, the soft hyphen and
 /// the tag characters), plus the line and paragraph separators, unassigned
 /// "noncharacters" and private-use code points.
-fn is_unsafe(c: char) -> bool {
+pub(crate) fn is_unsafe(c: char) -> bool {
     c.is_control() || is_format(c) || is_unprintable(c)
 }
 

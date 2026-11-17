@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>{{ heading }}</h1>
+  {% if is_done() %}
+  {% if already_on %}
+  <p><strong>{{ role_name }}</strong> was already on for {{ scope }}, so nothing was changed. <a href="{{ shell.vault_prefix() }}/my-access">My access</a> shows when it ends.</p>
+  {% else %}
+  <p><strong>{{ role_name }}</strong> is on for {{ scope }}{% if !minutes.is_empty() %} for {{ minutes }}{% endif %}.</p>
+  {% endif %}
+  <p class="muted">Key Vault can take a few minutes to see it. If it still says no, wait a minute and try again.</p>
+  <p><a class="button" href="{{ back }}">Try again</a> <a href="{{ shell.vault_prefix() }}/my-access">My access</a></p>
+  {% elif is_waiting() %}
+  <p>Your request for <strong>{{ role_name }}</strong> on {{ scope }} is waiting for approval. PIM turns it on once it's approved.</p>
+  {% if !approvers.is_empty() %}<p>Approvers: {% for (d, t) in approvers %}{{ d }}{% if !t.is_empty() %} ({{ t }}){% endif %}{% if !loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+  <p class="muted">Keyring doesn't keep the request. My access reads it back from Azure, and you can follow it in PIM in the Azure portal.</p>
+  <p><a class="button" href="{{ shell.vault_prefix() }}/my-access">My access</a> <a href="{{ portal }}">Open PIM in the Azure portal</a></p>
+  {% else %}
+  <p>PIM refused the request for <strong>{{ role_name }}</strong> on {{ scope }}. Nothing was turned on.</p>
+  {% if !code.is_empty() %}<p class="hint"><strong>Details:</strong> Azure gave the code <span class="mono">{{ code }}</span>.</p>{% endif %}
+  <p><a class="button" href="{{ back }}">Back</a> <a href="{{ portal }}">Open PIM in the Azure portal</a></p>
+  {% endif %}
+</div>
+{% endblock %}

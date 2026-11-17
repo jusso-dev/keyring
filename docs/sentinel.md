@@ -71,7 +71,7 @@ To remove it, delete the rules (named by a GUID; their display names start with 
 
 | ASIM field | From |
 | --- | --- |
-| `EventType` | `Read` for `secret.reveal`, `secret.copy.read` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update, rollback, bulk update and the write of a copy (`secret.copy.write`); `Other` for the rest (enable and disable settings, recover, `request.refused`) |
+| `EventType` | `Read` for `secret.reveal`, `secret.copy.read` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update, rollback, bulk update and the write of a copy (`secret.copy.write`); `Enable` for `role.activate` and `Disable` for `role.deactivate`; `Other` for the rest (enable and disable settings, recover, `request.refused`) |
 | `EventSubType` | `Recover` for the recover actions |
 | `EventResult` | `Success` for `success`, otherwise `Failure` |
 | `EventResultDetails` | "Denied by Azure", "Refused by Keyring" or "Failed" |
@@ -91,7 +91,9 @@ To remove it, delete the rules (named by a GUID; their display names start with 
 | `EventProduct`, `EventVendor`, `Dvc` | `Keyring` |
 | `EventProductVersion` | `KeyringVersion` |
 | `EventOriginalUid`, `EventUid` | `EventId`, and Log Analytics' `_ItemId` |
-| `AdditionalFields` | `ReasonCode`, `ItemVersion`, `KvRequestId`, `Reason`, `Ticket`, `WriterIdentityClientId`, `KeyringInstance` |
+| `AdditionalFields` | `ReasonCode`, `ItemVersion`, `KvRequestId`, `Reason`, `Ticket`, `Role`, `RoleScope`, `RoleDuration`, `WriterIdentityClientId`, `KeyringInstance` |
+
+The parser reads the `Role`, `RoleScope` and `RoleDuration` columns with `column_ifexists`, so it keeps working on a `KeyringAudit_CL` table made before those columns were added. Run the audit sink template again to add them.
 
 `session.*` events (sign-in, failed sign-in, sign-out, expiry) are left out: they belong to ASIM's Authentication schema, which has no Keyring parser yet. `NewValue` is always empty, because Keyring never logs a value.
 

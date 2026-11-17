@@ -46,6 +46,8 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/keys/app-key/delete",
     "/v/kv-test/keys/-/deleted/old-key/recover",
     "/v/kv-test/keys/-/deleted/old-key/purge",
+    "/v/kv-test/my-access/activate",
+    "/v/kv-test/my-access/deactivate",
     "/generator",
     "/auth/sign-out",
 ];

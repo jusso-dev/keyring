@@ -25,6 +25,7 @@ pub(crate) fn no_vault_page(shell: Shell, section: Section) -> axum::response::R
         Section::Certificates => "Certificates",
         Section::Keys => "Keys",
         Section::Access => "Access",
+        Section::MyAccess => "My access",
         _ => "Secrets",
     };
     render(&NoVaultPage {
