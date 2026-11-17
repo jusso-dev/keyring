@@ -3,6 +3,11 @@
 //! log as the signed-in person, within a short time limit of its own, and
 //! when it can't it says why and the form works as before. It changes
 //! nothing, so it writes none of Keyring's own audit events.
+//!
+//! An empty list is never told as proof that nothing uses the item: logs
+//! arrive late, a new diagnostic setting has no history, and a workspace
+//! that can't be read hides its callers. The panel tells these apart and
+//! always says what it looked at.
 
 use std::time::Duration;
 
@@ -10,7 +15,7 @@ use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::azure::AzureError;
 use crate::azure::audit;
-use crate::azure::used_by::{self, Caller, Usage, UsedByQuery};
+use crate::azure::used_by::{self, Answer, Caller, Usage, UsedByQuery};
 use crate::routes::lifecycle::Kind;
 use crate::routes::vault_ctx::vault_path;
 
@@ -79,14 +84,22 @@ pub(crate) struct UsedBy {
     pub callers: Vec<CallerRow>,
     /// More callers than the panel shows.
     pub capped: bool,
-    /// Why the log couldn't be read, in plain words. `None` when it was.
+    /// Why the history is unknown, in plain words. `None` when the log
+    /// was read and events from the vault were found.
     pub unavailable: Option<String>,
     /// What to ask for, with the reason. May be empty.
     pub hint: String,
-    /// Some workspaces couldn't be read, in plain words.
-    pub partial: Option<String>,
-    /// What an empty list means.
-    pub empty: &'static str,
+    /// Gaps in what was read (workspaces left out, workspaces with no
+    /// events from this vault yet, a partial answer), in plain words.
+    pub notes: Vec<String>,
+    /// What an empty list means. Never says the change is safe.
+    pub empty: String,
+    /// Workspaces the vault logs to. Zero when not known.
+    pub workspaces: usize,
+    /// Workspaces that answered.
+    pub answered: usize,
+    /// Time of the newest event from this vault in any workspace.
+    pub newest: String,
     /// The vault's audit view, filtered to this item.
     pub audit_url: String,
 }
@@ -104,8 +117,11 @@ impl UsedBy {
             capped: false,
             unavailable: None,
             hint: String::new(),
-            partial: None,
-            empty: EMPTY,
+            notes: Vec::new(),
+            empty: fill(kind.noun(), EMPTY),
+            workspaces: 0,
+            answered: 0,
+            newest: String::new(),
             audit_url: vault_path(vault, &format!("/audit?item={name}&range=30d&from={from}")),
         }
     }
@@ -132,10 +148,65 @@ impl UsedBy {
     pub(crate) fn column(&self) -> &'static str {
         if self.noun == "key" { "Uses" } else { "Reads" }
     }
+
+    /// What was looked at, when the workspaces are known.
+    pub(crate) fn coverage(&self) -> Option<String> {
+        if self.workspaces == 0 {
+            return None;
+        }
+        let noun = if self.workspaces == 1 {
+            "workspace"
+        } else {
+            "workspaces"
+        };
+        let mut s = format!(
+            "Looked at: the last {} days in {} of {} Log Analytics {noun} this vault logs to.",
+            used_by::DAYS,
+            self.answered,
+            self.workspaces
+        );
+        if !self.newest.is_empty() {
+            s.push_str(&format!(
+                " Newest event from this vault: {}.",
+                time(&self.newest)
+            ));
+        }
+        Some(s)
+    }
+
+    /// What the log can't show, whatever it found.
+    pub(crate) fn limits(&self) -> String {
+        format!(
+            "Only allowed {} the vault's diagnostic setting sends to Log Analytics is counted. Events can take a while to arrive, and nothing from before the setting was turned on, or past the workspace's retention, is there.",
+            activity(self.noun)
+        )
+    }
 }
 
-/// What an empty list says, whatever the kind.
-const EMPTY: &str = "No reads in the last 30 days, so nothing should break.";
+/// What counts as a use, in a few words, by kind.
+fn activity(noun: &str) -> &'static str {
+    match noun {
+        "key" => "key use (sign, verify, wrap, unwrap, encrypt or decrypt)",
+        "certificate" => "certificate private-key access (reads of its backing secret)",
+        _ => "secret reads",
+    }
+}
+
+/// A message with `{activity}` and `{noun}` filled in for the kind.
+fn fill(noun: &str, template: &str) -> String {
+    template
+        .replace("{activity}", activity(noun))
+        .replace("{noun}", noun)
+}
+
+/// Every workspace answered and events from the vault arrived, but none
+/// were uses of this item.
+const EMPTY: &str = "No {activity} found in the available logs for this period. Logs may be delayed or incomplete; check consumers before changing this {noun}.";
+/// None found, but some of the log was left out.
+const EMPTY_PARTIAL: &str = "No {activity} found in the logs Keyring could read for this period. Some of the log is missing (see below), so check consumers before changing this {noun}.";
+/// The workspaces answered, but nothing from this vault has arrived.
+const NOT_ARRIVED: &str = "No audit events from this vault have arrived in its Log Analytics workspace for this period, so Keyring can't tell what uses this {noun}. A diagnostic setting that was just turned on can take a while to send its first events. Check consumers before changing this {noun}.";
+const HINT_ARRIVED: &str = "someone who manages the vault to check its diagnostic setting sends the \"audit\" log category to the workspace, then try again later.";
 
 const HINT_READER: &str = "the Reader role on the vault (or its resource group), so Keyring can find where its audit log goes.";
 const HINT_LOGGING: &str = "a diagnostic setting on the vault that sends the \"audit\" log category to a Log Analytics workspace.";
@@ -215,8 +286,8 @@ async fn read(
             HINT_LOGGING,
         );
     }
-    let mut answers = Vec::new();
-    let (mut denied, mut failed_count) = (0, 0);
+    let mut answers: Vec<Answer> = Vec::new();
+    let (mut denied, mut failed_count, mut missing) = (0, 0, 0);
     let mut failure = None;
     for ws in &workspaces {
         match used_by::query(
@@ -228,8 +299,11 @@ async fn read(
         )
         .await
         {
-            Ok(c) => answers.push(c),
+            Ok(a) => answers.push(a),
             Err(AzureError::Status { status: 403, .. }) => denied += 1,
+            // The table appears with the first event, so a missing one is
+            // a workspace that answered with nothing from this vault yet.
+            Err(e) if used_by::is_missing_table(&e) => missing += 1,
             Err(e) => {
                 tracing::warn!(error = %e, "used-by workspace query failed");
                 failed_count += 1;
@@ -244,22 +318,58 @@ async fn read(
         );
     }
     if answers.is_empty()
+        && missing == 0
         && let Some(e) = failure
     {
         return failed(panel, &e);
     }
     let mut panel = panel;
-    let (callers, capped) = used_by::merge(answers);
-    panel.callers = callers.iter().map(CallerRow::from).collect();
-    panel.capped = capped;
+    let m = workspaces.len();
+    panel.workspaces = m;
+    panel.answered = answers.len() + missing;
+    panel.newest = answers
+        .iter()
+        .map(|a| a.newest.as_str())
+        .max()
+        .unwrap_or_default()
+        .to_owned();
+    let with_events = answers.iter().filter(|a| a.vault_events > 0).count();
+    let quiet = panel.answered - with_events;
+    let incomplete = answers.iter().any(|a| a.incomplete);
     let unread = denied + failed_count;
-    if unread > 0 {
-        let m = workspaces.len();
+    let of = |n: usize| {
         let noun = if m == 1 { "workspace" } else { "workspaces" };
-        panel.partial = Some(format!(
-            "{unread} of {m} Log Analytics {noun} this vault logs to couldn't be read, so some callers may be missing."
+        format!("{n} of {m} Log Analytics {noun} this vault logs to")
+    };
+    if unread > 0 {
+        panel.notes.push(format!(
+            "{} couldn't be read, so some callers may be missing.",
+            of(unread)
         ));
     }
+    if with_events == 0 {
+        // Nothing from the vault at all: the history is unknown, not empty.
+        let why = fill(panel.noun, NOT_ARRIVED);
+        return panel.unavailable(why, HINT_ARRIVED);
+    }
+    if quiet > 0 {
+        panel.notes.push(format!(
+            "{} had no events from this vault for this period, so its callers, if any, aren't shown.",
+            of(quiet)
+        ));
+    }
+    if incomplete {
+        panel.notes.push(
+            "Log Analytics returned only part of the answer, so some callers may be missing."
+                .to_owned(),
+        );
+    }
+    if !panel.notes.is_empty() {
+        panel.empty = fill(panel.noun, EMPTY_PARTIAL);
+    }
+    let (callers, capped) = used_by::merge(answers.into_iter().map(|a| a.callers).collect());
+    panel.callers = callers.iter().map(CallerRow::from).collect();
+    panel.capped = capped;
     panel
 }
 
@@ -333,13 +443,25 @@ mod tests {
     fn empty_wording_fits_the_kind() {
         assert_eq!(
             UsedBy::new("kv", Kind::Secret, "db").empty,
-            "No reads in the last 30 days, so nothing should break."
+            "No secret reads found in the available logs for this period. Logs may be delayed or incomplete; check consumers before changing this secret."
         );
-        assert_eq!(
-            UsedBy::new("kv", Kind::Certificate, "c").empty,
-            "No reads in the last 30 days, so nothing should break."
+        assert!(
+            UsedBy::new("kv", Kind::Certificate, "c").empty.starts_with(
+                "No certificate private-key access (reads of its backing secret) found"
+            )
         );
-        assert_eq!(UsedBy::new("kv", Kind::Key, "k").empty, EMPTY);
+        let k = UsedBy::new("kv", Kind::Key, "k");
+        assert!(k.empty.starts_with("No key use (sign, verify, wrap"));
+        assert!(k.empty.ends_with("before changing this key."));
+        assert!(fill("key", EMPTY_PARTIAL).contains("Some of the log is missing"));
+        for t in [EMPTY, EMPTY_PARTIAL, NOT_ARRIVED] {
+            assert!(
+                t.to_lowercase().contains("check consumers before changing"),
+                "{t}"
+            );
+        }
+        assert!(k.limits().starts_with("Only allowed key use (sign"));
+        assert_eq!(k.coverage(), None);
         assert_eq!(
             UsedBy::new("kv", Kind::Key, "k").audit_url,
             "/v/kv/audit?item=k&range=30d&from=key"
