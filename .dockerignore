@@ -6,3 +6,6 @@ target
 docs
 *.md
 !README.md
+
+# The docs site is built separately and never goes in the image.
+website

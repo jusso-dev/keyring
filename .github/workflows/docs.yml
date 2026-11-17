@@ -1,0 +1,77 @@
+name: Docs site
+
+# Builds the Docusaurus site in website/ from the Markdown in docs/, and
+# publishes it to GitHub Pages from main. This is the only workflow that uses
+# Node. The product (Cargo, the Dockerfile, ci.yml and release.yml) never
+# touches website/.
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - "docs/**"
+      - "README.md"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "docs/**"
+      - "README.md"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+# One Pages deploy at a time; a newer push to a pull request replaces the
+# older build. A deploy in progress on main is never cancelled.
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NO_UPDATE_NOTIFIER: "1"
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.4"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      # No install scripts run. Broken links and anchors fail the build.
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: website/build
+
+  deploy:
+    name: deploy to Pages
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

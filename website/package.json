@@ -1,0 +1,30 @@
+{
+  "name": "keyring-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Keyring documentation site. Built separately from the product and never shipped in it.",
+  "scripts": {
+    "build": "docusaurus build",
+    "serve": "docusaurus serve",
+    "start": "docusaurus start",
+    "clear": "docusaurus clear"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "@easyops-cn/docusaurus-search-local": "0.55.3",
+    "@mdx-js/react": "3.1.1",
+    "clsx": "2.1.1",
+    "prism-react-renderer": "2.4.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "overrides": {
+    "serialize-javascript": "7.1.4",
+    "tinypool": "2.2.0",
+    "uuid": "11.1.1"
+  }
+}

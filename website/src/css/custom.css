@@ -1,0 +1,193 @@
+/*
+ * Keyring's cool console palette and type, from design.md. Light only, as in
+ * the app. The system font stack: no font files are loaded.
+ */
+
+:root {
+  --color-paper: #f5f7fa;
+  --color-paper-2: #ebeff2;
+  --color-surface: #ffffff;
+  --color-rule: #dadee3;
+  --color-rule-strong: #737b84;
+  --color-ink: #1c222a;
+  --color-ink-2: #515963;
+  --color-accent: #186575;
+  --color-accent-strong: #02515f;
+  --color-accent-tint: #e3f4f8;
+  --color-accent-rule: #9ac7d2;
+  --color-focus: #02515f;
+  --color-chrome: #1d252d;
+  --color-chrome-ink: #f3f5f8;
+  --color-chrome-muted: #b0b8c1;
+  --color-chrome-link: #9dd6e0;
+  --color-chrome-focus: #7be3f5;
+  --color-warn: #804d0c;
+  --color-warn-tint: #fdf2dd;
+  --color-warn-rule: #dcb783;
+  --color-danger: #b02a2d;
+  --color-danger-tint: #fcf1ef;
+  --color-danger-rule: #e8ada7;
+  --color-ok: #17653c;
+  --color-ok-tint: #e3f8e9;
+  --color-ok-rule: #9accaa;
+
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --ifm-font-family-base: var(--font-body);
+  --ifm-heading-font-family: var(--font-body);
+  --ifm-font-family-monospace: var(--font-mono);
+  --ifm-font-color-base: var(--color-ink);
+  --ifm-heading-color: var(--color-ink);
+  --ifm-color-content-secondary: var(--color-ink-2);
+  --ifm-background-color: var(--color-paper);
+  --ifm-background-surface-color: var(--color-surface);
+
+  --ifm-color-primary: #186575;
+  --ifm-color-primary-dark: #155b69;
+  --ifm-color-primary-darker: #145663;
+  --ifm-color-primary-darkest: #02515f;
+  --ifm-color-primary-light: #1b6f81;
+  --ifm-color-primary-lighter: #1c7487;
+  --ifm-color-primary-lightest: #2183a3;
+  --ifm-link-color: var(--color-accent);
+  --ifm-link-hover-color: var(--color-accent-strong);
+
+  --ifm-global-radius: 6px;
+  --ifm-code-border-radius: 4px;
+  --ifm-code-font-size: 90%;
+  --ifm-code-background: var(--color-paper-2);
+  --ifm-pre-background: var(--color-paper-2);
+  --ifm-table-border-color: var(--color-rule);
+  --ifm-table-stripe-background: transparent;
+  --ifm-table-head-background: var(--color-surface);
+  --ifm-hr-background-color: var(--color-rule);
+  --ifm-toc-border-color: var(--color-rule);
+
+  --ifm-navbar-height: 3rem;
+  --ifm-navbar-background-color: var(--color-chrome);
+  --ifm-navbar-link-color: var(--color-chrome-link);
+  --ifm-navbar-link-hover-color: var(--color-chrome-ink);
+  --ifm-navbar-shadow: none;
+
+  --ifm-menu-color: var(--color-ink);
+  --ifm-menu-color-active: var(--color-accent);
+  --ifm-menu-color-background-active: var(--color-accent-tint);
+  --ifm-menu-color-background-hover: var(--color-paper-2);
+
+  --ifm-footer-background-color: var(--color-chrome);
+  --ifm-footer-color: var(--color-chrome-muted);
+  --ifm-footer-link-color: var(--color-chrome-link);
+  --ifm-footer-link-hover-color: var(--color-chrome-ink);
+  --ifm-footer-title-color: var(--color-chrome-ink);
+
+  --ifm-alert-border-radius: 6px;
+  --docusaurus-highlighted-code-line-bg: rgba(24, 101, 117, 0.12);
+}
+
+.navbar {
+  border-bottom: 0;
+}
+
+.navbar__title {
+  color: var(--color-chrome-ink);
+  font-weight: 600;
+}
+
+.navbar__toggle,
+.navbar-sidebar__brand .navbar__toggle {
+  color: var(--color-chrome-ink);
+}
+
+.navbar-sidebar {
+  background: var(--color-surface);
+}
+
+.navbar-sidebar .navbar__title {
+  color: var(--color-ink);
+}
+
+.navbar__link--active {
+  color: var(--color-chrome-ink);
+}
+
+/* Focus ring as in the app: 2px with a 2px offset. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.navbar a:focus-visible,
+.navbar button:focus-visible,
+.navbar input:focus-visible,
+.footer a:focus-visible {
+  outline-color: var(--color-chrome-focus);
+}
+
+.theme-doc-sidebar-container {
+  background: var(--color-surface);
+  border-right-color: var(--color-rule) !important;
+}
+
+/* Framed tables with column headers in the app's style. */
+.markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--color-ink-2);
+  text-align: left;
+}
+
+.markdown table thead tr {
+  border-bottom: 1px solid var(--color-rule-strong);
+}
+
+.markdown table tr:hover {
+  background: var(--color-paper-2);
+}
+
+.markdown img {
+  border: 1px solid var(--color-rule);
+  border-radius: var(--ifm-global-radius);
+}
+
+.markdown h1:first-child {
+  font-size: 1.75rem;
+}
+
+.alert--warning {
+  --ifm-alert-background-color: var(--color-warn-tint);
+  --ifm-alert-border-color: var(--color-warn-rule);
+  --ifm-alert-foreground-color: var(--color-ink);
+}
+
+.alert--danger {
+  --ifm-alert-background-color: var(--color-danger-tint);
+  --ifm-alert-border-color: var(--color-danger-rule);
+  --ifm-alert-foreground-color: var(--color-ink);
+}
+
+.alert--info,
+.alert--secondary {
+  --ifm-alert-background-color: var(--color-accent-tint);
+  --ifm-alert-border-color: var(--color-accent-rule);
+  --ifm-alert-foreground-color: var(--color-ink);
+}
+
+.alert--success {
+  --ifm-alert-background-color: var(--color-ok-tint);
+  --ifm-alert-border-color: var(--color-ok-rule);
+  --ifm-alert-foreground-color: var(--color-ink);
+}
