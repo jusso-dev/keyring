@@ -166,6 +166,9 @@ param notifyAdmins string = ''
 @description('Domains, separated by commas, that every recipient must be in. Empty allows any.')
 param notifyAllowedDomains string = ''
 
+@description('With expiry in notifyTypes: the subscription IDs, separated by commas, whose Key Vaults may send expiry events to Keyring (KEYRING_EVENTGRID_SUBSCRIPTIONS). Defaults to this deployment\'s subscription; add the ID of any other subscription a watched vault is in. Empty accepts any subscription, which Keyring warns about at start-up.')
+param eventGridSubscriptions string = subscription().subscriptionId
+
 param tags object = {}
 
 var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infrastructureSubnetId) && !empty(vaultPrivateDnsZoneId))
@@ -264,7 +267,11 @@ var notifySettings = useNotify
       ],
       empty(notifyTypes) ? [] : [{ name: 'KEYRING_NOTIFY_TYPES', value: notifyTypes }],
       empty(notifyAdmins) ? [] : [{ name: 'KEYRING_NOTIFY_ADMINS', value: notifyAdmins }],
-      empty(notifyAllowedDomains) ? [] : [{ name: 'KEYRING_NOTIFY_ALLOWED_DOMAINS', value: notifyAllowedDomains }]
+      empty(notifyAllowedDomains) ? [] : [{ name: 'KEYRING_NOTIFY_ALLOWED_DOMAINS', value: notifyAllowedDomains }],
+      // Keyring refuses the list without expiry in the types.
+      empty(eventGridSubscriptions) || !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry')
+        ? []
+        : [{ name: 'KEYRING_EVENTGRID_SUBSCRIPTIONS', value: eventGridSubscriptions }]
     )
   : []
 
