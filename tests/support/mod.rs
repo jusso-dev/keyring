@@ -604,6 +604,8 @@ pub(crate) struct ArmState {
     /// Rows of `KeyringAudit_CL` the Log Analytics mock answers with, as
     /// column name and value pairs.
     pub keyring_rows: Mutex<Vec<Vec<(&'static str, serde_json::Value)>>>,
+    /// Answer `KeyringAudit_CL` queries with a `PartialError` beside the rows.
+    pub keyring_partial: Mutex<bool>,
     /// Access (role assignments, eligibility, role definitions and the
     /// vault resource). See [`AuthzMock`].
     pub authz: Mutex<AuthzMock>,
@@ -904,6 +906,7 @@ pub(crate) async fn start_arm() -> MockArm {
         workspace_delay: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
         keyring_rows: Mutex::new(Vec::new()),
+        keyring_partial: Mutex::new(false),
         authz: Mutex::new(AuthzMock::with_builtin_roles()),
     });
     let app = Router::new()
@@ -1067,10 +1070,11 @@ async fn arm_fallback(
             return json_response(StatusCode::OK, answer_used_by(&query, &events));
         }
         if query.contains("\nKeyringAudit_CL\n") {
-            return json_response(
-                StatusCode::OK,
-                answer_keyring(&query, &s.keyring_rows.lock().unwrap()),
-            );
+            let mut answer = answer_keyring(&query, &s.keyring_rows.lock().unwrap());
+            if *s.keyring_partial.lock().unwrap() {
+                answer["error"] = json!({"code": "PartialError", "message": "x"});
+            }
+            return json_response(StatusCode::OK, answer);
         }
         if query.starts_with("let vault0 = ") {
             let events = s

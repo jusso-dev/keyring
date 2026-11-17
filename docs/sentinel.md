@@ -61,7 +61,7 @@ az deployment group create -g <workspace resource group> \
   -f infra/sentinel/main.bicep -p infra/sentinel/main.bicepparam
 ```
 
-With only `workspaceName` set, it adds the parsers, the hunting queries and the workbook, and five rules, all turned off. Nothing raises an alert or an incident until you turn a rule on, either with its parameter or in Sentinel's **Analytics** blade.
+With only `workspaceName` set (or the example file as it is), it adds the parsers, the hunting queries and the workbook, and five rules, all turned off. Nothing raises an alert or an incident until you turn a rule on, either with its parameter or in Sentinel's **Analytics** blade.
 
 To remove it, delete the rules (named by a GUID; their display names start with "Keyring:"), the saved searches `vimAuditEventKeyring`, `ASimAuditEventKeyring` and `keyring-*`, and the "Keyring audit" workbook.
 
@@ -121,7 +121,9 @@ Each is a Sentinel Scheduled rule, created with `enabled` set to its parameter (
 
 **Bulk changes.** Bulk change actions (#216) don't exist yet. The working hours rule matches any action with `bulk` as a part of its name (split at `.` and `_`), so it will catch them once they ship, whatever they are called. Add their exact names to `offHoursActions` then if you prefer.
 
-**Working hours** use a fixed offset from UTC, so they don't follow daylight saving. Set `utcOffsetMinutes` for the half of the year that matters more, or widen the hours.
+**Late rows.** Rows can reach the table some minutes after they happen. Each rule looks back `ingestionDelayMinutes` (default 10) further than it runs, and counts a row in the run after it arrives (by `ingestion_time()`), so a late row is neither missed nor raised twice. Measure the delay in your workspace with the checklist's "Sentinel: ingestion delay" row and set the parameter above it.
+
+**Working hours** may run past midnight (`workStartHour` 22, `workEndHour` 6). They use a fixed offset from UTC, so they don't follow daylight saving. Set `utcOffsetMinutes` for the half of the year that matters more, or widen the hours.
 
 **Keyring's outbound addresses.** The last two rules compare with Key Vault's log, which sees Keyring's outbound address, not the browser's. Keyring can't know that address, so give it in `keyringOutboundIps`: the App Service app's outbound IP addresses (`az webapp show --query outboundIpAddresses`), or the Container Apps environment's static outbound IP or NAT gateway. With the list empty, those two rules aren't created at all. Set `keyVaultTable` to the table your vaults' diagnostic settings write to.
 

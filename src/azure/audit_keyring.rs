@@ -133,6 +133,20 @@ pub struct KeyringEvent {
 struct QueryResult {
     #[serde(default)]
     tables: Vec<Table>,
+    /// Log Analytics can answer 200 with some rows and an error, such as
+    /// `PartialError` when a query hits a limit. Only its presence is
+    /// kept: Azure's message is never shown or logged.
+    #[serde(default)]
+    error: Option<Value>,
+}
+
+/// What a query gave back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyringResult {
+    pub events: Vec<KeyringEvent>,
+    /// Log Analytics answered with an error beside the rows, so some may be
+    /// missing.
+    pub partial: bool,
 }
 
 #[derive(Deserialize)]
@@ -191,7 +205,7 @@ pub async fn query(
     loganalytics_url: &str,
     workspace_id: &str,
     q: &KeyringQuery,
-) -> Result<Vec<KeyringEvent>, AzureError> {
+) -> Result<KeyringResult, AzureError> {
     if !is_safe_resource_id(workspace_id) {
         return Err(AzureError::Unreadable);
     }
@@ -209,7 +223,11 @@ pub async fn query(
             &body,
         )
         .await?;
-    Ok(parse(result))
+    let partial = result.error.as_ref().is_some_and(|e| !e.is_null());
+    Ok(KeyringResult {
+        events: parse(result),
+        partial,
+    })
 }
 
 #[cfg(test)]
@@ -272,5 +290,17 @@ mod tests {
         assert_eq!(e[0].action, "secret.reveal");
         assert_eq!(e[1].reason, "");
         assert_eq!(e[1].outcome, "");
+    }
+
+    #[test]
+    fn notices_an_error_beside_the_rows() {
+        let r: QueryResult = serde_json::from_value(serde_json::json!({
+            "tables": [{"columns": [{"name": "Action"}], "rows": [["secret.reveal"]]}],
+            "error": {"code": "PartialError", "message": "x"}
+        }))
+        .unwrap();
+        assert!(r.error.is_some());
+        let r: QueryResult = serde_json::from_value(serde_json::json!({"tables": []})).unwrap();
+        assert!(r.error.is_none());
     }
 }

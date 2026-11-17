@@ -191,3 +191,17 @@ fn the_query_reads_only_table_columns() {
         assert!(q.contains(c));
     }
 }
+
+#[tokio::test]
+async fn says_when_log_analytics_returned_only_part() {
+    let w = world().await;
+    *w.arm.state.keyring_rows.lock().unwrap() = vec![event("kv-test", "secret.reveal", "success")];
+    *w.arm.state.keyring_partial.lock().unwrap() = true;
+    let (status, html) = w.page("/v/kv-test/audit/keyring").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("only part of the result"));
+    assert!(html.contains("secret.reveal"));
+    *w.arm.state.keyring_partial.lock().unwrap() = false;
+    let (_, html) = w.page("/v/kv-test/audit/keyring").await;
+    assert!(!html.contains("only part of the result"));
+}

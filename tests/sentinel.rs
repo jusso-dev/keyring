@@ -145,6 +145,15 @@ fn scan(kql: &str) -> (String, Vec<String>) {
                     }
                 }
             }
+            // A workbook parameter, `{TimeRange:start}`, isn't a column.
+            '{' => {
+                for d in chars.by_ref() {
+                    if d == '}' {
+                        break;
+                    }
+                }
+                code.push_str(" 0 ");
+            }
             c => code.push(c),
         }
     }
@@ -342,9 +351,10 @@ fn compared_with(q: &str, column: &str) -> Vec<String> {
         let rest = q[i + column.len()..].trim_start();
         let rest = rest.strip_prefix('!').unwrap_or(rest);
         let list = if let Some(r) = rest.strip_prefix("==") {
+            // Keep both quotes, so the literal check below sees a literal.
             let r = r.trim_start();
-            match r.strip_prefix('"') {
-                Some(r) => &r[..=r.find('"').unwrap_or(0)],
+            match r.strip_prefix('"').and_then(|t| t.find('"')) {
+                Some(end) => &r[..end + 2],
                 None => continue,
             }
         } else if let Some(r) = rest.strip_prefix("in") {
@@ -645,4 +655,15 @@ fn the_docs_cover_each_rule_and_its_switch() {
             );
         }
     }
+}
+
+#[test]
+fn compared_with_reads_equality_and_lists() {
+    let q = r#"| where Outcome == "success" and ReasonCode in ("csrf", "cross_site")
+| where Outcome !in ("denied") and Verb == "set" and Outcome == other"#;
+    assert_eq!(compared_with(q, "Outcome"), ["success", "denied"]);
+    assert_eq!(compared_with(q, "ReasonCode"), ["csrf", "cross_site"]);
+    assert_eq!(compared_with(q, "Verb"), ["set"]);
+    // Not the column itself inside another name.
+    assert!(compared_with("| where MyOutcome == \"x\"", "Outcome").is_empty());
 }

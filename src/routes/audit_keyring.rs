@@ -88,6 +88,8 @@ struct KeyringPage {
     /// The person can't read the workspace.
     no_access: bool,
     capped: bool,
+    /// Log Analytics said some rows may be missing.
+    partial: bool,
     errors: FieldErrors,
 }
 
@@ -120,6 +122,7 @@ pub(super) async fn page(
         rows: Vec::new(),
         no_access: false,
         capped: false,
+        partial: false,
         errors: FieldErrors::new(),
     };
     let q = match KeyringQuery::new(&vault, range, &filter.item, &filter.action, &filter.person) {
@@ -147,16 +150,17 @@ pub(super) async fn page(
     )
     .await
     {
-        Ok(events) => {
-            page.capped = events.len() >= MAX_ROWS as usize;
-            page.rows = events.iter().map(Row::from).collect();
+        Ok(result) => {
+            page.capped = result.events.len() >= MAX_ROWS as usize;
+            page.partial = result.partial;
+            page.rows = result.events.iter().map(Row::from).collect();
         }
         Err(AzureError::Status { status: 403, .. }) => page.no_access = true,
         Err(e) => {
             return Err(PageError::new(
                 page.shell,
                 Problem::from_azure(&e, Need::ReadAuditLogs)
-                    .returning_to(&vault_path(&vault, "/audit")),
+                    .returning_to(&vault_path(&vault, "/audit/keyring")),
             )
             .into());
         }

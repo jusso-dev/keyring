@@ -3,13 +3,20 @@
 // watchedActions, or one of the parts of its name (split at "." and "_")
 // is in watchedTerms, so "bulk" catches secret.bulk_update or bulk.tag.set
 // whatever the bulk change actions end up named.
-// Set by main.bicep: window, watchedActions, watchedTerms, utcOffset, workStart, workEnd, workDays
+// Each event is looked at once, in the run after it arrives, so late rows
+// are neither missed nor raised twice. Working hours may run past midnight
+// (workStart 22, workEnd 6); the day is the local day of the event.
+// Set by main.bicep: window, delay, watchedActions, watchedTerms, utcOffset, workStart, workEnd, workDays
 KeyringAudit_CL
-| where TimeGenerated > ago(window)
+| where TimeGenerated > ago(window + delay)
+| where coalesce(ingestion_time(), TimeGenerated) > ago(window)
 | extend Parts = split(replace_string(Action, "_", "."), ".")
 | where Action in (watchedActions) or array_length(set_intersect(Parts, watchedTerms)) > 0
 | extend LocalTime = TimeGenerated + utcOffset
 | extend LocalHour = hourofday(LocalTime), LocalDay = toint(dayofweek(LocalTime) / 1d)
-| where LocalHour < workStart or LocalHour >= workEnd or LocalDay !in (workDays)
+| extend InHours = iff(workStart <= workEnd,
+    LocalHour >= workStart and LocalHour < workEnd,
+    LocalHour >= workStart or LocalHour < workEnd)
+| where not(InHours) or LocalDay !in (workDays)
 | project TimeGenerated, LocalTime, Action, Outcome, ReasonCode, ActorObjectId, ActorUpn,
     ClientIp, Vault, ItemKind, ItemName, KvRequestId

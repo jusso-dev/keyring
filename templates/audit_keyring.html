@@ -47,7 +47,9 @@
   <p><strong>Keyring's own audit events go to a Log Analytics workspace you can't read.</strong></p>
   <p class="hint"><strong>What to ask for:</strong> the Log Analytics Reader role on the workspace that holds Keyring's audit table (KeyringAudit_CL).</p>
 </div>
-{% elif rows.is_empty() && errors.is_empty() %}
+{% else %}
+{% if partial %}<p class="notice notice-warn">Log Analytics returned only part of the result, so some events may be missing. Narrow the filters or try again.</p>{% endif %}
+{% if rows.is_empty() && errors.is_empty() %}
 <div class="empty-state"><p>No events match. Try a longer time range or fewer filters. New events can take a few minutes to arrive.</p></div>
 {% elif !rows.is_empty() %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
@@ -70,5 +72,6 @@
   </tbody>
 </table>
 {% endcall %}
+{% endif %}
 {% endif %}
 {% endblock %}

@@ -1,10 +1,13 @@
 // Many secret reveals or private key downloads by one person in a short time.
-// Set by main.bicep: window, revealThreshold
+// Rows can arrive late, so the rule looks back window + delay, and only
+// alerts when a row counted arrived in the last window.
+// Set by main.bicep: window, delay, revealThreshold
 KeyringAudit_CL
-| where TimeGenerated > ago(window)
+| where TimeGenerated > ago(window + delay)
 | where Action in ("secret.reveal", "certificate.download_private_key") and Outcome == "success"
 | summarize Reveals = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
     ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),
-    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated)
+    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated),
+    LastArrived = max(coalesce(ingestion_time(), TimeGenerated))
     by ActorObjectId
-| where Reveals >= revealThreshold
+| where Reveals >= revealThreshold and LastArrived > ago(window)

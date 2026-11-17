@@ -9,17 +9,19 @@ param workspaceName = 'law-sentinel'
 // Whichever table the vaults' diagnostic settings write to.
 param keyVaultTable = 'AzureDiagnostics'
 
+// Every rule stays off until you set its enable... switch to true.
+
 // Keyring's outbound addresses, as Key Vault sees them. Empty leaves out the
 // audit gap and unmatched SecretGet rules.
 param keyringOutboundIps = [
   '203.0.113.10'
 ]
 
-param enableManyReveals = true
+param enableManyReveals = false
 param revealThreshold = 20
 param revealWindowMinutes = 60
 
-param enableAppAttack = true
+param enableAppAttack = false
 
 param enableOffHours = false
 param utcOffsetMinutes = 600

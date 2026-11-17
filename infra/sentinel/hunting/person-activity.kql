@@ -1,6 +1,7 @@
-// Everything one person did through Keyring. Set who first.
+// Everything one person did through Keyring. Set who to their exact
+// sign-in name or object ID first.
 let who = "name@example.com";
 KeyringAudit_CL
-| where ActorUpn has who or ActorObjectId == who
+| where ActorUpn =~ who or ActorObjectId =~ who
 | project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, SessionRef, Reason, Ticket
 | order by TimeGenerated desc

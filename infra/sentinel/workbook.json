@@ -118,7 +118,7 @@
       "name": "sink-health",
       "content": {
         "version": "KqlItem/1.0",
-        "query": "KeyringAudit_CL\n| summarize Events = count() by bin(TimeGenerated, 1h), KeyringInstance\n| render timechart",
+        "query": "KeyringAudit_CL\n| make-series Events = count() default = 0 on TimeGenerated from {TimeRange:start} to {TimeRange:end} step 1h by KeyringInstance\n| render timechart",
         "size": 0,
         "title": "Audit sink health: events per hour by Keyring instance. A gap while Keyring was in use means the sink stopped. /healthz/audit has the live state",
         "timeContextFromParameter": "TimeRange",
@@ -146,7 +146,7 @@
       "name": "person",
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let who = \"{Person:escape}\";\nKeyringAudit_CL\n| where isnotempty(who) and (ActorUpn has who or ActorObjectId == who)\n| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, Reason, Ticket\n| order by TimeGenerated desc",
+        "query": "let who = \"{Person:escape}\";\nKeyringAudit_CL\n| where isnotempty(who) and (ActorUpn contains who or ActorObjectId =~ who)\n| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, Reason, Ticket\n| order by TimeGenerated desc",
         "size": 0,
         "title": "One person's activity (set Person above)",
         "timeContextFromParameter": "TimeRange",

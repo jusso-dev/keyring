@@ -10,6 +10,6 @@ KeyVaultCalls
     "CertificateImport", "CertificateCreate", "CertificateDelete", "CertificatePurge", "CertificateRecover",
     "KeyCreate", "KeyRotate", "KeyDelete", "KeyPurge", "KeyRecover")
 | summarize KeyVaultCallCount = count(), Operations = make_set(OperationName, 20),
-    CallerIpAddress = take_any(CallerIpAddress), LastTime = max(TimeGenerated)
+    CallerIpAddress = take_any(CallerIpAddress), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)
     by ResourceId
 | where KeyringEvents == 0

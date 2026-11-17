@@ -50,6 +50,11 @@ param keyVaultTable string = 'AzureDiagnostics'
 @description('Keyring\'s outbound IP addresses, as Key Vault sees them (the App Service outbound addresses, or the Container Apps environment\'s static outbound IP or NAT gateway). Keyring can\'t know these itself. Leave empty and the audit gap and unmatched SecretGet rules aren\'t created.')
 param keyringOutboundIps array = []
 
+@description('Minutes rows can take to arrive in KeyringAudit_CL after they happen. Each rule looks back this much further than it runs, and counts a row in the run after it arrives, so a late row is neither missed nor raised twice. Measure it in your workspace (see docs/sentinel.md) and set it above what you see.')
+@minValue(0)
+@maxValue(60)
+param ingestionDelayMinutes int = 10
+
 // Many reveals by one person
 @description('Turn on: many secret reveals or private key downloads by one person in a short time.')
 param enableManyReveals bool = false
@@ -168,6 +173,8 @@ var keyVaultSource = keyVaultTable == 'AzureDiagnostics'
   : loadTextContent('rules/keyvault-azkv.kql')
 var keyVaultLet = 'let keyringIps = ${ipsLiteral};\nlet KeyVaultCalls = ${keyVaultSource};\n'
 var hasIps = !empty(keyringOutboundIps)
+var delayLet = 'let delay = ${ingestionDelayMinutes}m;\n'
+
 
 var accountEntity = {
   entityType: 'Account'
@@ -202,9 +209,9 @@ var allRules = [
     enabled: enableManyReveals
     displayName: 'Keyring: many secret reveals by one person'
     description: 'One person revealed secret values or downloaded private keys through Keyring ${revealThreshold} or more times in ${revealWindowMinutes} minutes.'
-    query: 'let window = ${revealWindowMinutes}m;\nlet revealThreshold = ${revealThreshold};\n${loadTextContent('rules/many-reveals.kql')}'
+    query: 'let window = ${revealWindowMinutes}m;\n${delayLet}let revealThreshold = ${revealThreshold};\n${loadTextContent('rules/many-reveals.kql')}'
     frequency: 'PT${revealWindowMinutes}M'
-    period: 'PT${revealWindowMinutes}M'
+    period: 'PT${revealWindowMinutes + ingestionDelayMinutes}M'
     tactics: ['CredentialAccess', 'Collection']
     entities: [accountEntity, ipEntity]
   }
@@ -214,7 +221,7 @@ var allRules = [
     enabled: enableRevealNewIp
     displayName: 'Keyring: secret revealed from a new address'
     description: 'A person revealed a secret value or downloaded a private key through Keyring from an address they hadn\'t used in the 14 days before.'
-    query: 'let window = ${newIpWindowHours}h;\n${loadTextContent('rules/reveal-new-ip.kql')}'
+    query: 'let window = ${newIpWindowHours}h;\n${delayLet}${loadTextContent('rules/reveal-new-ip.kql')}'
     frequency: 'PT${newIpWindowHours}H'
     period: 'P14D'
     tactics: ['CredentialAccess', 'InitialAccess']
@@ -226,9 +233,9 @@ var allRules = [
     enabled: enableDeniedProbing
     displayName: 'Keyring: one person denied in several vaults'
     description: 'Key Vault denied one person through Keyring at least ${probingDenied} times across ${probingVaults} or more vaults in ${probingWindowMinutes} minutes.'
-    query: 'let window = ${probingWindowMinutes}m;\nlet probingVaults = ${probingVaults};\nlet probingDenied = ${probingDenied};\n${loadTextContent('rules/denied-probing.kql')}'
+    query: 'let window = ${probingWindowMinutes}m;\n${delayLet}let probingVaults = ${probingVaults};\nlet probingDenied = ${probingDenied};\n${loadTextContent('rules/denied-probing.kql')}'
     frequency: 'PT${probingWindowMinutes}M'
-    period: 'PT${probingWindowMinutes}M'
+    period: 'PT${probingWindowMinutes + ingestionDelayMinutes}M'
     tactics: ['Discovery']
     entities: [accountEntity, ipEntity]
   }
@@ -238,9 +245,9 @@ var allRules = [
     enabled: enableOffHours
     displayName: 'Keyring: sensitive action outside working hours'
     description: 'A purge, private key download or other watched action through Keyring outside working hours (${workStartHour}:00 to ${workEndHour}:00, UTC offset ${utcOffsetMinutes} minutes).'
-    query: 'let window = ${offHoursWindowMinutes}m;\nlet watchedActions = dynamic(${string(offHoursActions)});\nlet watchedTerms = dynamic(${string(offHoursTerms)});\nlet utcOffset = ${utcOffsetMinutes} * 1m;\nlet workStart = ${workStartHour};\nlet workEnd = ${workEndHour};\nlet workDays = dynamic(${string(workDays)});\n${loadTextContent('rules/off-hours.kql')}'
+    query: 'let window = ${offHoursWindowMinutes}m;\n${delayLet}let watchedActions = dynamic(${string(offHoursActions)});\nlet watchedTerms = dynamic(${string(offHoursTerms)});\nlet utcOffset = ${utcOffsetMinutes} * 1m;\nlet workStart = ${workStartHour};\nlet workEnd = ${workEndHour};\nlet workDays = dynamic(${string(workDays)});\n${loadTextContent('rules/off-hours.kql')}'
     frequency: 'PT${offHoursWindowMinutes}M'
-    period: 'PT${offHoursWindowMinutes}M'
+    period: 'PT${offHoursWindowMinutes + ingestionDelayMinutes}M'
     tactics: ['Impact', 'CredentialAccess']
     entities: [accountEntity, ipEntity]
   }
@@ -250,9 +257,9 @@ var allRules = [
     enabled: enableAppAttack
     displayName: 'Keyring: forged or cross-site requests'
     description: 'Keyring refused ${attackThreshold} or more requests from one address in ${attackWindowMinutes} minutes as a forged form (csrf) or a cross-site post (cross_site): a possible attack on Keyring itself.'
-    query: 'let window = ${attackWindowMinutes}m;\nlet attackThreshold = ${attackThreshold};\n${loadTextContent('rules/app-attack.kql')}'
+    query: 'let window = ${attackWindowMinutes}m;\n${delayLet}let attackThreshold = ${attackThreshold};\n${loadTextContent('rules/app-attack.kql')}'
     frequency: 'PT${attackWindowMinutes}M'
-    period: 'PT${attackWindowMinutes}M'
+    period: 'PT${attackWindowMinutes + ingestionDelayMinutes}M'
     tactics: ['InitialAccess']
     entities: [ipEntity, accountEntity]
   }
