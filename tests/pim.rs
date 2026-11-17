@@ -54,9 +54,14 @@ async fn refused_page(w: &support::World) -> String {
     body_text(res).await
 }
 
+/// What the activation form posts for the eligibility at the resource
+/// group, as `eligible()` sets up. `scope` and `schedule` say which
+/// eligibility the form showed.
 fn form_fields<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     let mut f = vec![
         ("role", SECRETS_USER),
+        ("scope", RG),
+        ("schedule", SCHEDULE),
         ("back", "/v/kv-test/secrets/db-password"),
         ("minutes", "60"),
         ("justification", "Fixing INC-42 in production"),
@@ -129,8 +134,13 @@ async fn eligible_and_activated() {
         html.contains(">Activate Key Vault Secrets User</a>"),
         "{html}"
     );
-    let href =
-        format!("{FORM}?role={SECRETS_USER}&#38;back=%2Fv%2Fkv-test%2Fsecrets%2Fdb-password");
+    // The link names the eligibility it is for, so the form opens on it.
+    let enc = |s: &str| s.replace('/', "%2F");
+    let href = format!(
+        "{FORM}?role={SECRETS_USER}&#38;scope={}&#38;schedule={}&#38;back=%2Fv%2Fkv-test%2Fsecrets%2Fdb-password",
+        enc(RG),
+        enc(SCHEDULE)
+    );
     assert!(html.contains(&href), "{html}");
 
     let (status, form) = w
@@ -607,7 +617,23 @@ async fn activates_at_the_nearest_scope_not_the_longest_id() {
                 )
             })
             .collect();
-        let res = w.post(FORM, &form_fields(&[])).await;
+        // Open the form with no eligibility named, as an old link would:
+        // it shows the nearest one, and posting what it shows uses it.
+        let (status, form) = w
+            .page(&format!(
+                "{FORM}?role={SECRETS_USER}&back=/v/kv-test/secrets"
+            ))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        let shown = hidden_value(&form, "scope").expect("scope on the form");
+        assert_eq!(shown.to_lowercase(), want.to_lowercase());
+        let schedule = hidden_value(&form, "schedule").expect("schedule on the form");
+        let res = w
+            .post(
+                FORM,
+                &form_fields(&[("scope", &shown), ("schedule", &schedule)]),
+            )
+            .await;
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(put_scope(&w).to_lowercase(), want.to_lowercase());
     }
@@ -815,4 +841,182 @@ async fn an_acrs_challenge_with_step_up_set() {
         "the justification isn't carried into the sign-in link"
     );
     assert_eq!(puts(&w).len(), 1, "one request, refused by PIM");
+}
+
+/// A second schedule, for the same role at the subscription.
+const SUB_SCHEDULE: &str = "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/c2588559-3dd7-5dfc-a4c5-65b313b9a524";
+const VAULT_SCHEDULE: &str = "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/d3699660-4ee8-6e0d-b5d6-76c424cab635";
+
+#[tokio::test]
+async fn activation_is_tied_to_the_eligibility_the_form_showed() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    // Eligible at the vault and at the subscription: the form shows the
+    // vault, the nearer one.
+    w.arm.state.authz.lock().unwrap().pim.eligible = vec![
+        (VAULT.into(), SECRETS_USER.into(), VAULT_SCHEDULE.into()),
+        (SUB.into(), SECRETS_USER.into(), SUB_SCHEDULE.into()),
+    ];
+    let (status, form) = w
+        .page(&format!(
+            "{FORM}?role={SECRETS_USER}&back=/v/kv-test/secrets"
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let scope = hidden_value(&form, "scope").unwrap();
+    let schedule = hidden_value(&form, "schedule").unwrap();
+    assert_eq!(scope.to_lowercase(), VAULT.to_lowercase());
+    assert!(form.contains("the vault kv-test"), "{form}");
+
+    // The vault eligibility goes before the form is posted. Only the
+    // subscription is left: nothing is sent, and the form comes back
+    // showing the subscription and saying it changed.
+    w.arm.state.authz.lock().unwrap().pim.eligible =
+        vec![(SUB.into(), SECRETS_USER.into(), SUB_SCHEDULE.into())];
+    let posted = form_fields(&[("scope", &scope), ("schedule", &schedule)]);
+    let res = w.post(FORM, &posted).await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let again = body_text(res).await;
+    assert!(puts(&w).is_empty(), "nothing was sent to a broader scope");
+    assert!(again.contains("Your eligible roles changed"), "{again}");
+    assert!(again.contains("whole subscription"), "{again}");
+    assert_eq!(
+        hidden_value(&again, "scope").unwrap().to_lowercase(),
+        SUB.to_lowercase()
+    );
+    // What was typed is kept for the second go.
+    assert!(again.contains("Fixing INC-42 in production"));
+
+    // Posting what the new form shows is the confirmation: it goes to
+    // the subscription, as shown.
+    let res = w
+        .post(
+            FORM,
+            &form_fields(&[("scope", SUB), ("schedule", SUB_SCHEDULE)]),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(put_scope(&w).to_lowercase(), SUB.to_lowercase());
+}
+
+#[tokio::test]
+async fn a_post_that_does_not_name_its_eligibility_sends_nothing() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    for (scope, schedule) in [
+        // None named, as a hand-made post would be.
+        ("", ""),
+        // Same scope, another schedule: the eligibility was replaced.
+        (RG, SUB_SCHEDULE),
+        // Same schedule, another scope.
+        (SUB, SCHEDULE),
+        // Not plain ARM values: never used, never echoed as a target.
+        (
+            "/subscriptions/sub-a/resourceGroups/rg-kv-test?x=1",
+            SCHEDULE,
+        ),
+        ("https://evil.example/subscriptions/sub-a", SCHEDULE),
+        (RG, "/a/../b"),
+    ] {
+        let res = w
+            .post(
+                FORM,
+                &form_fields(&[("scope", scope), ("schedule", schedule)]),
+            )
+            .await;
+        assert_eq!(
+            res.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{scope} {schedule}"
+        );
+        let html = body_text(res).await;
+        assert!(html.contains("Your eligible roles changed"), "{scope}");
+        // The form that comes back names what ARM lists, not what was posted.
+        assert_eq!(
+            hidden_value(&html, "scope").unwrap().to_lowercase(),
+            RG.to_lowercase(),
+            "{scope}"
+        );
+        assert!(!html.contains("evil.example"));
+    }
+    assert!(puts(&w).is_empty(), "nothing reached ARM");
+}
+
+#[tokio::test]
+async fn my_access_links_name_their_eligibility() {
+    let w = world().await;
+    w.arm.state.authz.lock().unwrap().pim.eligible = vec![
+        (VAULT.into(), SECRETS_USER.into(), VAULT_SCHEDULE.into()),
+        (SUB.into(), SECRETS_USER.into(), SUB_SCHEDULE.into()),
+    ];
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    let enc = |s: &str| s.replace('/', "%2F");
+    for (scope, schedule) in [(VAULT, VAULT_SCHEDULE), (SUB, SUB_SCHEDULE)] {
+        let link = format!(
+            "{FORM}?role={SECRETS_USER}&#38;scope={}&#38;schedule={}",
+            enc(scope),
+            enc(schedule)
+        );
+        assert!(html.contains(&link), "{scope}: {html}");
+    }
+    // The subscription's link opens the form on the subscription, even
+    // though the vault's is nearer.
+    let (status, form) = w
+        .page(&format!(
+            "{FORM}?role={SECRETS_USER}&scope={}&schedule={}&back=/v/kv-test/my-access",
+            enc(SUB),
+            enc(SUB_SCHEDULE)
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        hidden_value(&form, "scope").unwrap().to_lowercase(),
+        SUB.to_lowercase()
+    );
+    assert!(!form.contains("Your eligible roles changed"));
+}
+
+#[tokio::test]
+async fn an_active_key_vault_role_is_listed_when_its_definition_cannot_be_read() {
+    let w = world().await;
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.pim.active = vec![
+            (VAULT.into(), SECRETS_USER.into(), "Activated".into(), None),
+            (
+                VAULT.into(),
+                "11111111-2222-3333-4444-555555555555".into(),
+                "Assigned".into(),
+                None,
+            ),
+        ];
+        // No role definition can be read.
+        m.definitions_status = Some(403);
+    }
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    // The built-in role is known by its GUID: named, and can be turned off.
+    assert!(
+        html.contains("Key Vault Secrets User <span class=\"badge badge-ok\">Activated</span>"),
+        "{html}"
+    );
+    assert_eq!(html.matches(">Deactivate</button>").count(), 1);
+    // The other one can't be told apart, so the page says so.
+    assert!(html.contains("This list may be incomplete"), "{html}");
+    assert!(!html.contains("No Key Vault role that reaches this vault is on"));
+}
+
+#[tokio::test]
+async fn already_on_names_no_duration() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    reply(
+        &w,
+        409,
+        serde_json::json!({"error": {"code": "RoleAssignmentExists", "message": "x"}}),
+    );
+    let res = w.post(FORM, &form_fields(&[("minutes", "60")])).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body_text(res).await;
+    assert!(html.contains("This role is already on"), "{html}");
+    assert!(html.contains("was already on"), "{html}");
+    assert!(!html.contains("for 1 hour"), "{html}");
 }

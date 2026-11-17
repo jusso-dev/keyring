@@ -768,7 +768,7 @@ fn is_word(s: &str) -> bool {
 }
 
 /// An ARM ID or a bare GUID, as `linkedRoleEligibilityScheduleId` may be.
-fn is_safe_id(s: &str) -> bool {
+pub fn is_safe_id(s: &str) -> bool {
     is_guid(s)
         || (s.len() <= 1024
             && s.starts_with('/')

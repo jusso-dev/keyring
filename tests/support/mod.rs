@@ -629,6 +629,8 @@ pub(crate) struct AuthzMock {
     pub assignments_forbidden: bool,
     /// Answer this status to eligibility, as a tenant without PIM might.
     pub eligible_status: Option<u16>,
+    /// Answer this status to every role definition read.
+    pub definitions_status: Option<u16>,
     /// Answer 403 to the vault resource.
     pub vault_forbidden: bool,
     /// The signed-in person's own permissions, for
@@ -983,6 +985,12 @@ async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> 
         return Some(json_response(StatusCode::OK, json!({"value": value})));
     }
     if let Some((_, guid)) = path.split_once(DEFS) {
+        if let Some(status) = m.definitions_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
         return Some(match m.roles.get(guid) {
             Some((name, actions)) => json_response(
                 StatusCode::OK,

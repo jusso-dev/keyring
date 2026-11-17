@@ -242,6 +242,9 @@ async fn read(
         return kept;
     }
     let url = &state.config.management_url;
+    // Taken before the read, so an answer that lands after a role was
+    // turned on or off isn't kept.
+    let generation = session.0.permissions_generation();
     let (auth, perms) = tokio::join!(
         authz::vault_authorisation(&state.azure, &session.0, url, &vault_id),
         authz::permissions(&state.azure, &session.0, url, &scope),
@@ -257,7 +260,7 @@ async fn read(
     };
     session
         .0
-        .keep_permissions_at(&scope, perms.clone(), Instant::now());
+        .keep_permissions_at(&scope, perms.clone(), Instant::now(), generation);
     perms
 }
 

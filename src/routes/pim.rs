@@ -126,7 +126,7 @@ pub(super) async fn offer_layer(
     let mut page = *pending;
     page.problem.offer = Some(Offer {
         role: need.role(),
-        url: activate_url(&vault, &found.role, &back),
+        url: activate_url(&vault, &found.role, Some(&Shown::of(&found)), &back),
     });
     page.into_response()
 }
@@ -192,6 +192,14 @@ pub(crate) fn is_offered_role(role: &str) -> bool {
         .any(|g| g.eq_ignore_ascii_case(role))
 }
 
+/// The name of an offered role, as its 403 page writes it.
+fn offered_name(role: &str) -> Option<&'static str> {
+    OFFERED_NEEDS
+        .iter()
+        .find(|n| role_for(**n).is_some_and(|g| g.eq_ignore_ascii_case(role)))
+        .map(|n| n.role())
+}
+
 /// Every need a 403 page can name a role for.
 const OFFERED_NEEDS: [Need; 7] = [
     Need::ReadSecrets,
@@ -203,14 +211,58 @@ const OFFERED_NEEDS: [Need; 7] = [
     Need::ManageKeys,
 ];
 
+/// Which eligibility a form or link is for: its scope and its schedule
+/// ID. Only ever a key to find that same eligibility in a fresh read from
+/// ARM. The scope a request is sent to always comes from ARM's answer,
+/// never from here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Shown {
+    scope: String,
+    schedule: String,
+}
+
+impl Shown {
+    fn of(e: &Eligibility) -> Self {
+        Self {
+            scope: e.scope.clone(),
+            schedule: e.schedule_id.clone(),
+        }
+    }
+
+    /// From an address or a form. `None` unless both are plain ARM values.
+    fn parse(scope: &str, schedule: &str) -> Option<Self> {
+        let (scope, schedule) = (scope.trim(), schedule.trim());
+        (pim::is_safe_scope(scope) && pim::is_safe_id(schedule)).then(|| Self {
+            scope: scope.to_owned(),
+            schedule: schedule.to_owned(),
+        })
+    }
+
+    fn is(&self, e: &Eligibility) -> bool {
+        e.scope.eq_ignore_ascii_case(&self.scope)
+            && e.schedule_id.eq_ignore_ascii_case(&self.schedule)
+    }
+}
+
 /// The activation form's address. `back` must already be a local path.
 /// `role` goes in only when it is one of the roles Keyring offers (so a
 /// GUID and nothing else); anything else gives the form with no role,
-/// which says there is nothing to activate.
-pub(crate) fn activate_url(vault: &str, role: &str, back: &str) -> String {
+/// which says there is nothing to activate. `shown` names the eligibility
+/// the link is for, so the form opens on that one and not another.
+pub(crate) fn activate_url(vault: &str, role: &str, shown: Option<&Shown>, back: &str) -> String {
     let role = if is_offered_role(role) { role } else { "" };
+    let which = shown
+        .filter(|_| !role.is_empty())
+        .map(|s| {
+            format!(
+                "&scope={}&schedule={}",
+                return_to::encode(&s.scope),
+                return_to::encode(&s.schedule)
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "{}?role={role}&back={}",
+        "{}?role={role}{which}&back={}",
         vault_path(vault, "/my-access/activate"),
         return_to::encode(back)
     )
@@ -235,6 +287,11 @@ fn safe_back(vault: &str, back: Option<&str>) -> String {
 pub(super) struct ActivateQuery {
     #[serde(default)]
     role: String,
+    /// The eligibility a link is for. See [`Shown`].
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    schedule: String,
     #[serde(default)]
     back: Option<String>,
 }
@@ -245,6 +302,11 @@ pub(super) struct ActivateForm {
     csrf: String,
     #[serde(default)]
     role: String,
+    /// The eligibility the form showed. See [`Shown`].
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    schedule: String,
     #[serde(default)]
     back: String,
     #[serde(default)]
@@ -264,6 +326,10 @@ struct Ready {
     /// `None` when PIM's settings for the role couldn't be read.
     policy: Option<Policy>,
     origin: Origin,
+    /// The eligibility asked for (`Shown`) is no longer there or has
+    /// changed, so this is the nearest one now. Nothing may be sent for
+    /// it until the person has seen it and asked again.
+    changed: bool,
 }
 
 impl Ready {
@@ -365,6 +431,7 @@ async fn ready(
     shell: &Shell,
     vault: &str,
     role: &str,
+    shown: Option<&Shown>,
     back: &str,
 ) -> Result<Ready, Halt> {
     let not_eligible = || -> Halt {
@@ -392,7 +459,18 @@ async fn ready(
         };
         let url = &state.config.management_url;
         let all = pim::my_eligibilities(&state.azure, &session.0, url, &vault_id).await?;
-        let Some(e) = pick(all, &vault_id, role) else {
+        // The one the form or link was for, if it is still there for this
+        // role and still reaches the vault. Otherwise the nearest one now,
+        // marked as changed so the caller shows it instead of using it.
+        let same = shown.and_then(|s| {
+            all.iter()
+                .find(|e| {
+                    s.is(e) && e.role.eq_ignore_ascii_case(role) && applies_at(&e.scope, &vault_id)
+                })
+                .cloned()
+        });
+        let changed = shown.is_some() && same.is_none();
+        let Some(e) = same.or_else(|| pick(all, &vault_id, role)) else {
             return Ok(None);
         };
         let (policy, def) = tokio::join!(
@@ -413,6 +491,7 @@ async fn ready(
             eligibility: e,
             role_name,
             policy,
+            changed,
         }))
     };
     match tokio::time::timeout(LOOKUP_TIMEOUT, read).await {
@@ -441,6 +520,9 @@ async fn ready(
         }
     }
 }
+
+/// Shown when the eligibility a form or link was for has gone or changed.
+const CHANGED: &str = "Your eligible roles changed since this page was opened. This is what you can turn on now. Check where it applies, then select Activate again. Nothing was turned on.";
 
 fn activate_page(
     shell: Shell,
@@ -476,23 +558,30 @@ pub(super) async fn activate_form(
 ) -> PageResult {
     let (vault, shell) = vault_ctx::path_vault(&session, shell, Section::MyAccess, &vault)?;
     let back = safe_back(&vault, q.back.as_deref());
-    let here = activate_url(&vault, q.role.trim(), &back);
+    let shown = Shown::parse(&q.scope, &q.schedule);
+    let here = activate_url(&vault, q.role.trim(), shown.as_ref(), &back);
     let shell = crate::routes::step_up::require(&state, &session.0, shell, &here, &back)?;
-    let ready = ready(&state, &session, &shell, &vault, q.role.trim(), &back).await?;
+    let ready = ready(
+        &state,
+        &session,
+        &shell,
+        &vault,
+        q.role.trim(),
+        shown.as_ref(),
+        &back,
+    )
+    .await?;
     let form = ActivateForm {
         role: ready.eligibility.role.clone(),
         back: back.clone(),
         minutes: ready.max_minutes().min(60).to_string(),
         ..ActivateForm::default()
     };
-    Ok(activate_page(
-        shell,
-        vault,
-        &ready,
-        back,
-        form,
-        FieldErrors::new(),
-    ))
+    let mut errors = FieldErrors::new();
+    if ready.changed {
+        errors.push("", CHANGED);
+    }
+    Ok(activate_page(shell, vault, &ready, back, form, errors))
 }
 
 /// What the person typed, checked. Never trusted from the form: the
@@ -602,6 +691,8 @@ struct ResultPage {
     /// ARM's status or error code, for a refusal. Never its message.
     code: String,
     minutes: String,
+    /// The role was already on: this request changed nothing.
+    already_on: bool,
     approvers: Vec<(String, String)>,
     back: String,
     portal: &'static str,
@@ -627,7 +718,11 @@ pub(super) async fn activate(
     let (vault, shell) = vault_ctx::path_vault(&session, shell, Section::MyAccess, &vault)?;
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     let back = safe_back(&vault, Some(&form.back));
-    let here = activate_url(&vault, form.role.trim(), &back);
+    // Which eligibility the form showed. A post without one (or with one
+    // that isn't a plain ARM value) can't say what the person agreed to,
+    // so it is treated as changed: the form is shown again, nothing sent.
+    let shown = Shown::parse(&form.scope, &form.schedule);
+    let here = activate_url(&vault, form.role.trim(), shown.as_ref(), &back);
     let shell = crate::routes::step_up::require(&state, &session.0, shell, &here, &back)?;
     let Some(principal) = session.0.user.subject.oid.clone().filter(|o| is_guid(o)) else {
         crate::audit::refuse(Refusal::InvalidRequest);
@@ -641,8 +736,26 @@ pub(super) async fn activate(
         )
         .into());
     };
-    let ready = ready(&state, &session, &shell, &vault, form.role.trim(), &back).await?;
+    let ready = ready(
+        &state,
+        &session,
+        &shell,
+        &vault,
+        form.role.trim(),
+        shown.as_ref(),
+        &back,
+    )
+    .await?;
     let e = &ready.eligibility;
+    // Never fall back to another scope: if what the form showed isn't
+    // exactly what ARM lists now, show the current choice and stop.
+    if ready.changed || shown.is_none() {
+        crate::audit::note_role_request(&e.role, &e.scope, None, None, None);
+        crate::audit::end(AuditOutcome::Refused, "eligibility_changed");
+        let mut errors = FieldErrors::new();
+        errors.push("", CHANGED);
+        return Ok(activate_page(shell, vault, &ready, back, form, errors));
+    }
     let checked = match check(&form, &ready) {
         Ok(c) => c,
         Err(errors) => {
@@ -692,6 +805,7 @@ pub(super) async fn activate(
         outcome,
         code,
         minutes: minutes_words(checked.minutes),
+        already_on: false,
         approvers: ready
             .policy
             .as_ref()
@@ -774,12 +888,11 @@ pub(super) async fn activate(
                 AzureError::Status { code, .. }
                     if code.as_deref() == Some("RoleAssignmentExists") =>
                 {
-                    Ok(render(&result(
-                        Outcome::Done,
-                        "This role is already on",
-                        String::new(),
-                    ))
-                    .into_response())
+                    // The request set no end time, so the page names none.
+                    let mut page = result(Outcome::Done, "This role is already on", String::new());
+                    page.minutes = String::new();
+                    page.already_on = true;
+                    Ok(render(&page).into_response())
                 }
                 AzureError::Status {
                     status: 400..=499,
@@ -1013,18 +1126,39 @@ async fn read_mine(
     guids.sort();
     guids.dedup();
     guids.truncate(crate::routes::access::MAX_ROLES);
+    let wanted = guids.clone();
     let defs: HashMap<String, RoleDefinition> =
         crate::routes::access::definitions(&state.azure, s, url, &vault_id, guids).await;
+    // The built-in Key Vault roles are known by their GUIDs, so they are
+    // listed (and can be turned off) even when their definition couldn't
+    // be read. Any other role needs its definition to tell.
     let is_kv = |g: &str| {
-        defs.get(g)
-            .is_some_and(RoleDefinition::has_key_vault_data_actions)
+        is_offered_role(g)
+            || defs
+                .get(g)
+                .is_some_and(RoleDefinition::has_key_vault_data_actions)
     };
     let name = |g: &str| {
         defs.get(g)
             .map(|d| d.role_name.clone())
             .filter(|n| !n.is_empty())
+            .or_else(|| offered_name(g).map(str::to_owned))
             .unwrap_or_else(|| g.to_owned())
     };
+    let unread = wanted
+        .iter()
+        .filter(|g| !defs.contains_key(*g) && !is_offered_role(g))
+        .count();
+    if unread > 0 {
+        mine.notes.push(format!(
+            "This list may be incomplete: Keyring couldn't read what {} can do, so it isn't shown.",
+            if unread == 1 {
+                "one of your roles".to_owned()
+            } else {
+                format!("{unread} of your roles")
+            }
+        ));
+    }
     let now = crate::azure::secrets::now_ts();
     for a in active.iter().filter(|a| is_kv(&a.role)) {
         mine.active.push(Row {
@@ -1054,7 +1188,7 @@ async fn read_mine(
             origin: Origin::of(&e.scope, &vault_id).label(),
             ends: ends_words(e.ends, now),
             can_deactivate: false,
-            activate_url: activate_url(vault, &e.role, &back),
+            activate_url: activate_url(vault, &e.role, Some(&Shown::of(e)), &back),
             state: if on {
                 "On now"
             } else if waiting {
@@ -1287,7 +1421,31 @@ mod tests {
             assert!(!is_offered_role(other), "{other}");
         }
         // Never a role in an address unless it is one of them.
-        assert!(activate_url("kv", "x&admin=1", "/v/kv/secrets").contains("?role=&back="));
+        assert!(activate_url("kv", "x&admin=1", None, "/v/kv/secrets").contains("?role=&back="));
+        // The eligibility a link is for is only a key, and only plain ARM
+        // values are accepted as one.
+        let r = "4633458b-17de-408a-b874-0445c86b69e6";
+        let shown = Shown::parse("/subscriptions/s1", "/subscriptions/s1/providers/x/y").unwrap();
+        let url = activate_url("kv", r, Some(&shown), "/v/kv/secrets");
+        assert!(
+            url.contains("&scope=%2Fsubscriptions%2Fs1&schedule="),
+            "{url}"
+        );
+        assert!(shown.is(&el("/SUBSCRIPTIONS/S1", r)));
+        assert!(!shown.is(&el("/subscriptions/s2", r)));
+        for (scope, schedule) in [
+            ("/subscriptions/s1?x=1", "/a/b"),
+            ("/subscriptions/s1/..", "/a/b"),
+            ("https://evil.example", "/a/b"),
+            ("/subscriptions/s1", "/a/../b"),
+            ("/subscriptions/s1", "a b"),
+            ("", ""),
+        ] {
+            assert!(
+                Shown::parse(scope, schedule).is_none(),
+                "{scope} {schedule}"
+            );
+        }
     }
 
     #[test]

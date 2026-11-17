@@ -4,7 +4,11 @@
 <div class="panel narrow">
   <h1>{{ heading }}</h1>
   {% if is_done() %}
+  {% if already_on %}
+  <p><strong>{{ role_name }}</strong> was already on for {{ scope }}, so nothing was changed. <a href="{{ shell.vault_prefix() }}/my-access">My access</a> shows when it ends.</p>
+  {% else %}
   <p><strong>{{ role_name }}</strong> is on for {{ scope }}{% if !minutes.is_empty() %} for {{ minutes }}{% endif %}.</p>
+  {% endif %}
   <p class="muted">Key Vault can take a few minutes to see it. If it still says no, wait a minute and try again.</p>
   <p><a class="button" href="{{ back }}">Try again</a> <a href="{{ shell.vault_prefix() }}/my-access">My access</a></p>
   {% elif is_waiting() %}
