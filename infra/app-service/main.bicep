@@ -132,6 +132,21 @@ param auditRetentionInDays int = 365
 @description('Refuse reveals and private key downloads while the audit sink has been failing for over a minute. Needs auditWorkspaceId.')
 param auditRequired bool = false
 
+@description('Email for Keyring\'s notifications through Azure Communication Services: AzureManaged for an Azure-managed domain, or your own domain name (such as mail.example.com, whose SPF, DKIM and DMARC records you add yourself). Leave empty for no email. Makes the ACS resources in this resource group and gives Keyring\'s managed identity a two-action custom role on the one Communication Services resource. See docs/deploy.md, "Email".')
+param notifyDomain string = ''
+
+@description('Where ACS keeps its data at rest, such as Australia, Europe or United States.')
+param notifyDataLocation string = 'Australia'
+
+@description('Which notices to send, separated by commas: expiry, access-requests, watched-reads, destructive, role-use, health. Empty sends none.')
+param notifyTypes string = ''
+
+@description('Addresses, separated by commas, for health and fallback notices.')
+param notifyAdmins string = ''
+
+@description('Domains, separated by commas, that every recipient must be in. Empty allows any.')
+param notifyAllowedDomains string = ''
+
 param tags object = {}
 
 // A private config vault is only reachable from inside the VNet, so the
@@ -194,6 +209,33 @@ var auditSettings = useAuditSink
     ]
   : []
 
+// Email, in Keyring's own resource group, sent as Keyring's managed
+// identity. Never an access key or connection string.
+var useNotify = !empty(notifyDomain)
+var notifyCheck = useNotify || (empty(notifyTypes) && empty(notifyAdmins) && empty(notifyAllowedDomains)) ? 'ok' : fail('notifyTypes, notifyAdmins and notifyAllowedDomains need notifyDomain.')
+module notify '../modules/notify.bicep' = if (useNotify) {
+  name: '${name}-notify${notifyCheck == 'ok' ? '' : '-invalid'}'
+  params: {
+    name: name
+    notifyDomain: notifyDomain
+    dataLocation: notifyDataLocation
+    identityPrincipalId: config.outputs.identityPrincipalId
+    tags: tags
+  }
+}
+
+var notifySettings = useNotify
+  ? concat(
+      [
+        { name: 'KEYRING_NOTIFY_ACS_ENDPOINT', value: notify!.outputs.endpoint }
+        { name: 'KEYRING_NOTIFY_SENDER', value: notify!.outputs.senderAddress }
+      ],
+      empty(notifyTypes) ? [] : [{ name: 'KEYRING_NOTIFY_TYPES', value: notifyTypes }],
+      empty(notifyAdmins) ? [] : [{ name: 'KEYRING_NOTIFY_ADMINS', value: notifyAdmins }],
+      empty(notifyAllowedDomains) ? [] : [{ name: 'KEYRING_NOTIFY_ALLOWED_DOMAINS', value: notifyAllowedDomains }]
+    )
+  : []
+
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: '${name}-plan'
   location: location
@@ -214,12 +256,12 @@ var sessionSecretRef = '@Microsoft.KeyVault(VaultName=${config.outputs.vaultName
 
 // How Keyring proves itself to Entra: the client secret, or (with
 // useFederatedCredential) the app's managed identity. Keyring's one managed
-// identity is also what the audit sink writes with, so it is named
-// whenever either needs it.
+// identity is also what the audit sink and email are sent with, so it is
+// named whenever any of them needs it.
 var useAuditSink = !empty(auditWorkspaceId)
 var auditCheck = useAuditSink || !auditRequired ? 'ok' : fail('auditRequired needs auditWorkspaceId.')
 var credentialSettings = concat(
-  useFederatedCredential || useAuditSink
+  useFederatedCredential || useAuditSink || !empty(notifyDomain)
     ? [{ name: 'KEYRING_MANAGED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
     : [],
   useFederatedCredential ? [] : [{ name: 'ENTRA_CLIENT_SECRET', value: clientSecretRef }]
@@ -279,7 +321,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         stepUpMaxAge == 0 ? [] : [{ name: 'KEYRING_STEP_UP_MAX_AGE', value: string(stepUpMaxAge) }],
         empty(requireReason) ? [] : [{ name: 'KEYRING_REQUIRE_REASON', value: requireReason }],
         empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
-        auditSettings
+        auditSettings,
+        notifySettings
       )
     }
   }
@@ -356,9 +399,11 @@ module inbound '../modules/private-endpoint.bicep' = if (!publicInbound) {
 }
 
 output appName string = site.name
-output checks string = '${privateVaultCheck} ${auditCheck}'
+output checks string = '${privateVaultCheck} ${auditCheck} ${notifyCheck}'
 output defaultHostName string = site.properties.defaultHostName
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
 @description('The audit data collection rule\'s immutable ID, when the audit sink is on.')
 output auditRuleId string = useAuditSink ? audit!.outputs.ruleImmutableId : ''
+@description('The Communication Services resource\'s endpoint, when email is on.')
+output notifyEndpoint string = useNotify ? notify!.outputs.endpoint : ''

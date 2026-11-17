@@ -23,3 +23,7 @@ param useFederatedCredential = false // true: sign in to Entra with the app's ma
 param auditWorkspaceId = '' // a Log Analytics workspace's resource ID: Keyring also sends its audit events there, as its managed identity; see docs/deploy.md, "Audit sink"
 param auditRetentionInDays = 365 // days the KeyringAudit_CL table keeps rows
 param auditRequired = false // true: refuse reveals and private key downloads while the audit sink is failing
+param notifyDomain = '' // AzureManaged, or your own mail domain: Keyring sends email through ACS as its managed identity; see docs/deploy.md, "Email"
+param notifyTypes = '' // expiry, access-requests, watched-reads, destructive, role-use, health; empty sends none
+param notifyAdmins = '' // addresses for health and fallback notices
+param notifyAllowedDomains = '' // every recipient must be in one of these domains; empty allows any

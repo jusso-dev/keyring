@@ -62,6 +62,9 @@ var streamColumns = [
   { name: 'Role', type: 'string' }
   { name: 'RoleScope', type: 'string' }
   { name: 'RoleDuration', type: 'string' }
+  { name: 'NotifyType', type: 'string' }
+  { name: 'NotifyRecipientCount', type: 'int' }
+  { name: 'NotifyRecipients', type: 'string' }
   { name: 'WriterIdentityClientId', type: 'string' }
   { name: 'KeyringInstance', type: 'string' }
   { name: 'KeyringVersion', type: 'string' }

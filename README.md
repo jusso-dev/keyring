@@ -310,6 +310,13 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_AUDIT_DCR_ID` | Optional. The rule's immutable ID, `dcr-` and 32 hexadecimal digits |
 | `KEYRING_AUDIT_STREAM` | Optional. The rule's stream. Defaults to `Custom-KeyringAudit_CL` |
 | `KEYRING_AUDIT_REQUIRED` | Optional. `true` to refuse reveals and private key downloads while the audit sink has been failing for over a minute. Off by default. Needs the audit sink |
+| `KEYRING_NOTIFY_ACS_ENDPOINT` | Optional. Email through Azure Communication Services: the Communication Services resource's endpoint, `https://<resource>.<geography>.communication.azure.com`. Needs `KEYRING_MANAGED_IDENTITY_CLIENT_ID` and `KEYRING_NOTIFY_SENDER`: email is sent only as that identity. See [Email](docs/deploy.md#email) |
+| `KEYRING_NOTIFY_SENDER` | The sender, `DoNotReply@<verified domain>`. One plain address |
+| `KEYRING_NOTIFY_TYPES` | Optional. Notices to send, separated by commas: `expiry`, `access-requests`, `watched-reads`, `destructive`, `role-use`, `health`. Default: none |
+| `KEYRING_NOTIFY_ADMINS` | Optional. Addresses, separated by commas, for health and fallback notices |
+| `KEYRING_NOTIFY_ALLOWED_DOMAINS` | Optional. Every recipient must be in one of these domains |
+| `KEYRING_NOTIFY_RATE_PER_HOUR` | Optional. Emails an hour to one recipient for one type, 1 to 1000. Default 20 |
+| `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | Optional. `true` to put recipients' addresses on audit events. Off by default |
 | `KEYRING_AUDIT_WORKSPACE_ID` | Optional. The resource ID of the Log Analytics workspace that holds `KeyringAudit_CL`, `/subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.OperationalInsights/workspaces/<name>`. Each vault's audit page then gains a **Keyring activity** view of that table, read as the signed-in person: they need Log Analytics Reader on the workspace. Checked at start. The templates set it from `auditWorkspaceId`. See [Keyring activity](docs/deploy.md#keyring-activity) |
 | `APP_BASE_URL` | Public URL of this app, used for redirects and to check that form posts come from Keyring. Must be `https://` except for `http://localhost`. Scheme, host and port only: Keyring must be at the root of its host, not under a path like `/keyring` |
 | `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. Keyring won't start if it's shorter, still the `replace-me` placeholder, or an unresolved Key Vault reference. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
@@ -325,7 +332,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_STEP_UP_MAX_AGE` | Optional. Minutes, 1 to 720, since the person last signed in for those same actions to go ahead. Older, and Keyring asks for a fresh sign-in. For tenants without Conditional Access. Checked at start |
 | `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
 
-Five more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL`, `KEYRING_TEST_LOGANALYTICS_URL` and `KEYRING_TEST_AUDIT_INGESTION_URL`. They send people's tokens (and, for the authority host and the audit ingestion URL, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
+Six more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL`, `KEYRING_TEST_LOGANALYTICS_URL`, `KEYRING_TEST_AUDIT_INGESTION_URL` and `KEYRING_TEST_NOTIFY_ACS_URL`. They send people's tokens (and, for the authority host, the audit ingestion URL and the ACS URL, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 
 Sessions live in memory, so restarting Keyring signs everyone out. A request that hits a bug (a panic) gets an error page; other people's sessions carry on. If you run more than one copy, use sticky sessions. A session ends after one hour without a request, or 12 hours after sign-in. With JavaScript on, the page warns a few minutes before the hour runs out and offers to keep you signed in.
 
