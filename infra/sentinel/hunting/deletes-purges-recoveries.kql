@@ -1,0 +1,9 @@
+// Deletes, purges and recoveries of secrets, certificates and keys through Keyring.
+let who = "";
+KeyringAudit_CL
+| where Action in ("secret.delete", "secret.purge", "secret.recover",
+    "certificate.delete", "certificate.purge", "certificate.recover",
+    "key.delete", "key.purge", "key.recover")
+| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who
+| project TimeGenerated, Action, ActorUpn, ActorObjectId, Vault, ItemKind, ItemName, Outcome, ReasonCode, ClientIp, KvRequestId
+| order by TimeGenerated desc

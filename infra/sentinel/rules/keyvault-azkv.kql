@@ -1,0 +1,7 @@
+AZKVAuditLogs
+| extend Claims = column_ifexists('Identity', dynamic(null)).claim
+| project TimeGenerated, ResourceId = _ResourceId, OperationName,
+    Item = tostring(split(tostring(parse_url(column_ifexists('RequestUri', '')).Path), '/')[2]),
+    CallerIpAddress = tostring(column_ifexists('CallerIpAddress', '')),
+    CorrelationId = tostring(column_ifexists('CorrelationId', '')),
+    CallerObjectId = coalesce(tostring(Claims['http://schemas.microsoft.com/identity/claims/objectidentifier']), tostring(Claims.oid))

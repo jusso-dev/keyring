@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod audit_across;
+pub mod audit_keyring;
 pub mod authz;
 pub mod certs;
 pub mod client;

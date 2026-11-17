@@ -120,7 +120,7 @@ param useFederatedCredential bool = false
 @description('Only when moving an existing app to useFederatedCredential: keep the entra-client-secret entry defined (the container no longer reads it), because Container Apps refuses to remove a secret an active revision still uses. Deploy once with this true, then again with it false once the old revision is inactive. See docs/deploy.md.')
 param keepClientSecretEntry bool = false
 
-@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
+@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. The audit page also gains a Keyring activity view, read from the table as each person. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
 param auditWorkspaceId string = ''
 
 @description('Days the KeyringAudit_CL table keeps rows.')
@@ -192,13 +192,17 @@ module audit '../modules/audit-sink.bicep' = if (useAuditSink) {
   }
 }
 
-// Where the sink writes, from the module, and whether reads need it.
+// Where the sink writes, from the module, whether reads need it, and where
+// the audit page reads Keyring's own events.
 var auditSettings = useAuditSink
   ? [
       { name: 'KEYRING_AUDIT_INGESTION_ENDPOINT', value: audit!.outputs.ingestionEndpoint }
       { name: 'KEYRING_AUDIT_DCR_ID', value: audit!.outputs.ruleImmutableId }
       { name: 'KEYRING_AUDIT_STREAM', value: audit!.outputs.streamName }
       { name: 'KEYRING_AUDIT_REQUIRED', value: string(auditRequired) }
+      // Where the audit page's Keyring activity view reads the table, as
+      // the signed-in person. The identity can't read it.
+      { name: 'KEYRING_AUDIT_WORKSPACE_ID', value: auditWorkspaceId }
     ]
   : []
 

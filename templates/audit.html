@@ -8,6 +8,7 @@
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
 {% endif %}
+{% if keyring_activity %}<nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit" aria-current="page">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring">Keyring activity</a></p></nav>{% endif %}
 <p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC. <a href="/audit">Reports across every vault</a></p>
 
 {% call ui::error_summary(errors) %}{% endcall %}

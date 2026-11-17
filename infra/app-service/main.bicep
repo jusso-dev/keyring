@@ -108,7 +108,7 @@ param logAnalyticsWorkspaceId string = ''
 @description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
 param useFederatedCredential bool = false
 
-@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
+@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. The audit page also gains a Keyring activity view, read from the table as each person. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
 param auditWorkspaceId string = ''
 
 @description('Days the KeyringAudit_CL table keeps rows.')
@@ -167,13 +167,17 @@ module audit '../modules/audit-sink.bicep' = if (useAuditSink) {
   }
 }
 
-// Where the sink writes, from the module, and whether reads need it.
+// Where the sink writes, from the module, whether reads need it, and where
+// the audit page reads Keyring's own events.
 var auditSettings = useAuditSink
   ? [
       { name: 'KEYRING_AUDIT_INGESTION_ENDPOINT', value: audit!.outputs.ingestionEndpoint }
       { name: 'KEYRING_AUDIT_DCR_ID', value: audit!.outputs.ruleImmutableId }
       { name: 'KEYRING_AUDIT_STREAM', value: audit!.outputs.streamName }
       { name: 'KEYRING_AUDIT_REQUIRED', value: string(auditRequired) }
+      // Where the audit page's Keyring activity view reads the table, as
+      // the signed-in person. The identity can't read it.
+      { name: 'KEYRING_AUDIT_WORKSPACE_ID', value: auditWorkspaceId }
     ]
   : []
 

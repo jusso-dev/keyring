@@ -1,0 +1,15 @@
+// No Keyring events at all in the window while Key Vault logged calls from
+// Keyring's outbound addresses that only an audited action makes: the audit
+// sink is broken or turned off.
+// Set by main.bicep: window, KeyVaultCalls, keyringIps
+let KeyringEvents = toscalar(KeyringAudit_CL | where TimeGenerated > ago(window) | count);
+KeyVaultCalls
+| where TimeGenerated > ago(window)
+| where CallerIpAddress in (keyringIps)
+| where OperationName in ("SecretGet", "SecretSet", "SecretDelete", "SecretPurge", "SecretRecover",
+    "CertificateImport", "CertificateCreate", "CertificateDelete", "CertificatePurge", "CertificateRecover",
+    "KeyCreate", "KeyRotate", "KeyDelete", "KeyPurge", "KeyRecover")
+| summarize KeyVaultCallCount = count(), Operations = make_set(OperationName, 20),
+    CallerIpAddress = take_any(CallerIpAddress), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)
+    by ResourceId
+| where KeyringEvents == 0

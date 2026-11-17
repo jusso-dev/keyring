@@ -4,7 +4,7 @@ Keyring is a stateless web app. It holds a session for the signed-in person and 
 
 ## Principles
 
-- **Act as the user.** Every Azure call that reads or changes a person's data uses a token obtained through the on-behalf-of (OBO) flow. Keyring has no identity of its own with data-plane or control-plane access to anyone's vaults, subscriptions or workspaces. Its one managed identity only proves Keyring is the app and writes audit rows (see [Who makes each call](#who-makes-each-call)).
+- **Act as the user.** Every Azure call that reads or changes a person's data uses a token obtained through the on-behalf-of (OBO) flow. Keyring has no identity of its own with data-plane or control-plane access to anyone's vaults, subscriptions or workspaces. Its one managed identity only proves Keyring is the app and writes audit rows; it never reads them (see [Who makes each call](#who-makes-each-call)).
 - **Store nothing.** No database. Secret values pass through memory on the way to the browser and are never logged, cached or written to disk. The only list Keyring keeps is the names and properties of each vault's items, in the session's memory, for a minute (see [Search](#search)), and the person's own permissions at each scope for five minutes (see [Permission hints](#permission-hints)). Pinned and recently opened items are kept by the person's own browser, not by Keyring (see [Pinned and recently opened](#pinned-and-recently-opened)).
 - **Let Key Vault decide.** Authorisation is Key Vault RBAC (or access policies on older vaults). Keyring shows what Azure allows and explains clearly when it doesn't. Disabled buttons ([Permission hints](#permission-hints)) are only a hint; Key Vault still answers every request.
 - **Safe by default.** Purge is off. Deletes need typed confirmation. Secret values are hidden until revealed, and Keyring tries to clear the clipboard after a copy.
@@ -265,6 +265,17 @@ The audit view reads Key Vault diagnostic logs (`AzureDiagnostics` or the `AZKVA
 - When a vault logs to several workspaces and some can't be read, the others are still shown, and the page and the CSV say how many were left out and why. If none can be read, the CSV answers 403 or 404 with an explanation instead of an empty file.
 - Each secret, certificate and key page has "Who used it", which opens the audit view filtered to that item for the last 30 days.
 
+### Keyring activity
+
+Optional (`KEYRING_AUDIT_WORKSPACE_ID`, checked at start to be a Log Analytics workspace's ARM resource ID). `/v/{vault}/audit/keyring` shows Keyring's own audit events for the vault from `KeyringAudit_CL`, beside Key Vault's log, with a link between the two. Code: `src/azure/audit_keyring.rs` (query) and `src/routes/audit_keyring.rs` (page).
+
+- Read as the signed-in person, with their Log Analytics OBO token, at the resource-centric endpoint (`/v1/<workspace ARM ID>/query`), like the vault's audit page. Never as Keyring's managed identity: it can only write rows through the data collection rule, and reading as it would show people rows they have no right to see. A 403 shows what to ask for (Log Analytics Reader on the workspace).
+- **No query injection.** The vault, item and person are checked with the same patterns as the audit page, the action against Keyring's own action names, and each reaches the query only as an escaped string literal in a `let` line. The time range comes from the fixed list. Up to 500 rows, newest first. The columns it reads are all in `sink::COLUMNS` (tested).
+- The reason and ticket columns (#205) are free text people typed, shown escaped like everything else, never as markup.
+- Without the setting the route answers 404, the audit page has no link to it, and no query goes to the table.
+- It only reads, so it writes no audit event.
+- **Later.** Showing the reason and ticket next to Key Vault's row in an item's "Used by" needs the `kv_request_id` to `CorrelationId` join confirmed on a real vault first.
+
 ### Used by in the last 30 days
 
 Each secret, certificate and key page, and the forms that change one (Set a new value, Roll back, Disable, Rotate and Delete), has a "Used by in the last 30 days" panel: the distinct callers in Key Vault's audit log, each with its kind (person, app or managed identity), sign-in name or app ID, object ID, last use, number of uses, and up to three client infos (user agents) and IP addresses. Code: `src/azure/used_by.rs` (query) and `src/routes/used_by.rs` (panel), shown by `templates/_used_by.html`.
@@ -389,6 +400,8 @@ A **Pin** button under the heading of each vault list (secrets, certificates, ke
 
 Expiry alerts are optional. Since Keyring stores nothing and has no identity of its own, alerts are delivered by Azure-native means (Event Grid `SecretNearExpiry` and `CertificateNearExpiry` events), set up through the deploy templates. The app itself never runs background jobs with stored credentials.
 
+Sentinel content for Keyring's own audit table is optional as well (`infra/sentinel`, [sentinel.md](sentinel.md)). Its rules are Sentinel Scheduled rules, run by Sentinel, created turned off. Two of them compare Keyring's table with Key Vault's log, which needs Keyring's outbound addresses: Keyring can't know them, so they are a parameter, and without it those rules aren't created.
+
 Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor log search alert rules on the vault's Log Analytics workspace: a read of a watched secret, any purge, or more than N refusals from one caller in 15 minutes. Each rule runs its query as its own system-assigned identity with Log Analytics Reader on the workspace. That identity belongs to Azure Monitor, has no role on any vault, and is never used by Keyring. The rules read the same columns and operation names as the audit view (`tests/alert_queries.rs` checks).
 
 ## Deploy
@@ -397,6 +410,7 @@ Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor l
 - `infra/app-service` and `infra/container-apps`: Bicep that runs the image, with Keyring's own config vault and a user-assigned managed identity. That identity can only read Keyring's two config secrets (client secret and session secret) through Key Vault references, and, with `auditWorkspaceId`, send rows through the one audit data collection rule (Monitoring Metrics Publisher, from `infra/modules/audit-sink.bicep`). It has no role on any other vault or on any workspace's data, so it can't be used to reach user data. With `useFederatedCredential`, the app registration also trusts this identity as a federated credential, so there is no client secret to read.
 - Optional VNet integration, private endpoints and private DNS so Keyring can reach private vaults (`docs/private-vaults.md`).
 - `infra/alerts`: optional per-vault Event Grid subscription for near-expiry events, and optional log search alerts for reads of watched secrets, purges and repeated refusals (`docs/alerts.md`).
+- `infra/sentinel`: optional Microsoft Sentinel content for `KeyringAudit_CL`: the ASIM Audit Event parser `vimAuditEventKeyring`, analytic rules (each created turned off, and each turned on by its own parameter), hunting queries and a workbook (`docs/sentinel.md`). Sentinel runs the rules as itself. `tests/sentinel.rs` checks every column they read against `sink::COLUMNS`, and every action, outcome and reason code against the ones Keyring writes.
 - CI runs `az bicep build` on every template and example parameter file, and on each example copied next to its template the way the docs say. Nothing is deployed from this repository.
 
 ## Threat model
@@ -439,7 +453,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Values left on screen or clipboard | Hidden until asked for; revealed values are wiped after 30 seconds or on leaving the page. Keyring tries to clear the clipboard if it still holds the value. After a copy, every way off the page in the same tab (Hide, Back, the nav and Sign out) waits for that clear, or a second and a half, before it leaves. Browsers only allow the clear while the tab has focus, so a clear that fails in a background tab is tried again when you come back |
 | Accidental or malicious deletes | Typed-name confirmation checked on the server. Purge is refused by the server unless `KEYRING_ALLOW_PURGE=true` |
 | Private key leaks | Keys: no export, backup, release, decrypt, unwrap or sign calls exist (tested); the JWK type has no private fields. Certificates: private key download only for exportable policies, after a warning and typed name. A certificate's backing secret can't be revealed, rolled back, changed or deleted through the secrets pages |
-| Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed. Across vaults, the vaults' resource IDs go in the same way, one `let` line each |
+| Query injection in the audit view | Filters checked against strict patterns, then used only as escaped string literals in `let` lines. The rest of the KQL is fixed. Across vaults, the vaults' resource IDs go in the same way, one `let` line each. Keyring activity does the same, with actions checked against Keyring's own action names |
 | CSV injection in exports | Fields starting with `= + - @` are prefixed so spreadsheets don't run them |
 | Path tricks in names | Vault, secret, certificate, key and version names are checked against Key Vault's own rules before they go in any URL. `nextLink` and backing secret URLs are only followed on the same vault, and ARM `nextLink`s on the Access page only on ARM's own host |
 | Large or slow requests | Request headers must arrive within 10 seconds (slow-header clients are cut off). 64 KB body limit on forms (256 KB on the two forms that carry a secret value, 272 KB for a certificate upload of up to 256 KB, and 1040 KB for a secrets import of up to 1 MB). 90 second limit per request. At most 512 connections at once; past that, new ones wait in the listen backlog. Each connection is asked to close after 5 minutes and cut off 2 minutes later. Outbound calls have 10 second connect and 30 second total timeouts, and don't follow redirects |

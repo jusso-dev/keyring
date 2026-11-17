@@ -601,6 +601,11 @@ pub(crate) struct ArmState {
     /// `workspace_events`.
     pub workspace_delay: Mutex<Vec<(String, Duration)>>,
     pub audit_bearers: Mutex<Vec<String>>,
+    /// Rows of `KeyringAudit_CL` the Log Analytics mock answers with, as
+    /// column name and value pairs.
+    pub keyring_rows: Mutex<Vec<Vec<(&'static str, serde_json::Value)>>>,
+    /// Answer `KeyringAudit_CL` queries with a `PartialError` beside the rows.
+    pub keyring_partial: Mutex<bool>,
     /// Access (role assignments, eligibility, role definitions and the
     /// vault resource). See [`AuthzMock`].
     pub authz: Mutex<AuthzMock>,
@@ -1047,6 +1052,8 @@ pub(crate) async fn start_arm() -> MockArm {
         workspace_events: Mutex::new(Vec::new()),
         workspace_delay: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
+        keyring_rows: Mutex::new(Vec::new()),
+        keyring_partial: Mutex::new(false),
         authz: Mutex::new(AuthzMock::with_builtin_roles()),
     });
     let app = Router::new()
@@ -1213,6 +1220,13 @@ async fn arm_fallback(
                 .unwrap_or_default();
             return json_response(StatusCode::OK, answer_used_by(&query, &events));
         }
+        if query.contains("\nKeyringAudit_CL\n") {
+            let mut answer = answer_keyring(&query, &s.keyring_rows.lock().unwrap());
+            if *s.keyring_partial.lock().unwrap() {
+                answer["error"] = json!({"code": "PartialError", "message": "x"});
+            }
+            return json_response(StatusCode::OK, answer);
+        }
         if query.starts_with("let vault0 = ") {
             let events = s
                 .workspace_events
@@ -1244,6 +1258,50 @@ async fn arm_fallback(
         StatusCode::NOT_FOUND,
         json!({"error": {"code": "NotFound", "message": "x"}}),
     )
+}
+
+/// Answer a query over `KeyringAudit_CL`: the rows whose `Vault` matches
+/// the query's `let vaultName`, with the columns it projects.
+fn answer_keyring(
+    query: &str,
+    rows: &[Vec<(&'static str, serde_json::Value)>],
+) -> serde_json::Value {
+    let vault = query
+        .lines()
+        .find_map(|l| l.strip_prefix("let vaultName = \""))
+        .and_then(|l| l.strip_suffix("\";"))
+        .unwrap_or_default()
+        .to_owned();
+    let columns: Vec<String> = query
+        .lines()
+        .find_map(|l| l.strip_prefix("| project "))
+        .unwrap_or_default()
+        .split(", ")
+        .map(str::to_owned)
+        .collect();
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .filter(|r| {
+            r.iter().any(|(k, v)| {
+                *k == "Vault" && v.as_str().is_some_and(|v| v.eq_ignore_ascii_case(&vault))
+            })
+        })
+        .map(|r| {
+            json!(
+                columns
+                    .iter()
+                    .map(|c| r
+                        .iter()
+                        .find(|(k, _)| k == c)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(serde_json::Value::Null))
+                    .collect::<Vec<_>>()
+            )
+        })
+        .collect();
+    json!({"tables": [{"name": "PrimaryResult",
+        "columns": columns.iter().map(|c| json!({"name": c, "type": "string"})).collect::<Vec<_>>(),
+        "rows": out}]})
 }
 
 /// One Key Vault audit event as it sits in a workspace, for the mock.
