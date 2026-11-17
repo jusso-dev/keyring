@@ -23,7 +23,9 @@ fn healthy(name: &str) -> serde_json::Value {
 /// The cells of one vault's row, as (check, status) in order.
 fn row_statuses(html: &str, vault: &str) -> Vec<String> {
     let start = html
-        .find(&format!("<th scope=\"row\" class=\"mono\">{vault}</th>"))
+        .find(&format!(
+            "<th scope=\"row\" class=\"item-name\">{vault}</th>"
+        ))
         .unwrap_or_else(|| panic!("no row for {vault}"));
     let row = &html[start..];
     let row = &row[..row.find("</tr>").unwrap()];
@@ -330,7 +332,7 @@ async fn vault_list_badges_vaults_without_audit_logs() {
     assert!(html.contains("<th scope=\"col\">Audit logs</th>"));
     let cell = |vault: &str| {
         let at = html
-            .find(&format!("class=\"mono\">{vault}"))
+            .find(&format!("class=\"item-name\">{vault}"))
             .unwrap_or_else(|| panic!("{vault}"));
         let row = &html[at..at + html[at..].find("</tr>").unwrap()];
         row.split("<td>").nth(7).unwrap().to_owned()

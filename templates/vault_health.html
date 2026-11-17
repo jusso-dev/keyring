@@ -24,7 +24,7 @@
 {% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
 
 {% if unknown_vault %}
-<div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/vault-health">Show all vaults</a></p></div>
+<div class="empty-state"><p><span class="item-name">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/vault-health">Show all vaults</a></p></div>
 {% elif rows.is_empty() %}
 <div class="empty-state">
   <p><strong>You can't see any vaults yet.</strong></p>
@@ -45,7 +45,7 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <th scope="row" class="mono">{{ r.vault }}</th>
+      <th scope="row" class="item-name">{{ r.vault }}</th>
       {% for f in r.findings %}
       <td>{% if f.deferred %}<span class="muted">Pick this vault</span>{% else %}<span class="badge {{ f.status.css() }}">{{ f.status.label() }}</span>{% endif %}</td>
       {% endfor %}
@@ -60,7 +60,7 @@
   <h2 id="issues">What to look at</h2>
   <ul>
     {% for i in issues %}
-    <li><span class="badge {{ i.finding.status.css() }}">{{ i.finding.status.label() }}</span> <span class="mono">{{ i.vault }}</span>, {{ i.finding.kind.label() }}: {{ i.finding.detail }}. <a href="{{ i.finding.kind.guide() }}" rel="noopener noreferrer">Microsoft's guide<span class="visually-hidden"> on {{ i.finding.kind.label() }}</span></a></li>
+    <li><span class="badge {{ i.finding.status.css() }}">{{ i.finding.status.label() }}</span> <span class="item-name">{{ i.vault }}</span>, {{ i.finding.kind.label() }}: {{ i.finding.detail }}. <a href="{{ i.finding.kind.guide() }}" rel="noopener noreferrer">Microsoft's guide<span class="visually-hidden"> on {{ i.finding.kind.label() }}</span></a></li>
     {% endfor %}
   </ul>
 </section>

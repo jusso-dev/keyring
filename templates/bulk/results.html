@@ -18,7 +18,7 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <th scope="row" class="mono">{% if r.done == Done::NotFound %}{{ r.name }}{% else %}<a href="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ r.name }}">{{ r.name }}</a>{% endif %}</th>
+      <th scope="row" class="item-name">{% if r.done == Done::NotFound %}{{ r.name }}{% else %}<a href="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ r.name }}">{{ r.name }}</a>{% endif %}</th>
       <td>
         {%- match r.done -%}
         {%- when Done::Changed %}<span class="badge badge-ok">Done</span>

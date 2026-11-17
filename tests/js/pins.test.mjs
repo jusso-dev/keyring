@@ -23,7 +23,7 @@ function itemPage(storage, name = "db-password") {
   return page(
     (h) => [
       h("p", { class: "back-link" }),
-      h("h1", { class: "mono", "data-pin": "secret", "data-pin-vault": "kv-test", "data-pin-name": name, text: name }),
+      h("h1", { class: "item-name", "data-pin": "secret", "data-pin-vault": "kv-test", "data-pin-name": name, text: name }),
       h("p", { text: "badges" }),
     ],
     { script: "pins.js", storage },

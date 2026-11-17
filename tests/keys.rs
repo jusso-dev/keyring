@@ -200,7 +200,7 @@ async fn delete_recover_and_purge_flag() {
     let w = support::world().await;
     w.kv.state.add_key_with("app-key", "RSA", |_| {});
     let (_, html) = w.page("/v/kv-test/keys/app-key/delete").await;
-    assert!(html.contains("Type <strong class=\"mono\">app-key</strong> to confirm"));
+    assert!(html.contains("Type <strong class=\"item-name\">app-key</strong> to confirm"));
     assert!(html.contains("stop working straight away"));
     let res = w
         .post("/v/kv-test/keys/app-key/delete", &[("confirm_name", "app")])

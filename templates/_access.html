@@ -21,7 +21,7 @@
   <tbody>
     {% for p in access.policies %}
     <tr>
-      <th scope="row" class="mono">{{ p.object_id }}{% if !p.application_id.is_empty() %}<br><span class="muted small">Only through the app <span class="mono">{{ p.application_id }}</span></span>{% endif %}</th>
+      <th scope="row"><span class="mono">{{ p.object_id }}</span>{% if !p.application_id.is_empty() %}<br><span class="muted small">Only through the app <span class="mono">{{ p.application_id }}</span></span>{% endif %}</th>
       <td>{% for (k, w) in p.lines %}<span class="nowrap">{{ k }}:</span> {{ w }}{% if !loop.last %}<br>{% endif %}{% endfor %}{% if p.reads_secret_values %} <span class="badge badge-warn">Reads secret values</span>{% endif %}</td>
     </tr>
     {% endfor %}

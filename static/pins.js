@@ -125,7 +125,7 @@
     var ul = el("ul", "pin-list");
     list.forEach(function (e) {
       var li = el("li");
-      var a = el("a", "mono", e.name);
+      var a = el("a", "item-name", e.name);
       a.setAttribute("href", e.path);
       li.appendChild(a);
       li.appendChild(el("span", "muted", e.kind === "vault" ? " vault" : " " + e.kind + " in " + e.vault));

@@ -114,7 +114,7 @@ async fn lists_vaults_it_could_not_read_on_the_page_and_in_the_csv() {
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("couldn't be read"));
     assert!(html.contains(
-        "<span class=\"mono\">kv-locked</span>: You don&#39;t have a Key Vault role on it"
+        "<span class=\"item-name\">kv-locked</span>: You don&#39;t have a Key Vault role on it"
     ));
     assert!(band(&html, "older").contains(">old<"));
     let csv = body_text(w.get("/expiry/age.csv").await).await;

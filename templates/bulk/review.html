@@ -18,7 +18,7 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <th scope="row" class="mono">{{ r.name }}</th>
+      <th scope="row" class="item-name">{{ r.name }}</th>
       <td>
         {%- match r.kind -%}
         {%- when RowKind::Change %}<span class="badge badge-ok">Will change</span>

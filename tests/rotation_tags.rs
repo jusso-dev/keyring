@@ -36,7 +36,7 @@ async fn rotation_line_from_the_tags() {
     let (status, html) = w.page("/v/kv-test/secrets/storage-key").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains(
-        r#"Rotated by <span class="mono">storage-key-rotator</span>, last 2 Nov 2026, <span class="badge badge-ok">OK</span>"#
+        r#"Rotated by <span class="item-name">storage-key-rotator</span>, last 2 Nov 2026, <span class="badge badge-ok">OK</span>"#
     ));
     assert!(html.contains("not checked by Keyring"));
     // Still in the tag list too.
@@ -95,13 +95,13 @@ async fn hostile_tag_values_render_safely() {
     assert!(!html.contains("<script>alert"));
     assert!(!html.contains("<b>ok</b>"));
     assert!(html.contains(
-        r#"Rotated by <span class="mono">&#60;script&#62;alert(1)&#60;/script&#62;[31m</span>, last unknown, <span class="badge badge-muted">Unknown</span>"#
+        r#"Rotated by <span class="item-name">&#60;script&#62;alert(1)&#60;/script&#62;[31m</span>, last unknown, <span class="badge badge-muted">Unknown</span>"#
     ), "{html}");
     let (_, html) = w.page("/v/kv-test/secrets/long").await;
     assert!(!html.contains("<img src=x>"));
     let shown = format!("{}…", "r".repeat(64));
     assert!(html.contains(&format!(
-        r#"Rotated by <span class="mono">{shown}</span>, last unknown, <span class="badge badge-muted">Unknown</span>"#
+        r#"Rotated by <span class="item-name">{shown}</span>, last unknown, <span class="badge badge-muted">Unknown</span>"#
     )));
 }
 
@@ -133,7 +133,7 @@ async fn expiry_dashboard_lists_failed_rotations() {
     let section = html.split(r#"id="rotation-failed""#).nth(1).unwrap();
     let section = section.split("</section>").next().unwrap();
     assert!(section.contains(r#">sql-login <span class="badge badge-error">Failed</span>"#));
-    assert!(section.contains(r#"<td class="mono">sql-rotator</td>"#));
+    assert!(section.contains(r#"<td class="item-name">sql-rotator</td>"#));
     assert!(section.contains("2 Nov 2026"));
     assert!(!section.contains("storage-key"));
     assert!(!section.contains(">odd"));

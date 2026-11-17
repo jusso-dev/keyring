@@ -3,7 +3,7 @@
 {% block title %}Check and upload certificate {{ name }} to {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <div class="panel narrow">
-  <h1>Upload <span class="mono">{{ name }}</span> to {{ vault }}?</h1>
+  <h1>Upload <span class="item-name">{{ name }}</span> to {{ vault }}?</h1>
   <p>Here's what's in the {{ kind }} file. Nothing has been saved yet.</p>
   {% if let Some(x) = existing %}
   <div class="notice notice-warn">

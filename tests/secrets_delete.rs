@@ -20,7 +20,7 @@ async fn delete_needs_the_name_typed() {
     w.kv.state.put("db-password", "x");
     let (status, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Type <strong class=\"mono\">db-password</strong> to confirm"));
+    assert!(html.contains("Type <strong class=\"item-name\">db-password</strong> to confirm"));
 
     for typed in ["", "db-passwor", "DB-PASSWORD"] {
         let res = w

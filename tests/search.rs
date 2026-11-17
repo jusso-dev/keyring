@@ -103,9 +103,9 @@ async fn finds_matches_across_vaults_and_says_which_were_not_read() {
     assert!(html.contains("<span class=\"badge badge-muted\">Disabled</span>"));
     // A note for each vault that couldn't be read.
     assert!(html.contains(
-        "<span class=\"mono\">kv-locked</span>: You don&#39;t have a Key Vault role on it."
+        "<span class=\"item-name\">kv-locked</span>: You don&#39;t have a Key Vault role on it."
     ));
-    assert!(html.contains("<span class=\"mono\">kv-slow</span>: Took too long to answer."));
+    assert!(html.contains("<span class=\"item-name\">kv-slow</span>: Took too long to answer."));
     assert!(!html.contains("db-hidden") && !html.contains("db-late"));
     // Never a value.
     assert!(!html.contains("-VALUE"));

@@ -63,7 +63,7 @@
       <td class="small">{{ r.time }}</td>
       <td>{{ r.who }}</td>
       <th scope="row" class="mono">{{ r.action }}</th>
-      <td class="mono">{{ ui::or_none(r.item) }}</td>
+      <td class="item-name">{{ ui::or_none(r.item) }}</td>
       <td>{% if r.outcome == "success" %}<span class="result-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %}<br><span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
       <td>{% if r.reason.is_empty() && r.ticket.is_empty() %}<span class="muted">None</span>{% else %}{{ r.reason }}{% if !r.ticket.is_empty() %}<br><span class="muted small">Ticket {{ r.ticket }}</span>{% endif %}{% endif %}</td>
       <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>

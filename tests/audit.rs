@@ -154,7 +154,7 @@ async fn item_history_and_csv_match() {
         detail.contains("href=\"/v/kv-test/audit?item=db-password&amp;range=30d&amp;from=secret\"")
     );
     let (_, html) = w.page("/v/kv-test/audit?item=db-password&range=30d").await;
-    assert!(html.contains("Who used <span class=\"mono\">db-password</span>"));
+    assert!(html.contains("Who used <span class=\"item-name\">db-password</span>"));
     let q = w
         .arm
         .state

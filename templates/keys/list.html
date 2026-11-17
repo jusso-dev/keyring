@@ -31,7 +31,7 @@
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <td><input type="checkbox" id="pick-{{ row.name }}" name="item" value="{{ row.name }}" form="bulk-form"><label for="pick-{{ row.name }}" class="visually-hidden">Select {{ row.name }}</label></td>
-      <th scope="row"><a class="mono" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
+      <th scope="row"><a class="item-name" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
       <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
       <td class="nowrap">{{ ui::or_none(row.created) }}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>

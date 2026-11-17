@@ -17,7 +17,7 @@ decoration: no illustrations, gradients, background art, charts or scores.
 - Page types:
   - **List pages** (vaults, secrets, certificates, keys, deleted): heading,
     one action row, a summary line, filters, then a framed table.
-  - **Detail pages** (secret, certificate, key, deleted item): back link, mono
+  - **Detail pages** (secret, certificate, key, deleted item): back link, native-font
     heading, status badges, action row, then fact lists and tables.
   - **Form pages** (create, edit, upload, renewal, rotation policy,
     generator): a single column of fields, 40rem wide at most.
@@ -118,17 +118,20 @@ Use the operating system's native fonts. The owner requested this on
 - `--font-body`: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
   Used for the interface, including headings, labels and controls.
 - `--font-mono`: `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`.
-  Only for values, names and identifiers: vault, secret, certificate and key
-  names, version IDs, thumbprints, tags, operations, IP addresses and the
-  revealed value.
+  Only for technical data: version IDs, thumbprints, tags, operations, IP
+  addresses and secret values. Resource names use the normal UI font in
+  headings, navigation, tables and recent items.
 - The UI loads no font files. Rendering follows the user's operating system.
 - Nothing in Keyring is set in italic.
+- Validation messages use the UI font; only their technical codes use mono.
+- Form inputs use 1rem text. Technical-value inputs retain the mono font;
+  mobile search and filter fields also stay at 1rem to avoid focus zoom.
 - Numbers line up: `font-variant-numeric: tabular-nums` on tables, fact lists,
   badges, tiles, the pager and the countdown.
 - Scale: `--text-xs` 0.75rem (column headers, badges), `--text-sm` 0.875rem
   (help, tags, small cells), `--text-base` 1rem (body), `--text-md` 1.125rem
   (h2), `--text-lg` 1.5rem (h1), `--text-xl` 1.75rem (tile figures).
-- Headings are roman, weight 650 (h1) and 600 (h2), tracking -0.01em, line
+- Headings are roman, weight 600 (h1 and h2), tracking -0.01em, line
   height 1.25. Never italic. Long names wrap anywhere.
 - Column headers: `--text-xs`, uppercase, 0.06em tracking, weight 600, ink-2.
 
@@ -148,7 +151,7 @@ Use the operating system's native fonts. The owner requested this on
 
 - **Top bar**: dark chrome, one line on desktop. Wordmark (an inline SVG key
   ring, hidden from assistive tech, and "Keyring"), the current vault as a
-  small "Vault" label with the name in mono and a "Change vault" link, a
+  small "Vault" label with the name in the UI font and a "Change vault" link, a
   search box (a plain GET form to `/search`, with a small Search button and a
   visually hidden label), and the signed-in person with "Sign out" at the
   right. It wraps on small screens, where the search box takes its own row.
@@ -184,7 +187,7 @@ like a status.
 ## Tables
 
 All tables follow the ledger rules: hairline row rules, small uppercase
-column headers, tabular figures, rows at least 3rem tall, and names in mono.
+column headers, tabular figures, rows at least 3rem tall, and names in the UI font.
 
 - **Framed** (default): white table with a 1px rule border and 6px radius.
   Header row ruled off with `--color-rule-strong`. Rows tint paper-2 on hover.
@@ -224,7 +227,7 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 ### Reveal (secret value and generator)
 
 - The value sits in a bordered mono well: paper-2, 1px rule-strong border,
-  6px radius, mono at 0.9375rem.
+  6px radius, mono at 1rem.
 - Copy, Show for longer and Hide sit in one row under it.
 - The copy status shows as a neutral chip once it has words, so "Copied" is a
   clear label beside the buttons.
@@ -291,7 +294,7 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 
 - A list page across vaults: heading, the search form (text, vault, type,
   status), then the notes on vaults not read, then one framed table per vault
-  under an `h2` with the vault name in mono and its count.
+  under an `h2` with the vault name in the UI font and its count.
 - Rows use the same columns and status badges as each vault's own list.
 - Before a search, and when nothing matches, an empty state says what to do.
 
@@ -324,7 +327,7 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   per check, each cell a Pass, Warn or Unknown badge. A check left for the
   one-vault view is muted text, "Pick this vault", not a badge.
 - Under it, "What to look at": a plain list, one line per warning or
-  unknown, with its badge, the vault in mono, the check, one sentence on
+  unknown, with its badge, the vault in the UI font, the check, one sentence on
   why it matters and what to do, and a link to Microsoft's guide.
 - No score, no chart and no totals per vault. Unknown never reads as a pass.
 - On the vault list, the Audit logs column is plain "On", a warn badge
@@ -334,7 +337,7 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 
 - A section at the foot of an item's page, and under the form on Set a new
   value, Roll back, Disable, Rotate and Delete, so the form comes first.
-- One ledger table: Who (sign-in name or app ID, mono), Kind, Object ID,
+- One ledger table: Who (sign-in name in the UI font; technical IDs in mono), Kind, Object ID,
   Last, Reads (Uses for a key), From (IP in mono, client info muted under
   it). Latest first.
 - Nothing found is an empty state: "No reads in the last 30 days, so
@@ -421,7 +424,7 @@ Read as "make a new version". The primary button is the accent, never danger.
   item name, and a CSS star glyph: an outline when off, filled with an
   accent border and tint when pinned, so state isn't colour alone.
 - The home page and the vault list show **Pinned** and **Recently opened**
-  (last 10) above everything else, each an `h2` and a plain list of mono
+  (last 10) above everything else, each an `h2` and a plain list of resource-name
   links with the kind and vault muted after them. Only when non-empty.
 - Under them a muted line says the list is kept in this browser only and is
   cleared on sign-out, with a **Clear** text button.
