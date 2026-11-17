@@ -171,6 +171,15 @@ These need a tenant with Entra ID P2 or Governance, PIM for Azure resources, and
 | PIM: deactivate | Select **Deactivate** | "Role turned off". PIM shows it ended. Note how soon after activating PIM allows it (PIM has a minimum activation time) and the code it gives if too soon | `src/azure/pim.rs` (`deactivate`) | |
 | PIM: audit columns | With the audit sink on, activate | The `KeyringAudit_CL` row has `Role`, `RoleScope`, `RoleDuration`, `Reason` and `Ticket` | `src/audit/sink.rs` | |
 
+## Access requests
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| Request access on a tenant without PIM | With `access-requests` on, open a secret you have no role for in a tenant without Entra ID P2 | The 403 page offers Request access, not Activate. Sending it shows "Sent to the vault's owners" | `src/routes/pim.rs` (`offer_layer`), `src/routes/access_request.rs` | |
+| Owners from the vault tag | Set `keyring-owners` on the vault to a test mailbox, send a request | The test mailbox and you get one email each in one message, naming you, the role, the scope and the reason | `src/routes/access_request.rs`, `src/notify/access.rs` | |
+| Portal link | Open the "Access control" link in the email | The portal opens the vault's Access control (IAM) blade | `src/notify/access.rs` (`AccessRequestNotice`) | |
+| A linkable reason in a real mail client | Send a request whose reason holds `example.com` | The email says a reason was given and is in the audit log; nothing in it is a link except Keyring's two | `src/notify/access.rs` (`is_quotable`) | |
+
 ## Permission hints
 
 | Check | Do this | Expected | Code | Result |

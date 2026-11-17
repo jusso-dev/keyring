@@ -1,0 +1,12 @@
+{{ n.heading }}
+{% for l in n.lines %}
+{{ l }}
+{%- endfor %}
+{% for (label, value) in n.facts %}
+{{ label }}: {{ value }}
+{%- endfor %}
+{% for (url, label) in n.links %}
+{{ label }}: {{ url }}
+{%- endfor %}
+--
+Sent by Keyring (access-requests notices) to the vault's owners, with a copy to the person who asked. Keyring never puts a secret value in an email.

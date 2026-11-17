@@ -70,6 +70,8 @@ pub struct AppState {
     /// `health` in `KEYRING_NOTIFY_TYPES`. Watches audit events as they
     /// are recorded. Its timer is started by `main`.
     pub health: Option<Arc<HealthWatch>>,
+    /// One access request per person, vault and role an hour (#258).
+    pub access_requests: Arc<notify::access::RequestLimit>,
 }
 
 impl AppState {
@@ -162,6 +164,7 @@ impl AppState {
             sessions.set_audit_sink(sink.clone());
         }
         Ok(Self {
+            access_requests: Arc::new(notify::access::RequestLimit::default()),
             expiry_hook,
             health,
             notifier,

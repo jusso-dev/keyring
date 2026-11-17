@@ -1,6 +1,7 @@
 //! HTTP routes.
 
 mod access;
+pub(crate) mod access_request;
 mod age;
 pub mod assets;
 mod audit;
@@ -346,6 +347,10 @@ fn vault_routes() -> Router<AppState> {
         .route(
             "/my-access/deactivate",
             audited(Action::RoleDeactivate, pim::deactivate),
+        )
+        .route(
+            "/my-access/request",
+            get(access_request::form).merge(audited(Action::AccessRequest, access_request::send)),
         )
         // A change to a vault drops the list search keeps for it.
         .route_layer(middleware::from_fn(every_vault::forget_on_change))

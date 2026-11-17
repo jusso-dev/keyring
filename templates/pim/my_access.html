@@ -89,4 +89,11 @@
 {% endcall %}
 <p class="muted">Requests waiting for approval are decided in PIM. <a href="{{ portal }}">Open PIM in the Azure portal</a>.</p>
 {% endif %}
+{% if !requests.is_empty() %}
+<h2>Request access</h2>
+<p>Ask this vault's owners for a Key Vault role you don't have and can't turn on through PIM. Keyring emails them your request; it can't grant access itself.</p>
+<ul>
+  {% for (name, url) in requests %}<li><a href="{{ url }}">Request {{ name }}</a></li>{% endfor %}
+</ul>
+{% endif %}
 {% endblock %}
