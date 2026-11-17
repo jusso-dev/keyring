@@ -564,3 +564,255 @@ async fn my_access_without_pim() {
     assert!(html.contains("PIM isn&#39;t available here"), "{html}");
     assert!(!html.contains("private Azure detail"));
 }
+
+const SUB: &str = "/subscriptions/sub-a";
+/// A management group whose ID is longer than the subscription's.
+const MG: &str =
+    "/providers/Microsoft.Management/managementGroups/a-very-long-management-group-name";
+const ROOT_MG: &str = "/providers/Microsoft.Management/managementGroups/root";
+
+/// The scope the one schedule request was sent to.
+fn put_scope(w: &support::World) -> String {
+    let sent = puts(w);
+    assert_eq!(sent.len(), 1, "one request sent");
+    sent[0]
+        .0
+        .split("/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/")
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn activates_at_the_nearest_scope_not_the_longest_id() {
+    // Eligible at the subscription and at a management group with a longer
+    // ID: the subscription is nearer the vault, so the role is turned on
+    // there, not for everything under the management group.
+    for (offered, want) in [
+        (vec![SUB, MG], SUB),
+        (vec![MG, SUB], SUB),
+        (vec![ROOT_MG, MG, SUB, RG], RG),
+        (vec![MG, RG, VAULT, SUB], VAULT),
+        // Only a management group on offer: it is used, as ARM returned it.
+        (vec![MG], MG),
+    ] {
+        let w = eligible(pim_rules("PT8H", true, false, false)).await;
+        w.arm.state.authz.lock().unwrap().pim.eligible = offered
+            .iter()
+            .map(|s| {
+                (
+                    (*s).to_owned(),
+                    SECRETS_USER.to_owned(),
+                    SCHEDULE.to_owned(),
+                )
+            })
+            .collect();
+        let res = w.post(FORM, &form_fields(&[])).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(put_scope(&w).to_lowercase(), want.to_lowercase());
+    }
+}
+
+#[tokio::test]
+async fn only_key_vault_roles_can_be_turned_on_or_off() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        // Eligible for Owner and Reader as well, and Owner is on.
+        m.pim
+            .eligible
+            .push((RG.into(), support::OWNER_ROLE.into(), SCHEDULE.into()));
+        m.pim
+            .eligible
+            .push((RG.into(), support::READER_ROLE.into(), SCHEDULE.into()));
+        m.pim.active = vec![(
+            RG.into(),
+            support::OWNER_ROLE.into(),
+            "Activated".into(),
+            None,
+        )];
+    }
+    for role in [support::OWNER_ROLE, support::READER_ROLE] {
+        // The form says there is nothing to activate, and reads nothing.
+        let reads = pim_reads(&w);
+        let (status, html) = w
+            .page(&format!("{FORM}?role={role}&back=/v/kv-test/secrets"))
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{role}");
+        assert!(html.contains("Nothing to activate"));
+        assert_eq!(pim_reads(&w), reads, "{role}: refused before any ARM call");
+        // The post sends nothing.
+        let res = w.post(FORM, &form_fields(&[("role", role)])).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{role}");
+        // Nor does turning it off.
+        let res = w
+            .post(
+                "/v/kv-test/my-access/deactivate",
+                &[("role", role), ("scope", RG)],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{role}");
+    }
+    assert!(puts(&w).is_empty(), "no request reached ARM");
+    // The Key Vault role still works.
+    let res = w.post(FORM, &form_fields(&[])).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(puts(&w).len(), 1);
+}
+
+#[tokio::test]
+async fn a_role_that_is_not_a_guid_never_reaches_an_address() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    for role in [
+        "x&back=https://evil.example",
+        "../../secrets",
+        "4633458b-17de-408a-b874-0445c86b69e6%26admin%3D1",
+        "\"><script>",
+    ] {
+        // Step-up isn't set here, so the form is reached and refuses.
+        let res = w.post(FORM, &form_fields(&[("role", role)])).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{role}");
+        let html = body_text(res).await;
+        assert!(!html.contains("evil.example"), "{role}");
+        assert!(!html.contains("<script>"), "{role}");
+    }
+    assert!(puts(&w).is_empty());
+}
+
+#[tokio::test]
+async fn an_invisible_justification_is_refused() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    for only in ['\u{061C}', '\u{00AD}', '\u{E0041}', '\u{200B}', '\u{FE0F}'] {
+        // Enough of them to pass a length check made before cleaning.
+        let j = only.to_string().repeat(12);
+        let res = w.post(FORM, &form_fields(&[("justification", &j)])).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "U+{:04X}",
+            only as u32
+        );
+        // Three letters padded out with invisible ones is still too
+        // short: they become one space, and "ab c" is four characters.
+        let padded = format!("ab{only}{only}{only}{only}c");
+        let res = w
+            .post(FORM, &form_fields(&[("justification", &padded)]))
+            .await;
+        assert_eq!(
+            res.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "padded U+{:04X}",
+            only as u32
+        );
+    }
+    assert!(puts(&w).is_empty(), "nothing reached ARM");
+}
+
+#[tokio::test]
+async fn hostile_values_from_arm_send_nothing() {
+    // ARM is trusted, but what it returns still goes into a request
+    // address and body. Anything that isn't a plain scope or ID is dropped.
+    let good_schedule = SCHEDULE;
+    for (scope, schedule) in [
+        (
+            "/subscriptions/sub-a/resourceGroups/rg-kv-test?x=1",
+            good_schedule,
+        ),
+        (
+            "/subscriptions/sub-a/resourceGroups/rg-kv-test%2F..%2F..",
+            good_schedule,
+        ),
+        (
+            "/subscriptions/sub-a/resourceGroups/../../providers/x",
+            good_schedule,
+        ),
+        (
+            "/subscriptions/sub-a/resourceGroups/rg-kv-test#frag",
+            good_schedule,
+        ),
+        ("https://evil.example/subscriptions/sub-a", good_schedule),
+        (RG, "/subscriptions/sub-a/providers/x?api-version=1"),
+        (RG, "/subscriptions/sub-a/providers/..%2F..%2Fx"),
+        (RG, "/subscriptions/sub-a/providers/../x"),
+        (RG, "sched\r\nX-Injected: 1"),
+    ] {
+        let w = eligible(pim_rules("PT8H", true, false, false)).await;
+        w.arm.state.authz.lock().unwrap().pim.eligible =
+            vec![(scope.into(), SECRETS_USER.into(), schedule.into())];
+        let res = w.post(FORM, &form_fields(&[])).await;
+        assert!(
+            res.status().is_client_error(),
+            "{scope} {schedule}: {}",
+            res.status()
+        );
+        assert!(
+            puts(&w).is_empty(),
+            "{scope} {schedule}: a request was sent"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hostile_role_definition_ids_from_arm_send_nothing() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    for id in [
+        format!(
+            "/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{SECRETS_USER}?x=1"
+        ),
+        format!("/subscriptions/sub-a/providers/../roleDefinitions/{SECRETS_USER}"),
+        format!("https://evil.example/roleDefinitions/{SECRETS_USER}"),
+        format!("/subscriptions/sub-a%2Fx/roleDefinitions/{SECRETS_USER}"),
+    ] {
+        w.arm.state.authz.lock().unwrap().pim.eligible_role_id = Some(id.clone());
+        let res = w.post(FORM, &form_fields(&[])).await;
+        assert!(res.status().is_client_error(), "{id}: {}", res.status());
+        assert!(puts(&w).is_empty(), "{id}: a request was sent");
+    }
+}
+
+#[tokio::test]
+async fn an_acrs_challenge_with_step_up_set() {
+    // Step-up asks for c1 before the form; PIM then asks for c2. Both end
+    // up asked for at sign-in, and neither comes from the request.
+    let w = support::world_with(&[("KEYRING_STEP_UP_AUTH_CONTEXT", "c1")]).await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.pim.eligible = vec![(RG.into(), SECRETS_USER.into(), SCHEDULE.into())];
+        m.pim
+            .policies
+            .insert(SECRETS_USER.into(), pim_rules("PT8H", true, false, false));
+    }
+    // Without the step-up context the activation is stopped first: no
+    // read of eligibility and no request.
+    let res = w.post(FORM, &form_fields(&[])).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert!(body_text(res).await.contains("Confirm it&#39;s you"));
+    assert!(puts(&w).is_empty());
+
+    // With step-up met, PIM's own challenge is passed on.
+    let id = w.cookie.split('=').nth(1).unwrap();
+    let session = w.state.sessions.get(id).unwrap();
+    session.set_sign_in_facts(keyring::auth::step_up::SignInFacts {
+        acrs: vec!["c1".into()],
+        auth_time: Some(keyring::auth::step_up::unix(std::time::SystemTime::now())),
+    });
+    reply(
+        &w,
+        400,
+        serde_json::json!({"error": {"code": "RoleAssignmentRequestAcrsValidationFailed",
+            "message": "&claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c2%22%7D%7D%7D"}}),
+    );
+    let res = w.post(FORM, &form_fields(&[])).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let html = body_text(res).await;
+    assert!(
+        html.contains("PIM wants you to confirm it&#39;s you"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("Fixing INC-42"),
+        "the justification isn't carried into the sign-in link"
+    );
+    assert_eq!(puts(&w).len(), 1, "one request, refused by PIM");
+}

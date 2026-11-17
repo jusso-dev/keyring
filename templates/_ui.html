@@ -105,3 +105,19 @@
 {%- macro needs_note(needs, id) -%}
 {%- if let Some(role) = needs %} <span class="needs-role" id="{{ id }}-needs">Needs {{ role }}</span>{% endif -%}
 {%- endmacro -%}
+
+{#- Reason and ticket fields (KEYRING_REQUIRE_REASON). `id` keeps the ids
+    unique when a page has more than one form. Never filled in from a
+    previous post, except on the reason page itself. -#}
+{%- macro reason_fields(id, reason = "", ticket = "", reason_error = "", ticket_error = "") -%}
+<label for="reason{{ id }}">Reason</label>
+<p class="field-help" id="reason{{ id }}-help">Why you need to do this, in 5 to 200 characters. It's recorded in Keyring's log with your name. Don't type secrets, passwords or personal details here.</p>
+<input id="reason{{ id }}" name="reason" type="text" required minlength="5" maxlength="200" value="{{ reason }}" autocomplete="off" aria-describedby="reason{{ id }}-help{% if !reason_error.is_empty() %} reason{{ id }}-error{% endif %}"{% if !reason_error.is_empty() %} aria-invalid="true"{% endif %}>
+{%- if !reason_error.is_empty() %}<p class="field-error" id="reason{{ id }}-error">{{ reason_error }}</p>{% endif %}
+{%- if !shell.ticket_pattern().is_empty() %}
+<label for="ticket{{ id }}">Ticket</label>
+<p class="field-help" id="ticket{{ id }}-help">The change or incident ticket this is for. It must match <span class="mono">{{ shell.ticket_pattern() }}</span>.</p>
+<input id="ticket{{ id }}" name="ticket" type="text" required maxlength="64" value="{{ ticket }}"{% call ident() %}{% endcall %} aria-describedby="ticket{{ id }}-help{% if !ticket_error.is_empty() %} ticket{{ id }}-error{% endif %}"{% if !ticket_error.is_empty() %} aria-invalid="true"{% endif %}>
+{%- if !ticket_error.is_empty() %}<p class="field-error" id="ticket{{ id }}-error">{{ ticket_error }}</p>{% endif %}
+{%- endif %}
+{%- endmacro -%}

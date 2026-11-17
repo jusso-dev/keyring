@@ -50,6 +50,10 @@ pub struct Config {
     /// `KEYRING_STEP_UP_AUTH_CONTEXT` and `KEYRING_STEP_UP_MAX_AGE`: what a
     /// sensitive action needs beyond a live session. Off by default.
     pub step_up: crate::auth::step_up::StepUpPolicy,
+    /// `KEYRING_REQUIRE_REASON` and `KEYRING_REASON_TICKET_PATTERN`: a
+    /// reason, and maybe a ticket, before a value is shown or anything is
+    /// changed. Off by default.
+    pub reason: crate::reason::ReasonPolicy,
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
@@ -362,6 +366,7 @@ impl Config {
         };
 
         let step_up = step_up_policy(&get)?;
+        let reason = reason_policy(&get)?;
 
         let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
             None => DEFAULT_STALE_AFTER_DAYS,
@@ -378,6 +383,7 @@ impl Config {
         Ok(Self {
             stale_after_days,
             step_up,
+            reason,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -695,6 +701,37 @@ fn checked_origin(name: &'static str, raw: &str) -> Result<String, ConfigError> 
         ));
     }
     Ok(url.origin().ascii_serialization())
+}
+
+/// `KEYRING_REQUIRE_REASON` and `KEYRING_REASON_TICKET_PATTERN`, checked
+/// at start so a typo stops Keyring instead of turning the check off. The
+/// pattern is compiled here, once.
+fn reason_policy(
+    get: &impl Fn(&str) -> Option<String>,
+) -> Result<crate::reason::ReasonPolicy, ConfigError> {
+    use crate::reason::{ReasonPolicy, RequireReason, TicketPattern};
+    let require = match get("KEYRING_REQUIRE_REASON") {
+        None => RequireReason::Off,
+        Some(v) => RequireReason::parse(&v).ok_or_else(|| ConfigError::Invalid {
+            name: "KEYRING_REQUIRE_REASON",
+            reason: "use off, reveal or all".into(),
+        })?,
+    };
+    let ticket = get("KEYRING_REASON_TICKET_PATTERN")
+        .map(|v| {
+            if require == RequireReason::Off {
+                return Err(ConfigError::Invalid {
+                    name: "KEYRING_REASON_TICKET_PATTERN",
+                    reason: "only used when KEYRING_REQUIRE_REASON is reveal or all".into(),
+                });
+            }
+            TicketPattern::new(&v).map_err(|reason| ConfigError::Invalid {
+                name: "KEYRING_REASON_TICKET_PATTERN",
+                reason,
+            })
+        })
+        .transpose()?;
+    Ok(ReasonPolicy { require, ticket })
 }
 
 /// `KEYRING_STEP_UP_AUTH_CONTEXT` and `KEYRING_STEP_UP_MAX_AGE`, checked
@@ -1394,6 +1431,60 @@ pub(crate) mod tests {
         assert!(load(&env).unwrap().audit_required);
         env.insert("KEYRING_AUDIT_REQUIRED", "sometimes".into());
         assert_eq!(invalid(&env), "KEYRING_AUDIT_REQUIRED");
+    }
+
+    #[test]
+    fn reason_is_off_by_default_and_checked_when_set() {
+        use crate::reason::RequireReason;
+        let mut env = sample_env();
+        let config = load(&env).unwrap();
+        assert_eq!(config.reason.require, RequireReason::Off);
+        assert!(config.reason.ticket.is_none());
+        for (raw, want) in [
+            ("off", RequireReason::Off),
+            ("Reveal", RequireReason::Reveal),
+            ("ALL", RequireReason::All),
+        ] {
+            env.insert("KEYRING_REQUIRE_REASON", raw.into());
+            assert_eq!(load(&env).unwrap().reason.require, want);
+        }
+        for bad in ["on", "reveals", "true", "1"] {
+            env.insert("KEYRING_REQUIRE_REASON", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_REQUIRE_REASON",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+        env.insert("KEYRING_REQUIRE_REASON", "reveal".into());
+        env.insert("KEYRING_REASON_TICKET_PATTERN", "(INC|CHG)[0-9]{7}".into());
+        let config = load(&env).unwrap();
+        assert_eq!(
+            config.reason.ticket.as_ref().map(|t| t.source()),
+            Some("(INC|CHG)[0-9]{7}")
+        );
+        for bad in ["(INC", "a)|(b", "(\\w{100}){100}"] {
+            env.insert("KEYRING_REASON_TICKET_PATTERN", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_REASON_TICKET_PATTERN",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+        // A pattern with the reason off is a mistake, not ignored.
+        env.insert("KEYRING_REASON_TICKET_PATTERN", "CHG[0-9]+".into());
+        env.insert("KEYRING_REQUIRE_REASON", "off".into());
+        assert!(load(&env).is_err());
     }
 
     #[test]

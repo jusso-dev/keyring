@@ -367,7 +367,15 @@ async fn sink_world(
     identity: &MockIdentity,
     required: bool,
 ) -> support::World {
-    let mut extra = vec![
+    let mut extra = sink_settings(ingest, identity);
+    if required {
+        extra.push(("KEYRING_AUDIT_REQUIRED", "true".to_owned()));
+    }
+    sink_world_with(extra).await
+}
+
+fn sink_settings(ingest: &MockIngestion, identity: &MockIdentity) -> Vec<(&'static str, String)> {
+    vec![
         (
             "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
             IDENTITY_CLIENT_ID.to_owned(),
@@ -380,10 +388,10 @@ async fn sink_world(
         ),
         ("KEYRING_AUDIT_DCR_ID", DCR_ID.to_owned()),
         ("KEYRING_TEST_AUDIT_INGESTION_URL", ingest.url()),
-    ];
-    if required {
-        extra.push(("KEYRING_AUDIT_REQUIRED", "true".to_owned()));
-    }
+    ]
+}
+
+async fn sink_world_with(extra: Vec<(&'static str, String)>) -> support::World {
     support::world_configured(extra, |c| {
         c.audit_sink.as_mut().unwrap().tuning = quick();
     })
@@ -659,4 +667,64 @@ async fn an_import_sends_one_row_for_each_secret_it_writes() {
         !format!("{rows:?}").contains("v1"),
         "a value in the audit rows"
     );
+}
+
+#[tokio::test]
+async fn an_import_with_a_reason_puts_it_on_each_secrets_row() {
+    let ingest = ingestion::start().await;
+    let identity = support::start_identity().await;
+    let mut extra = sink_settings(&ingest, &identity);
+    extra.push(("KEYRING_REQUIRE_REASON", "all".to_owned()));
+    let w = sink_world_with(extra).await;
+    let res = w
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File("file", ".env", b"ONE=v1\nTWO=v2\n")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = support::body_text(res).await;
+    // The preview's own form asks for the reason.
+    assert!(html.contains("name=\"reason\""), "{html}");
+    let id = support::hidden_value(&html, "import_id").expect("import id on the preview");
+
+    // Without one, nothing is written.
+    let res = w
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let writes = |w: &support::World| {
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("PUT"))
+            .count()
+    };
+    assert_eq!(writes(&w), 0);
+
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/import/confirm",
+            &[("import_id", &id), ("reason", "Moving the app's settings")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(writes(&w), 2);
+
+    let sink = w.state.audit_sink.clone().unwrap();
+    sink.shutdown().await;
+    let rows = ingest.state.rows();
+    // Audit rows hold names and the typed reason, never a value.
+    let item_rows: Vec<&Value> = rows
+        .iter()
+        .filter(|r| {
+            r["Action"] == "secret.import" && r["ItemName"].is_string() && r["Outcome"] == "success"
+        })
+        .collect();
+    assert_eq!(item_rows.len(), 2);
+    for r in item_rows {
+        assert_eq!(r["Reason"], "Moving the app's settings");
+    }
 }

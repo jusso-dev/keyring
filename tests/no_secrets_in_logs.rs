@@ -63,6 +63,25 @@ async fn values_never_reach_the_logs() {
     // An error path too.
     *w.kv.state.fail.lock().unwrap() = Some((500, "InternalError"));
     let _ = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
+    *w.kv.state.fail.lock().unwrap() = None;
+
+    // With a reason asked for: the reason is logged, the value isn't, and
+    // a value posted to the reason page isn't either.
+    let wr = support::world_with(&[("KEYRING_REQUIRE_REASON", "all")]).await;
+    wr.kv.state.put("db-password", VALUE);
+    let res = wr
+        .post(
+            "/v/kv-test/secrets/db-password/reveal",
+            &[("reason", "Checking the value")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let res = wr
+        .post("/v/kv-test/secrets/db-password/value", &[("value", VALUE)])
+        .await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert!(!support::body_text(res).await.contains("Sup3r-S3cret"));
 
     // A certificate upload with a password, through to import.
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");

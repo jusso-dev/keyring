@@ -52,6 +52,7 @@
     <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
     {% include "_field_error.html" %}
   </details>
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions"><button type="submit">Create key</button><a href="{{ shell.vault_prefix() }}/keys">Cancel</a></div>
 </form>
 {% endblock %}

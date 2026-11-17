@@ -670,6 +670,9 @@ pub(crate) struct PimMock {
     pub policies: std::collections::HashMap<String, serde_json::Value>,
     /// Answer this status to the eligibility list.
     pub eligible_status: Option<u16>,
+    /// Return this as every eligibility's `roleDefinitionId`, in place of
+    /// a well-formed one.
+    pub eligible_role_id: Option<String>,
     /// Answer this status to the policy list.
     pub policy_status: Option<u16>,
     /// Wait this long before answering the eligibility list.
@@ -774,7 +777,7 @@ async fn pim_answer(
             return Some(err(status, "InvalidResourceType"));
         }
         let value: Vec<_> = m.pim.eligible.iter().map(|(scope, g, sched)| json!({"properties": {
-            "scope": scope, "roleDefinitionId": role_id(g), "principalId": USER_OID, "principalType": "User",
+            "scope": scope, "roleDefinitionId": m.pim.eligible_role_id.clone().unwrap_or_else(|| role_id(g)), "principalId": USER_OID, "principalType": "User",
             "status": "Provisioned", "roleEligibilityScheduleId": sched, "memberType": "Direct",
             "endDateTime": "2027-09-10T00:31:41.477Z"}})).collect();
         return Some(json_response(StatusCode::OK, json!({"value": value})));

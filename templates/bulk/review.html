@@ -37,7 +37,7 @@
 {% if changing.is_empty() %}
 <p class="notice notice-error">None of these {{ kind.plural() }} would change. Go back and choose another change or other {{ kind.plural() }}.</p>
 {% else %}
-<form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/-/bulk/apply">
+<form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/-/bulk/apply"{% if shell.asks_reason_to_change() %} class="stacked" novalidate{% endif %}>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <input type="hidden" name="op" value="{{ op }}">
   <input type="hidden" name="tag_name" value="{{ tag_name }}">
@@ -45,6 +45,7 @@
   <input type="hidden" name="expires" value="{{ expires }}">
   {% for n in changing %}<input type="hidden" name="item" value="{{ n }}">
   {% endfor %}
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   {% if disable %}
   <label for="confirm_count">Type <strong>{{ changing.len() }}</strong>, the number of {{ kind.plural() }} to disable, to confirm</label>
   <input id="confirm_count" name="confirm_count" type="text" inputmode="numeric" required size="6"{% call ui::ident() %}{% endcall %}>

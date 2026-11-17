@@ -680,6 +680,55 @@ async fn audited_routes_write_exactly_one_event() {
         assert_eq!(ev["outcome"], "success");
         assert_eq!(ev["role_scope"], rg);
         assert!(ev.get("role_duration").is_none() && ev.get("reason").is_none());
+        // A deactivation ARM refuses answers with a redirect and a
+        // message. It must not be recorded as a success.
+        for (http, code, outcome) in [
+            (403, "AuthorizationFailed", "denied"),
+            (401, "InvalidAuthenticationToken", "denied"),
+            (400, "ActiveDurationTooShort", "failed"),
+            (409, "RoleAssignmentRequestExists", "failed"),
+            (500, "InternalServerError", "failed"),
+        ] {
+            w.arm.state.authz.lock().unwrap().pim.reply = Some((
+                http,
+                serde_json::json!({"error": {"code": code, "message": "private detail"}}),
+            ));
+            let _ = post(
+                &w,
+                "/v/kv-test/my-access/deactivate",
+                &w.csrf,
+                &[("role", support::SECRETS_USER), ("scope", rg)],
+                &[SAME_SITE],
+            )
+            .await;
+            let ev = capture.one_event("refused deactivate");
+            assert_eq!(ev["action"], "role.deactivate", "{http}");
+            assert_eq!(ev["outcome"], outcome, "{http} {code}");
+            assert_eq!(ev["reason_code"], code, "{http}");
+            assert_eq!(ev["role_scope"], rg);
+        }
+        // An activation that fails outright is recorded as failed too.
+        w.arm.state.authz.lock().unwrap().pim.reply = Some((
+            500,
+            serde_json::json!({"error": {"code": "InternalServerError", "message": "private detail"}}),
+        ));
+        let _ = post(
+            &w,
+            "/v/kv-test/my-access/activate",
+            &w.csrf,
+            &[
+                ("role", support::SECRETS_USER),
+                ("minutes", "60"),
+                ("justification", "Fix prod now"),
+                ("ticket_number", "1"),
+            ],
+            &[SAME_SITE],
+        )
+        .await;
+        let ev = capture.one_event("failed activate");
+        assert_eq!(ev["action"], "role.activate");
+        assert_eq!(ev["outcome"], "failed");
+        assert_eq!(ev["reason_code"], "InternalServerError");
         w.arm.state.authz.lock().unwrap().pim = Default::default();
     }
 

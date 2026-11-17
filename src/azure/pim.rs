@@ -154,6 +154,12 @@ pub async fn my_eligibilities(
         .into_iter()
         .filter_map(|w| {
             let p = w.properties;
+            // What ARM returned goes into a request address and body, so
+            // a row with anything but a plain scope and plain IDs is
+            // dropped here, before it can be offered or used.
+            if !is_safe_scope(&p.scope) || !is_safe_id(&p.role_definition_id) {
+                return None;
+            }
             let role = role_guid(&p.role_definition_id)?.to_ascii_lowercase();
             let schedule_id = p.role_eligibility_schedule_id.filter(|s| is_safe_id(s))?;
             Some(Eligibility {
@@ -186,6 +192,9 @@ pub async fn my_active(
         .into_iter()
         .filter_map(|w| {
             let p = w.properties;
+            if !is_safe_scope(&p.scope) || !is_safe_id(&p.role_definition_id) {
+                return None;
+            }
             let role = role_guid(&p.role_definition_id)?.to_ascii_lowercase();
             Some(Active {
                 scope: p.scope,
@@ -770,9 +779,11 @@ fn is_safe_id(s: &str) -> bool {
 }
 
 /// One line of text from a person or from Azure, made safe to show, send
-/// and log: control and invisible formatting characters out, runs of
+/// and log: control, format and other invisible characters out (the same
+/// check as the reveal reason, [`crate::reason::is_unsafe`]), runs of
 /// white space made one space, trimmed. `None` if empty after that or
-/// longer than `max` characters.
+/// longer than `max` characters. Length is counted after cleaning, so
+/// invisible characters can't pad a line up to a minimum.
 pub fn clean_line(raw: &str, max: usize) -> Option<String> {
     if raw.len() > max * 16 {
         return None;
@@ -780,7 +791,7 @@ pub fn clean_line(raw: &str, max: usize) -> Option<String> {
     let mut out = String::with_capacity(raw.len());
     let mut gap = false;
     for c in raw.chars() {
-        if c.is_whitespace() || is_unsafe(c) {
+        if c.is_whitespace() || crate::reason::is_unsafe(c) {
             gap = true;
             continue;
         }
@@ -792,21 +803,6 @@ pub fn clean_line(raw: &str, max: usize) -> Option<String> {
     }
     let n = out.chars().count();
     (1..=max).contains(&n).then_some(out)
-}
-
-/// Control characters, and the invisible ones that can hide or reorder
-/// text: zero-width, bidirectional controls and the byte order mark. The
-/// same set as the reveal reason (#205).
-pub fn is_unsafe(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{200B}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2060}'..='\u{206F}'
-                | '\u{FEFF}'
-                | '\u{FFF9}'..='\u{FFFB}'
-        )
 }
 
 #[cfg(test)]

@@ -152,16 +152,63 @@ async fn eligible_here(
     pick(all, &vault_id, role)
 }
 
-/// The eligibility for `role` that reaches `vault_id`, the one nearest the
-/// vault first.
+/// The eligibility for `role` that reaches `vault_id`: the one nearest
+/// the vault, so the role is turned on for as little as possible.
+///
+/// Nearness is by kind of scope, never by the length of its ID. A
+/// management group's ID says nothing about what it holds, and Keyring
+/// can't cheaply check that one contains the vault's subscription, so a
+/// management group (and the tenant root, and anything Keyring can't name)
+/// is used only when nothing nearer is on offer. ARM returned it for a
+/// query at the vault, and ARM refuses the request if it doesn't apply.
 fn pick(all: Vec<Eligibility>, vault_id: &str, role: &str) -> Option<Eligibility> {
     all.into_iter()
         .filter(|e| e.role.eq_ignore_ascii_case(role) && applies_at(&e.scope, vault_id))
-        .max_by_key(|e| e.scope.len())
+        .min_by_key(|e| nearness(Origin::of(&e.scope, vault_id)))
 }
 
+/// Smaller is nearer the vault. Item-scoped eligibility comes after the
+/// vault's own: turning a role on for one item wouldn't lift a refusal on
+/// another, and the form doesn't know which item the person was on.
+fn nearness(origin: Origin) -> u8 {
+    match origin {
+        Origin::Vault => 0,
+        Origin::ResourceGroup => 1,
+        Origin::Subscription => 2,
+        Origin::Item => 3,
+        Origin::ManagementGroup => 4,
+        Origin::Root => 5,
+        Origin::Above => 6,
+    }
+}
+
+/// True for a role Keyring will turn on or off: only the built-in Key
+/// Vault roles its own 403 pages name. Owner, Contributor and every other
+/// role are left to PIM in the portal, whatever the address or form says.
+pub(crate) fn is_offered_role(role: &str) -> bool {
+    OFFERED_NEEDS
+        .iter()
+        .filter_map(|n| role_for(*n))
+        .any(|g| g.eq_ignore_ascii_case(role))
+}
+
+/// Every need a 403 page can name a role for.
+const OFFERED_NEEDS: [Need; 7] = [
+    Need::ReadSecrets,
+    Need::ManageSecrets,
+    Need::ReadCertificates,
+    Need::ReadKeys,
+    Need::ExportCertificate,
+    Need::ManageCertificates,
+    Need::ManageKeys,
+];
+
 /// The activation form's address. `back` must already be a local path.
+/// `role` goes in only when it is one of the roles Keyring offers (so a
+/// GUID and nothing else); anything else gives the form with no role,
+/// which says there is nothing to activate.
 pub(crate) fn activate_url(vault: &str, role: &str, back: &str) -> String {
+    let role = if is_offered_role(role) { role } else { "" };
     format!(
         "{}?role={role}&back={}",
         vault_path(vault, "/my-access/activate"),
@@ -333,7 +380,8 @@ async fn ready(
         )
         .into()
     };
-    if !is_guid(role) {
+    // Only the Key Vault roles Keyring names, checked before any call.
+    if !is_guid(role) || !is_offered_role(role) {
         crate::audit::refuse(Refusal::InvalidRequest);
         return Err(not_eligible());
     }
@@ -695,6 +743,16 @@ pub(super) async fn activate(
             })
         }
         Ok(Err(err)) => {
+            // Every refusal and failure is recorded as what ARM said, so
+            // none of the pages below can read as a success. "Already on"
+            // is the one answer that isn't a failure.
+            let already_on = matches!(
+                &err,
+                AzureError::Status { code, .. } if code.as_deref() == Some("RoleAssignmentExists")
+            );
+            if !already_on {
+                end_with_azure(&err);
+            }
             if let Some(claims) = pim::claims_challenge(&err) {
                 return Err(confirm_page(&session.0, shell, &claims, &here, &back));
             }
@@ -746,6 +804,27 @@ pub(super) async fn activate(
             }
         }
     }
+}
+
+/// Record how a refused or failed ARM call ended on the request's audit
+/// event: `denied` for a 401 or 403, `failed` for anything else, with
+/// ARM's error code (never its message). Without this a refusal answered
+/// with a page or redirect that isn't an error status would be recorded
+/// as a success.
+fn end_with_azure(err: &AzureError) {
+    let (outcome, code) = match err {
+        AzureError::Status { status, code, .. } => (
+            if matches!(status, 401 | 403) {
+                AuditOutcome::Denied
+            } else {
+                AuditOutcome::Failed
+            },
+            code.clone().unwrap_or_else(|| format!("http_{status}")),
+        ),
+        AzureError::Token(_) => (AuditOutcome::Denied, "token".to_owned()),
+        _ => (AuditOutcome::Failed, "network".to_owned()),
+    };
+    crate::audit::end(outcome, &crate::audit::safe_code(&code));
 }
 
 /// PIM wants a stronger sign-in. Keep the checked challenge in the
@@ -954,7 +1033,7 @@ async fn read_mine(
             scope: a.scope.clone(),
             origin: Origin::of(&a.scope, &vault_id).label(),
             ends: ends_words(a.ends, now),
-            can_deactivate: a.activated,
+            can_deactivate: a.activated && is_offered_role(&a.role),
             activate_url: String::new(),
             state: "",
         });
@@ -980,6 +1059,8 @@ async fn read_mine(
                 "On now"
             } else if waiting {
                 "Waiting for approval"
+            } else if !is_offered_role(&e.role) {
+                "Activate in PIM"
             } else {
                 ""
             },
@@ -1014,8 +1095,11 @@ pub(super) async fn deactivate(
     let role = form.role.trim().to_ascii_lowercase();
     let scope = form.scope.trim();
     let principal = session.0.user.subject.oid.clone().filter(|o| is_guid(o));
-    let (Some(principal), true, true) = (principal, is_guid(&role), pim::is_safe_scope(scope))
-    else {
+    let (Some(principal), true, true) = (
+        principal,
+        is_guid(&role) && is_offered_role(&role),
+        pim::is_safe_scope(scope),
+    ) else {
         crate::audit::refuse(Refusal::InvalidRequest);
         return Err(PageError::new(shell, Problem::not_found()).into());
     };
@@ -1053,7 +1137,10 @@ pub(super) async fn deactivate(
             )
             .into());
         }
-        Ok(Err(e)) => return Err(vault_ctx::azure_problem(shell, &e, Need::ListVaults, &mine)),
+        Ok(Err(e)) => {
+            end_with_azure(&e);
+            return Err(vault_ctx::azure_problem(shell, &e, Need::ListVaults, &mine));
+        }
         Err(_) => {
             crate::audit::end(AuditOutcome::Failed, "timeout");
             return Err(PageError::new(
@@ -1104,14 +1191,20 @@ pub(super) async fn deactivate(
             );
             Ok(res)
         }
-        Ok(Err(AzureError::Status {
-            status: 400..=499,
-            code,
-            ..
-        })) => {
+        Ok(Err(
+            ref err @ AzureError::Status {
+                status: 400..=499,
+                ref code,
+                ..
+            },
+        )) => {
+            // The answer is a redirect, which the audit event would read as
+            // success: say how ARM really answered.
+            end_with_azure(err);
             let mut res = Redirect::to(&mine).into_response();
             let code = code
-                .map(|c| crate::audit::safe_code(&c))
+                .as_deref()
+                .map(crate::audit::safe_code)
                 .unwrap_or_else(|| "no code".into());
             flash::set(
                 &state,
@@ -1122,7 +1215,10 @@ pub(super) async fn deactivate(
             );
             Ok(res)
         }
-        Ok(Err(e)) => Err(vault_ctx::azure_problem(shell, &e, Need::ListVaults, &mine)),
+        Ok(Err(e)) => {
+            end_with_azure(&e);
+            Err(vault_ctx::azure_problem(shell, &e, Need::ListVaults, &mine))
+        }
         Err(_) => {
             crate::audit::end(AuditOutcome::Failed, "timeout");
             Err(PageError::new(shell, Problem::new(StatusCode::GATEWAY_TIMEOUT, "Azure took too long", "PIM didn't answer in time. The role may still have been turned off: check My access.")).into())
@@ -1161,6 +1257,37 @@ mod tests {
             "/subscriptions/s1/resourceGroups/rg"
         );
         assert!(pick(all, VAULT, "21090545-7ca7-4776-b22c-e363652d74d2").is_none());
+        // A management group with a long ID is never preferred to a
+        // subscription, a resource group or the vault.
+        let mg = "/providers/Microsoft.Management/managementGroups/a-very-long-management-group-id";
+        let near = |scopes: &[&str]| {
+            pick(scopes.iter().map(|s| el(s, r)).collect(), VAULT, r)
+                .unwrap()
+                .scope
+        };
+        assert_eq!(near(&[mg, "/subscriptions/s1"]), "/subscriptions/s1");
+        assert_eq!(near(&["/subscriptions/s1", mg, VAULT]), VAULT);
+        assert_eq!(near(&[mg]), mg);
+    }
+
+    #[test]
+    fn only_key_vault_roles_are_offered() {
+        for n in OFFERED_NEEDS {
+            assert!(is_offered_role(role_for(n).unwrap()), "{n:?}");
+        }
+        assert!(is_offered_role("4633458B-17DE-408A-B874-0445C86B69E6"));
+        for other in [
+            "8e3af657-a8ff-443c-a75c-2fe8c4bcb635", // Owner
+            "b24988ac-6180-42a0-ab88-20f7382dd24c", // Contributor
+            "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9", // User Access Administrator
+            "acdd72a7-3385-48ef-bd42-f606fba81ae7", // Reader
+            "",
+            "not-a-guid",
+        ] {
+            assert!(!is_offered_role(other), "{other}");
+        }
+        // Never a role in an address unless it is one of them.
+        assert!(activate_url("kv", "x&admin=1", "/v/kv/secrets").contains("?role=&back="));
     }
 
     #[test]

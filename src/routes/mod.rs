@@ -28,6 +28,7 @@ mod moved;
 mod origin;
 pub(crate) mod paging;
 pub(crate) mod pim;
+pub(crate) mod reason;
 mod rejection;
 pub mod search;
 mod secrets;
@@ -65,6 +66,9 @@ pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 /// whatever the outcome. Every POST that can change something in Key
 /// Vault, or reads a value, goes through here. `tests/audit_events.rs`
 /// fails on a POST route that is neither this nor on its exempt list.
+///
+/// It also runs the reason gate (`KEYRING_REQUIRE_REASON`), so every
+/// audited action asks for a reason the same way.
 fn audited<H, T>(action: Action, handler: H) -> MethodRouter<AppState>
 where
     H: Handler<T, AppState>,
@@ -73,7 +77,7 @@ where
     post(handler).layer(middleware::from_fn(
         move |req: Request, next: Next| async move {
             crate::audit::set_action(action);
-            next.run(req).await
+            reason::gate(action, req, next).await
         },
     ))
 }
@@ -363,6 +367,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         ))
         // Inside the session check, so the error page has the signed-in shell.
         .route_layer(middleware::from_fn(rejection::layer))
+        // For the reason gate and the reason fields on forms.
+        .route_layer(axum::Extension(state.config.clone()))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,
