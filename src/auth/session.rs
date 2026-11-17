@@ -423,6 +423,11 @@ impl Session {
             .map(|c| c.perms.clone())
     }
 
+    /// Drop every permission read, after a role was turned on or off.
+    pub(crate) fn forget_permissions(&self) {
+        lock(&self.permissions).clear();
+    }
+
     pub(crate) fn keep_permissions_at(
         &self,
         scope: &str,

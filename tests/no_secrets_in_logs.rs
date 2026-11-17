@@ -209,6 +209,39 @@ async fn values_never_reach_the_logs() {
     assert!(ingest.state.violations().is_empty());
     assert!(sink.health().dropped_rejected >= 1, "{:?}", sink.health());
 
+    // PIM: an activation refused with a claims challenge, and one refused
+    // with Azure's own message. Neither the challenge, Azure's message nor
+    // a token reaches the log. The justification goes only to the audit
+    // event's `reason`, never to any other line.
+    {
+        *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+        let rg = "/subscriptions/sub-a/resourceGroups/rg-kv-test";
+        {
+            let mut m = w.arm.state.authz.lock().unwrap();
+            m.pim.eligible = vec![(rg.into(), support::SECRETS_USER.into(), "/s/sched".into())];
+            m.pim.reply = Some((
+                400,
+                serde_json::json!({"error": {"code": "RoleAssignmentRequestAcrsValidationFailed",
+                "message": "PIMLEAK &claims=%7B%22access_token%22%3A%7B%22acrs%22%3A%7B%22essential%22%3Atrue%2C%22value%22%3A%22c7%22%7D%7D%7D"}}),
+            ));
+        }
+        let fields = [
+            ("role", support::SECRETS_USER),
+            ("minutes", "60"),
+            ("justification", "JUSTLEAK for the audit only"),
+        ];
+        let res = w.post("/v/kv-test/my-access/activate", &fields).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let _ = support::body_text(res).await;
+        w.arm.state.authz.lock().unwrap().pim.reply = Some((
+            403,
+            serde_json::json!({"error": {"code": "AuthorizationFailed", "message": "PIMLEAK private detail"}}),
+        ));
+        let res = w.post("/v/kv-test/my-access/activate", &fields).await;
+        let _ = support::body_text(res).await;
+        w.arm.state.authz.lock().unwrap().pim = Default::default();
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -265,6 +298,21 @@ async fn values_never_reach_the_logs() {
     assert!(!logs.contains("user-api-token"), "token leaked into logs");
     assert!(!logs.contains("obo:"), "token leaked into logs");
     assert!(
+        !logs.contains("PIMLEAK"),
+        "Azure's PIM message leaked:\n{logs}"
+    );
+    assert!(
+        !logs.contains("%22acrs%22"),
+        "claims challenge leaked:\n{logs}"
+    );
+    // The justification is on the audit events only.
+    for line in logs.lines().filter(|l| l.contains("JUSTLEAK")) {
+        assert!(
+            line.contains("kind=audit") && line.contains("action=role.activate"),
+            "{line}"
+        );
+    }
+    assert!(
         !logs.contains(support::MI_MONITOR_TOKEN),
         "identity token leaked"
     );
@@ -300,6 +348,8 @@ async fn values_never_reach_the_logs() {
         support::IDENTITY_HEADER,
         "WriterIdentityClientId",
         "private detail",
+        "PIMLEAK",
+        "%22acrs%22",
         w.cookie.as_str(),
         w.csrf.as_str(),
     ] {

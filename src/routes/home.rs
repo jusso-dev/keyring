@@ -11,7 +11,7 @@ use crate::routes::shell::{Section, Shell};
 struct HomePage {
     shell: Shell,
     allow_purge: bool,
-    sections: [Section; 9],
+    sections: [Section; 10],
 }
 
 pub(super) async fn index(State(state): State<AppState>, shell: Shell) -> Html<String> {

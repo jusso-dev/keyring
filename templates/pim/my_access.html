@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}My access to {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>My access <span class="muted">to {{ vault }}</span></h1>
+<p>Your own Key Vault roles that reach this vault: the ones on now, and the ones you can turn on through Privileged Identity Management (PIM). Read from Azure each time; Keyring keeps nothing.</p>
+{% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
+<h2>On now</h2>
+{% if active.is_empty() %}
+<div class="empty-state"><p>No Key Vault role that reaches this vault is on for you{% if !notes.is_empty() %}, as far as Keyring could read{% endif %}.</p></div>
+{% else %}
+{% call ui::table_wrap("active-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="active-caption">Key Vault roles on now</caption>
+  <thead><tr><th scope="col">Role</th><th scope="col">Comes from</th><th scope="col">Time left</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+    {% for r in active %}
+    <tr>
+      <th scope="row">{{ r.role_name }}{% if r.can_deactivate %} <span class="badge badge-ok">Activated</span>{% endif %}</th>
+      <td>{{ r.origin }}</td>
+      <td>{{ r.ends }}</td>
+      <td>{% if r.can_deactivate %}<form method="post" action="{{ shell.vault_prefix() }}/my-access/deactivate">
+        <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+        <input type="hidden" name="role" value="{{ r.role }}">
+        <input type="hidden" name="scope" value="{{ r.scope }}">
+        <button type="submit" class="button-secondary">Deactivate</button>
+      </form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+<h2>Eligible</h2>
+{% if eligible.is_empty() %}
+<div class="empty-state"><p>You have no eligible PIM assignment of a Key Vault role that reaches this vault{% if !notes.is_empty() %}, as far as Keyring could read{% endif %}.</p></div>
+{% else %}
+{% call ui::table_wrap("eligible-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="eligible-caption">Key Vault roles you can turn on</caption>
+  <thead><tr><th scope="col">Role</th><th scope="col">Comes from</th><th scope="col">Eligible until</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+    {% for r in eligible %}
+    <tr>
+      <th scope="row">{{ r.role_name }}</th>
+      <td>{{ r.origin }}</td>
+      <td>{{ r.ends }}</td>
+      <td>{% if r.state.is_empty() %}<a class="button" href="{{ r.activate_url }}">Activate</a>{% else %}<span class="badge badge-muted">{{ r.state }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% if waiting > 0 %}<p class="muted">Requests waiting for approval are decided in PIM. <a href="{{ portal }}">Open PIM in the Azure portal</a>.</p>{% endif %}
+{% endblock %}

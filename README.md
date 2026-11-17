@@ -269,6 +269,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | Vault health: settings checks | Reader | Vault or resource group |
 | Vault health: secret expiry, certificate renewal and key rotation counts | Key Vault Reader | Vault |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
+| Turn on an eligible Key Vault role (PIM), see My access, turn it off | An eligible PIM assignment of that role (Entra ID P2 or Governance). Reader on the vault to see role names | Vault, or above it |
 | Audit reports across vaults | Reader and Log Analytics Reader, as above | Each vault, and each workspace they log to. Vaults and workspaces you can't read are listed, not hidden |
 
 These roles apply to the whole vault unless you assign them on a single item. **Key Vault Certificate User and Key Vault Secrets User can both read secret values.** Certificate User needs to, because a certificate's private key is kept in its backing secret, but at vault scope it can read every secret in the vault. Where that matters, assign it on the one certificate (its scope is `<vault ID>/certificates/<name>`, or `<vault ID>/secrets/<name>` for the backing secret) instead of the vault.
@@ -276,6 +277,8 @@ These roles apply to the whole vault unless you assign them on a single item. **
 For access-policy vaults, the matching permissions are: secrets Get and List for reading, plus Set, Delete, Recover and Purge to change them; certificates Get and List, plus Create, Import, Update, Delete, Recover and Purge (and List Issuers); keys Get and List, plus Create, Rotate, Update, Delete, Recover and Purge (and Get rotation policy, Set rotation policy).
 
 Role changes can take a few minutes to apply.
+
+**PIM.** If your organisation uses Privileged Identity Management for Azure resources and you're eligible for the role a "You don't have access" page names, the page offers **Activate** beside "What to ask for". You pick how long (up to what PIM allows), give a reason and a ticket if PIM asks for them, and Keyring sends the request to PIM as you. PIM decides: it may turn the role on, wait for an approver, or ask you to sign in again with a stronger method. **My access** under each vault lists your Key Vault roles there, eligible and on, with time left and **Deactivate**. Keyring keeps nothing: it reads all of this from Azure each time, and needs no new permission. Without PIM, or without an eligible role, the 403 page is as it was.
 
 Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
 

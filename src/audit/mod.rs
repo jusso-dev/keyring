@@ -77,6 +77,10 @@ pub enum Action {
     KeyDelete,
     KeyRecover,
     KeyPurge,
+    /// A PIM eligible role turned on (`SelfActivate`) from Keyring.
+    RoleActivate,
+    /// A PIM activated role turned off (`SelfDeactivate`) from Keyring.
+    RoleDeactivate,
     SessionSignIn,
     SessionSignInFailed,
     SessionSignOut,
@@ -88,7 +92,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 33] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -115,6 +119,8 @@ impl Action {
         Self::KeyDelete,
         Self::KeyRecover,
         Self::KeyPurge,
+        Self::RoleActivate,
+        Self::RoleDeactivate,
         Self::SessionSignIn,
         Self::SessionSignInFailed,
         Self::SessionSignOut,
@@ -150,6 +156,8 @@ impl Action {
             Self::KeyDelete => "key.delete",
             Self::KeyRecover => "key.recover",
             Self::KeyPurge => "key.purge",
+            Self::RoleActivate => "role.activate",
+            Self::RoleDeactivate => "role.deactivate",
             Self::SessionSignIn => "session.sign_in",
             Self::SessionSignInFailed => "session.sign_in_failed",
             Self::SessionSignOut => "session.sign_out",
@@ -289,10 +297,17 @@ pub struct AuditEvent {
     /// The `x-ms-client-request-id` Keyring sent on its last Key Vault call
     /// for this request.
     pub kv_request_id: Option<String>,
-    /// Why the person did it. Always absent until #205.
+    /// Why the person did it: the PIM justification on `role.activate`,
+    /// cleaned and at most 200 characters.
     pub reason: Option<String>,
-    /// A change or incident ticket. Always absent until #205.
+    /// A change or incident ticket: the PIM ticket system and number.
     pub ticket: Option<String>,
+    /// The role definition GUID turned on or off (`role.*` only).
+    pub role: Option<String>,
+    /// The ARM scope the role was turned on or off at (`role.*` only).
+    pub role_scope: Option<String>,
+    /// How long it was asked for, ISO 8601 (`PT8H`), on `role.activate`.
+    pub role_duration: Option<String>,
 }
 
 impl AuditEvent {
@@ -317,6 +332,9 @@ impl AuditEvent {
             kv_request_id: None,
             reason: None,
             ticket: None,
+            role: None,
+            role_scope: None,
+            role_duration: None,
         }
     }
 
@@ -386,6 +404,9 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
         kv_request_id = opt(&ev.kv_request_id),
         reason = ev.reason.as_deref(),
         ticket = ev.ticket.as_deref(),
+        role = opt(&ev.role),
+        role_scope = opt(&ev.role_scope),
+        role_duration = opt(&ev.role_duration),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         "audit"
@@ -417,6 +438,11 @@ struct Draft {
     item_name: Option<String>,
     item_version: Option<String>,
     kv_request_id: Option<String>,
+    reason: Option<String>,
+    ticket: Option<String>,
+    role: Option<String>,
+    role_scope: Option<String>,
+    role_duration: Option<String>,
 }
 
 tokio::task_local! {
@@ -499,6 +525,26 @@ pub fn note_version(version: &str) {
 /// The `x-ms-client-request-id` of a Key Vault call just sent.
 pub fn note_kv_request(id: &str) {
     note(|d| d.kv_request_id = Some(id.to_owned()));
+}
+
+/// A PIM role request: the role GUID, the scope and, for an activation,
+/// the duration, justification and ticket. All must already be checked:
+/// the GUID and scope against ARM's rules, the text with
+/// [`crate::azure::pim::clean_line`].
+pub fn note_role_request(
+    role: &str,
+    scope: &str,
+    duration: Option<&str>,
+    reason: Option<&str>,
+    ticket: Option<&str>,
+) {
+    note(|d| {
+        d.role = Some(role.to_owned());
+        d.role_scope = Some(scope.to_owned());
+        d.role_duration = duration.map(str::to_owned);
+        d.reason = reason.map(str::to_owned);
+        d.ticket = ticket.map(str::to_owned);
+    });
 }
 
 /// A failed Azure call. Only the status and code are kept.
@@ -701,6 +747,11 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.item_name = d.item_name;
     ev.item_version = d.item_version;
     ev.kv_request_id = d.kv_request_id;
+    ev.reason = d.reason;
+    ev.ticket = d.ticket;
+    ev.role = d.role;
+    ev.role_scope = d.role_scope;
+    ev.role_duration = d.role_duration;
     Some(ev)
 }
 

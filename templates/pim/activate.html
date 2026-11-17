@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Activate {{ ready.role_name }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ back }}">Back</a></p>
+<h1>Activate <span class="muted">{{ ready.role_name }}</span></h1>
+<p>You're eligible for this role on {{ scope_words() }} through Privileged Identity Management (PIM). Turning it on gives you its access for the time you pick, then PIM turns it off again.</p>
+{% if let Some(p) = ready.policy %}{% if p.approval %}
+<div class="notice notice-warn"><p>PIM needs someone to approve this before it's turned on.{% if !p.approvers.is_empty() %} Approvers: {% for (d, t) in p.approvers %}{{ d }}{% if !t.is_empty() %} ({{ t }}){% endif %}{% if !loop.last %}, {% endif %}{% endfor %}.{% endif %}</p></div>
+{% endif %}{% else %}
+<p class="muted">Keyring couldn't read this role's PIM settings, so it asks for a reason and offers up to {{ crate::routes::pim::minutes_words(ready.max_minutes()) }}. PIM checks the request either way.</p>
+{% endif %}
+{% call ui::error_summary(errors) %}{% endcall %}
+<form method="post" action="{{ shell.vault_prefix() }}/my-access/activate" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="role" value="{{ ready.eligibility.role }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  {% let field_name = "minutes" %}
+  <label for="minutes">How long</label>
+  <p class="field-help" id="minutes-help">Up to {{ crate::routes::pim::minutes_words(ready.max_minutes()) }}, as PIM allows for this role.</p>
+  <select id="minutes" name="minutes"{% call ui::aria("minutes", "minutes-help") %}{% endcall %}>
+    {% for (m, words) in durations %}<option value="{{ m }}"{% if is_selected(m) %} selected{% endif %}>{{ words }}</option>{% endfor %}
+  </select>
+  {% include "_field_error.html" %}
+  {% let field_name = "justification" %}
+  <label for="justification">Why you need it{% if !ready.wants_justification() %} <span class="muted">(optional)</span>{% endif %}</label>
+  <p class="field-help" id="justification-help">5 to 200 characters. PIM keeps it, and Keyring writes it to its audit log. Don't type secrets or personal details.</p>
+  <textarea id="justification" name="justification" rows="2" maxlength="200"{% call ui::aria("justification", "justification-help") %}{% endcall %}>{{ form.justification }}</textarea>
+  {% include "_field_error.html" %}
+  {% let field_name = "ticket_system" %}
+  <label for="ticket_system">Ticket system <span class="muted">(optional)</span></label>
+  <input id="ticket_system" name="ticket_system" type="text" maxlength="64" value="{{ form.ticket_system }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("ticket_system") %}{% endcall %}>
+  {% include "_field_error.html" %}
+  {% let field_name = "ticket_number" %}
+  <label for="ticket_number">Ticket number{% if !ready.wants_ticket() %} <span class="muted">(optional)</span>{% endif %}</label>
+  <input id="ticket_number" name="ticket_number" type="text" maxlength="64" value="{{ form.ticket_number }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("ticket_number") %}{% endcall %}>
+  {% include "_field_error.html" %}
+  <div class="actions"><button type="submit">Activate {{ ready.role_name }}</button><a href="{{ back }}">Cancel</a></div>
+</form>
+{% endblock %}
