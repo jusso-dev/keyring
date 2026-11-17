@@ -289,6 +289,9 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
     "outcome",
     "reason",
     "reason_code",
+    "role",
+    "role_duration",
+    "role_scope",
     "schema_version",
     "session_ref",
     "ticket",
@@ -395,6 +398,9 @@ async fn audited_routes_write_exactly_one_event() {
         ev.kv_request_id = Some("11111111-2222-4333-8444-555555555555".into());
         ev.reason = Some("why".into());
         ev.ticket = Some("CHG-1".into());
+        ev.role = Some("4633458b-17de-408a-b874-0445c86b69e6".into());
+        ev.role_scope = Some("/subscriptions/s/resourceGroups/rg".into());
+        ev.role_duration = Some("PT1H".into());
         record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");
@@ -588,6 +594,149 @@ async fn audited_routes_write_exactly_one_event() {
         (ev["action"].as_str(), ev["outcome"].as_str()),
         (Some("key.delete"), Some("success"))
     );
+
+    // --- A PIM activation: role, scope, duration, justification, ticket --
+    {
+        *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+        let rg = "/subscriptions/sub-a/resourceGroups/rg-kv-test";
+        {
+            let mut m = w.arm.state.authz.lock().unwrap();
+            m.pim.eligible = vec![(rg.into(), support::SECRETS_USER.into(), "/s/sched".into())];
+            m.pim.policies.insert(
+                support::SECRETS_USER.into(),
+                support::pim_rules("PT8H", true, true, false),
+            );
+        }
+        capture.take_events();
+        let status = post(
+            &w,
+            "/v/kv-test/my-access/activate",
+            &w.csrf,
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
+                ("minutes", "90"),
+                ("justification", "Fix\nprod\u{202E} FORGED=1"),
+                ("ticket_system", "SNOW"),
+                ("ticket_number", "CHG-9"),
+            ],
+            &[SAME_SITE],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let ev = capture.one_event("role activate");
+        assert_eq!(ev["action"], "role.activate");
+        assert_eq!(ev["outcome"], "success");
+        assert_eq!(ev["vault"], "kv-test");
+        assert_eq!(ev["role"], support::SECRETS_USER);
+        assert_eq!(ev["role_scope"], rg);
+        assert_eq!(ev["role_duration"], "PT1H30M");
+        assert_eq!(ev["reason"], "Fix prod FORGED=1");
+        assert_eq!(ev["ticket"], "SNOW CHG-9");
+        assert!(ev.get("item_kind").is_none());
+        // Waiting for approval still counts as done; a refusal is denied.
+        w.arm.state.authz.lock().unwrap().pim.reply = Some((
+            403,
+            serde_json::json!({"error": {"code": "AuthorizationFailed", "message": "private detail"}}),
+        ));
+        let _ = post(
+            &w,
+            "/v/kv-test/my-access/activate",
+            &w.csrf,
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
+                ("minutes", "60"),
+                ("justification", "Fix prod now"),
+                ("ticket_number", "1"),
+            ],
+            &[SAME_SITE],
+        )
+        .await;
+        let ev = capture.one_event("refused activate");
+        assert_eq!(ev["outcome"], "denied");
+        assert_eq!(ev["reason_code"], "AuthorizationFailed");
+        assert!(!ev.to_string().contains("private detail"));
+        // Deactivate.
+        {
+            let mut m = w.arm.state.authz.lock().unwrap();
+            m.pim.reply = None;
+            m.pim.active = vec![(
+                rg.into(),
+                support::SECRETS_USER.into(),
+                "Activated".into(),
+                None,
+            )];
+        }
+        let status = post(
+            &w,
+            "/v/kv-test/my-access/deactivate",
+            &w.csrf,
+            &[("role", support::SECRETS_USER), ("scope", rg)],
+            &[SAME_SITE],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let ev = capture.one_event("role deactivate");
+        assert_eq!(ev["action"], "role.deactivate");
+        assert_eq!(ev["outcome"], "success");
+        assert_eq!(ev["role_scope"], rg);
+        assert!(ev.get("role_duration").is_none() && ev.get("reason").is_none());
+        // A deactivation ARM refuses answers with a redirect and a
+        // message. It must not be recorded as a success.
+        for (http, code, outcome) in [
+            (403, "AuthorizationFailed", "denied"),
+            (401, "InvalidAuthenticationToken", "denied"),
+            (400, "ActiveDurationTooShort", "failed"),
+            (409, "RoleAssignmentRequestExists", "failed"),
+            (500, "InternalServerError", "failed"),
+        ] {
+            w.arm.state.authz.lock().unwrap().pim.reply = Some((
+                http,
+                serde_json::json!({"error": {"code": code, "message": "private detail"}}),
+            ));
+            let _ = post(
+                &w,
+                "/v/kv-test/my-access/deactivate",
+                &w.csrf,
+                &[("role", support::SECRETS_USER), ("scope", rg)],
+                &[SAME_SITE],
+            )
+            .await;
+            let ev = capture.one_event("refused deactivate");
+            assert_eq!(ev["action"], "role.deactivate", "{http}");
+            assert_eq!(ev["outcome"], outcome, "{http} {code}");
+            assert_eq!(ev["reason_code"], code, "{http}");
+            assert_eq!(ev["role_scope"], rg);
+        }
+        // An activation that fails outright is recorded as failed too.
+        w.arm.state.authz.lock().unwrap().pim.reply = Some((
+            500,
+            serde_json::json!({"error": {"code": "InternalServerError", "message": "private detail"}}),
+        ));
+        let _ = post(
+            &w,
+            "/v/kv-test/my-access/activate",
+            &w.csrf,
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
+                ("minutes", "60"),
+                ("justification", "Fix prod now"),
+                ("ticket_number", "1"),
+            ],
+            &[SAME_SITE],
+        )
+        .await;
+        let ev = capture.one_event("failed activate");
+        assert_eq!(ev["action"], "role.activate");
+        assert_eq!(ev["outcome"], "failed");
+        assert_eq!(ev["reason_code"], "InternalServerError");
+        w.arm.state.authz.lock().unwrap().pim = Default::default();
+    }
 
     // --- An import: one event for the request, one per secret written ---
     let res = w

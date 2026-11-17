@@ -629,6 +629,8 @@ pub(crate) struct AuthzMock {
     pub assignments_forbidden: bool,
     /// Answer this status to eligibility, as a tenant without PIM might.
     pub eligible_status: Option<u16>,
+    /// Answer this status to every role definition read.
+    pub definitions_status: Option<u16>,
     /// Answer 403 to the vault resource.
     pub vault_forbidden: bool,
     /// The signed-in person's own permissions, for
@@ -651,6 +653,156 @@ pub(crate) struct AuthzMock {
     pub paths: Vec<String>,
     /// Bearer token of every Access read.
     pub bearers: Vec<String>,
+    /// PIM for the signed-in person. See [`PimMock`].
+    pub pim: PimMock,
+}
+
+/// What mock ARM answers for PIM, for the signed-in person (`asTarget()`).
+/// Every list answers 400 `InvalidResourceType`-style errors when
+/// `status` is set, as a tenant without PIM might.
+#[derive(Default)]
+pub(crate) struct PimMock {
+    /// Eligible: (scope, role GUID, schedule ID).
+    pub eligible: Vec<(String, String, String)>,
+    /// Active: (scope, role GUID, `Activated` or `Assigned`, end time).
+    pub active: Vec<(String, String, String, Option<String>)>,
+    /// Requests waiting: (scope, role GUID, status).
+    pub pending: Vec<(String, String, String)>,
+    /// Policy rules by role GUID: `effectiveRules`.
+    pub policies: std::collections::HashMap<String, serde_json::Value>,
+    /// Answer this status to the eligibility list.
+    pub eligible_status: Option<u16>,
+    /// Return this as every eligibility's `roleDefinitionId`, in place of
+    /// a well-formed one.
+    pub eligible_role_id: Option<String>,
+    /// Answer this status to the policy list.
+    pub policy_status: Option<u16>,
+    /// Wait this long before answering the eligibility list.
+    pub eligible_delay: Duration,
+    /// What a PUT of a schedule request answers: a status, and a body.
+    /// `None` answers 201 with `status` `Provisioned`.
+    pub reply: Option<(u16, serde_json::Value)>,
+    /// Every PUT body received, with its path.
+    pub requests: Vec<(String, serde_json::Value)>,
+    /// Paths of every PIM read.
+    pub reads: Vec<String>,
+}
+
+/// One PIM end-user rule set: maximum, and which of justification,
+/// ticket, MFA and approval PIM asks for.
+pub(crate) fn pim_rules(
+    max: &str,
+    justification: bool,
+    ticket: bool,
+    approval: bool,
+) -> serde_json::Value {
+    let mut enabled = vec![];
+    if justification {
+        enabled.push("Justification");
+    }
+    if ticket {
+        enabled.push("Ticketing");
+    }
+    let target = json!({"caller": "EndUser", "operations": ["All"], "level": "Assignment"});
+    json!([
+        {"isExpirationRequired": true, "maximumDuration": "P90D", "id": "Expiration_Admin_Assignment",
+         "ruleType": "RoleManagementPolicyExpirationRule", "target": {"caller": "Admin", "operations": ["All"], "level": "Assignment"}},
+        {"isExpirationRequired": true, "maximumDuration": max, "id": "Expiration_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyExpirationRule", "target": target},
+        {"enabledRules": enabled, "id": "Enablement_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyEnablementRule", "target": target},
+        {"setting": {"isApprovalRequired": approval, "approvalStages": [{"primaryApprovers": [
+            {"id": "2385b0f3-5fa9-43cf-8ca4-b01dc97298cd", "description": "kv-approvers", "isBackup": false, "userType": "Group"}]}]},
+         "id": "Approval_EndUser_Assignment", "ruleType": "RoleManagementPolicyApprovalRule", "target": target},
+        {"isEnabled": false, "claimValue": "", "id": "AuthenticationContext_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyAuthenticationContextRule", "target": target}
+    ])
+}
+
+/// PIM's reads and requests, or `None` if `path` isn't one.
+async fn pim_answer(
+    s: &ArmState,
+    method: &axum::http::Method,
+    path: &str,
+    query: &str,
+    body: &str,
+) -> Option<Response> {
+    const ELIGIBLE: &str = "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances";
+    const ACTIVE: &str = "/providers/Microsoft.Authorization/roleAssignmentScheduleInstances";
+    const REQUESTS: &str = "/providers/Microsoft.Authorization/roleAssignmentScheduleRequests";
+    const POLICIES: &str = "/providers/Microsoft.Authorization/roleManagementPolicyAssignments";
+    let pim_read = (path.ends_with(ELIGIBLE) && query.contains("asTarget()"))
+        || path.ends_with(ACTIVE)
+        || path.ends_with(REQUESTS)
+        || path.ends_with(POLICIES);
+    let pim_put = *method == axum::http::Method::PUT && path.contains(&format!("{REQUESTS}/"));
+    if !(pim_read || pim_put) {
+        return None;
+    }
+    assert!(query.contains("api-version=2020-10-01"), "{query}");
+    let err = |status: u16, code: &str| {
+        json_response(
+            StatusCode::from_u16(status).unwrap(),
+            json!({"error": {"code": code, "message": "private Azure detail"}}),
+        )
+    };
+    if pim_put {
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let mut m = s.authz.lock().unwrap();
+        m.pim.requests.push((path.to_owned(), body.clone()));
+        return Some(match m.pim.reply.clone() {
+            Some((status, reply)) => json_response(StatusCode::from_u16(status).unwrap(), reply),
+            None => json_response(
+                StatusCode::CREATED,
+                json!({"properties": {"status": "Provisioned", "requestType": body["properties"]["requestType"]}}),
+            ),
+        });
+    }
+    let delay = {
+        let mut m = s.authz.lock().unwrap();
+        m.pim.reads.push(path.to_owned());
+        if path.ends_with(ELIGIBLE) {
+            m.pim.eligible_delay
+        } else {
+            Duration::ZERO
+        }
+    };
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let m = s.authz.lock().unwrap();
+    let role_id = |g: &str| {
+        format!("/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{g}")
+    };
+    if path.ends_with(ELIGIBLE) {
+        if let Some(status) = m.pim.eligible_status {
+            return Some(err(status, "InvalidResourceType"));
+        }
+        let value: Vec<_> = m.pim.eligible.iter().map(|(scope, g, sched)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": m.pim.eligible_role_id.clone().unwrap_or_else(|| role_id(g)), "principalId": USER_OID, "principalType": "User",
+            "status": "Provisioned", "roleEligibilityScheduleId": sched, "memberType": "Direct",
+            "endDateTime": "2027-09-10T00:31:41.477Z"}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(ACTIVE) {
+        assert!(query.contains("asTarget()"), "{query}");
+        let value: Vec<_> = m.pim.active.iter().map(|(scope, g, kind, end)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": role_id(g), "principalId": USER_OID, "assignmentType": kind,
+            "status": "Provisioned", "endDateTime": end}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(REQUESTS) {
+        assert!(query.contains("asRequestor()"), "{query}");
+        let value: Vec<_> = m.pim.pending.iter().map(|(scope, g, status)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": role_id(g), "requestType": "SelfActivate", "status": status}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if let Some(status) = m.pim.policy_status {
+        return Some(err(status, "AuthorizationFailed"));
+    }
+    let value: Vec<_> = m.pim.policies.iter().map(|(g, rules)| json!({"properties": {
+        "scope": path.trim_end_matches(POLICIES), "roleDefinitionId": role_id(g), "effectiveRules": rules}})).collect();
+    Some(json_response(StatusCode::OK, json!({"value": value})))
 }
 
 pub(crate) const SECRETS_USER: &str = "4633458b-17de-408a-b874-0445c86b69e6";
@@ -833,6 +985,12 @@ async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> 
         return Some(json_response(StatusCode::OK, json!({"value": value})));
     }
     if let Some((_, guid)) = path.split_once(DEFS) {
+        if let Some(status) = m.definitions_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
         return Some(match m.roles.get(guid) {
             Some((name, actions)) => json_response(
                 StatusCode::OK,
@@ -982,6 +1140,10 @@ async fn arm_fallback(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_owned();
+    if let Some(res) = pim_answer(&s, &method, &path, uri.query().unwrap_or_default(), &body).await
+    {
+        return res;
+    }
     if method == axum::http::Method::GET
         && let Some(res) =
             authz_answer(&s, &path, uri.query().unwrap_or_default(), bearer.clone()).await

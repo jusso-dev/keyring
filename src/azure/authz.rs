@@ -203,7 +203,7 @@ fn same_origin(management_url: &str, link: &str) -> bool {
 
 /// GET `first` and follow `nextLink` on the same origin, up to
 /// [`MAX_PAGES`].
-async fn list_all<T: DeserializeOwned>(
+pub(crate) async fn list_all<T: DeserializeOwned>(
     azure: &AzureClient,
     session: &Session,
     management_url: &str,

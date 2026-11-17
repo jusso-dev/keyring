@@ -59,6 +59,9 @@ var streamColumns = [
   { name: 'KvRequestId', type: 'string' }
   { name: 'Reason', type: 'string' }
   { name: 'Ticket', type: 'string' }
+  { name: 'Role', type: 'string' }
+  { name: 'RoleScope', type: 'string' }
+  { name: 'RoleDuration', type: 'string' }
   { name: 'WriterIdentityClientId', type: 'string' }
   { name: 'KeyringInstance', type: 'string' }
   { name: 'KeyringVersion', type: 'string' }

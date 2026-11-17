@@ -74,7 +74,7 @@ impl Need {
         }
     }
 
-    fn uses_vault_rbac(self) -> bool {
+    pub(crate) fn uses_vault_rbac(self) -> bool {
         !matches!(self, Self::ListVaults | Self::ReadAuditLogs)
     }
 }
@@ -130,6 +130,21 @@ pub struct Problem {
     pub next: NextStep,
     /// A second, smaller link shown beside the main button.
     pub also: Option<NextStep>,
+    /// Set on a Key Vault RBAC refusal (`ForbiddenByRbac`) that names a
+    /// role, so the PIM layer can look for an eligible assignment of it.
+    /// See `crate::routes::pim`.
+    pub pim_need: Option<Need>,
+    /// "Activate" for that role, when the person is eligible for it.
+    pub offer: Option<Offer>,
+}
+
+/// An offer to turn on an eligible PIM role, shown beside "What to ask for".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    /// The role's name, as the page names it.
+    pub role: &'static str,
+    /// The activation form, a local path.
+    pub url: String,
 }
 
 impl Problem {
@@ -142,6 +157,8 @@ impl Problem {
             hint_is_role: false,
             next: NextStep::Home,
             also: None,
+            pim_need: None,
+            offer: None,
         }
     }
 
@@ -312,12 +329,16 @@ impl Problem {
                         " If the vault still uses access policies, ask for an access policy that allows this instead.",
                     );
                 }
-                Self::new(
+                let mut p = Self::new(
                     StatusCode::FORBIDDEN,
                     "You don't have access",
                     format!("You don't have permission to {}.", need.doing()),
                 )
-                .with_role_hint(hint)
+                .with_role_hint(hint);
+                if need.uses_vault_rbac() && code.eq_ignore_ascii_case("ForbiddenByRbac") {
+                    p.pim_need = Some(need);
+                }
+                p
             }
             404 => Self::new(
                 StatusCode::NOT_FOUND,
@@ -411,6 +432,7 @@ struct ErrorPage<'a> {
 }
 
 /// A [`Problem`] with the page chrome to show it in.
+#[derive(Clone)]
 pub struct PageError {
     pub shell: Shell,
     pub problem: Problem,
@@ -425,6 +447,10 @@ impl PageError {
 impl IntoResponse for PageError {
     fn into_response(self) -> Response {
         let (next_url, next_label) = self.problem.next.link();
+        // A refusal that could be lifted by turning on a PIM role is kept
+        // on the response for `routes::pim::offer_layer` to look at.
+        let pending = (self.problem.pim_need.is_some() && self.problem.offer.is_none())
+            .then(|| crate::routes::pim::OfferPending(Box::new(self.clone())));
         let page = ErrorPage {
             shell: self.shell,
             problem: &self.problem,
@@ -432,7 +458,11 @@ impl IntoResponse for PageError {
             next_label,
             also: self.problem.also.as_ref().map(NextStep::link),
         };
-        (self.problem.status, render(&page)).into_response()
+        let mut res = (self.problem.status, render(&page)).into_response();
+        if let Some(p) = pending {
+            res.extensions_mut().insert(p);
+        }
+        res
     }
 }
 
@@ -492,6 +522,25 @@ mod tests {
         let hint = p.admin_hint.unwrap();
         assert!(hint.contains("Reader role on the subscription or resource group"));
         assert!(!hint.contains("access policies"));
+    }
+
+    #[test]
+    fn only_rbac_refusals_on_vault_contents_look_for_pim() {
+        let p = Problem::from_azure(&status(403, "ForbiddenByRbac"), Need::ReadSecrets);
+        assert_eq!(p.pim_need, Some(Need::ReadSecrets));
+        for (code, need) in [
+            ("ForbiddenByPolicy", Need::ReadSecrets),
+            ("Forbidden", Need::ManageKeys),
+            ("ForbiddenByRbac", Need::ListVaults),
+            ("ForbiddenByRbac", Need::ReadAuditLogs),
+            ("ForbiddenByFirewall", Need::ReadSecrets),
+        ] {
+            assert_eq!(
+                Problem::from_azure(&status(403, code), need).pim_need,
+                None,
+                "{code}"
+            );
+        }
     }
 
     #[test]

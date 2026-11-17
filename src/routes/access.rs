@@ -56,7 +56,7 @@ pub(crate) enum Origin {
 }
 
 impl Origin {
-    fn of(scope: &str, vault_id: &str) -> Self {
+    pub(crate) fn of(scope: &str, vault_id: &str) -> Self {
         let s = scope.trim_end_matches('/').to_ascii_lowercase();
         let v = vault_id.trim_end_matches('/').to_ascii_lowercase();
         if s.is_empty() {
@@ -279,7 +279,7 @@ fn policy_row(p: &AccessPolicy, only: Option<Kind>) -> PolicyRow {
 
 /// Read every role used, a few at a time. A role that can't be read is
 /// left out of the map.
-async fn definitions(
+pub(crate) async fn definitions(
     azure: &AzureClient,
     session: &Arc<Session>,
     management_url: &str,

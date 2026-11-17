@@ -84,6 +84,10 @@ pub enum Action {
     KeyPurge,
     /// Tags, expiry or enabled changed on many keys at once.
     KeyBulkUpdate,
+    /// A PIM eligible role turned on (`SelfActivate`) from Keyring.
+    RoleActivate,
+    /// A PIM activated role turned off (`SelfDeactivate`) from Keyring.
+    RoleDeactivate,
     SessionSignIn,
     SessionSignInFailed,
     SessionSignOut,
@@ -95,7 +99,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 34] = [
+    pub const ALL: [Action; 36] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -125,6 +129,8 @@ impl Action {
         Self::KeyRecover,
         Self::KeyPurge,
         Self::KeyBulkUpdate,
+        Self::RoleActivate,
+        Self::RoleDeactivate,
         Self::SessionSignIn,
         Self::SessionSignInFailed,
         Self::SessionSignOut,
@@ -163,6 +169,8 @@ impl Action {
             Self::KeyRecover => "key.recover",
             Self::KeyPurge => "key.purge",
             Self::KeyBulkUpdate => "key.bulk_update",
+            Self::RoleActivate => "role.activate",
+            Self::RoleDeactivate => "role.deactivate",
             Self::SessionSignIn => "session.sign_in",
             Self::SessionSignInFailed => "session.sign_in_failed",
             Self::SessionSignOut => "session.sign_out",
@@ -311,12 +319,19 @@ pub struct AuditEvent {
     /// The `x-ms-client-request-id` Keyring sent on its last Key Vault call
     /// for this request.
     pub kv_request_id: Option<String>,
-    /// Why the person did it, when `KEYRING_REQUIRE_REASON` asked. Cleaned
-    /// by [`crate::reason`]: no control characters, 5 to 200 characters.
+    /// Why the person did it, when `KEYRING_REQUIRE_REASON` asked, or the
+    /// PIM justification on `role.activate`. Cleaned by [`crate::reason`]:
+    /// no control or invisible characters, 5 to 200 characters.
     pub reason: Option<String>,
     /// A change or incident ticket, when `KEYRING_REASON_TICKET_PATTERN`
-    /// asked and it matched.
+    /// asked and it matched, or the PIM ticket system and number.
     pub ticket: Option<String>,
+    /// The role definition GUID turned on or off (`role.*` only).
+    pub role: Option<String>,
+    /// The ARM scope the role was turned on or off at (`role.*` only).
+    pub role_scope: Option<String>,
+    /// How long it was asked for, ISO 8601 (`PT8H`), on `role.activate`.
+    pub role_duration: Option<String>,
 }
 
 impl AuditEvent {
@@ -341,6 +356,9 @@ impl AuditEvent {
             kv_request_id: None,
             reason: None,
             ticket: None,
+            role: None,
+            role_scope: None,
+            role_duration: None,
         }
     }
 
@@ -409,6 +427,9 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
         item_name = opt(&ev.item_name),
         item_version = opt(&ev.item_version),
         kv_request_id = opt(&ev.kv_request_id),
+        role = opt(&ev.role),
+        role_scope = opt(&ev.role_scope),
+        role_duration = opt(&ev.role_duration),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         // Last, so in the text format nothing typed can come before a
@@ -446,6 +467,9 @@ struct Draft {
     kv_request_id: Option<String>,
     reason: Option<String>,
     ticket: Option<String>,
+    role: Option<String>,
+    role_scope: Option<String>,
+    role_duration: Option<String>,
 }
 
 tokio::task_local! {
@@ -528,6 +552,26 @@ pub fn note_version(version: &str) {
 /// The `x-ms-client-request-id` of a Key Vault call just sent.
 pub fn note_kv_request(id: &str) {
     note(|d| d.kv_request_id = Some(id.to_owned()));
+}
+
+/// A PIM role request: the role GUID, the scope and, for an activation,
+/// the duration, justification and ticket. All must already be checked:
+/// the GUID and scope against ARM's rules, the text with
+/// [`crate::azure::pim::clean_line`].
+pub fn note_role_request(
+    role: &str,
+    scope: &str,
+    duration: Option<&str>,
+    reason: Option<&str>,
+    ticket: Option<&str>,
+) {
+    note(|d| {
+        d.role = Some(role.to_owned());
+        d.role_scope = Some(scope.to_owned());
+        d.role_duration = duration.map(str::to_owned);
+        d.reason = reason.map(str::to_owned);
+        d.ticket = ticket.map(str::to_owned);
+    });
 }
 
 /// The reason and ticket the person gave, already cleaned and checked by
@@ -751,6 +795,9 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.kv_request_id = d.kv_request_id;
     ev.reason = d.reason;
     ev.ticket = d.ticket;
+    ev.role = d.role;
+    ev.role_scope = d.role_scope;
+    ev.role_duration = d.role_duration;
     Some(ev)
 }
 

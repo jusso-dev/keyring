@@ -21,10 +21,11 @@ pub enum Section {
     Generator,
     Audit,
     Access,
+    MyAccess,
 }
 
 impl Section {
-    pub const NAV: [Section; 9] = [
+    pub const NAV: [Section; 10] = [
         Section::Vaults,
         Section::Secrets,
         Section::Certificates,
@@ -34,6 +35,7 @@ impl Section {
         Section::Generator,
         Section::Audit,
         Section::Access,
+        Section::MyAccess,
     ];
 
     pub fn label(self) -> &'static str {
@@ -48,6 +50,7 @@ impl Section {
             Self::Generator => "Generator",
             Self::Audit => "Audit",
             Self::Access => "Access",
+            Self::MyAccess => "My access",
         }
     }
 
@@ -55,7 +58,12 @@ impl Section {
     pub fn is_vault_scoped(self) -> bool {
         matches!(
             self,
-            Self::Secrets | Self::Certificates | Self::Keys | Self::Audit | Self::Access
+            Self::Secrets
+                | Self::Certificates
+                | Self::Keys
+                | Self::Audit
+                | Self::Access
+                | Self::MyAccess
         )
     }
 
@@ -71,10 +79,12 @@ impl Section {
             Self::Generator => "/generator",
             Self::Audit => "/audit",
             Self::Access => "/access",
+            Self::MyAccess => "/my-access",
         }
     }
 }
 
+#[derive(Clone)]
 pub struct ShellUser {
     pub name: String,
     /// Form token, bound to the vault chosen when the page was rendered.
@@ -82,11 +92,12 @@ pub struct ShellUser {
 }
 
 /// The vault picked in the header, if any.
+#[derive(Clone)]
 pub struct ShellVault {
     pub name: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Shell {
     pub user: Option<ShellUser>,
     pub section: Option<Section>,
@@ -97,7 +108,7 @@ pub struct Shell {
 }
 
 /// What the reason fields on a form need to know.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ReasonAsk {
     pub require: crate::reason::RequireReason,
     /// `KEYRING_REASON_TICKET_PATTERN`, as written, when set.
