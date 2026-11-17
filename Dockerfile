@@ -20,7 +20,7 @@
 # passes them; for your own builds:
 #   docker build --build-arg VERSION=0.1.0 --build-arg VCS_REF=$(git rev-parse HEAD) .
 
-FROM rust:1.99.1-alpine3.22@sha256:9a744dc47d1ac2a7d17fc3cedfc8b4928b1696dfcba3274ab25bfb40988a9ff0 AS build
+FROM rust:1.100.0-alpine3.22@sha256:8e71319e2fb470aa2d6335a8376a104ceea1957f86ec91b7efcbb9b4732973ae AS build
 # Use the toolchain already in the pinned image (its rustup default).
 # rust-toolchain.toml isn't copied: it lists rustfmt and clippy, which would
 # make rustup download them, and the release build needs neither. CI checks
