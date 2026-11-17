@@ -87,6 +87,10 @@ pub(crate) struct KvState {
     pub recover_lag: Mutex<Option<u32>>,
     /// Certificate issuers and self-signed timing (see `certs.rs`).
     pub cert_extra: super::certs::Extra,
+    /// If set, a value read answers with these tags in place of the
+    /// version's own, as if someone changed them just after the versions
+    /// list was read.
+    pub tags_on_value_read: Mutex<Option<BTreeMap<String, String>>>,
     seq: Mutex<i64>,
 }
 
@@ -684,7 +688,10 @@ async fn get_current(
     match s.secrets.lock().unwrap().get(&name) {
         Some(sec) => match sec.versions.last() {
             Some(v) if !v.enabled => err(403, "SecretDisabled"),
-            Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed, r)),
+            Some(v) => json_response(
+                StatusCode::OK,
+                s.raced(bundle(&b, &name, v, sec.managed, r)),
+            ),
             None => err(404, "SecretNotFound"),
         },
         None => err(404, "SecretNotFound"),
@@ -705,8 +712,20 @@ async fn get_version(
     };
     match sec.versions.iter().find(|v| v.version == version) {
         Some(v) if !v.enabled => err(403, "Forbidden"),
-        Some(v) => json_response(StatusCode::OK, bundle(&b, &name, v, sec.managed, r)),
+        Some(v) => json_response(
+            StatusCode::OK,
+            s.raced(bundle(&b, &name, v, sec.managed, r)),
+        ),
         None => err(404, "SecretNotFound"),
+    }
+}
+
+impl KvState {
+    fn raced(&self, mut bundle: Value) -> Value {
+        if let Some(t) = self.tags_on_value_read.lock().unwrap().as_ref() {
+            bundle["tags"] = json!(t);
+        }
+        bundle
     }
 }
 

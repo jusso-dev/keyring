@@ -127,6 +127,9 @@ struct RevealedPage {
     value: Secret,
     shown: Shown,
     clear_after: u32,
+    /// `keyring-reveal=copy-only`: the value is only in hidden inputs for
+    /// Copy, never on screen.
+    copy_only: bool,
 }
 
 impl RevealedPage {
@@ -217,27 +220,55 @@ pub(crate) async fn reveal(
     } else {
         format!("{path}/versions")
     };
-    let shell = crate::routes::step_up::require(&state, &session.0, shell, &confirm, &confirm)?;
-    // A certificate's backing secret holds its private key. That goes
-    // through the certificate's own download, with its warning and typed
-    // name, never through reveal. Checked from properties, so no value is
-    // read.
-    match api(&state, &session, &vault).properties(&name).await {
-        Ok(item) if item.managed.unwrap_or(false) => {
+    // The reveal limit, from the versions list (properties only): the
+    // current version's tag or the asked-for version's, whichever is
+    // stricter. Checked before step-up, so nobody signs in again for a
+    // refusal, and before any value is read. A certificate's backing
+    // secret holds its private key: that goes through the certificate's
+    // own download, never through reveal.
+    let secrets = api(&state, &session, &vault);
+    let asked = (!version.is_empty()).then_some(version);
+    let limit = match crate::routes::reveal_limit::of_secret(&secrets, &name, asked).await {
+        Ok((_, items)) if items.first().is_some_and(|i| i.managed.unwrap_or(false)) => {
             return Err(managed_problem(shell, &vault, &name));
         }
-        Ok(_) => {}
+        Ok((limit, _)) => limit,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
+    };
+    if limit.refuses_reveal() {
+        return Err(crate::routes::reveal_limit::refused(
+            shell, &vault, "secret", &path,
+        ));
     }
-    let bundle = match api(&state, &session, &vault)
-        .get_value(&name, (!version.is_empty()).then_some(version))
-        .await
-    {
+    let shell = crate::routes::step_up::require(&state, &session.0, shell, &confirm, &confirm)?;
+    let bundle = match secrets.get_value(&name, asked).await {
         Ok(b) => b,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
     };
     // Which version was read goes on the audit event. The value never does.
     crate::audit::note_version(bundle.item.version());
+    // Checked again on what was read, so a tag added since the list was
+    // read still stops it. For an older version the current version's tag
+    // is read again too. A refused value is dropped here, unused.
+    let mut limit = limit.max(crate::reveal_limit::of(bundle.item.tags()));
+    if asked.is_some() {
+        match crate::routes::reveal_limit::of_secret(&secrets, &name, None).await {
+            Ok((now, _)) => limit = limit.max(now),
+            Err(err) => {
+                drop(bundle);
+                return Err(azure_problem(shell, &err, Need::ReadSecrets, &path));
+            }
+        }
+    }
+    if limit.refuses_reveal() || bundle.item.managed.unwrap_or(false) {
+        drop(bundle);
+        if limit.refuses_reveal() {
+            return Err(crate::routes::reveal_limit::refused(
+                shell, &vault, "secret", &path,
+            ));
+        }
+        return Err(managed_problem(shell, &vault, &name));
+    }
     let now = now_ts();
     let page = RevealedPage {
         version: bundle.item.version().to_owned(),
@@ -252,6 +283,7 @@ pub(crate) async fn reveal(
         shown: shown(bundle.item.content_type.as_deref(), &bundle.value),
         value: bundle.value,
         clear_after: CLEAR_AFTER_SECS,
+        copy_only: limit.copy_only(),
         shell,
         vault,
     };

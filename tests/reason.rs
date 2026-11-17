@@ -26,8 +26,21 @@ async fn seeded(extra: &[(&'static str, &'static str)]) -> World {
     w
 }
 
+/// Key Vault calls that read a value or change something. The reveal
+/// limit check before the reason reads properties only (the versions list,
+/// or the certificate), which aren't counted.
 fn kv_calls(w: &World) -> usize {
-    w.kv.state.log.lock().unwrap().len()
+    w.kv.state
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| {
+            !(l.starts_with("GET ")
+                && (l.ends_with("/versions")
+                    || (l.contains("/certificates/") && !l.contains("/secrets/"))))
+        })
+        .count()
 }
 
 #[tokio::test]

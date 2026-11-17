@@ -150,6 +150,18 @@ async fn require_exportable(
             ));
         }
     };
+    // The reveal limit is on the certificate's own tags. `copy-only` means
+    // nothing for a file download, so it refuses it like `none`.
+    if crate::reveal_limit::of(bundle.tags.as_ref().unwrap_or(&Default::default()))
+        .refuses_download()
+    {
+        return Err(crate::routes::reveal_limit::refused(
+            shell,
+            vault,
+            "certificate",
+            &vault_path(vault, &format!("/certificates/{name}")),
+        ));
+    }
     if bundle.policy.as_ref().is_some_and(|p| p.exportable()) && bundle.sid.is_some() {
         Ok((shell, bundle))
     } else {
@@ -173,8 +185,8 @@ pub(crate) async fn pfx_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
+    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
     let pem = bundle
         .policy
         .as_ref()
@@ -235,9 +247,13 @@ pub(crate) fn is_backing_secret(vault_url: &str, name: &str, sid: &str) -> bool 
 
 #[derive(Deserialize)]
 struct SecretValue {
-    value: String,
+    value: crate::secret::Secret,
     #[serde(rename = "contentType", default)]
     content_type: Option<String>,
+    /// The backing secret's tags. Key Vault may or may not copy the
+    /// certificate's tags here; a limit found here counts too.
+    #[serde(default)]
+    tags: Option<std::collections::BTreeMap<String, String>>,
 }
 
 pub(crate) async fn pfx(
@@ -252,8 +268,10 @@ pub(crate) async fn pfx(
     // The form token first, so a forged post reaches nothing in Key Vault.
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     let shell = crate::routes::audit_gate::require_audit(&state, shell)?;
-    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
+    // The limit and the policy first (properties only, no value), so a
+    // refused download doesn't send anyone to step up.
     let (shell, bundle) = require_exportable(&state, &session, &vault, &name, shell).await?;
+    let shell = pfx_step_up(&state, &session, shell, &vault, &name)?;
     let pem = bundle
         .policy
         .as_ref()
@@ -300,15 +318,42 @@ pub(crate) async fn pfx(
             ));
         }
     };
+    // Checked again after the read: the backing secret's own tags, and the
+    // certificate's tags read once more, so a limit set in between still
+    // stops the download. A refused value is dropped unused.
+    let again =
+        crate::routes::reveal_limit::of_certificate(&api(&state, &session, &vault), &name).await;
+    let limit = crate::reveal_limit::of(secret.tags.as_ref().unwrap_or(&Default::default()));
+    match again {
+        Ok(l) if !l.refuses_download() && !limit.refuses_download() => {}
+        Ok(_) => {
+            drop(secret);
+            return Err(crate::routes::reveal_limit::refused(
+                shell,
+                &vault,
+                "certificate",
+                &vault_path(&vault, &format!("/certificates/{name}")),
+            ));
+        }
+        Err(err) => {
+            drop(secret);
+            return Err(azure_problem(
+                shell,
+                &err,
+                Need::ReadCertificates,
+                &vault_path(&vault, &format!("/certificates/{name}")),
+            ));
+        }
+    }
     let is_pem = secret.content_type.as_deref() == Some("application/x-pem-file");
     if is_pem {
         Ok(attachment(
-            secret.value.into_bytes(),
+            secret.value.expose().as_bytes().to_vec(),
             "application/x-pem-file",
             &format!("{name}.pem"),
         ))
     } else {
-        match STANDARD.decode(secret.value.trim()) {
+        match STANDARD.decode(secret.value.expose().trim()) {
             Ok(bytes) => Ok(attachment(bytes, "application/x-pkcs12", &format!("{name}.pfx"))),
             Err(_) => Err(PageError::new(
                 shell,

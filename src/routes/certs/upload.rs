@@ -697,6 +697,26 @@ pub(crate) async fn confirm(
         tags: Some(up.tags),
     };
     let name = up.name;
+    // Uploading onto an existing certificate adds its new current version
+    // with these tags. Its reveal limit is read again now and carried, so
+    // an upload is no way to drop `keyring-reveal`.
+    let mut body = body;
+    match api(&state, &session, &vault).get_cert(&name, None).await {
+        Ok(b) => {
+            let cur = b.tags.unwrap_or_default();
+            let tags = body.tags.take().unwrap_or_default();
+            body.tags = Some(crate::reveal_limit::carry(&tags, &cur));
+        }
+        Err(AzureError::Status { status: 404, .. }) => {}
+        Err(err) => {
+            return Err(azure_problem(
+                shell,
+                &err,
+                Need::ManageCertificates,
+                &vault_path(&vault, "/certificates/-/upload"),
+            ));
+        }
+    }
     crate::audit::note_item(&name);
     match api(&state, &session, &vault).import(&name, &body).await {
         Ok(_) => {

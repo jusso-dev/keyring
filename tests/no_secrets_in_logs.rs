@@ -1228,6 +1228,47 @@ async fn values_never_reach_the_logs() {
         );
     }
 
+    // Reveal limits: a refused reveal, a refused copy and a refused
+    // private key download leave no value in any page or log line.
+    let wl = support::world().await;
+    wl.kv.state.put_with("limited", VALUE, |v| {
+        v.tags = [("keyring-reveal".to_owned(), "none".to_owned())].into();
+    });
+    wl.kv
+        .state
+        .add_cert("limited-tls", true, "Sup3r-S3cret-Key");
+    wl.kv
+        .state
+        .certs
+        .lock()
+        .unwrap()
+        .get_mut("limited-tls")
+        .unwrap()
+        .versions[0]
+        .tags = [("keyring-reveal".to_owned(), "copy-only".to_owned())].into();
+    for (path, fields) in [
+        ("/v/kv-test/secrets/limited/reveal", vec![]),
+        (
+            "/v/kv-test/secrets/limited/copy",
+            vec![
+                ("to_vault", "kv-test"),
+                ("to_name", "limited-copy"),
+                ("tags", "on"),
+            ],
+        ),
+        (
+            "/v/kv-test/certificates/limited-tls/download-key",
+            vec![("confirm_name", "limited-tls")],
+        ),
+    ] {
+        let res = wl.post(path, &fields).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
+        let html = support::body_text(res).await;
+        assert!(!html.contains("Sup3r-S3cret"), "{path}: {html}");
+        assert!(html.contains("Not shown in Keyring"), "{path}");
+    }
+    assert!(wl.kv.state.value_reads().is_empty(), "nothing was read");
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -1235,6 +1276,18 @@ async fn values_never_reach_the_logs() {
     let _ = support::body_text(res).await;
 
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    for action in [
+        "secret.reveal",
+        "secret.copy.read",
+        "certificate.download_private_key",
+    ] {
+        assert!(
+            logs.lines().any(|l| l.contains(&format!(
+                "action={action} outcome=refused reason_code=reveal_limited"
+            )) && l.contains("item_name=limited")),
+            "{action} refused with reveal_limited: {logs}"
+        );
+    }
     assert!(
         logs.contains("action=secret.reveal outcome=success"),
         "the reveal itself is logged: {logs}"
@@ -1604,6 +1657,8 @@ async fn values_never_reach_the_logs() {
             expect("secret.copy.read", "kv-test", "db-password", "success"),
             expect("secret.copy.write", "kv-stage", "db-staged", "success"),
             expect("secret.copy.read", "kv-test", "db-password", "success"),
+            // A copy the reveal limit refused: its read event only.
+            expect("secret.copy.read", "kv-test", "limited", "refused"),
         ],
         "one read and one write event per copy, each on its own vault"
     );
@@ -1624,7 +1679,7 @@ async fn values_never_reach_the_logs() {
     assert!(
         lines
             .iter()
-            .filter(|l| l["action"] == "secret.copy.read")
+            .filter(|l| l["action"] == "secret.copy.read" && l["outcome"] == "success")
             .all(|l| l["item_version"].is_string()),
         "the read names the version read"
     );
