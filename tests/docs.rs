@@ -243,3 +243,70 @@ fn audit_actions_and_reasons_are_in_the_deploy_doc() {
     );
     has(README, "README.md", "`KEYRING_TRUSTED_PROXY_HOPS`");
 }
+
+/// The README's Configuration section names every `KEYRING_*` setting that
+/// `src/config.rs` reads (#262). The list comes from the `"KEYRING_..."`
+/// string literals in that file, so a new setting fails here until the
+/// README has a row for it. Left out on purpose:
+/// - `KEYRING_TEST_*`: test-only overrides that send tokens to another
+///   server. The README names them once, to say leave them unset, but
+///   they get no row in the settings tables.
+///
+/// The deprecated `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` is kept in: it is
+/// still read, and people upgrading need to find what replaced it.
+#[test]
+fn readme_names_every_keyring_setting() {
+    const CONFIG: &str = include_str!("../src/config.rs");
+    let mut settings: Vec<&str> = CONFIG
+        .match_indices("\"KEYRING_")
+        .filter_map(|(start, _)| {
+            let rest = &CONFIG[start + 1..];
+            let end = rest.find('"')?;
+            let name = &rest[..end];
+            name.bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                .then_some(name)
+        })
+        .filter(|name| !name.starts_with("KEYRING_TEST_"))
+        .collect();
+    settings.sort_unstable();
+    settings.dedup();
+    assert!(
+        settings.len() >= 25,
+        "expected the KEYRING_* settings from src/config.rs, found {settings:?}"
+    );
+    let missing: Vec<&str> = settings
+        .into_iter()
+        .filter(|name| !README.contains(&format!("| `{name}` |")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "README's Configuration tables should have a row for: {missing:?}"
+    );
+}
+
+/// No hype words and no em dashes in the README (#262, house style).
+#[test]
+fn readme_has_no_hype_words() {
+    let text = README.to_lowercase();
+    for word in [
+        "enterprise-grade",
+        "seamless",
+        "robust",
+        "leverage",
+        "empower",
+        "unlock",
+        "cutting-edge",
+        "world-class",
+        "game-changing",
+        "best-in-class",
+        "designed to",
+        "it's worth noting",
+    ] {
+        assert!(!text.contains(word), "README shouldn't say \"{word}\"");
+    }
+    assert!(
+        !README.contains('\u{2014}'),
+        "README shouldn't use em dashes"
+    );
+}
