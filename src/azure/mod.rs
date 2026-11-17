@@ -1,5 +1,6 @@
 //! Calls to Azure, always made as the signed-in user via on-behalf-of.
 
+pub mod access_review;
 pub mod audit;
 pub mod audit_across;
 pub mod audit_keyring;

@@ -1272,6 +1272,21 @@ async fn arm_fallback(
                 json!({"error": {"code": "InsufficientAccessError", "message": "x"}}),
             );
         }
+        if query.contains("| summarize Uses = count(), LastUse = max(TimeGenerated)") {
+            let events = s
+                .workspace_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            let mut answer = answer_review(&query, &events);
+            if *s.used_by_partial.lock().unwrap() {
+                answer["error"] = json!({"code": "PartialError", "message": "x"});
+            }
+            return json_response(StatusCode::OK, answer);
+        }
         if query.contains("| summarize Reads = count(), LastRead = max(TimeGenerated)") {
             let events = s
                 .workspace_events
@@ -1740,6 +1755,116 @@ pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Va
     json!({"tables": [{"name": "PrimaryResult", "columns": [
         {"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"}, {"name": "Reads"},
         {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"},
+        {"name": "VaultEvents"}, {"name": "Newest"}
+    ], "rows": rows}]})
+}
+
+/// Answer the access review's query from `src/azure/access_review.rs`
+/// the way Log Analytics would: allowed reads and key operations of every
+/// item in the named vault, summarised by use, item and caller, the most
+/// recent callers of each item up to the query's `Rank` limit, then the
+/// query's `take`, then the row counting all the vault's events.
+pub(crate) fn answer_review(query: &str, events: &[RawEvent]) -> serde_json::Value {
+    let vault = let_literal(query, "vaultName")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let number = |prefix: &str| -> usize {
+        query
+            .lines()
+            .find_map(|l| l.strip_prefix(prefix))
+            .and_then(|r| r.trim_end_matches(';').trim().parse().ok())
+            .expect(prefix)
+    };
+    let (per_item, take) = (number("| where Rank <= "), number("| take "));
+    let keys = [
+        "KeySign",
+        "KeyVerify",
+        "KeyWrap",
+        "KeyUnwrap",
+        "KeyEncrypt",
+        "KeyDecrypt",
+    ];
+    let from_vault: Vec<&RawEvent> = events
+        .iter()
+        .filter(|e| {
+            e.vault_id
+                .to_ascii_lowercase()
+                .ends_with(&format!("/vaults/{vault}"))
+        })
+        .collect();
+    // (use, item, oid, app, upn) -> (uses, last, managed)
+    type Key = (String, String, String, String, String);
+    let mut groups: std::collections::BTreeMap<Key, (u64, String, u64)> =
+        std::collections::BTreeMap::new();
+    for e in from_vault.iter().filter(|e| (200..300).contains(&e.status)) {
+        let kind = if e.operation == "SecretGet" {
+            "secret"
+        } else if keys.contains(&e.operation.as_str()) {
+            "key"
+        } else {
+            continue;
+        };
+        let upn = if e.who.contains('@') {
+            e.who.clone()
+        } else {
+            String::new()
+        };
+        let g = groups
+            .entry((
+                kind.into(),
+                e.item.to_ascii_lowercase(),
+                e.object_id.clone(),
+                e.app_id.clone(),
+                upn,
+            ))
+            .or_insert((0, String::new(), 0));
+        g.0 += 1;
+        if e.time > g.1 {
+            g.1 = e.time.clone();
+        }
+        g.2 += u64::from(e.managed);
+    }
+    let mut list: Vec<_> = groups.into_iter().collect();
+    list.sort_by(|a, b| {
+        (&a.0.0, &a.0.1)
+            .cmp(&(&b.0.0, &b.0.1))
+            .then_with(|| b.1.1.cmp(&a.1.1))
+    });
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut rank = 0;
+    let mut last_key: Option<(String, String)> = None;
+    for (k, v) in list {
+        let item_key = (k.0.clone(), k.1.clone());
+        if last_key.as_ref() != Some(&item_key) {
+            rank = 0;
+            last_key = Some(item_key);
+        }
+        rank += 1;
+        if rank > per_item {
+            continue;
+        }
+        rows.push(json!([
+            k.0, k.1, k.2, k.3, k.4, v.0, v.1, v.2, rank, null, null
+        ]));
+    }
+    rows.truncate(take);
+    let newest = from_vault.iter().map(|e| e.time.clone()).max();
+    rows.push(json!([
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        from_vault.len(),
+        newest
+    ]));
+    json!({"tables": [{"name": "PrimaryResult", "columns": [
+        {"name": "Use"}, {"name": "Item"}, {"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"},
+        {"name": "Uses"}, {"name": "LastUse"}, {"name": "Managed"}, {"name": "Rank"},
         {"name": "VaultEvents"}, {"name": "Newest"}
     ], "rows": rows}]})
 }

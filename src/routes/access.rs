@@ -164,7 +164,7 @@ impl Access {
 const READER_HINT: &str = "the Reader role on the vault, its resource group or its subscription. Reader lets you see who has access without giving any access to the vault's contents.";
 
 /// Plain words for a failed ARM read. Never Azure's message.
-fn arm_reason(e: &AzureError) -> String {
+pub(crate) fn arm_reason(e: &AzureError) -> String {
     match e {
         AzureError::Status { status: 429, .. } => {
             "Azure was throttling requests. Try again in a minute".into()
@@ -323,6 +323,7 @@ async fn assignments(
     vault_id: &str,
     scope: &str,
     only_can_grant: bool,
+    below: bool,
     access: &mut Access,
 ) {
     let url = &state.config.management_url;
@@ -368,7 +369,11 @@ async fn assignments(
             Vec::new()
         }
     };
-    let keep = |a: &RoleAssignment| applies_at(&a.scope, scope);
+    // With `below`, assignments made on one item in the vault are kept
+    // too, for the access review's per-item column.
+    let keep = |a: &RoleAssignment| {
+        applies_at(&a.scope, scope) || (below && Origin::of(&a.scope, vault_id) == Origin::Item)
+    };
     let active: Vec<RoleAssignment> = active.into_iter().filter(keep).collect();
     let eligible: Vec<RoleAssignment> = eligible.into_iter().filter(keep).collect();
     let mut guids = distinct_roles(active.iter().chain(eligible.iter()));
@@ -449,6 +454,7 @@ async fn read(
     session: &CurrentSession,
     vault: &str,
     item: Option<(Kind, &str)>,
+    below: bool,
 ) -> Access {
     let vault_id = match super::audit::vault_id(state, session, vault).await {
         Ok(Some(id)) => id,
@@ -510,6 +516,7 @@ async fn read(
         &vault_id,
         &scope,
         !auth.rbac,
+        below,
         &mut access,
     )
     .await;
@@ -524,7 +531,29 @@ pub(crate) async fn read_within(
     item: Option<(Kind, &str)>,
     limit: Duration,
 ) -> Access {
-    match tokio::time::timeout(limit, read(state, session, vault, item)).await {
+    read_limited(state, session, vault, item, false, limit).await
+}
+
+/// The vault's access with the assignments made on single items in it
+/// kept too (their `origin` is [`Origin::Item`]), for the access review.
+pub(crate) async fn with_items_within(
+    state: &AppState,
+    session: &CurrentSession,
+    vault: &str,
+    limit: Duration,
+) -> Access {
+    read_limited(state, session, vault, None, true, limit).await
+}
+
+async fn read_limited(
+    state: &AppState,
+    session: &CurrentSession,
+    vault: &str,
+    item: Option<(Kind, &str)>,
+    below: bool,
+    limit: Duration,
+) -> Access {
+    match tokio::time::timeout(limit, read(state, session, vault, item, below)).await {
         Ok(a) => a,
         Err(_) => Access {
             for_item: item.is_some(),
@@ -557,6 +586,7 @@ struct AccessPage {
     vault: String,
     access: Access,
     csv_url: String,
+    review_url: String,
 }
 
 pub(super) async fn page(
@@ -569,6 +599,7 @@ pub(super) async fn page(
     let access = read_within(&state, &session, &vault, None, PAGE_TIMEOUT).await;
     Ok(render(&AccessPage {
         csv_url: vault_ctx::vault_path(&vault, "/access.csv"),
+        review_url: vault_ctx::vault_path(&vault, "/access/review"),
         shell,
         vault,
         access,
@@ -650,6 +681,7 @@ pub(super) async fn csv(
     {
         let page = AccessPage {
             csv_url: vault_ctx::vault_path(&vault, "/access.csv"),
+            review_url: vault_ctx::vault_path(&vault, "/access/review"),
             shell,
             vault,
             access,
