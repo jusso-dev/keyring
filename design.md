@@ -358,6 +358,21 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 
 Read as "make a new version". The primary button is the accent, never danger.
 
+### Change many at once
+
+- The secrets, certificates and keys lists have a first column of plain
+  checkboxes, each with a visually hidden "Select {name}" label. Above the
+  table, a second toolbar (the `.filters` box, after the filter form, never
+  inside it) holds "With selected": the change, tag name and value, expiry
+  date where it applies, and a primary **Review changes** button, disabled
+  with the role as text when the hint says so.
+- The review page is a framed table of names with a badge each (Will
+  change, No change, Can't change, Not found) and a muted sentence saying
+  exactly what happens. The button is primary, or danger for disable, which
+  also asks for the count typed. Cancel is a text link back to the list.
+- The results page follows the import results: a count heading, an ok or
+  warn notice, and a badge and reason per item.
+
 ### Pinned and recently opened
 
 - Kept in the browser by `static/pins.js`, never on the server. Without

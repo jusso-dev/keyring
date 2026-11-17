@@ -410,6 +410,22 @@ impl CertsApi<'_> {
         .await
     }
 
+    /// Change a certificate version's properties: only what `body`
+    /// carries is sent. Tags, when sent, replace the version's tags.
+    pub async fn update(
+        &self,
+        name: &str,
+        version: &str,
+        body: &crate::azure::secrets::UpdateProperties,
+    ) -> Result<CertBundle, AzureError> {
+        self.send(
+            Method::PATCH,
+            &format!("/certificates/{name}/{version}"),
+            body,
+        )
+        .await
+    }
+
     /// Change what Key Vault does near expiry. Only `lifetime_actions` is sent,
     /// so the rest of the policy is left as it is. Key Vault's reference for
     /// "Update Certificate Policy" says to "set specified members in the

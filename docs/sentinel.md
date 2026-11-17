@@ -71,7 +71,7 @@ To remove it, delete the rules (named by a GUID; their display names start with 
 
 | ASIM field | From |
 | --- | --- |
-| `EventType` | `Read` for `secret.reveal` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update and rollback; `Other` for the rest (enable and disable settings, recover, `request.refused`) |
+| `EventType` | `Read` for `secret.reveal` and `certificate.download_private_key`; `Create` for create, upload, import and rotate; `Delete` for delete, purge and cancel; `Set` for set, update, rollback and bulk update; `Other` for the rest (enable and disable settings, recover, `request.refused`) |
 | `EventSubType` | `Recover` for the recover actions |
 | `EventResult` | `Success` for `success`, otherwise `Failure` |
 | `EventResultDetails` | "Denied by Azure", "Refused by Keyring" or "Failed" |
@@ -119,7 +119,7 @@ Each is a Sentinel Scheduled rule, created with `enabled` set to its parameter (
 | No audit events while Key Vault saw Keyring | `rules/audit-gap.kql` | `enableAuditGap` | `auditGapHours` (6), and needs `keyringOutboundIps` |
 | SecretGet from Keyring with no audit event | `rules/unmatched-secret-get.kql` | `enableUnmatchedSecretGet` | Needs `keyringOutboundIps`. Leave off for now (below) |
 
-**Bulk changes.** Bulk change actions (#216) don't exist yet. The working hours rule matches any action with `bulk` as a part of its name (split at `.` and `_`), so it will catch them once they ship, whatever they are called. Add their exact names to `offHoursActions` then if you prefer.
+**Bulk changes.** The working hours rule matches any action with `bulk` as a part of its name (split at `.` and `_`): today `secret.bulk_update`, `certificate.bulk_update` and `key.bulk_update` (#244), one event per item changed, and any bulk action added later.
 
 **Late rows.** Rows can reach the table some minutes after they happen. Each rule looks back `ingestionDelayMinutes` (default 10) further than it runs, and counts a row in the run after it arrives (by `ingestion_time()`), so a late row is neither missed nor raised twice. Measure the delay in your workspace with the checklist's "Sentinel: ingestion delay" row and set the parameter above it.
 
