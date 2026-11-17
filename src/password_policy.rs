@@ -66,30 +66,37 @@ fn is_lower(c: char) -> bool {
 fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
-/// Anything that isn't a letter, a number, a space or a character that
-/// doesn't count (see [`counts`]).
+/// A punctuation mark or symbol (Unicode categories P and S) that counts
+/// (see [`counts`]).
 fn is_symbol(c: char) -> bool {
-    counts(c) && !c.is_alphanumeric() && !c.is_whitespace()
+    !crate::reason::is_unsafe(c) && matches_one(&SYMBOL, c)
 }
 
-/// Unicode general category M (combining marks), such as the accent in a
-/// decomposed `é`. The regex crate is already a dependency, with its
-/// Unicode tables.
-static MARK: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"^\p{M}$").expect("a fixed pattern"));
+/// Letters, numbers, punctuation, symbols and spaces (Unicode categories
+/// L, N, P, S and Zs): what a person can see they typed. The regex crate
+/// is already a dependency, with its Unicode tables.
+static COUNTED: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[\p{L}\p{N}\p{P}\p{S}\p{Zs}]$").expect("a fixed pattern")
+});
+static SYMBOL: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[\p{P}\p{S}]$").expect("a fixed pattern"));
 
-/// Whether a character counts towards `min` and can be a symbol. Control,
-/// format and other invisible characters ([`crate::reason::is_unsafe`]:
-/// zero-width spaces and joiners, the soft hyphen, the byte order mark,
-/// bidi marks, private use) and combining marks don't: they add nothing
-/// anyone can see. A value may still hold them; they just don't meet a
-/// rule.
-fn counts(c: char) -> bool {
-    if crate::reason::is_unsafe(c) {
-        return false;
-    }
+fn matches_one(re: &regex::Regex, c: char) -> bool {
     let mut buf = [0u8; 4];
-    !MARK.is_match(c.encode_utf8(&mut buf))
+    re.is_match(c.encode_utf8(&mut buf))
+}
+
+/// Whether a character counts: towards `min`, as a member of a class, in
+/// a run for `max-repeat`, and in the common list lookup. Only a visible
+/// letter, number, punctuation mark, symbol or space does. Everything
+/// else adds nothing anyone can see and meets no rule: control, format
+/// and other invisible characters ([`crate::reason::is_unsafe`]:
+/// zero-width spaces and joiners, the soft hyphen, the byte order mark,
+/// bidi marks, fillers, private use), combining marks, line and paragraph
+/// separators, and code points Unicode hasn't assigned. A value may still
+/// hold them.
+fn counts(c: char) -> bool {
+    !crate::reason::is_unsafe(c) && matches_one(&COUNTED, c)
 }
 
 impl PasswordPolicy {
@@ -195,15 +202,24 @@ impl PasswordPolicy {
     }
 
     /// Check a value. `label` names the field in the message, such as
-    /// "Password". `None` when it passes, or one message naming each rule
+    /// "Password". Only characters that count (see [`counts`]) are looked
+    /// at. `None` when it passes, or one message naming each rule
     /// it fails, in a fixed order. Every rule is checked every time, so the
     /// time taken doesn't depend on which rule fails first.
     pub fn check(&self, label: &str, value: &Secret) -> Option<String> {
         if !self.is_on() {
             return None;
         }
-        let v = value.expose();
-        let length = v.chars().filter(|&c| counts(c)).count();
+        // The value with only the characters that count, in a `Secret` so
+        // the copy is zeroised when dropped. Sized up front, so it never
+        // moves. Every rule runs on this: an invisible character can't
+        // pad the length, stand in for a class, break up a run or hide a
+        // common password.
+        let mut seen = String::with_capacity(value.expose().len());
+        seen.extend(value.expose().chars().filter(|&c| counts(c)));
+        let seen = Secret::new(seen);
+        let v = seen.expose();
+        let length = v.chars().count();
         let mut needs: Vec<String> = Vec::new();
         if let Some(n) = self.min
             && length < n
@@ -409,6 +425,37 @@ mod tests {
         assert_eq!(check("min=3", "cafe\u{0301}"), None);
         assert!(check("min=5", "cafe\u{0301}").is_some());
         assert!(check("min=5", "caf\u{e9}\u{0301}\u{0301}\u{0301}").is_some());
+        // Code points Unicode hasn't assigned, some of which show as
+        // nothing, aren't a symbol and don't count either.
+        let reserved = "Password1\u{E0002}\u{E0003}\u{E0004}\u{E0005}\u{E0006}";
+        assert_eq!(
+            check(policy, reserved).as_deref(),
+            Some("Password needs at least 14 characters and a symbol, such as ! # or %.")
+        );
+        for c in ['\u{E0002}', '\u{FFF0}', '\u{0378}', '\u{2028}', '\u{2029}'] {
+            assert!(!is_symbol(c) && !counts(c), "{c:?}");
+        }
+        // A combining mark that Unicode calls lower case isn't a lower
+        // case letter here.
+        assert!(check("lower", "ABC1!\u{0345}").is_some());
+        // Nor can an invisible character break up a run or hide a common
+        // password.
+        assert!(check("max-repeat=3", "a\u{200B}a\u{200B}a\u{200B}a").is_some());
+        assert_eq!(check("max-repeat=3", "a\u{200B}a\u{200B}a"), None);
+        for hidden in [
+            "password\u{200B}",
+            "pass\u{200D}word",
+            "password\n",
+            "\u{FEFF}Password",
+        ] {
+            assert_eq!(
+                check("common", hidden).as_deref(),
+                Some("Password is a common password, on Keyring's built-in list. Choose another."),
+                "{hidden:?}"
+            );
+        }
+        // Spaces are visible to the person who typed them, and count.
+        assert_eq!(check("min=4,common", "pass word"), None);
         // Still allowed in a value: they just don't meet a rule.
         assert_eq!(check(policy, "Password1!-long\u{200B}"), None);
         // Visible symbols still count.

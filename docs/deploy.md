@@ -532,13 +532,13 @@ The reveal button and the confirmation pages show the reason field. Any other fo
 
 | Part | What it asks for | Default when left out |
 |---|---|---|
-| `min=N` | At least N characters, 1 to 256. Counted in characters (Unicode scalar values), not bytes, so `ü` or `日` is one. Invisible characters (control and format characters such as zero-width spaces and joiners, the soft hyphen and the byte order mark, and private-use code points) and combining marks (such as the accent in a decomposed `é`) aren't counted. A value may hold them; they just don't count | No minimum |
+| `min=N` | At least N characters, 1 to 256. Counted in characters (Unicode scalar values), not bytes, so `ü` or `日` is one. Only visible characters count: letters, numbers, punctuation, symbols and spaces. Invisible ones (control and format characters such as zero-width spaces and joiners, the soft hyphen and the byte order mark, fillers, private-use and unassigned code points), combining marks (such as the accent in a decomposed `é`) and line breaks aren't counted. A value may hold them; they just don't count | No minimum |
 | `upper` | An upper case letter, in any alphabet | Not needed |
 | `lower` | A lower case letter, in any alphabet | Not needed |
 | `digit` | A digit, 0 to 9 | Not needed |
-| `symbol` | A visible character that isn't a letter, number or space, such as `!`, `#` or `%`. Invisible characters and combining marks are never a symbol | Not needed |
-| `max-repeat=N` | No character more than N times in a row, 1 to 64 | No limit |
-| `common` | Not on Keyring's built-in list of about 1,000 common passwords, compared in lower case | Not checked |
+| `symbol` | A punctuation mark or symbol, such as `!`, `#`, `%` or `€` (Unicode categories P and S). Invisible characters, combining marks, spaces and unassigned code points are never a symbol | Not needed |
+| `max-repeat=N` | No character more than N times in a row, 1 to 64. Characters that don't count are left out first, so an invisible character between two letters doesn't break up a run | No limit |
+| `common` | Not on Keyring's built-in list of about 1,000 common passwords, compared in lower case with characters that don't count left out, so `password` followed by a zero-width space or a line break is still `password` | Not checked |
 
 Unset means no policy: the forms behave as they did before. An unknown part, a part given twice, a number out of range, a value on a part that doesn't take one, or an empty part stops Keyring at start rather than turning the check off. 256 is the generator's longest password, so a policy can always be met by a generated value.
 
