@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- "Edit details" for a certificate or key (src/routes/details.rs): the
+    description and tags only. -#}
+{% block title %}Edit {{ kind.noun() }} {{ name }} in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ kind.item_url(vault, name) }}">Back to {{ name }}</a></p>
+<h1>Edit <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
+<p>Changes the description and tags of the current version. Nothing else about the {{ kind.noun() }} changes, and no new version is made.</p>
+{% call ui::error_summary(errors) %}{% endcall %}
+{% call ui::optional_note() %}{% endcall %}
+<form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ name }}/details" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="version" value="{{ version }}">
+  <input type="hidden" name="updated" value="{{ updated }}">
+
+  {% call ui::description_field(description, kind.noun()) %}{% endcall %}
+
+  {% let field_name = "tags" %}
+  {% if let Some(locked) = locked_tags %}
+  <p><strong>Tags</strong></p>
+  <p class="field-help">These tags have a name with an =, a line break, or spaces at either end, so this form can't show them without changing them. They're kept as they are. Change them in the Azure portal or the Azure CLI.</p>
+  {% if locked.is_empty() %}<p class="muted">None</p>{% else %}<ul>{% for (k, v) in locked %}<li class="mono">{{ k }}: {{ v }}</li>{% endfor %}</ul>{% endif %}
+  {% else %}
+  <label for="tags">Tags <span class="muted">(optional)</span></label>
+  <p class="field-help" id="tags-help">One per line, as name=value. Up to 15 with the description, each name used once.</p>
+  <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ tags }}</textarea>
+  {% include "_field_error.html" %}
+  {% endif %}
+
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
+  <div class="actions">
+    <button type="submit">Save changes</button>
+    <a href="{{ kind.item_url(vault, name) }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

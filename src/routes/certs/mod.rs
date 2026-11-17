@@ -69,7 +69,10 @@ pub(super) struct CertRow {
     pub created_at: Option<i64>,
     /// The "Not changed in over ..." badge, or empty. Set by `mark_stale`.
     pub stale: String,
+    /// Tags, without the description.
     pub tags: Vec<(String, String)>,
+    /// The note in the `description` tag, or empty.
+    pub description: String,
     pub filter_text: String,
 }
 
@@ -82,14 +85,19 @@ impl CertRow {
 
     pub(super) fn from_item(item: &CertItem, now: i64) -> Self {
         let a = &item.attributes;
-        let tags: Vec<(String, String)> = item
-            .tags()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+        let tags: Vec<(String, String)> = crate::description::without(item.tags())
+            .into_iter()
             .collect();
+        let description = crate::description::of(item.tags())
+            .unwrap_or_default()
+            .to_owned();
         let mut filter_text = item.name().to_lowercase();
         for (k, v) in &tags {
             filter_text.push_str(&format!(" {k}={v}").to_lowercase());
+        }
+        if !description.is_empty() {
+            filter_text.push(' ');
+            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
         }
         Self {
             name: item.name().to_owned(),
@@ -106,6 +114,7 @@ impl CertRow {
             created_at: a.created,
             stale: String::new(),
             tags,
+            description,
             filter_text,
         }
     }

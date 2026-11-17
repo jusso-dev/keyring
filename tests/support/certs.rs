@@ -47,6 +47,8 @@ pub(crate) struct Extra {
     pub pfx_password: Mutex<Option<String>>,
     /// The body of every "Update Certificate Policy" call, in order.
     pub policy_patches: Mutex<Vec<Value>>,
+    /// The body of every "Update Certificate" (PATCH a version) call.
+    pub version_patches: Mutex<Vec<Value>>,
     /// Answer a policy update with 200 but keep the old lifetime actions, as
     /// Key Vault might for a change it ignores.
     pub keep_lifetime_actions: Mutex<bool>,
@@ -327,7 +329,8 @@ async fn get_version(
     }
 }
 
-/// "Update Certificate": only `attributes.enabled` is used here.
+/// "Update Certificate": enabled, expiry and tags. Tags sent replace the
+/// version's tags as a whole.
 async fn update_version(
     State(s): State<Arc<KvState>>,
     Path((vault, name, version)): Path<(String, String, String)>,
@@ -343,6 +346,11 @@ async fn update_version(
     let Some(v) = c.versions.iter_mut().find(|v| v.version == version) else {
         return err(404, "CertificateNotFound");
     };
+    s.cert_extra
+        .version_patches
+        .lock()
+        .unwrap()
+        .push(body.clone());
     if let Some(e) = body["attributes"]["enabled"].as_bool() {
         v.enabled = e;
     }

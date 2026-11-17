@@ -47,7 +47,7 @@ pub(super) fn managed_problem(shell: Shell, vault: &str, name: &str) -> Halt {
 
 /// Read the key and refuse if it belongs to a certificate. A missing key
 /// gets the normal not-found page.
-pub(super) async fn unmanaged_key(
+pub(crate) async fn unmanaged_key(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
@@ -107,7 +107,10 @@ pub(super) struct KeyRow {
     pub expires: String,
     pub expires_note: String,
     pub expiry: ExpiryState,
+    /// Tags, without the description.
     pub tags: Vec<(String, String)>,
+    /// The note in the `description` tag, or empty.
+    pub description: String,
     pub managed: bool,
     pub filter_text: String,
 }
@@ -121,14 +124,18 @@ impl KeyRow {
 
     pub(super) fn from_item(k: &KeyItem, now: i64) -> Self {
         let a = &k.attributes;
-        let tags: Vec<(String, String)> = k
-            .tags()
-            .iter()
-            .map(|(a, b)| (a.clone(), b.clone()))
-            .collect();
+        let tags: Vec<(String, String)> =
+            crate::description::without(k.tags()).into_iter().collect();
+        let description = crate::description::of(k.tags())
+            .unwrap_or_default()
+            .to_owned();
         let mut filter_text = k.name().to_lowercase();
         for (a, b) in &tags {
             filter_text.push_str(&format!(" {a}={b}").to_lowercase());
+        }
+        if !description.is_empty() {
+            filter_text.push(' ');
+            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
         }
         Self {
             name: k.name().to_owned(),
@@ -144,6 +151,7 @@ impl KeyRow {
                 .unwrap_or_default(),
             expiry: a.expiry_state(now),
             tags,
+            description,
             managed: k.managed.unwrap_or(false),
             filter_text,
         }

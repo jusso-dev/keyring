@@ -86,8 +86,9 @@ impl SearchQuery {
         self.text().chars().count() > MAX_QUERY_CHARS
     }
 
-    /// Case-insensitive substring of the name, a tag as `name=value`, or
-    /// the content type: the same match as each vault's own list filter.
+    /// Case-insensitive substring of the name, a tag as `name=value`, the
+    /// description, or the content type: the same match as each vault's
+    /// own list filter.
     fn matches_text(&self, i: &Item) -> bool {
         let q = self.text().to_lowercase();
         i.name.to_lowercase().contains(&q)
@@ -95,6 +96,7 @@ impl SearchQuery {
                 .iter()
                 .any(|(k, v)| format!("{k}={v}").to_lowercase().contains(&q))
             || i.content_type.to_lowercase().contains(&q)
+            || i.description().to_lowercase().contains(&q)
     }
 
     fn matches(&self, i: &Item, now: i64) -> bool {
@@ -119,7 +121,9 @@ pub(super) struct Row {
     pub content_type: String,
     pub expires: String,
     pub expires_note: String,
+    /// Tags, without the description.
     pub tags: Vec<(String, String)>,
+    pub description: String,
 }
 
 pub(super) struct VaultResults {
@@ -228,7 +232,13 @@ pub(super) async fn page(
                 .expires
                 .map(|e| dates::relative_days(e, now))
                 .unwrap_or_default(),
-            tags: i.tags.clone(),
+            tags: i
+                .tags
+                .iter()
+                .filter(|(k, _)| k != crate::description::TAG)
+                .cloned()
+                .collect(),
+            description: i.description().to_owned(),
         };
         match out.groups.last_mut() {
             Some(g) if g.vault == i.vault => g.rows.push(row),
@@ -292,6 +302,17 @@ mod tests {
         for miss in ["dbpassword", "team", "password owner"] {
             assert!(!q(miss).matches(&i, NOW), "{miss}");
         }
+    }
+
+    #[test]
+    fn matches_the_description() {
+        let mut i = item(ItemType::Certificate, "web-tls");
+        i.tags = vec![(
+            "description".into(),
+            "Front door for the Payments site".into(),
+        )];
+        assert!(q("payments site").matches(&i, NOW));
+        assert!(!q("billing").matches(&i, NOW));
     }
 
     #[test]

@@ -424,6 +424,24 @@ Read as "make a new version". The primary button is the accent, never danger.
 - The results page follows the import results: a count heading, an ok or
   warn notice, and a badge and reason per item.
 
+### Description (the `description` tag)
+
+- Create and edit forms for secrets, certificates and keys have a
+  **Description** textarea (optional) after the name, with field help that
+  says it is saved as a tag anyone who can see the tags can read, and not to
+  type secrets, passwords or personal details. A second help line under it
+  says the 256-character limit; the script turns it into a count of
+  characters left. It isn't a live region: it is read with the field.
+- Certificates and keys get a secondary **Edit details** link button on
+  their page, disabled with the role named like the others. Its form is the
+  description and the tags box, nothing else.
+- Detail pages show the description under the heading in ink-2, line
+  breaks kept (`.item-note`). No label, no box.
+- Lists have a Description column after Status, at `--text-sm`, cut to 80
+  characters on one line with an ellipsis; the whole note is the cell's
+  visually hidden text. "None" in muted when empty, like other cells.
+- The tags box and tag lists never show `description`.
+
 ### Pinned and recently opened
 
 - Kept in the browser by `static/pins.js`, never on the server. Without

@@ -97,15 +97,34 @@ fn read_need(kind: Kind) -> Need {
     }
 }
 
-/// One change, the same for every item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One change, the same for every item. `Debug` is written by hand so a
+/// description never prints.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Op {
     SetTag(String, String),
     RemoveTag(String),
+    /// Set the note in the `description` tag. Cleaned and checked.
+    SetNote(String),
+    RemoveNote,
     /// End of the chosen day, UTC.
     Expiry(Timestamp),
     Enable,
     Disable,
+}
+
+impl std::fmt::Debug for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SetTag(k, v) => f.debug_tuple("SetTag").field(k).field(v).finish(),
+            Self::RemoveTag(k) => f.debug_tuple("RemoveTag").field(k).finish(),
+            // The note may hold sensitive context: never printed.
+            Self::SetNote(_) => f.write_str("SetNote(..)"),
+            Self::RemoveNote => f.write_str("RemoveNote"),
+            Self::Expiry(e) => f.debug_tuple("Expiry").field(e).finish(),
+            Self::Enable => f.write_str("Enable"),
+            Self::Disable => f.write_str("Disable"),
+        }
+    }
 }
 
 impl Op {
@@ -114,6 +133,8 @@ impl Op {
         match self {
             Self::SetTag(k, v) => format!("Set the tag {k}={v}"),
             Self::RemoveTag(k) => format!("Remove the tag {k}"),
+            Self::SetNote(_) => "Set the description".into(),
+            Self::RemoveNote => "Remove the description".into(),
             Self::Expiry(e) => format!("Set the expiry date to {}", dates::format_date(*e)),
             Self::Enable => "Enable".into(),
             Self::Disable => "Disable".into(),
@@ -123,15 +144,27 @@ impl Op {
 
 /// What the forms post. The names come as repeated `item` fields, which
 /// `serde_urlencoded` can't read into a list, so the body is read by hand.
-#[derive(Debug, Default)]
+/// `Debug` shows the change and how many items, never the form token, a
+/// tag value or the description.
+#[derive(Default)]
 struct Posted {
     csrf: String,
     items: Vec<String>,
     op: String,
     tag_name: String,
     tag_value: String,
+    description: String,
     expires: String,
     confirm_count: String,
+}
+
+impl std::fmt::Debug for Posted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Posted")
+            .field("op", &self.op)
+            .field("items", &self.items.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Posted {
@@ -145,6 +178,7 @@ impl Posted {
                 "op" => p.op = v,
                 "tag_name" => p.tag_name = v,
                 "tag_value" => p.tag_value = v,
+                "description" => p.description = v,
                 "expires" => p.expires = v,
                 "confirm_count" => p.confirm_count = v,
                 _ => {}
@@ -159,6 +193,14 @@ impl Posted {
         match self.op.as_str() {
             "tag_set" => one_tag(&self.tag_name, &self.tag_value).map(|(k, v)| Op::SetTag(k, v)),
             "tag_remove" => one_tag(&self.tag_name, "").map(|(k, _)| Op::RemoveTag(k)),
+            "description_set" => match crate::description::clean(&self.description)? {
+                Some(n) => Ok(Op::SetNote(n)),
+                None => Err(
+                    "Type the description to set. To take it off, choose Remove the description."
+                        .into(),
+                ),
+            },
+            "description_remove" => Ok(Op::RemoveNote),
             "expiry" if kind == Kind::Certificate => Err(
                 "A certificate's expiry date comes from the certificate. Renew it to change it."
                     .into(),
@@ -269,6 +311,30 @@ pub(crate) fn plan(kind: Kind, op: &Op, cur: &Current) -> Plan {
                 Some(o) => format!("Changes {k} from {} to {}.", shown(o), shown(v)),
                 None => format!("Adds {}.", tag_text(k, v)),
             }
+        }
+        Op::SetNote(note) => {
+            let old = crate::description::of(&cur.tags);
+            if old == Some(note.as_str()) {
+                return Plan::NoChange("Already has this description.".into());
+            }
+            match crate::description::merge(&cur.tags, Some(note)) {
+                Ok(tags) => body.tags = Some(tags),
+                Err(m) => return Plan::Blocked(Blocked::TooManyTags, m),
+            }
+            if old.is_some() {
+                "Replaces its description.".into()
+            } else {
+                "Adds the description.".into()
+            }
+        }
+        Op::RemoveNote => {
+            if !cur.tags.contains_key(crate::description::TAG) {
+                return Plan::NoChange("Has no description.".into());
+            }
+            let mut tags = cur.tags.clone();
+            tags.remove(crate::description::TAG);
+            body.tags = Some(tags);
+            "Removes its description.".into()
         }
         Op::RemoveTag(k) => {
             let Some(old) = cur.tags.get(k) else {
@@ -557,6 +623,7 @@ struct ReviewPage {
     op: String,
     tag_name: String,
     tag_value: String,
+    description: String,
     expires: String,
 }
 
@@ -648,6 +715,7 @@ pub(crate) async fn review<K: Which>(
             op: p.op,
             tag_name: p.tag_name,
             tag_value: p.tag_value,
+            description: p.description,
             expires: p.expires,
         })
         .into_response(),
@@ -900,6 +968,57 @@ mod tests {
     }
 
     #[test]
+    fn debug_hides_the_description() {
+        let op = Op::SetNote("TOPSECRETNOTE".into());
+        assert_eq!(format!("{op:?}"), "SetNote(..)");
+        let p =
+            Posted::parse(b"op=description_set&description=TOPSECRETNOTE&item=a&item=b&csrf=TOKEN");
+        let shown = format!("{p:?}");
+        assert!(
+            !shown.contains("TOPSECRETNOTE") && !shown.contains("TOKEN"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("description_set") && shown.contains("items: 2"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn the_description_is_merged_and_counted() {
+        let c = cur(&[("env", "prod")]);
+        let Plan::Change(words, b) = plan(Kind::Key, &Op::SetNote("Signs invoices".into()), &c)
+        else {
+            panic!("should change");
+        };
+        assert_eq!(words, "Adds the description.");
+        let tags = b.tags.unwrap();
+        assert_eq!(tags["env"], "prod");
+        assert_eq!(tags["description"], "Signs invoices");
+        let noted = cur(&[("env", "prod"), ("description", "Signs invoices")]);
+        assert!(matches!(
+            plan(Kind::Key, &Op::SetNote("Signs invoices".into()), &noted),
+            Plan::NoChange(_)
+        ));
+        let Plan::Change(_, b) = plan(Kind::Key, &Op::RemoveNote, &noted) else {
+            panic!("should change");
+        };
+        assert_eq!(b.tags.unwrap().keys().collect::<Vec<_>>(), ["env"]);
+        assert!(matches!(
+            plan(Kind::Key, &Op::RemoveNote, &c),
+            Plan::NoChange(_)
+        ));
+        let many: Vec<(String, String)> = (0..MAX_TAGS)
+            .map(|i| (format!("k{i}"), "v".to_owned()))
+            .collect();
+        let refs: Vec<(&str, &str)> = many.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        assert!(matches!(
+            plan(Kind::Key, &Op::SetNote("n".into()), &cur(&refs)),
+            Plan::Blocked(Blocked::TooManyTags, _)
+        ));
+    }
+
+    #[test]
     fn tags_are_written_back_whole() {
         let c = cur(&[("env", "prod"), ("team", "ops")]);
         let b = body(plan(
@@ -1017,6 +1136,31 @@ mod tests {
         assert!(p("op=expiry&expires=2099-01-01").op(Kind::Key, now).is_ok());
         assert!(p("op=delete").op(Kind::Key, now).is_err());
         assert!(p("op=tag_set&tag_name=").op(Kind::Key, now).is_err());
+        assert_eq!(
+            p("op=description_set&description=Used%20by%20billing%0D%0Aand%20payroll")
+                .op(Kind::Certificate, now)
+                .unwrap(),
+            Op::SetNote("Used by billing\nand payroll".into())
+        );
+        assert!(
+            p("op=description_set&description=")
+                .op(Kind::Key, now)
+                .is_err()
+        );
+        assert!(
+            p("op=description_set&description=a%E2%80%AEb")
+                .op(Kind::Key, now)
+                .is_err()
+        );
+        assert_eq!(
+            p("op=description_remove").op(Kind::Key, now).unwrap(),
+            Op::RemoveNote
+        );
+        assert!(
+            p("op=tag_set&tag_name=description&tag_value=x")
+                .op(Kind::Key, now)
+                .is_err()
+        );
         let long = "x".repeat(257);
         assert!(
             p(&format!("op=tag_set&tag_name=a&tag_value={long}"))

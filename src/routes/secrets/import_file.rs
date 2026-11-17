@@ -78,6 +78,8 @@ struct Raw {
     content_type: String,
     expires: String,
     tags: String,
+    /// The optional `description` column: the note, merged into the tags.
+    description: String,
 }
 
 /// Read a whole file. An `Err` is a message for the person about why the
@@ -157,10 +159,15 @@ fn check(raw: Raw, now: i64) -> Row {
             }
         }
     }
-    let tags = parse_tags(&raw.tags).unwrap_or_else(|m| {
-        problem.get_or_insert(m);
-        BTreeMap::new()
-    });
+    let tags = parse_tags(&raw.tags)
+        .and_then(|t| {
+            crate::description::clean(&raw.description)
+                .and_then(|n| crate::description::merge(&t, n.as_deref()))
+        })
+        .unwrap_or_else(|m| {
+            problem.get_or_insert(m);
+            BTreeMap::new()
+        });
     Row {
         line: raw.line,
         original,
@@ -185,6 +192,9 @@ fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
         let (k, v) = (k.trim(), v.trim());
         if k.is_empty() {
             return Err("A tag has no name before the =.".into());
+        }
+        if crate::description::is_reserved(k) {
+            return Err("Put the description in the description column, not in tags.".into());
         }
         if k.len() > 512 || v.len() > 256 {
             return Err("A tag is too long. Names can be 512 characters and values 256.".into());
@@ -319,6 +329,7 @@ fn parse_env(text: &str) -> Result<Vec<Raw>, String> {
             content_type: String::new(),
             expires: String::new(),
             tags: String::new(),
+            description: String::new(),
         });
     }
     Ok(out)
@@ -409,10 +420,17 @@ impl Quoted {
 // CSV
 // ---------------------------------------------------------------------
 
-const COLUMNS: [&str; 5] = ["name", "value", "content_type", "expires", "tags"];
+const COLUMNS: [&str; 6] = [
+    "name",
+    "value",
+    "content_type",
+    "expires",
+    "tags",
+    "description",
+];
 
 /// RFC 4180 CSV with a header row. `name` and `value` are needed;
-/// `content_type`, `expires` and `tags` are optional. Fields may be quoted,
+/// `content_type`, `expires`, `tags` and `description` are optional. Fields may be quoted,
 /// with `""` for a quote, and quoted fields may hold commas and line
 /// breaks. Blank lines are skipped.
 fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
@@ -428,7 +446,7 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
         // header row has a value there.
         let Some(col) = COLUMNS.iter().find(|c| **c == h) else {
             return Err(format!(
-                "The first line needs column names: name, value, and optionally content_type, expires and tags. Keyring doesn't know the column name in column {} of the first line.",
+                "The first line needs column names: name, value, and optionally content_type, expires, tags and description. Keyring doesn't know the column name in column {} of the first line.",
                 i + 1
             ));
         };
@@ -463,6 +481,7 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
             content_type: take("content_type"),
             expires: take("expires"),
             tags: take("tags"),
+            description: take("description"),
         };
         drop(take);
         out.push(raw);
@@ -678,6 +697,33 @@ mod tests {
             "\n",
             "plain, keeps spaces ,,,\n",
         ));
+        // An optional description column, merged into the tags.
+        let noted = csv(concat!(
+            "name,value,tags,description\n",
+            "a,v,env=prod,\"Used by the \"\"billing\"\" job\nline two\"\n",
+            "b,v,description=x,\n",
+            "c,v,,\"bad\u{202E}note\"\n",
+        ));
+        assert_eq!(
+            noted[0].tags["description"],
+            "Used by the \"billing\" job\nline two"
+        );
+        assert_eq!(noted[0].tags["env"], "prod");
+        assert!(noted[0].problem.is_none());
+        assert!(
+            noted[1]
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("description column")
+        );
+        assert!(
+            noted[2]
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("hidden character")
+        );
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "db-password");
         assert_eq!(rows[0].value.expose(), "a,b \"c\"");

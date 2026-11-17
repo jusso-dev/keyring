@@ -42,6 +42,7 @@
   <dl class="props">
     <dt>Enabled</dt><dd>{% if enabled %}Yes{% else %}No{% endif %}</dd>
     <dt>Private key can be downloaded later</dt><dd>{% if exportable %}Yes{% else %}No{% endif %}</dd>
+    <dt>Description</dt><dd class="note">{{ ui::or_none(description) }}</dd>
     <dt>Tags</dt><dd>{{ ui::tags(tags) }}</dd>
   </dl>
   <form method="post" action="{{ shell.vault_prefix() }}/certificates/-/upload/confirm">
