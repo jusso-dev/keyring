@@ -589,8 +589,14 @@ pub(crate) struct ArmState {
     /// Make Log Analytics answer 403.
     pub audit_forbidden: Mutex<bool>,
     /// Status to answer for one workspace, keyed by the end of its
-    /// resource ID (for example `/workspaces/logs-b`).
+    /// resource ID (for example `/workspaces/logs-b`). 400 answers the way
+    /// Log Analytics does when the queried table doesn't exist yet.
     pub audit_fail_workspace: Mutex<Vec<(String, u16)>>,
+    /// Answer "used by" queries with Log Analytics' `PartialError`.
+    pub used_by_partial: Mutex<bool>,
+    /// With `used_by_partial`, also leave out the vault's count row, as a
+    /// cut-short answer can.
+    pub used_by_no_summary: Mutex<bool>,
     /// KQL queries received.
     pub audit_queries: Mutex<Vec<String>>,
     /// The path of each Log Analytics query, which names the workspace.
@@ -1085,6 +1091,8 @@ pub(crate) async fn start_arm() -> MockArm {
         audit_raw: Mutex::new(Vec::new()),
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
+        used_by_partial: Mutex::new(false),
+        used_by_no_summary: Mutex::new(false),
         audit_queries: Mutex::new(Vec::new()),
         audit_paths: Mutex::new(Vec::new()),
         diagnostics_for: Mutex::new(Vec::new()),
@@ -1231,6 +1239,15 @@ async fn arm_fallback(
             .iter()
             .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
             .map(|(_, status)| *status);
+        if one_fails == Some(400) {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({"error": {"code": "BadArgumentError", "message": "x",
+                    "innererror": {"code": "SemanticError",
+                        "message": "'where' operator: Failed to resolve table or column expression named 'AZKVAuditLogs'",
+                        "innererror": {"code": "SEM0100", "message": "x"}}}}),
+            );
+        }
         if let Some(status) = one_fails {
             let code = if status == 403 {
                 "InsufficientAccessError"
@@ -1257,7 +1274,14 @@ async fn arm_fallback(
                 .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
                 .map(|(_, e)| e.clone())
                 .unwrap_or_default();
-            return json_response(StatusCode::OK, answer_used_by(&query, &events));
+            let mut answer = answer_used_by(&query, &events);
+            if *s.used_by_partial.lock().unwrap() {
+                answer["error"] = json!({"code": "PartialError", "message": "x"});
+                if *s.used_by_no_summary.lock().unwrap() {
+                    answer["tables"][0]["rows"].as_array_mut().unwrap().pop();
+                }
+            }
+            return json_response(StatusCode::OK, answer);
         }
         if query.contains("\nKeyringAudit_CL\n") {
             let mut answer = answer_keyring(&query, &s.keyring_rows.lock().unwrap());
@@ -1599,7 +1623,7 @@ pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Val
 
 /// Answer a "used by" query from `src/azure/used_by.rs` the way Log
 /// Analytics would: allowed uses of the named item in the named vault,
-/// summarised by caller.
+/// summarised by caller, then the row counting all the vault's events.
 pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Value {
     let vault = let_literal(query, "vaultName")
         .unwrap_or_default()
@@ -1668,7 +1692,16 @@ pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Va
         }
     }
     groups.sort_by(|a, b| b.last.cmp(&a.last));
-    let rows: Vec<serde_json::Value> = groups
+    let from_vault: Vec<&RawEvent> = events
+        .iter()
+        .filter(|e| {
+            e.vault_id
+                .to_ascii_lowercase()
+                .ends_with(&format!("/vaults/{vault}"))
+        })
+        .collect();
+    let newest = from_vault.iter().map(|e| e.time.clone()).max();
+    let mut rows: Vec<serde_json::Value> = groups
         .into_iter()
         .map(|g| {
             json!([
@@ -1679,13 +1712,28 @@ pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Va
                 g.last,
                 g.managed,
                 g.clients.join(", "),
-                g.ips.join(", ")
+                g.ips.join(", "),
+                null,
+                null
             ])
         })
         .collect();
+    rows.push(json!([
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        from_vault.len(),
+        newest
+    ]));
     json!({"tables": [{"name": "PrimaryResult", "columns": [
         {"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"}, {"name": "Reads"},
-        {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"}
+        {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"},
+        {"name": "VaultEvents"}, {"name": "Newest"}
     ], "rows": rows}]})
 }
 

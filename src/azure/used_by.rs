@@ -119,8 +119,11 @@ impl UsedByQuery {
         })
     }
 
-    /// The KQL. Values only appear as escaped string literals in `let`
-    /// lines; the rest of the query is fixed text.
+    /// The KQL. Values only appear as escaped string literals in the
+    /// `let vaultName` and `let itemName` lines; the rest of the query is
+    /// fixed text. The answer is the callers, then one more row with the
+    /// count and newest time of all this vault's events in the period, so
+    /// an empty list can be told apart from logs that haven't arrived.
     pub fn kql(&self, resource_specific: bool) -> String {
         let mut q = String::new();
         q.push_str(&format!("let vaultName = {};\n", kql_string(&self.vault)));
@@ -135,9 +138,10 @@ impl UsedByQuery {
         };
         if resource_specific {
             q.push_str(&format!(
-                "AZKVAuditLogs\n\
+                "let vaultEvents = AZKVAuditLogs\n\
                  | where TimeGenerated > ago({DAYS}d)\n\
-                 | where _ResourceId endswith strcat('/vaults/', tolower(vaultName))\n\
+                 | where _ResourceId endswith strcat('/vaults/', tolower(vaultName));\n\
+                 let callers = vaultEvents\n\
                  | where OperationName in ({ops})\n\
                  | extend Item = tostring(split(tostring(parse_url(column_ifexists('RequestUri', '')).Path), '/')[2])\n\
                  | where Item =~ itemName\n\
@@ -158,10 +162,11 @@ impl UsedByQuery {
             // AzureDiagnostics only has a column once data with it has
             // arrived, so every optional column goes through column_ifexists.
             q.push_str(&format!(
-                "AzureDiagnostics\n\
+                "let vaultEvents = AzureDiagnostics\n\
                  | where TimeGenerated > ago({DAYS}d)\n\
                  | where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'\n\
-                 | where Resource =~ vaultName\n\
+                 | where Resource =~ vaultName;\n\
+                 let callers = vaultEvents\n\
                  | where OperationName in ({ops})\n\
                  | extend Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2])\n\
                  | where Item =~ itemName\n\
@@ -184,7 +189,8 @@ impl UsedByQuery {
         q.push_str(&format!(
             "| summarize Reads = count(), LastRead = max(TimeGenerated), Managed = countif(isnotempty(ManagedId)), ClientInfo = strcat_array(make_set(ClientInfo, {MAX_SEEN}), ', '), CallerIp = strcat_array(make_set(CallerIp, {MAX_SEEN}), ', ') by ObjectId, AppId, Upn\n\
              | order by LastRead desc\n\
-             | take {MAX_CALLERS}"
+             | take {MAX_CALLERS};\n\
+             union callers, (vaultEvents | summarize VaultEvents = count(), Newest = max(TimeGenerated))"
         ));
         q
     }
@@ -194,6 +200,25 @@ impl UsedByQuery {
 struct QueryResult {
     #[serde(default)]
     tables: Vec<Table>,
+    /// Set on a 200 when Log Analytics gave only part of the answer
+    /// (`PartialError`).
+    #[serde(default)]
+    error: Option<Value>,
+}
+
+/// One workspace's answer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Answer {
+    pub callers: Vec<Caller>,
+    /// Audit events from this vault, of any kind, in the period. Zero
+    /// means the vault's logs haven't arrived in this workspace (a new
+    /// diagnostic setting, or one that was off), not that nobody used
+    /// the item.
+    pub vault_events: u64,
+    /// Time of the vault's newest event, as Log Analytics gave it.
+    pub newest: String,
+    /// Log Analytics said the answer was only partial.
+    pub incomplete: bool,
 }
 
 #[derive(Deserialize)]
@@ -217,12 +242,25 @@ fn text(v: Option<&Value>) -> String {
     }
 }
 
-fn parse(result: QueryResult) -> Vec<Caller> {
+fn parse(result: QueryResult) -> Answer {
+    let incomplete = result.error.is_some();
     let Some(t) = result.tables.into_iter().next() else {
-        return Vec::new();
+        return Answer {
+            incomplete,
+            ..Answer::default()
+        };
     };
     let idx = |name: &str| t.columns.iter().position(|c| c.name == name);
     let get = |row: &Vec<Value>, i: Option<usize>| text(i.and_then(|i| row.get(i)));
+    // The vault's own summary row: the one with `VaultEvents`.
+    let (vi, ni) = (idx("VaultEvents"), idx("Newest"));
+    let summary = |r: &Vec<Value>| !get(r, vi).is_empty();
+    let (vault_events, newest) = t
+        .rows
+        .iter()
+        .find(|r| summary(r))
+        .map(|r| (get(r, vi).parse().unwrap_or(0), get(r, ni)))
+        .unwrap_or_default();
     let (oi, ai, ui, ri, li, mi, ci, pi) = (
         idx("ObjectId"),
         idx("AppId"),
@@ -233,8 +271,10 @@ fn parse(result: QueryResult) -> Vec<Caller> {
         idx("ClientInfo"),
         idx("CallerIp"),
     );
-    t.rows
+    let callers = t
+        .rows
         .iter()
+        .filter(|r| !summary(r))
         .map(|r| Caller {
             object_id: get(r, oi),
             app_id: get(r, ai),
@@ -245,7 +285,33 @@ fn parse(result: QueryResult) -> Vec<Caller> {
             client_info: get(r, ci),
             ip: get(r, pi),
         })
-        .collect()
+        .collect();
+    Answer {
+        callers,
+        vault_events,
+        newest,
+        incomplete,
+    }
+}
+
+/// Log Analytics couldn't find the table: `AzureDiagnostics` doesn't
+/// exist in a workspace until the first diagnostic data arrives, and
+/// `AZKVAuditLogs` not until the first resource-specific Key Vault event.
+/// Azure's message is matched here only, never logged or shown.
+pub fn is_missing_table(e: &AzureError) -> bool {
+    match e {
+        AzureError::Status {
+            status: 400,
+            code,
+            message,
+        } => {
+            matches!(code.as_deref(), Some("SEM0100" | "SemanticError"))
+                || message
+                    .as_deref()
+                    .is_some_and(|m| m.contains("Failed to resolve table"))
+        }
+        _ => false,
+    }
 }
 
 /// Run the query against one workspace, as the signed-in person.
@@ -255,7 +321,7 @@ pub async fn query(
     loganalytics_url: &str,
     workspace: &Workspace,
     q: &UsedByQuery,
-) -> Result<Vec<Caller>, AzureError> {
+) -> Result<Answer, AzureError> {
     if !is_safe_resource_id(&workspace.resource_id) {
         return Err(AzureError::Unreadable);
     }
@@ -385,11 +451,22 @@ mod tests {
                 for v in ["kv-test", "db-password"] {
                     assert_eq!(k.matches(v).count(), 1, "{v} appears once");
                 }
-                assert_eq!(k.matches("let ").count(), 2, "only the two let lines");
+                assert_eq!(
+                    k.lines().filter(|l| l.starts_with("let ")).count(),
+                    4,
+                    "the two name lines and two fixed ones"
+                );
+                assert!(k.contains("\nlet vaultEvents = "));
+                // Not materialised: a busy vault's 30 days would not fit the cache.
+                assert!(!k.contains("materialize"));
+                assert!(k.contains("\nlet callers = vaultEvents\n"));
                 assert!(k.contains("ago(30d)"));
                 assert!(k.contains("| summarize Reads = count(), LastRead = max(TimeGenerated)"));
                 assert!(k.contains("by ObjectId, AppId, Upn"));
-                assert!(k.ends_with(&format!("| take {MAX_CALLERS}")));
+                assert!(k.contains(&format!("| take {MAX_CALLERS};\n")));
+                assert!(k.ends_with(
+                    "union callers, (vaultEvents | summarize VaultEvents = count(), Newest = max(TimeGenerated))"
+                ));
             }
         }
     }
@@ -463,14 +540,70 @@ mod tests {
             ]
         }]}))
         .unwrap();
-        let c = parse(r);
+        let a = parse(r);
+        assert_eq!((a.vault_events, a.incomplete), (0, false));
+        let c = a.callers;
         assert_eq!(c.len(), 4);
         assert_eq!(c[0].kind(), CallerKind::Person);
         assert_eq!(c[0].reads, 12);
         assert_eq!(c[1].kind(), CallerKind::ManagedIdentity);
         assert_eq!(c[2].kind(), CallerKind::App);
         assert_eq!(c[3].kind(), CallerKind::Unknown);
-        assert!(parse(QueryResult { tables: vec![] }).is_empty());
+        let none = parse(QueryResult {
+            tables: vec![],
+            error: None,
+        });
+        assert_eq!(none, Answer::default());
+    }
+
+    #[test]
+    fn the_vault_row_is_kept_apart_from_callers() {
+        let r: QueryResult = serde_json::from_value(serde_json::json!({
+            "tables": [{
+                "columns": [{"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"}, {"name": "Reads"},
+                            {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"},
+                            {"name": "VaultEvents"}, {"name": "Newest"}],
+                "rows": [
+                    ["oid-1", "app-1", "", 2, "2026-11-10T10:00:00Z", 0, "", "", null, null],
+                    [null, null, null, null, null, null, null, null, 57, "2026-11-12T10:00:00Z"]
+                ]
+            }],
+            "error": {"code": "PartialError"}
+        }))
+        .unwrap();
+        let a = parse(r);
+        assert_eq!(a.callers.len(), 1);
+        assert_eq!(a.vault_events, 57);
+        assert_eq!(a.newest, "2026-11-12T10:00:00Z");
+        assert!(a.incomplete);
+        // No events from the vault at all: count 0, no time.
+        let r: QueryResult = serde_json::from_value(serde_json::json!({"tables": [{
+            "columns": [{"name": "ObjectId"}, {"name": "VaultEvents"}, {"name": "Newest"}],
+            "rows": [[null, 0, null]]
+        }]}))
+        .unwrap();
+        let a = parse(r);
+        assert!(a.callers.is_empty());
+        assert_eq!((a.vault_events, a.newest.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn a_missing_table_is_told_apart() {
+        let status = |status, code: &str, message: &str| AzureError::Status {
+            status,
+            code: Some(code.into()),
+            message: Some(message.into()),
+        };
+        assert!(is_missing_table(&status(400, "SEM0100", "x")));
+        assert!(is_missing_table(&status(400, "SemanticError", "x")));
+        assert!(is_missing_table(&status(
+            400,
+            "BadArgumentError",
+            "'where' operator: Failed to resolve table or column expression named 'AZKVAuditLogs'"
+        )));
+        assert!(!is_missing_table(&status(400, "BadArgumentError", "x")));
+        assert!(!is_missing_table(&status(403, "SEM0100", "x")));
+        assert!(!is_missing_table(&AzureError::Unreadable));
     }
 
     #[test]
