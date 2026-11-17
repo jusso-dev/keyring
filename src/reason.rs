@@ -137,11 +137,12 @@ impl ReasonPolicy {
     }
 }
 
-/// A reveal: a secret value shown, or a private key downloaded.
+/// A reveal: a secret value shown, a private key downloaded, or a value
+/// read to copy it to another vault.
 pub fn is_reveal(action: Action) -> bool {
     matches!(
         action,
-        Action::SecretReveal | Action::CertificateDownloadPrivateKey
+        Action::SecretReveal | Action::CertificateDownloadPrivateKey | Action::SecretCopyRead
     )
 }
 

@@ -64,6 +64,12 @@ pub enum Action {
     /// Tags, expiry or enabled changed on many secrets at once. One event
     /// for the request, and one per secret, as for an import.
     SecretBulkUpdate,
+    /// A secret copied to another vault: the read from the source. The
+    /// request's own event, on the source vault and name.
+    SecretCopyRead,
+    /// A secret copied to another vault: the write to the target. Its own
+    /// event, on the target vault and name.
+    SecretCopyWrite,
     CertificateDownloadPrivateKey,
     CertificateUpload,
     CertificateCreate,
@@ -99,7 +105,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 36] = [
+    pub const ALL: [Action; 38] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -111,6 +117,8 @@ impl Action {
         Self::SecretPurge,
         Self::SecretImport,
         Self::SecretBulkUpdate,
+        Self::SecretCopyRead,
+        Self::SecretCopyWrite,
         Self::CertificateDownloadPrivateKey,
         Self::CertificateUpload,
         Self::CertificateCreate,
@@ -151,6 +159,8 @@ impl Action {
             Self::SecretPurge => "secret.purge",
             Self::SecretImport => "secret.import",
             Self::SecretBulkUpdate => "secret.bulk_update",
+            Self::SecretCopyRead => "secret.copy.read",
+            Self::SecretCopyWrite => "secret.copy.write",
             Self::CertificateDownloadPrivateKey => "certificate.download_private_key",
             Self::CertificateUpload => "certificate.upload",
             Self::CertificateCreate => "certificate.create",
@@ -506,6 +516,15 @@ pub fn refuse(why: Refusal) {
     });
 }
 
+/// Say the request's own action went through, whatever the response.
+/// For a copy, whose request event is the read: when the write that
+/// follows fails, the read still succeeded. First one wins.
+pub fn succeed() {
+    note(|d| {
+        d.outcome.get_or_insert((Outcome::Success, String::new()));
+    });
+}
+
 /// Say how the request ended, with a reason code. First one wins.
 pub fn end(outcome: Outcome, reason_code: &str) {
     note(|d| {
@@ -659,6 +678,14 @@ impl ItemEvents {
         me
     }
 
+    /// Write the events for another vault than the request's, such as the
+    /// target of a copy. `vault` must be a checked vault name.
+    #[must_use]
+    pub fn in_vault(mut self, vault: &str) -> Self {
+        self.vault = Some(vault.to_owned());
+        self
+    }
+
     /// Run `work` on one item and write one event for it: `success` if it
     /// returns `Ok`, otherwise what its failed Azure call said. The event
     /// carries the item name, and the `kv_request_id` of `work`'s own last
@@ -769,7 +796,7 @@ fn finish_cancelled(mut d: Draft) -> Option<AuditEvent> {
 fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     let action = d.action?;
     let (outcome, reason_code) = match (d.outcome, d.azure) {
-        (Some((o, r)), _) => (o, Some(r)),
+        (Some((o, r)), _) => (o, (!r.is_empty()).then_some(r)),
         _ if status.is_success() || status.is_redirection() => (Outcome::Success, None),
         (None, Some((o, r))) => (o, Some(r)),
         (None, None) if status == axum::http::StatusCode::GATEWAY_TIMEOUT => {

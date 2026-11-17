@@ -59,7 +59,9 @@ pub(crate) struct KvState {
     pub fail_method: Mutex<Option<Method>>,
     /// Each `(method, path part, status, code)`: a request with that
     /// method whose path contains the part fails so. For mixed results in
-    /// one request, such as some items refused and others not.
+    /// one request, such as some items refused and others not. A part
+    /// ending in `$` matches the end of the path only, so a value read
+    /// (`/secrets/{name}$`) can fail while its versions list doesn't.
     pub fail_each: Mutex<Vec<(Method, String, u16, &'static str)>>,
     pub certs: Mutex<BTreeMap<String, super::certs::StoredCert>>,
     pub deleted_certs: Mutex<BTreeMap<String, super::certs::DeletedCert>>,
@@ -483,7 +485,14 @@ async fn record(
         .lock()
         .unwrap()
         .iter()
-        .find(|(m, part, _, _)| m == req.method() && req.uri().path().contains(part.as_str()))
+        .find(|(m, part, _, _)| {
+            m == req.method()
+                && match part.strip_suffix('$') {
+                    // A part ending in `$` matches the end of the path only.
+                    Some(end) => req.uri().path().ends_with(end),
+                    None => req.uri().path().contains(part.as_str()),
+                }
+        })
         .map(|(_, _, st, code)| (*st, *code));
     if let Some((status, code)) = each {
         return err(status, code);

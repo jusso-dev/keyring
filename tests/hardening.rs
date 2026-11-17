@@ -14,6 +14,7 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/secrets/db-password/edit",
     "/v/kv-test/secrets/db-password/enabled",
     "/v/kv-test/secrets/db-password/rollback",
+    "/v/kv-test/secrets/db-password/copy",
     "/v/kv-test/secrets/db-password/reveal",
     "/v/kv-test/secrets/db-password/delete",
     "/v/kv-test/secrets/-/deleted/old-secret/recover",

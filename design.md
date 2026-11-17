@@ -389,6 +389,19 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 
 Read as "make a new version". The primary button is the accent, never danger.
 
+### Copy to another vault
+
+- A secondary "Copy to another vault" link button on a secret's page,
+  disabled with the role named when the hints say the person can't read the
+  value. Never shown for a certificate's backing secret.
+- The form is one stacked form: a select of the vaults the person can see,
+  the name, and a fieldset of plain checkboxes for what to bring, all ticked.
+  It is a GET to the review, so nothing is read until the review.
+- The review is a narrow panel: a `dl.props` of From and To, then one line on
+  what is at the target (a warn notice for a new version, an error notice
+  for a deleted name or a certificate's, with no copy button), and a bold
+  "The value isn't shown". The primary button names the target vault.
+
 ### Change many at once
 
 - The secrets, certificates and keys lists have a first column of plain

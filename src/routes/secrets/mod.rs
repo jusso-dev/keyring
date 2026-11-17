@@ -1,5 +1,6 @@
 //! Secrets pages: list, search and detail.
 
+pub(super) mod copy;
 pub(super) mod delete;
 pub(super) mod edit;
 pub(super) mod form;

@@ -65,6 +65,79 @@ async fn values_never_reach_the_logs() {
     let _ = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     *w.kv.state.fail.lock().unwrap() = None;
 
+    // A copy to another vault: the value passes through memory only. A
+    // copy that the target refuses, and one that goes through.
+    let target = std::sync::Arc::new(support::keyvault::KvState::default());
+    let wc = support::world_of_vaults_with(
+        vec![
+            (
+                "kv-test",
+                std::sync::Arc::new(support::keyvault::KvState::default()),
+            ),
+            ("kv-prod", target.clone()),
+        ],
+        &[],
+    )
+    .await;
+    wc.kv.state.put("db-password", VALUE);
+    let copy = [
+        ("to_vault", "kv-prod"),
+        ("to_name", "db-copy"),
+        ("tags", "on"),
+    ];
+    let res = wc
+        .get("/v/kv-test/secrets/db-password/copy/review?to_vault=kv-prod&to_name=db-copy")
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(!support::body_text(res).await.contains("Sup3r-S3cret"));
+    target.fail_each.lock().unwrap().push((
+        axum::http::Method::PUT,
+        "/secrets/db-copy$".into(),
+        403,
+        "ForbiddenByRbac",
+    ));
+    let res = wc.post("/v/kv-test/secrets/db-password/copy", &copy).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert!(!support::body_text(res).await.contains("Sup3r-S3cret"));
+    target.fail_each.lock().unwrap().clear();
+    let res = wc.post("/v/kv-test/secrets/db-password/copy", &copy).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let flash = res
+        .headers()
+        .get("set-cookie")
+        .map(|c| c.to_str().unwrap().to_owned());
+    assert!(!flash.unwrap_or_default().contains("Sup3r-S3cret"));
+    assert!(!support::location(&res).contains("Sup3r-S3cret"));
+    let _ = support::body_text(res).await;
+    assert_eq!(target.current("db-copy").unwrap().value, VALUE);
+    // With a reason, which goes on both events.
+    let wcr = support::world_of_vaults_with(
+        vec![
+            (
+                "kv-test",
+                std::sync::Arc::new(support::keyvault::KvState::default()),
+            ),
+            (
+                "kv-stage",
+                std::sync::Arc::new(support::keyvault::KvState::default()),
+            ),
+        ],
+        &[("KEYRING_REQUIRE_REASON", "reveal")],
+    )
+    .await;
+    wcr.kv.state.put("db-password", VALUE);
+    let res = wcr
+        .post(
+            "/v/kv-test/secrets/db-password/copy",
+            &[
+                ("to_vault", "kv-stage"),
+                ("to_name", "db-staged"),
+                ("reason", "Promote to staging"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+
     // With a reason asked for: the reason is logged, the value isn't, and
     // a value posted to the reason page isn't either.
     let wr = support::world_with(&[("KEYRING_REQUIRE_REASON", "all")]).await;
@@ -509,6 +582,65 @@ async fn values_never_reach_the_logs() {
             .iter()
             .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
         "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.copy.write"
+            && l["vault"] == "kv-prod"
+            && l["outcome"] == "denied"),
+        "a refused copy write is an audit event on the target"
+    );
+    // The read of that same copy went through: its own event, on the
+    // source, says so.
+    let copy_events: Vec<(String, String, String, String)> = lines
+        .iter()
+        .filter(|l| {
+            l["kind"] == "audit"
+                && l["action"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("secret.copy.")
+        })
+        .map(|l| {
+            let s = |k: &str| l[k].as_str().unwrap_or_default().to_owned();
+            (s("action"), s("vault"), s("item_name"), s("outcome"))
+        })
+        .collect();
+    let expect = |a: &str, v: &str, n: &str, o: &str| {
+        (a.to_owned(), v.to_owned(), n.to_owned(), o.to_owned())
+    };
+    assert_eq!(
+        copy_events,
+        vec![
+            expect("secret.copy.write", "kv-prod", "db-copy", "denied"),
+            expect("secret.copy.read", "kv-test", "db-password", "success"),
+            expect("secret.copy.write", "kv-prod", "db-copy", "success"),
+            expect("secret.copy.read", "kv-test", "db-password", "success"),
+            expect("secret.copy.write", "kv-stage", "db-staged", "success"),
+            expect("secret.copy.read", "kv-test", "db-password", "success"),
+        ],
+        "one read and one write event per copy, each on its own vault"
+    );
+    let denied_write = lines
+        .iter()
+        .find(|l| l["action"] == "secret.copy.write" && l["outcome"] == "denied")
+        .unwrap();
+    assert_eq!(denied_write["reason_code"], "ForbiddenByRbac");
+    assert!(denied_write["kv_request_id"].is_string());
+    for action in ["secret.copy.read", "secret.copy.write"] {
+        assert!(
+            lines
+                .iter()
+                .any(|l| l["action"] == action && l["reason"] == "Promote to staging"),
+            "{action} carries the reason"
+        );
+    }
+    assert!(
+        lines
+            .iter()
+            .filter(|l| l["action"] == "secret.copy.read")
+            .all(|l| l["item_version"].is_string()),
+        "the read names the version read"
     );
     assert!(
         lines.iter().any(|l| l["kind"] == "audit"
