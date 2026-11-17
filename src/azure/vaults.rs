@@ -259,6 +259,48 @@ pub async fn list_vaults(
     Ok(map_vaults(rows, &subs))
 }
 
+#[derive(Deserialize)]
+struct TagsRow {
+    name: String,
+    #[serde(default)]
+    tags: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+/// One vault's ARM tags, from Resource Graph, as the signed-in person.
+/// `None` when they can't see a vault of that name. `vault` must already
+/// pass [`is_valid_vault_name`]: it goes into the query as a literal.
+/// For the activity emails' `keyring-owners` (#259).
+pub async fn vault_tags(
+    azure: &AzureClient,
+    session: &Session,
+    management_url: &str,
+    vault: &str,
+) -> Result<Option<BTreeMap<String, String>>, AzureError> {
+    if !is_valid_vault_name(vault) {
+        return Ok(None);
+    }
+    let query = format!(
+        "resources | where type =~ 'microsoft.keyvault/vaults' and name =~ '{vault}' | project name, tags"
+    );
+    let rows: Vec<TagsRow> = run_query(azure, session, management_url, &query).await?;
+    Ok(rows
+        .into_iter()
+        .find(|r| r.name.eq_ignore_ascii_case(vault))
+        .map(|r| {
+            r.tags
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, v)| {
+                    let v = match v {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    (k, v)
+                })
+                .collect()
+        }))
+}
+
 /// Key Vault naming rules: 3 to 24 characters, letters, digits and
 /// hyphens, starting with a letter, ending with a letter or digit, no two
 /// hyphens in a row. Checked before a name is ever put into a URL.

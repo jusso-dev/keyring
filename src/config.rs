@@ -136,6 +136,9 @@ pub struct NotifySettings {
     pub types: Vec<crate::notify::NotifyType>,
     /// `KEYRING_NOTIFY_AUDIT_RECIPIENTS`: put addresses on audit events.
     pub audit_recipients: bool,
+    /// `KEYRING_NOTIFY_OWNER_ON_READ`: watched-read emails go to the
+    /// item's `owner` as well as its `notify` addresses.
+    pub owner_on_read: bool,
     /// `KEYRING_NOTIFY_RATE_PER_HOUR`: emails an hour to one recipient for
     /// one type.
     pub per_hour: u32,
@@ -739,7 +742,8 @@ fn notify_settings(
     get: &impl Fn(&str) -> Option<String>,
     has_identity: bool,
 ) -> Result<Option<NotifySettings>, ConfigError> {
-    const OTHERS: [&str; 8] = [
+    const OTHERS: [&str; 9] = [
+        "KEYRING_NOTIFY_OWNER_ON_READ",
         "KEYRING_EVENTGRID_AUDIENCE",
         "KEYRING_NOTIFY_BURST_THRESHOLD",
         "KEYRING_NOTIFY_SENDER",
@@ -808,6 +812,11 @@ fn notify_settings(
             )
         })?,
     };
+    let owner_on_read = match get("KEYRING_NOTIFY_OWNER_ON_READ").as_deref() {
+        None => false,
+        Some(v) => parse_bool(v)
+            .ok_or_else(|| invalid("KEYRING_NOTIFY_OWNER_ON_READ", "use true or false".into()))?,
+    };
     let per_hour = match get("KEYRING_NOTIFY_RATE_PER_HOUR") {
         None => crate::notify::rate::DEFAULT_PER_HOUR,
         Some(v) => v
@@ -856,6 +865,7 @@ fn notify_settings(
         allowed_domains,
         types,
         audit_recipients,
+        owner_on_read,
         per_hour,
         burst_threshold,
         tuning: crate::notify::sender::Tuning::default(),

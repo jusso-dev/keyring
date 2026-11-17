@@ -446,6 +446,7 @@ and sets `KEYRING_MANAGED_IDENTITY_CLIENT_ID`, `KEYRING_NOTIFY_ACS_ENDPOINT`, `K
 | `KEYRING_NOTIFY_ALLOWED_DOMAINS` | Domains, separated by commas. Every recipient must be in one, exactly (a subdomain is a different domain). Admins must be too. Default: any domain |
 | `KEYRING_NOTIFY_RATE_PER_HOUR` | Emails an hour to one recipient for one type, 1 to 1000. Default 20 |
 | `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | `true` to put recipients' addresses on the `notify.*` audit events. Off by default: addresses are personal data |
+| `KEYRING_NOTIFY_OWNER_ON_READ` | With `watched-reads` on: `true` to send watched-read emails to the item's `owner` as well as its `notify` addresses. Off by default. See [Activity emails](#activity-emails) |
 | `KEYRING_EVENTGRID_AUDIENCE` | With `expiry` in the types: the `aud` the Event Grid token on `/hooks/eventgrid` must have, compared exactly. An app ID URI (`api://...` or `https://...`) or a GUID. Default: `api://<ENTRA_CLIENT_ID>`. Refused without `expiry` |
 | `KEYRING_NOTIFY_BURST_THRESHOLD` | With `health` on: more than this many refused or denied requests from one person or address in 15 minutes is a burst, 1 to 1000. Default 20. See [Health notices](#health-notices) |
 | `KEYRING_CLIENT_SECRET_EXPIRES` | With `ENTRA_CLIENT_SECRET` only: the secret's expiry date, `YYYY-MM-DD` (Keyring can't read it from Entra). Keyring refuses to start with a malformed date, or with this set and no client secret (signing in with the managed identity has no secret to expire). Without email and `health` on, it is only logged at start |
@@ -459,6 +460,22 @@ Each address is parsed strictly: one `name@domain`, no display name, quotes, spa
 **Audit.** Each email gets one audit event: `notify.sent` (`success`, or `status_unknown` when its result wasn't known after three checks) or `notify.failed` (`delivery_failed` or `delivery_canceled` from ACS, `rejected`, `gave_up`, `gave_up_maybe_sent` when a try may have reached ACS, `queue_full` or `shutdown`), with `notify_type`, `notify_recipient_count` and the item. A failed result's message from Azure is never read into an event, email or log line: only the status.
 
 **Health.** `/healthz/notify` needs no sign-in and shows `status=ok`, `status=degraded` or `status=off` and counts since start (`queued`, `delivered`, `failed`, `unknown`, `dropped_queue_full`, `dropped_at_shutdown`, `rate_limited`, `not_allowed`, `invalid`, `failed_attempts`). No addresses. It answers 503 while degraded: sending has been failing for over a minute with no success.
+
+### Activity emails
+
+Three types, each on only when named in `KEYRING_NOTIFY_TYPES`. Each sends only when the action succeeded: a denied, refused or failed action sends nothing. The trigger is the audit event in memory, so it works with the audit sink off.
+
+| Type | Actions | Who gets it |
+| --- | --- | --- |
+| `watched-reads` | `secret.reveal`, `certificate.download_private_key`, `secret.copy.read`, `secret.rollback` | The item's `notify` addresses, and its `owner` with `KEYRING_NOTIFY_OWNER_ON_READ=true`. An item with neither sends nothing. Read from the tags Keyring already had from the read, with no extra call |
+| `destructive` | `secret.delete`, `certificate.delete`, `key.delete`, `secret.purge`, `certificate.purge`, `key.purge`, and `secret.bulk_update`, `certificate.bulk_update`, `key.bulk_update` | The vault's owners from its `keyring-owners` ARM tag, or `KEYRING_NOTIFY_ADMINS` when it has none or it can't be read. A bulk change is one email for the request, listing up to 50 changed item names and then "and N more"; one that changed some items and not others still sends, for the ones that changed |
+| `role-use` | `role.activate` (once the role is on, not while it waits for approval) and `role.deactivate` | The vault's owners, or the admins, as above. With the role's name, the scope and the duration |
+
+The person who acted isn't emailed about their own action (compared by mailbox, so case and `+tag` don't matter), unless they are the only address left. Each email says who (their sign-in name, or "an unnamed person" when it isn't one plain address), what (fixed words), when, the client address (only when it parses as an IP address) and links to the vault's audit view (Keyring activity when `KEYRING_AUDIT_WORKSPACE_ID` is set). It never holds a value, a token, a reason, a PIM justification, a description, a tag value or Azure's message: it says a reason or justification was given and that it is on the event in Keyring's audit log. A ticket is shown only when it matches `KEYRING_REASON_TICKET_PATTERN`.
+
+**Set `KEYRING_NOTIFY_ALLOWED_DOMAINS` before turning `watched-reads` on.** Anyone who can write an item's tags can put any address in `notify` and then read the item to send that address mail. Besides the per-recipient limit (`KEYRING_NOTIFY_RATE_PER_HOUR`), one item sends at most 4 watched-read emails an hour.
+
+The vault's owners are read from Resource Graph as the signed-in person, after the request has answered, in a task with a 10 second limit, so the action is never slowed or failed by it.
 
 ### Health notices
 

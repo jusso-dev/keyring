@@ -238,6 +238,7 @@ pub(crate) async fn reveal(
     };
     // Which version was read goes on the audit event. The value never does.
     crate::audit::note_version(bundle.item.version());
+    crate::notify::activity::note_read(bundle.item.tags.as_ref());
     let now = now_ts();
     let page = RevealedPage {
         version: bundle.item.version().to_owned(),
