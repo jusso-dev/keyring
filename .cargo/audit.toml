@@ -4,4 +4,8 @@ ignore = [
     # rsa 0.9 Marvin attack. No RSA private-key operations in Keyring.
     # https://github.com/jusso-dev/keyring/issues/41
     "RUSTSEC-2023-0071",
+    # chrono marked unmaintained (a notice, not a vulnerability). In the tree
+    # through openidconnect and oauth2; no release of either is without it.
+    # https://github.com/jusso-dev/keyring/issues/271
+    "RUSTSEC-2026-0543",
 ]
