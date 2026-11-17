@@ -10,11 +10,13 @@ publish = false
 
 [dependencies]
 askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
-axum = { version = "0.8", default-features = false, features = ["form", "http1", "multipart", "query", "tokio", "tracing"] }
+axum = { version = "0.8", default-features = false, features = ["form", "http1", "multipart", "original-uri", "query", "tokio", "tracing"] }
 base64 = "0.23"
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["server", "http1", "tokio", "service", "server-graceful"] }
 openidconnect = { version = "4.1", default-features = false }
+regex = { version = "1.13", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "form"] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

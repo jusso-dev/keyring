@@ -32,6 +32,14 @@ impl Drop for Secret {
     }
 }
 
+/// Read straight from a posted form or a JSON string, so the value is
+/// only ever held as a `Secret`.
+impl<'de> serde::Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(Self)
+    }
+}
+
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret([redacted])")

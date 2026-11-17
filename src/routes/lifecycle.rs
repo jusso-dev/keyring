@@ -19,6 +19,7 @@ use crate::routes::assets::render;
 use crate::routes::confirm::{self, ConfirmForm, ConfirmView};
 use crate::routes::error::{Halt, PageError, Problem};
 use crate::routes::flash::{self, Flash};
+use crate::routes::hints::{Action, Hints};
 use crate::routes::paging::{Pager, paginate};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, vault_path};
@@ -143,6 +144,28 @@ pub(crate) fn confirm_page(shell: Shell, confirm: ConfirmView, status: StatusCod
 }
 
 #[derive(Template)]
+#[template(path = "lifecycle/delete.html")]
+struct DeleteConfirmPage {
+    shell: Shell,
+    confirm: ConfirmView,
+    used_by: crate::routes::used_by::UsedBy,
+}
+
+/// The delete confirmation, with who used the item lately under it.
+pub(crate) fn delete_page(
+    shell: Shell,
+    confirm: ConfirmView,
+    used_by: crate::routes::used_by::UsedBy,
+) -> Response {
+    render(&DeleteConfirmPage {
+        shell,
+        confirm,
+        used_by,
+    })
+    .into_response()
+}
+
+#[derive(Template)]
 #[template(path = "lifecycle/disable.html")]
 struct DisablePage<'a> {
     shell: Shell,
@@ -150,18 +173,26 @@ struct DisablePage<'a> {
     kind: Kind,
     name: &'a str,
     effect: &'static str,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 /// The confirmation before a disable. Disabling can break apps as fast as
 /// a delete, so it is never one click. The form posts to the existing
 /// `enabled` route.
-pub(crate) fn disable_page(shell: Shell, vault: &str, kind: Kind, name: &str) -> Response {
+pub(crate) fn disable_page(
+    shell: Shell,
+    vault: &str,
+    kind: Kind,
+    name: &str,
+    used_by: crate::routes::used_by::UsedBy,
+) -> Response {
     render(&DisablePage {
         shell,
         vault,
         kind,
         name,
         effect: kind.disable_effect(),
+        used_by,
     })
     .into_response()
 }
@@ -255,6 +286,7 @@ pub(crate) fn delete_view_for(
         cancel_url: kind.item_url(vault, name),
         second_warning: None,
         error: None,
+        reveals: false,
     }
 }
 
@@ -274,6 +306,7 @@ pub(crate) fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             Kind::Certificate => "Only do this if you're sure nothing needs this certificate any more, or a policy requires it to be destroyed.".into(),
         }),
         error: None,
+        reveals: false,
     }
 }
 
@@ -308,6 +341,7 @@ pub(crate) fn purge_allowed(state: &AppState, shell: Shell, kind: Kind) -> Resul
     if state.config.allow_purge {
         return Ok(shell);
     }
+    crate::audit::refuse(crate::audit::Refusal::PurgeDisabled);
     let role = kind.officer_role();
     Err(PageError::new(
         shell,
@@ -479,6 +513,7 @@ struct DeletedDetail<'a> {
     kind: Kind,
     row: &'a DeletedRow,
     allow_purge: bool,
+    hints: Hints,
 }
 
 impl DeletedDetail<'_> {
@@ -501,6 +536,7 @@ pub(crate) fn deleted_detail(
     vault: String,
     kind: Kind,
     row: &DeletedRow,
+    hints: Hints,
 ) -> Response {
     render(&DeletedDetail {
         shell,
@@ -508,6 +544,7 @@ pub(crate) fn deleted_detail(
         kind,
         row,
         allow_purge: state.config.allow_purge,
+        hints,
     })
     .into_response()
 }

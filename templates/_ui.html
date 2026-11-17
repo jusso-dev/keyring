@@ -62,6 +62,13 @@
 {%- if date.is_empty() %}<span class="badge badge-none">No expiry</span>{% else %}{{ date }}{% if !note.is_empty() %} <span class="muted">({{ note }})</span>{% endif %}{% endif -%}
 {%- endmacro -%}
 
+{#- When the value last changed, with how long ago and, past the
+    KEYRING_STALE_AFTER_DAYS threshold, a warn badge. A muted "None" when
+    Key Vault gave no date. -#}
+{%- macro changed(date, note = "", stale = "") -%}
+{%- if date.is_empty() %}<span class="muted">None</span>{% else %}{{ date }}{% if !note.is_empty() %} <span class="muted">({{ note }})</span>{% endif %}{% if !stale.is_empty() %} <span class="badge badge-warn">{{ stale }}</span>{% endif %}{% endif -%}
+{%- endmacro -%}
+
 {#- The name field on every create form. The same rule holds for secrets,
     certificates and keys, so the same words say it. -#}
 {%- macro name_field(value, noun) -%}
@@ -75,4 +82,42 @@
 {#- Said once at the top of each form, so "(optional)" is the only marker. -#}
 {%- macro optional_note() -%}
 <p class="muted">Every field is needed unless it says optional.</p>
+{%- endmacro -%}
+
+{#- Permission hints (src/routes/hints.rs). `needs` is the role to name, or
+    None to leave the control as it is. A control the person can't use stays
+    visible: a link becomes a real disabled button, with the role as visible
+    text tied to it by aria-describedby. Key Vault still decides. -#}
+{%- macro link_button(needs, id, href, class, label) -%}
+{%- if let Some(role) = needs -%}
+<span class="needs"><button type="button" class="{{ class }}" disabled aria-describedby="{{ id }}-needs">{{ label }}</button> <span class="needs-role" id="{{ id }}-needs">Needs {{ role }}</span></span>
+{%- else -%}
+<a class="{{ class }}" href="{{ href }}">{{ label }}</a>
+{%- endif -%}
+{%- endmacro -%}
+
+{#- For a submit button in a form: put needs_attrs inside the button tag
+    and needs_note straight after it. -#}
+{%- macro needs_attrs(needs, id) -%}
+{%- if let Some(_role) = needs %} disabled aria-describedby="{{ id }}-needs"{% endif -%}
+{%- endmacro -%}
+
+{%- macro needs_note(needs, id) -%}
+{%- if let Some(role) = needs %} <span class="needs-role" id="{{ id }}-needs">Needs {{ role }}</span>{% endif -%}
+{%- endmacro -%}
+
+{#- Reason and ticket fields (KEYRING_REQUIRE_REASON). `id` keeps the ids
+    unique when a page has more than one form. Never filled in from a
+    previous post, except on the reason page itself. -#}
+{%- macro reason_fields(id, reason = "", ticket = "", reason_error = "", ticket_error = "") -%}
+<label for="reason{{ id }}">Reason</label>
+<p class="field-help" id="reason{{ id }}-help">Why you need to do this, in 5 to 200 characters. It's recorded in Keyring's log with your name. Don't type secrets, passwords or personal details here.</p>
+<input id="reason{{ id }}" name="reason" type="text" required minlength="5" maxlength="200" value="{{ reason }}" autocomplete="off" aria-describedby="reason{{ id }}-help{% if !reason_error.is_empty() %} reason{{ id }}-error{% endif %}"{% if !reason_error.is_empty() %} aria-invalid="true"{% endif %}>
+{%- if !reason_error.is_empty() %}<p class="field-error" id="reason{{ id }}-error">{{ reason_error }}</p>{% endif %}
+{%- if !shell.ticket_pattern().is_empty() %}
+<label for="ticket{{ id }}">Ticket</label>
+<p class="field-help" id="ticket{{ id }}-help">The change or incident ticket this is for. It must match <span class="mono">{{ shell.ticket_pattern() }}</span>.</p>
+<input id="ticket{{ id }}" name="ticket" type="text" required maxlength="64" value="{{ ticket }}"{% call ident() %}{% endcall %} aria-describedby="ticket{{ id }}-help{% if !ticket_error.is_empty() %} ticket{{ id }}-error{% endif %}"{% if !ticket_error.is_empty() %} aria-invalid="true"{% endif %}>
+{%- if !ticket_error.is_empty() %}<p class="field-error" id="ticket{{ id }}-error">{{ ticket_error }}</p>{% endif %}
+{%- endif %}
 {%- endmacro -%}

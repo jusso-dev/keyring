@@ -14,13 +14,21 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/secrets/db-password/edit",
     "/v/kv-test/secrets/db-password/enabled",
     "/v/kv-test/secrets/db-password/rollback",
+    "/v/kv-test/secrets/db-password/copy",
     "/v/kv-test/secrets/db-password/reveal",
     "/v/kv-test/secrets/db-password/delete",
     "/v/kv-test/secrets/-/deleted/old-secret/recover",
     "/v/kv-test/secrets/-/deleted/old-secret/purge",
+    "/v/kv-test/secrets/-/import",
+    "/v/kv-test/secrets/-/import/confirm",
+    "/v/kv-test/secrets/-/import/cancel",
+    "/v/kv-test/secrets/-/bulk",
+    "/v/kv-test/secrets/-/bulk/apply",
     "/v/kv-test/certificates/-/upload",
     "/v/kv-test/certificates/-/upload/confirm",
     "/v/kv-test/certificates/-/upload/cancel",
+    "/v/kv-test/certificates/-/bulk",
+    "/v/kv-test/certificates/-/bulk/apply",
     "/v/kv-test/certificates/-/new",
     "/v/kv-test/certificates/web-tls/enabled",
     "/v/kv-test/certificates/web-tls/renewal",
@@ -30,12 +38,16 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/certificates/-/deleted/old-cert/recover",
     "/v/kv-test/certificates/-/deleted/old-cert/purge",
     "/v/kv-test/keys/-/new",
+    "/v/kv-test/keys/-/bulk",
+    "/v/kv-test/keys/-/bulk/apply",
     "/v/kv-test/keys/app-key/rotate",
     "/v/kv-test/keys/app-key/rotation",
     "/v/kv-test/keys/app-key/enabled",
     "/v/kv-test/keys/app-key/delete",
     "/v/kv-test/keys/-/deleted/old-key/recover",
     "/v/kv-test/keys/-/deleted/old-key/purge",
+    "/v/kv-test/my-access/activate",
+    "/v/kv-test/my-access/deactivate",
     "/generator",
     "/auth/sign-out",
 ];
@@ -87,6 +99,13 @@ fn fields_for(path: &str) -> Vec<(&'static str, String)> {
         ("kind", "guid".into()),
         ("common_name", "a.example.com".into()),
         ("validity_months", "12".into()),
+        // The bulk change forms: every seeded item, enabled, so a disable
+        // would change each one if the checks weren't there.
+        ("item", "db-password".into()),
+        ("item", "web-tls".into()),
+        ("item", "app-key".into()),
+        ("op", "disable".into()),
+        ("confirm_count", "1".into()),
     ]
 }
 
@@ -121,17 +140,31 @@ fn kv_snapshot(w: &support::World) -> String {
             .map(|(k, v)| (
                 k.clone(),
                 v.versions.len(),
-                v.versions.last().map(|x| x.enabled)
+                v.versions.last().map(|x| (x.enabled, x.tags.clone()))
             ))
             .collect::<Vec<_>>(),
         s.deleted.lock().unwrap().keys().collect::<Vec<_>>(),
-        s.certs.lock().unwrap().keys().collect::<Vec<_>>(),
+        s.certs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (
+                k.clone(),
+                v.versions.last().map(|x| (x.enabled, x.tags.clone()))
+            ))
+            .collect::<Vec<_>>(),
         s.deleted_certs.lock().unwrap().keys().collect::<Vec<_>>(),
         s.keys
             .lock()
             .unwrap()
             .iter()
-            .map(|(k, v)| (k.clone(), v.versions.len()))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.versions.len(),
+                    v.versions.last().map(|x| (x.enabled, x.tags.clone())),
+                )
+            })
             .collect::<Vec<_>>(),
         s.deleted_keys.lock().unwrap().keys().collect::<Vec<_>>(),
     )
@@ -143,7 +176,16 @@ async fn every_mutating_route_refuses_a_forged_token() {
     let before = kv_snapshot(&w);
     let reads_before = w.kv.state.value_reads().len();
     for path in MUTATING {
-        let status = if *path == "/v/kv-test/certificates/-/upload" {
+        let status = if *path == "/v/kv-test/secrets/-/import" {
+            // Multipart, with a real file, so only the token is wrong.
+            w.post_multipart_with_csrf(
+                "forged-token",
+                path,
+                &[support::Part::File("file", ".env", b"NEW_ONE=x\n")],
+            )
+            .await
+            .status()
+        } else if *path == "/v/kv-test/certificates/-/upload" {
             // Multipart, with a real file, so only the token is wrong.
             let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
             w.post_multipart_with_csrf(
@@ -196,7 +238,10 @@ async fn mutating_routes_list_is_complete() {
     // change nothing; `tests/moved_pages.rs` covers them.
     let redirects = src.matches("post(moved::post_item)").count();
     assert_eq!(redirects, 3);
-    let posts = src.matches("post(").count() - redirects;
+    // `audited(...)` is a POST route that writes an audit event; the one
+    // `post(handler)` inside its definition isn't a route.
+    let audited = src.matches("audited(").count();
+    let posts = src.matches("post(").count() - redirects - 1 + audited;
     assert_eq!(
         posts,
         MUTATING.len(),
@@ -228,6 +273,8 @@ async fn headers_on_every_kind_of_response() {
         "/v/kv-test/certificates",
         "/v/kv-test/keys",
         "/expiry",
+        "/expiry/age",
+        "/expiry/age.csv",
         "/vault-health",
         "/vault-health.csv",
         "/search?q=db",

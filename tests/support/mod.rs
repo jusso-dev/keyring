@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod certs;
+pub(crate) mod ingestion;
 pub(crate) mod keys;
 pub(crate) mod keyvault;
 
@@ -42,6 +43,10 @@ pub(crate) const CLIENT_SECRET: &str = "test-client-secret";
 pub(crate) const IDENTITY_CLIENT_ID: &str = "33333333-3333-3333-3333-333333333333";
 pub(crate) const IDENTITY_HEADER: &str = "mock-identity-header";
 pub(crate) const MI_ASSERTION: &str = "mi-assertion";
+/// What the mock token service hands out for `https://monitor.azure.com`.
+/// The mock ingestion endpoint accepts nothing else.
+pub(crate) const MI_MONITOR_TOKEN: &str = "mi-monitor-token";
+pub(crate) const MONITOR_RESOURCE: &str = "https://monitor.azure.com";
 pub(crate) const ASSERTION_TYPE: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 pub(crate) fn config_with(authority: &str, base_url: &str) -> Config {
@@ -105,6 +110,8 @@ pub(crate) struct IdentityState {
     pub delay: Mutex<Duration>,
     /// Lifetime in seconds of the token handed out.
     pub expires_in: Mutex<u64>,
+    /// The `resource` of each request that passed the checks, in order.
+    pub resources: Mutex<Vec<String>>,
 }
 
 impl MockIdentity {
@@ -118,6 +125,7 @@ pub(crate) async fn start_identity() -> MockIdentity {
         calls: Mutex::new(0),
         delay: Mutex::new(Duration::ZERO),
         expires_in: Mutex::new(3600),
+        resources: Mutex::new(Vec::new()),
     });
     let app = Router::new()
         .route("/msi/token", get(identity_token))
@@ -140,13 +148,20 @@ async fn identity_token(
     if !header_ok {
         return json_response(StatusCode::UNAUTHORIZED, json!({}));
     }
-    let query_ok = q.get("resource").map(String::as_str) == Some("api://AzureADTokenExchange")
-        && q.get("api-version").map(String::as_str) == Some("2019-08-01")
+    // Only the two resources Keyring's identity is ever used for.
+    let resource = q.get("resource").cloned().unwrap_or_default();
+    let token = match resource.as_str() {
+        "api://AzureADTokenExchange" => MI_ASSERTION,
+        MONITOR_RESOURCE => MI_MONITOR_TOKEN,
+        _ => return json_response(StatusCode::BAD_REQUEST, json!({})),
+    };
+    let query_ok = q.get("api-version").map(String::as_str) == Some("2019-08-01")
         && q.get("client_id").map(String::as_str) == Some(IDENTITY_CLIENT_ID);
     if !query_ok {
         return json_response(StatusCode::BAD_REQUEST, json!({}));
     }
     *s.calls.lock().unwrap() += 1;
+    s.resources.lock().unwrap().push(resource.clone());
     let delay = *s.delay.lock().unwrap();
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
@@ -158,9 +173,9 @@ async fn identity_token(
     json_response(
         StatusCode::OK,
         json!({
-            "access_token": MI_ASSERTION,
+            "access_token": token,
             "expires_on": expires_on.to_string(),
-            "resource": "api://AzureADTokenExchange",
+            "resource": resource,
             "token_type": "Bearer",
             "client_id": IDENTITY_CLIENT_ID,
         }),
@@ -180,6 +195,9 @@ pub(crate) enum TokenBehaviour {
     WrongAudience,
     /// Return an OAuth error.
     Error(&'static str),
+    /// Return an OAuth error with an `AADSTS` number in its description,
+    /// as Entra does.
+    ErrorWithCode(&'static str, u64),
 }
 
 pub(crate) struct MockIdp {
@@ -211,6 +229,14 @@ pub(crate) struct IdpState {
     pub rolled_over: Mutex<bool>,
     /// Delay before answering token requests, so tests can overlap them.
     pub token_delay: Mutex<Duration>,
+    /// Sign the next person in as this object ID and user name, instead of
+    /// [`USER_OID`] and alex@example.com.
+    pub user: Mutex<Option<(&'static str, &'static str)>>,
+    /// `acrs` in the next ID tokens: authentication contexts met. `None`
+    /// leaves the claim out, as Entra does when none was asked for.
+    pub acrs: Mutex<Option<Vec<String>>>,
+    /// `auth_time` in the next ID tokens, Unix seconds. `None` leaves it out.
+    pub auth_time: Mutex<Option<i64>>,
 }
 
 impl IdpState {
@@ -287,6 +313,9 @@ pub(crate) async fn start_idp() -> MockIdp {
         discovery_down: Mutex::new(false),
         rolled_over: Mutex::new(false),
         token_delay: Mutex::new(Duration::ZERO),
+        user: Mutex::new(None),
+        acrs: Mutex::new(None),
+        auth_time: Mutex::new(None),
     });
     let app = Router::new()
         .route(
@@ -370,6 +399,12 @@ async fn token(
             json!({ "error": code, "error_description": "test" }),
         );
     }
+    if let TokenBehaviour::ErrorWithCode(code, n) = behaviour {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": code, "error_codes": [n], "error_description": format!("AADSTS{n}: test") }),
+        );
+    }
     let nonce = match behaviour {
         TokenBehaviour::WrongNonce => "not-the-nonce".to_owned(),
         _ => s.nonce.lock().unwrap().clone().unwrap_or_default(),
@@ -378,6 +413,11 @@ async fn token(
         TokenBehaviour::WrongAudience => "22222222-2222-2222-2222-222222222222",
         _ => CLIENT_ID,
     };
+    let (oid, upn) = s
+        .user
+        .lock()
+        .unwrap()
+        .unwrap_or((USER_OID, "alex@example.com"));
     let mut name = LocalizedClaim::new();
     name.insert(None, EndUserName::new("Alex Example".into()));
     let claims = openidconnect::IdTokenClaims::new(
@@ -387,13 +427,20 @@ async fn token(
         now_plus(0),
         StandardClaims::new(SubjectIdentifier::new("user-subject".into()))
             .set_name(Some(name))
-            .set_preferred_username(Some(EndUserUsername::new("alex@example.com".into()))),
+            .set_preferred_username(Some(EndUserUsername::new(upn.into()))),
         keyring::auth::oidc::EntraClaims {
-            oid: Some(USER_OID.into()),
+            oid: Some(oid.into()),
             tid: Some(TENANT.into()),
+            acrs: s.acrs.lock().unwrap().clone(),
         },
     )
-    .set_nonce(Some(Nonce::new(nonce)));
+    .set_nonce(Some(Nonce::new(nonce)))
+    .set_auth_time(
+        s.auth_time
+            .lock()
+            .unwrap()
+            .and_then(|t| DateTime::from_timestamp(t, 0)),
+    );
     let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
         TokenBehaviour::WrongKey if rolled => &s.key,
@@ -554,6 +601,426 @@ pub(crate) struct ArmState {
     /// `workspace_events`.
     pub workspace_delay: Mutex<Vec<(String, Duration)>>,
     pub audit_bearers: Mutex<Vec<String>>,
+    /// Rows of `KeyringAudit_CL` the Log Analytics mock answers with, as
+    /// column name and value pairs.
+    pub keyring_rows: Mutex<Vec<Vec<(&'static str, serde_json::Value)>>>,
+    /// Answer `KeyringAudit_CL` queries with a `PartialError` beside the rows.
+    pub keyring_partial: Mutex<bool>,
+    /// Access (role assignments, eligibility, role definitions and the
+    /// vault resource). See [`AuthzMock`].
+    pub authz: Mutex<AuthzMock>,
+}
+
+/// What the mock ARM answers for the Access reads. Like ARM, the
+/// assignment lists come back whatever their scope (at, above and below
+/// the one asked for), so Keyring has to keep the ones that reach it.
+#[derive(Default)]
+pub(crate) struct AuthzMock {
+    /// Active role assignments: (scope, role GUID, principal ID, type).
+    pub assignments: Vec<(String, String, String, String)>,
+    /// PIM eligible assignments, the same shape.
+    pub eligible: Vec<(String, String, String, String)>,
+    /// Role definitions by GUID: (role name, data actions).
+    pub roles: std::collections::HashMap<String, (String, Vec<String>)>,
+    /// Access policies by vault name, for `GET {vault ID}`. A vault's RBAC
+    /// flag comes from its Resource Graph row.
+    pub policies: std::collections::HashMap<String, serde_json::Value>,
+    /// Answer 403 to role assignments.
+    pub assignments_forbidden: bool,
+    /// Answer this status to eligibility, as a tenant without PIM might.
+    pub eligible_status: Option<u16>,
+    /// Answer this status to every role definition read.
+    pub definitions_status: Option<u16>,
+    /// Answer 403 to the vault resource.
+    pub vault_forbidden: bool,
+    /// The signed-in person's own permissions, for
+    /// `{scope}/providers/Microsoft.Authorization/permissions` at any
+    /// scope: one (dataActions, notDataActions) pair per role. `None`
+    /// answers 403, so tests that don't set it see every button enabled.
+    pub permissions: Option<Vec<RolePerms>>,
+    /// Permissions at one scope (compared without regard to case), in
+    /// place of `permissions` there.
+    pub permissions_at: Vec<(String, Vec<RolePerms>)>,
+    /// Answer this status to every `permissions` read.
+    pub permissions_status: Option<u16>,
+    /// Answer `permissions` with a body Keyring can't read.
+    pub permissions_garbled: bool,
+    /// Wait this long before answering a `permissions` read.
+    pub permissions_delay: Duration,
+    /// Wait this long before answering any Access read.
+    pub delay: Duration,
+    /// Path of every Access read, in order.
+    pub paths: Vec<String>,
+    /// Bearer token of every Access read.
+    pub bearers: Vec<String>,
+    /// PIM for the signed-in person. See [`PimMock`].
+    pub pim: PimMock,
+}
+
+/// What mock ARM answers for PIM, for the signed-in person (`asTarget()`).
+/// Every list answers 400 `InvalidResourceType`-style errors when
+/// `status` is set, as a tenant without PIM might.
+#[derive(Default)]
+pub(crate) struct PimMock {
+    /// Eligible: (scope, role GUID, schedule ID).
+    pub eligible: Vec<(String, String, String)>,
+    /// Active: (scope, role GUID, `Activated` or `Assigned`, end time).
+    pub active: Vec<(String, String, String, Option<String>)>,
+    /// Requests waiting: (scope, role GUID, status).
+    pub pending: Vec<(String, String, String)>,
+    /// Policy rules by role GUID: `effectiveRules`.
+    pub policies: std::collections::HashMap<String, serde_json::Value>,
+    /// Answer this status to the eligibility list.
+    pub eligible_status: Option<u16>,
+    /// Return this as every eligibility's `roleDefinitionId`, in place of
+    /// a well-formed one.
+    pub eligible_role_id: Option<String>,
+    /// Answer this status to the policy list.
+    pub policy_status: Option<u16>,
+    /// Wait this long before answering the eligibility list.
+    pub eligible_delay: Duration,
+    /// What a PUT of a schedule request answers: a status, and a body.
+    /// `None` answers 201 with `status` `Provisioned`.
+    pub reply: Option<(u16, serde_json::Value)>,
+    /// Every PUT body received, with its path.
+    pub requests: Vec<(String, serde_json::Value)>,
+    /// Paths of every PIM read.
+    pub reads: Vec<String>,
+}
+
+/// One PIM end-user rule set: maximum, and which of justification,
+/// ticket, MFA and approval PIM asks for.
+pub(crate) fn pim_rules(
+    max: &str,
+    justification: bool,
+    ticket: bool,
+    approval: bool,
+) -> serde_json::Value {
+    let mut enabled = vec![];
+    if justification {
+        enabled.push("Justification");
+    }
+    if ticket {
+        enabled.push("Ticketing");
+    }
+    let target = json!({"caller": "EndUser", "operations": ["All"], "level": "Assignment"});
+    json!([
+        {"isExpirationRequired": true, "maximumDuration": "P90D", "id": "Expiration_Admin_Assignment",
+         "ruleType": "RoleManagementPolicyExpirationRule", "target": {"caller": "Admin", "operations": ["All"], "level": "Assignment"}},
+        {"isExpirationRequired": true, "maximumDuration": max, "id": "Expiration_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyExpirationRule", "target": target},
+        {"enabledRules": enabled, "id": "Enablement_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyEnablementRule", "target": target},
+        {"setting": {"isApprovalRequired": approval, "approvalStages": [{"primaryApprovers": [
+            {"id": "2385b0f3-5fa9-43cf-8ca4-b01dc97298cd", "description": "kv-approvers", "isBackup": false, "userType": "Group"}]}]},
+         "id": "Approval_EndUser_Assignment", "ruleType": "RoleManagementPolicyApprovalRule", "target": target},
+        {"isEnabled": false, "claimValue": "", "id": "AuthenticationContext_EndUser_Assignment",
+         "ruleType": "RoleManagementPolicyAuthenticationContextRule", "target": target}
+    ])
+}
+
+/// PIM's reads and requests, or `None` if `path` isn't one.
+async fn pim_answer(
+    s: &ArmState,
+    method: &axum::http::Method,
+    path: &str,
+    query: &str,
+    body: &str,
+) -> Option<Response> {
+    const ELIGIBLE: &str = "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances";
+    const ACTIVE: &str = "/providers/Microsoft.Authorization/roleAssignmentScheduleInstances";
+    const REQUESTS: &str = "/providers/Microsoft.Authorization/roleAssignmentScheduleRequests";
+    const POLICIES: &str = "/providers/Microsoft.Authorization/roleManagementPolicyAssignments";
+    let pim_read = (path.ends_with(ELIGIBLE) && query.contains("asTarget()"))
+        || path.ends_with(ACTIVE)
+        || path.ends_with(REQUESTS)
+        || path.ends_with(POLICIES);
+    let pim_put = *method == axum::http::Method::PUT && path.contains(&format!("{REQUESTS}/"));
+    if !(pim_read || pim_put) {
+        return None;
+    }
+    assert!(query.contains("api-version=2020-10-01"), "{query}");
+    let err = |status: u16, code: &str| {
+        json_response(
+            StatusCode::from_u16(status).unwrap(),
+            json!({"error": {"code": code, "message": "private Azure detail"}}),
+        )
+    };
+    if pim_put {
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let mut m = s.authz.lock().unwrap();
+        m.pim.requests.push((path.to_owned(), body.clone()));
+        return Some(match m.pim.reply.clone() {
+            Some((status, reply)) => json_response(StatusCode::from_u16(status).unwrap(), reply),
+            None => json_response(
+                StatusCode::CREATED,
+                json!({"properties": {"status": "Provisioned", "requestType": body["properties"]["requestType"]}}),
+            ),
+        });
+    }
+    let delay = {
+        let mut m = s.authz.lock().unwrap();
+        m.pim.reads.push(path.to_owned());
+        if path.ends_with(ELIGIBLE) {
+            m.pim.eligible_delay
+        } else {
+            Duration::ZERO
+        }
+    };
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let m = s.authz.lock().unwrap();
+    let role_id = |g: &str| {
+        format!("/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{g}")
+    };
+    if path.ends_with(ELIGIBLE) {
+        if let Some(status) = m.pim.eligible_status {
+            return Some(err(status, "InvalidResourceType"));
+        }
+        let value: Vec<_> = m.pim.eligible.iter().map(|(scope, g, sched)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": m.pim.eligible_role_id.clone().unwrap_or_else(|| role_id(g)), "principalId": USER_OID, "principalType": "User",
+            "status": "Provisioned", "roleEligibilityScheduleId": sched, "memberType": "Direct",
+            "endDateTime": "2027-09-10T00:31:41.477Z"}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(ACTIVE) {
+        assert!(query.contains("asTarget()"), "{query}");
+        let value: Vec<_> = m.pim.active.iter().map(|(scope, g, kind, end)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": role_id(g), "principalId": USER_OID, "assignmentType": kind,
+            "status": "Provisioned", "endDateTime": end}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(REQUESTS) {
+        assert!(query.contains("asRequestor()"), "{query}");
+        let value: Vec<_> = m.pim.pending.iter().map(|(scope, g, status)| json!({"properties": {
+            "scope": scope, "roleDefinitionId": role_id(g), "requestType": "SelfActivate", "status": status}})).collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if let Some(status) = m.pim.policy_status {
+        return Some(err(status, "AuthorizationFailed"));
+    }
+    let value: Vec<_> = m.pim.policies.iter().map(|(g, rules)| json!({"properties": {
+        "scope": path.trim_end_matches(POLICIES), "roleDefinitionId": role_id(g), "effectiveRules": rules}})).collect();
+    Some(json_response(StatusCode::OK, json!({"value": value})))
+}
+
+pub(crate) const SECRETS_USER: &str = "4633458b-17de-408a-b874-0445c86b69e6";
+pub(crate) const OWNER_ROLE: &str = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635";
+pub(crate) const READER_ROLE: &str = "acdd72a7-3385-48ef-bd42-f606fba81ae7";
+pub(crate) const CERT_OFFICER: &str = "a4417e6f-fecd-4de8-b567-7b0420556985";
+
+/// One role's (dataActions, notDataActions).
+pub(crate) type RolePerms = (Vec<String>, Vec<String>);
+
+/// Data actions of built-in roles, as Microsoft defines them, for
+/// [`AuthzMock::permissions`].
+pub(crate) fn role_data_actions(role: &str) -> RolePerms {
+    let actions: &[&str] = match role {
+        "Key Vault Reader" => &[
+            "Microsoft.KeyVault/vaults/*/read",
+            "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+        ],
+        "Key Vault Secrets User" => &[
+            "Microsoft.KeyVault/vaults/secrets/getSecret/action",
+            "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+        ],
+        "Key Vault Secrets Officer" => &["Microsoft.KeyVault/vaults/secrets/*"],
+        "Key Vault Certificates Officer" => &[
+            "Microsoft.KeyVault/vaults/certificatecas/*",
+            "Microsoft.KeyVault/vaults/certificates/*",
+            "Microsoft.KeyVault/vaults/certificatecontacts/write",
+        ],
+        "Key Vault Crypto Officer" => &[
+            "Microsoft.KeyVault/vaults/keys/*",
+            "Microsoft.KeyVault/vaults/keyrotationpolicies/*",
+        ],
+        "Key Vault Administrator" => &["Microsoft.KeyVault/vaults/*"],
+        other => panic!("no data actions for {other}"),
+    };
+    (
+        actions.iter().map(|a| (*a).to_owned()).collect(),
+        Vec::new(),
+    )
+}
+
+impl AuthzMock {
+    /// The built-in roles the tests use.
+    pub(crate) fn with_builtin_roles() -> Self {
+        let mut m = Self::default();
+        for (g, name, actions) in [
+            (
+                SECRETS_USER,
+                "Key Vault Secrets User",
+                vec![
+                    "Microsoft.KeyVault/vaults/secrets/getSecret/action",
+                    "Microsoft.KeyVault/vaults/secrets/readMetadata/action",
+                ],
+            ),
+            (OWNER_ROLE, "Owner", vec![]),
+            (READER_ROLE, "Reader", vec![]),
+            (
+                CERT_OFFICER,
+                "Key Vault Certificates Officer",
+                vec!["Microsoft.KeyVault/vaults/certificates/*"],
+            ),
+        ] {
+            m.roles.insert(
+                g.into(),
+                (name.into(), actions.into_iter().map(String::from).collect()),
+            );
+        }
+        m
+    }
+}
+
+fn assignment_json(kind: &str, a: &(String, String, String, String)) -> serde_json::Value {
+    json!({
+        "id": format!("{}/providers/Microsoft.Authorization/{kind}/{}", a.0, a.2),
+        "properties": {
+            "scope": a.0,
+            "roleDefinitionId": format!("/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{}", a.1),
+            "principalId": a.2,
+            "principalType": a.3,
+        }
+    })
+}
+
+/// The Access reads, or `None` if `path` isn't one.
+async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> Option<Response> {
+    const ASSIGN: &str = "/providers/Microsoft.Authorization/roleAssignments";
+    const ELIGIBLE: &str = "/providers/Microsoft.Authorization/roleEligibilityScheduleInstances";
+    const DEFS: &str = "/providers/Microsoft.Authorization/roleDefinitions/";
+    const PERMS: &str = "/providers/Microsoft.Authorization/permissions";
+    let is_vault = path.contains("/providers/Microsoft.KeyVault/vaults/")
+        && path
+            .rsplit("/vaults/")
+            .next()
+            .is_some_and(|n| !n.contains('/'));
+    if !(path.ends_with(ASSIGN)
+        || path.ends_with(ELIGIBLE)
+        || path.contains(DEFS)
+        || path.ends_with(PERMS)
+        || is_vault)
+    {
+        return None;
+    }
+    let delay = {
+        let mut m = s.authz.lock().unwrap();
+        m.paths.push(path.to_owned());
+        m.bearers.push(bearer);
+        if path.ends_with(PERMS) {
+            m.delay + m.permissions_delay
+        } else {
+            m.delay
+        }
+    };
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let forbidden = || {
+        json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+        )
+    };
+    let m = s.authz.lock().unwrap();
+    if let Some(scope) = path.strip_suffix(PERMS) {
+        assert!(query.contains("api-version=2022-04-01"), "{query}");
+        if let Some(status) = m.permissions_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
+        if m.permissions_garbled {
+            return Some(json_response(
+                StatusCode::OK,
+                json!({"value": "not a list"}),
+            ));
+        }
+        let sets = m
+            .permissions_at
+            .iter()
+            .find(|(at, _)| at.eq_ignore_ascii_case(scope))
+            .map(|(_, sets)| sets)
+            .or(m.permissions.as_ref());
+        let Some(sets) = sets else {
+            return Some(forbidden());
+        };
+        let value: Vec<_> = sets
+            .iter()
+            .map(|(data, not)| {
+                json!({"actions": ["Microsoft.KeyVault/vaults/*/read"], "notActions": [],
+                       "dataActions": data, "notDataActions": not})
+            })
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(ASSIGN) {
+        assert!(query.contains("api-version=2022-04-01"), "{query}");
+        if m.assignments_forbidden {
+            return Some(forbidden());
+        }
+        let value: Vec<_> = m
+            .assignments
+            .iter()
+            .map(|a| assignment_json("roleAssignments", a))
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if path.ends_with(ELIGIBLE) {
+        assert!(query.contains("atScope()"), "{query}");
+        if let Some(status) = m.eligible_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
+        let value: Vec<_> = m
+            .eligible
+            .iter()
+            .map(|a| assignment_json("roleEligibilityScheduleInstances", a))
+            .collect();
+        return Some(json_response(StatusCode::OK, json!({"value": value})));
+    }
+    if let Some((_, guid)) = path.split_once(DEFS) {
+        if let Some(status) = m.definitions_status {
+            return Some(json_response(
+                StatusCode::from_u16(status).unwrap(),
+                json!({"error": {"code": "AuthorizationFailed", "message": "x"}}),
+            ));
+        }
+        return Some(match m.roles.get(guid) {
+            Some((name, actions)) => json_response(
+                StatusCode::OK,
+                json!({"name": guid, "properties": {"roleName": name, "permissions": [{"actions": [], "dataActions": actions}]}}),
+            ),
+            None => json_response(
+                StatusCode::NOT_FOUND,
+                json!({"error": {"code": "RoleDefinitionDoesNotExist", "message": "x"}}),
+            ),
+        });
+    }
+    assert!(query.contains("api-version=2023-07-01"), "{query}");
+    if m.vault_forbidden {
+        return Some(forbidden());
+    }
+    let name = path.rsplit("/vaults/").next().unwrap_or_default();
+    let row = s
+        .vaults
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == name)
+        .cloned()?;
+    Some(json_response(
+        StatusCode::OK,
+        json!({"id": row["id"], "name": name, "properties": {
+            "enableRbacAuthorization": row["enableRbacAuthorization"],
+            "accessPolicies": m.policies.get(name).cloned().unwrap_or(json!([])),
+        }}),
+    ))
 }
 
 impl MockArm {
@@ -596,6 +1063,9 @@ pub(crate) async fn start_arm() -> MockArm {
         workspace_events: Mutex::new(Vec::new()),
         workspace_delay: Mutex::new(Vec::new()),
         audit_bearers: Mutex::new(Vec::new()),
+        keyring_rows: Mutex::new(Vec::new()),
+        keyring_partial: Mutex::new(false),
+        authz: Mutex::new(AuthzMock::with_builtin_roles()),
     });
     let app = Router::new()
         .route(
@@ -670,6 +1140,16 @@ async fn arm_fallback(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_owned();
+    if let Some(res) = pim_answer(&s, &method, &path, uri.query().unwrap_or_default(), &body).await
+    {
+        return res;
+    }
+    if method == axum::http::Method::GET
+        && let Some(res) =
+            authz_answer(&s, &path, uri.query().unwrap_or_default(), bearer.clone()).await
+    {
+        return res;
+    }
     if method == axum::http::Method::GET
         && path.ends_with("/providers/Microsoft.Insights/diagnosticSettings")
     {
@@ -740,6 +1220,24 @@ async fn arm_fallback(
                 json!({"error": {"code": "InsufficientAccessError", "message": "x"}}),
             );
         }
+        if query.contains("| summarize Reads = count(), LastRead = max(TimeGenerated)") {
+            let events = s
+                .workspace_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(ws, _)| path.ends_with(&format!("{ws}/query")))
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            return json_response(StatusCode::OK, answer_used_by(&query, &events));
+        }
+        if query.contains("\nKeyringAudit_CL\n") {
+            let mut answer = answer_keyring(&query, &s.keyring_rows.lock().unwrap());
+            if *s.keyring_partial.lock().unwrap() {
+                answer["error"] = json!({"code": "PartialError", "message": "x"});
+            }
+            return json_response(StatusCode::OK, answer);
+        }
         if query.starts_with("let vault0 = ") {
             let events = s
                 .workspace_events
@@ -773,6 +1271,50 @@ async fn arm_fallback(
     )
 }
 
+/// Answer a query over `KeyringAudit_CL`: the rows whose `Vault` matches
+/// the query's `let vaultName`, with the columns it projects.
+fn answer_keyring(
+    query: &str,
+    rows: &[Vec<(&'static str, serde_json::Value)>],
+) -> serde_json::Value {
+    let vault = query
+        .lines()
+        .find_map(|l| l.strip_prefix("let vaultName = \""))
+        .and_then(|l| l.strip_suffix("\";"))
+        .unwrap_or_default()
+        .to_owned();
+    let columns: Vec<String> = query
+        .lines()
+        .find_map(|l| l.strip_prefix("| project "))
+        .unwrap_or_default()
+        .split(", ")
+        .map(str::to_owned)
+        .collect();
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .filter(|r| {
+            r.iter().any(|(k, v)| {
+                *k == "Vault" && v.as_str().is_some_and(|v| v.eq_ignore_ascii_case(&vault))
+            })
+        })
+        .map(|r| {
+            json!(
+                columns
+                    .iter()
+                    .map(|c| r
+                        .iter()
+                        .find(|(k, _)| k == c)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(serde_json::Value::Null))
+                    .collect::<Vec<_>>()
+            )
+        })
+        .collect();
+    json!({"tables": [{"name": "PrimaryResult",
+        "columns": columns.iter().map(|c| json!({"name": c, "type": "string"})).collect::<Vec<_>>(),
+        "rows": out}]})
+}
+
 /// One Key Vault audit event as it sits in a workspace, for the mock.
 #[derive(Clone, Debug)]
 pub(crate) struct RawEvent {
@@ -782,6 +1324,14 @@ pub(crate) struct RawEvent {
     pub operation: String,
     pub item: String,
     pub status: u16,
+    /// The caller's app and object IDs. A person (`who` with an `@`) has
+    /// their sign-in name as well.
+    pub app_id: String,
+    pub object_id: String,
+    /// The token was a managed identity's.
+    pub managed: bool,
+    pub client_info: String,
+    pub ip: String,
 }
 
 impl RawEvent {
@@ -802,7 +1352,24 @@ impl RawEvent {
             operation: op.into(),
             item: item.into(),
             status,
+            app_id: "04b07795-8ddb-461a-bbee-02f9e1bf7b46".into(),
+            object_id: format!("oid-{who}"),
+            managed: false,
+            client_info: "Mozilla/5.0".into(),
+            ip: "203.0.113.5".into(),
         }
+    }
+
+    /// The same event made by an app, not a person: `who` is empty and
+    /// the app ID is `app_id`.
+    pub(crate) fn by_app(mut self, app_id: &str, object_id: &str, managed: bool) -> Self {
+        self.who = String::new();
+        self.app_id = app_id.into();
+        self.object_id = object_id.into();
+        self.managed = managed;
+        self.client_info = "azsdk-net-Security.KeyVault.Secrets/4.6.0".into();
+        self.ip = "10.0.0.4".into();
+        self
     }
 
     fn signature(&self) -> &'static str {
@@ -927,6 +1494,98 @@ pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Val
     ], "rows": rows}]})
 }
 
+/// Answer a "used by" query from `src/azure/used_by.rs` the way Log
+/// Analytics would: allowed uses of the named item in the named vault,
+/// summarised by caller.
+pub(crate) fn answer_used_by(query: &str, events: &[RawEvent]) -> serde_json::Value {
+    let vault = let_literal(query, "vaultName")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let item = let_literal(query, "itemName").unwrap_or_default();
+    let ops: &[&str] = if query.contains("'KeySign'") {
+        &[
+            "KeySign",
+            "KeyVerify",
+            "KeyWrap",
+            "KeyUnwrap",
+            "KeyEncrypt",
+            "KeyDecrypt",
+        ]
+    } else {
+        &["SecretGet"]
+    };
+    struct Group {
+        key: (String, String, String),
+        reads: u64,
+        last: String,
+        managed: u64,
+        clients: Vec<String>,
+        ips: Vec<String>,
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    for e in events.iter().filter(|e| {
+        e.vault_id
+            .to_ascii_lowercase()
+            .ends_with(&format!("/vaults/{vault}"))
+            && e.item.eq_ignore_ascii_case(&item)
+            && ops.contains(&e.operation.as_str())
+            && (200..300).contains(&e.status)
+    }) {
+        let upn = if e.who.contains('@') {
+            e.who.clone()
+        } else {
+            String::new()
+        };
+        let key = (e.object_id.clone(), e.app_id.clone(), upn);
+        let i = match groups.iter().position(|g| g.key == key) {
+            Some(i) => i,
+            None => {
+                groups.push(Group {
+                    key,
+                    reads: 0,
+                    last: String::new(),
+                    managed: 0,
+                    clients: Vec::new(),
+                    ips: Vec::new(),
+                });
+                groups.len() - 1
+            }
+        };
+        let g = &mut groups[i];
+        g.reads += 1;
+        if e.time > g.last {
+            g.last = e.time.clone();
+        }
+        g.managed += u64::from(e.managed);
+        if !g.clients.contains(&e.client_info) && g.clients.len() < 3 {
+            g.clients.push(e.client_info.clone());
+        }
+        if !g.ips.contains(&e.ip) && g.ips.len() < 3 {
+            g.ips.push(e.ip.clone());
+        }
+    }
+    groups.sort_by(|a, b| b.last.cmp(&a.last));
+    let rows: Vec<serde_json::Value> = groups
+        .into_iter()
+        .map(|g| {
+            json!([
+                g.key.0,
+                g.key.1,
+                g.key.2,
+                g.reads,
+                g.last,
+                g.managed,
+                g.clients.join(", "),
+                g.ips.join(", ")
+            ])
+        })
+        .collect();
+    json!({"tables": [{"name": "PrimaryResult", "columns": [
+        {"name": "ObjectId"}, {"name": "AppId"}, {"name": "Upn"}, {"name": "Reads"},
+        {"name": "LastRead"}, {"name": "Managed"}, {"name": "ClientInfo"}, {"name": "CallerIp"}
+    ], "rows": rows}]})
+}
+
 /// Diagnostic settings sending audit logs to the workspace `name`.
 pub(crate) fn settings_to(name: &str, dedicated: bool) -> serde_json::Value {
     json!({"value": [{"properties": {
@@ -1007,10 +1666,47 @@ pub(crate) async fn world_of_vaults(
     w
 }
 
+/// A world over several vaults, as [`world_of_vaults`], with `extra`
+/// settings and the standard cross-vault limits.
+pub(crate) async fn world_of_vaults_with(
+    vaults: Vec<(&'static str, Arc<keyvault::KvState>)>,
+    extra: &[(&'static str, &'static str)],
+) -> World {
+    let rows = vaults
+        .iter()
+        .map(|(n, _)| vault_row(n, "sub-a", true))
+        .collect();
+    let w = world_over(keyvault::start_several(vaults).await, extra, None).await;
+    *w.arm.state.vaults.lock().unwrap() = rows;
+    w
+}
+
 async fn world_over(
     kv: keyvault::MockKeyVault,
     extra: &[(&'static str, &'static str)],
     limits: Option<keyring::azure::fanout::Limits>,
+) -> World {
+    world_over_with(kv, extra, limits, |_| {}).await
+}
+
+/// A world whose config gets `extra` settings (owned values) and then
+/// `tweak`, before the app state is built.
+pub(crate) async fn world_configured(
+    extra: Vec<(&'static str, String)>,
+    tweak: impl FnOnce(&mut Config),
+) -> World {
+    let leaked: Vec<(&'static str, &'static str)> = extra
+        .into_iter()
+        .map(|(k, v)| (k, &*Box::leak(v.into_boxed_str())))
+        .collect();
+    world_over_with(keyvault::start().await, &leaked, None, tweak).await
+}
+
+async fn world_over_with(
+    kv: keyvault::MockKeyVault,
+    extra: &[(&'static str, &'static str)],
+    limits: Option<keyring::azure::fanout::Limits>,
+    tweak: impl FnOnce(&mut Config),
 ) -> World {
     let idp = start_idp().await;
     let arm = start_arm().await;
@@ -1032,7 +1728,8 @@ async fn world_over(
     for (k, v) in extra {
         env.insert(k, (*v).to_owned());
     }
-    let config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
+    let mut config = Config::from_lookup(|k| env.get(k).cloned()).expect("test config");
+    tweak(&mut config);
     let (state, app, cookie) = signed_in_app_with(config, limits);
     let id = cookie.split('=').nth(1).unwrap().to_owned();
     let session = state.sessions.get(&id).unwrap();

@@ -2,7 +2,7 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
@@ -15,12 +15,15 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::{FieldErrors, ToggleForm};
+use crate::routes::lifecycle::Kind;
 use crate::routes::secrets::form::{self, SecretForm};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::used_by::{self, UsedBy};
 use crate::routes::vault_ctx::check_csrf;
 use crate::routes::vault_ctx::vault_path;
+use crate::secret_types::{ContentKind, Field, SecretType, classify};
 
 /// Which form is being shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +48,9 @@ pub(crate) struct FormView {
     /// The version the edit form was opened on, and its `updated` time.
     pub version: String,
     pub updated: String,
+    /// A typed secret: one input per field in place of the value box.
+    /// Field values are never put back into the form.
+    pub secret_type: Option<SecretType>,
 }
 
 impl FormView {
@@ -59,7 +65,21 @@ impl FormView {
             locked_tags: None,
             version: f.version.clone(),
             updated: f.updated.clone(),
+            secret_type: f.chosen_type().ok().flatten(),
         }
+    }
+
+    /// The type the secret already has, for "Set a new value" and "Edit
+    /// details", whatever the form posted.
+    fn typed_as(mut self, item: &SecretItem) -> Self {
+        self.secret_type = match classify(item.content_type.as_deref()) {
+            ContentKind::Typed(t) => Some(t),
+            _ => None,
+        };
+        if self.secret_type.is_some() {
+            self.content_type = item.content_type.clone().unwrap_or_default();
+        }
+        self
     }
 
     fn from_item(item: &SecretItem) -> Self {
@@ -74,8 +94,10 @@ impl FormView {
             locked_tags: None,
             version: item.version().to_owned(),
             updated: updated_stamp(item),
+            secret_type: None,
         }
         .locking_tags_of(item)
+        .typed_as(item)
     }
 
     /// Lock the tags when the item's can't round-trip through the form.
@@ -111,6 +133,8 @@ struct FormPage {
     errors: FieldErrors,
     /// Set when a create clashed with a soft-deleted secret of the same name.
     deleted_clash: Option<String>,
+    /// Who read the secret lately, on Set a new value.
+    used_by: Option<UsedBy>,
 }
 
 impl FormPage {
@@ -124,6 +148,46 @@ impl FormPage {
 
     fn has_value_field(&self) -> bool {
         self.mode != Mode::Properties
+    }
+
+    /// The typed secret's fields, when the form shows them.
+    fn typed_fields(&self) -> &'static [Field] {
+        match self.form.secret_type {
+            Some(t) if self.has_value_field() => t.fields(),
+            _ => &[],
+        }
+    }
+
+    fn type_label(&self) -> &'static str {
+        self.form.secret_type.map_or("Password", SecretType::label)
+    }
+
+    /// The create form's type picker: each type, its link, and whether it
+    /// is the one shown.
+    fn type_choices(&self) -> Vec<(&'static str, String, bool)> {
+        let base = vault_path(&self.vault, "/secrets/-/new");
+        std::iter::once(("Password", base.clone(), self.form.secret_type.is_none()))
+            .chain(SecretType::ALL.into_iter().map(|t| {
+                (
+                    t.label(),
+                    format!("{base}?type={}", t.slug()),
+                    self.form.secret_type == Some(t),
+                )
+            }))
+            .collect()
+    }
+
+    /// What a typed secret's content type is, or will be.
+    fn typed_content_type(&self) -> String {
+        match self.form.secret_type {
+            Some(_) if !self.form.content_type.is_empty() => self.form.content_type.clone(),
+            Some(t) => t.content_type(),
+            None => String::new(),
+        }
+    }
+
+    fn secret_type_slug(&self) -> &'static str {
+        self.form.secret_type.map_or("", SecretType::slug)
     }
 
     fn action(&self) -> String {
@@ -162,6 +226,18 @@ fn form_page(
     errors: FieldErrors,
     deleted_clash: Option<String>,
 ) -> Response {
+    form_page_with(shell, vault, mode, form, errors, deleted_clash, None)
+}
+
+fn form_page_with(
+    shell: Shell,
+    vault: String,
+    mode: Mode,
+    form: FormView,
+    errors: FieldErrors,
+    deleted_clash: Option<String>,
+    used_by: Option<UsedBy>,
+) -> Response {
     let status = if errors.is_empty() && deleted_clash.is_none() {
         StatusCode::OK
     } else {
@@ -178,6 +254,7 @@ fn form_page(
                 form,
                 errors,
                 deleted_clash,
+                used_by,
             }),
         )
             .into_response(),
@@ -190,14 +267,23 @@ fn saved(state: &AppState, to: &str, message: String) -> Response {
     res
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct NewQuery {
+    #[serde(default, rename = "type")]
+    kind: String,
+}
+
 pub(crate) async fn new_form(
     session: CurrentSession,
     shell: Shell,
     Path(vault): Path<String>,
+    Query(q): Query<NewQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
+    // An unknown type shows the plain form.
     let view = FormView {
         enabled: true,
+        secret_type: SecretType::from_slug(&q.kind),
         ..FormView::default()
     };
     Ok(form_page(
@@ -225,7 +311,10 @@ pub(crate) async fn create(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match form::for_create(&f, now_ts()) {
-        Ok(ok) => ok,
+        Ok(ok) => {
+            crate::audit::note_item(&ok.0);
+            ok
+        }
         Err(errors) => {
             return Ok(form_page(
                 shell,
@@ -273,14 +362,11 @@ pub(crate) async fn create(
     }
 
     match api.set(&name, &body).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret created");
-            Ok(saved(
-                &state,
-                &vault_path(&vault, &format!("/secrets/{name}")),
-                format!("Created {name}."),
-            ))
-        }
+        Ok(_) => Ok(saved(
+            &state,
+            &vault_path(&vault, &format!("/secrets/{name}")),
+            format!("Created {name}."),
+        )),
         Err(AzureError::Status { status: 409, .. }) if is_soft_deleted(&api, &name).await => {
             Ok(form_page(
                 shell,
@@ -344,14 +430,22 @@ pub(crate) async fn value_form(
     shell: Shell,
     Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &vault, &name).await?;
-    Ok(form_page(
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    // Who used it loads beside the secret, within its own time limit.
+    let (fetched, used_by) = tokio::join!(
+        fetch(&state, &session, shell, &vault, &name),
+        used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+    );
+    let (shell, item) = fetched?;
+    Ok(form_page_with(
         shell,
         vault,
         Mode::NewValue,
         FormView::from_item(&item),
         FieldErrors::new(),
         None,
+        Some(used_by),
     ))
 }
 
@@ -386,21 +480,20 @@ pub(crate) async fn set_value(
                 shell,
                 vault,
                 Mode::NewValue,
-                FormView::from_form(&f).locking_tags_of(&item),
+                FormView::from_form(&f)
+                    .locking_tags_of(&item)
+                    .typed_as(&item),
                 errors,
                 None,
             ));
         }
     };
     match api(&state, &session, &vault).set(&name, &body).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret value changed");
-            Ok(saved(
-                &state,
-                &vault_path(&vault, &format!("/secrets/{name}")),
-                format!("Saved a new version of {name}. The old value is still in its versions."),
-            ))
-        }
+        Ok(_) => Ok(saved(
+            &state,
+            &vault_path(&vault, &format!("/secrets/{name}")),
+            format!("Saved a new version of {name}. The old value is still in its versions."),
+        )),
         Err(err) => Err(azure_problem(
             shell,
             &err,
@@ -452,7 +545,9 @@ pub(crate) async fn update(
                 shell,
                 vault,
                 Mode::Properties,
-                FormView::from_form(&f).locking_tags_of(&item),
+                FormView::from_form(&f)
+                    .locking_tags_of(&item)
+                    .typed_as(&item),
                 errors,
                 None,
             ));
@@ -460,7 +555,6 @@ pub(crate) async fn update(
     };
     update_current(&state, &session, shell, &vault, &item, &body).await?;
     let name = item.name();
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, "secret properties changed");
     Ok(saved(
         &state,
         &vault_path(&vault, &format!("/secrets/{name}")),
@@ -518,12 +612,17 @@ pub(crate) async fn disable_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (shell, item) = fetch(&state, &session, shell, &vault, &name).await?;
+    let (fetched, used_by) = tokio::join!(
+        fetch(&state, &session, shell, &vault, &name),
+        used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+    );
+    let (shell, item) = fetched?;
     Ok(crate::routes::lifecycle::disable_page(
         shell,
         &vault,
-        crate::routes::lifecycle::Kind::Secret,
+        Kind::Secret,
         item.name(),
+        used_by,
     ))
 }
 
@@ -552,7 +651,6 @@ pub(crate) async fn toggle(
     };
     update_current(&state, &session, shell, &vault, &item, &body).await?;
     let name = item.name();
-    tracing::info!(subject = %session.0.user.subject, vault = %vault, secret = %name, enabled = enable, "secret enabled changed");
     let done = if enable { "Enabled" } else { "Disabled" };
     Ok(saved(
         &state,

@@ -281,7 +281,10 @@ pub(crate) async fn create(
     let f = CreateForm::from_pairs(pairs);
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let (name, body) = match build(&f, now_ts()) {
-        Ok(ok) => ok,
+        Ok(ok) => {
+            crate::audit::note_item(&ok.0);
+            ok
+        }
         Err(errors) => return Ok(create_page(shell, vault, f, errors)),
     };
     let keys = api(&state, &session, &vault);
@@ -308,14 +311,11 @@ pub(crate) async fn create(
         }
     }
     match keys.create(&name, &body).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key created");
-            Ok(redirect_with(
-                &state,
-                &vault_path(&vault, &format!("/keys/{name}")),
-                format!("Created {name}."),
-            ))
-        }
+        Ok(_) => Ok(redirect_with(
+            &state,
+            &vault_path(&vault, &format!("/keys/{name}")),
+            format!("Created {name}."),
+        )),
         Err(AzureError::Status { status: 409, .. }) => {
             let errors = FieldErrors::one(
                 "name",
@@ -356,6 +356,7 @@ struct RotatePage {
     shell: Shell,
     vault: String,
     name: String,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 pub(crate) async fn rotate_form(
@@ -366,8 +367,24 @@ pub(crate) async fn rotate_form(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
-    Ok(render(&RotatePage { shell, vault, name }).into_response())
+    let (checked, used_by) = tokio::join!(
+        unmanaged_key(&state, &session, &vault, &name, shell),
+        crate::routes::used_by::for_item(
+            &state,
+            &session,
+            &vault,
+            crate::routes::lifecycle::Kind::Key,
+            &name
+        ),
+    );
+    let (_, shell) = checked?;
+    Ok(render(&RotatePage {
+        shell,
+        vault,
+        name,
+        used_by,
+    })
+    .into_response())
 }
 
 pub(crate) async fn rotate(
@@ -383,7 +400,6 @@ pub(crate) async fn rotate(
     let (_, shell) = unmanaged_key(&state, &session, &vault, &name, shell).await?;
     match api(&state, &session, &vault).rotate(&name).await {
         Ok(b) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key rotated");
             let short: String = b.version().chars().take(8).collect();
             Ok(redirect_with(
                 &state,
@@ -688,14 +704,11 @@ pub(crate) async fn save_rotation(
         }
     };
     match keys.set_rotation_policy(&name, &policy).await {
-        Ok(_) => {
-            tracing::info!(subject = %session.0.user.subject, vault = %vault, key = %name, "key rotation policy changed");
-            Ok(redirect_with(
-                &state,
-                &vault_path(&vault, &format!("/keys/{name}")),
-                format!("Saved the rotation policy for {name}."),
-            ))
-        }
+        Ok(_) => Ok(redirect_with(
+            &state,
+            &vault_path(&vault, &format!("/keys/{name}")),
+            format!("Saved the rotation policy for {name}."),
+        )),
         Err(e) => match rejection_message(&e) {
             Some(m) => Ok(rotation_page(
                 shell,

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {#- Disabling can break an app as fast as deleting, so it is confirmed
     first. No typed name: it is undone with one click on Enable. -#}
 {% block title %}Disable {{ kind.noun() }} {{ name }} - Keyring{% endblock %}
@@ -10,10 +11,12 @@
   <form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="state" value="off">
+    {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
     <div class="actions">
       <button type="submit" class="button-danger">Disable {{ kind.noun() }}</button>
       <a href="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ name }}">Cancel</a>
     </div>
   </form>
 </div>
+{% include "_used_by.html" %}
 {% endblock %}

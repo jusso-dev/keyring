@@ -234,6 +234,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/v/kv-test/keys/app-key/disable".into(),
         "/v/kv-test/keys/-/deleted".into(),
         "/expiry".into(),
+        "/expiry/age".into(),
         "/vault-health".into(),
         "/vault-health?vault=kv-test".into(),
         "/search".into(),
@@ -242,6 +243,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         format!("/search?q={}", "a".repeat(101)),
         "/generator".into(),
         "/v/kv-test/audit".into(),
+        "/v/kv-test/access".into(),
         "/audit".into(),
         "/audit?report=reads".into(),
         "/audit?report=refused".into(),
@@ -260,6 +262,48 @@ async fn pages_have_labels_headings_and_landmarks() {
         html.contains("data-countdown-announce"),
         "countdown has a quiet live region"
     );
+}
+
+#[tokio::test]
+async fn disabled_buttons_keep_their_label_and_say_why() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    w.arm.state.authz.lock().unwrap().permissions =
+        Some(vec![support::role_data_actions("Key Vault Reader")]);
+    let s = &w.kv.state;
+    s.put("db-password", "x");
+    s.add_cert("web-tls", true, "UEZY");
+    s.add_key_with("app-key", "RSA", |_| {});
+    s.put("old-one", "x");
+    s.soft_delete("old-one");
+    for p in [
+        "/v/kv-test/secrets",
+        "/v/kv-test/secrets/db-password",
+        "/v/kv-test/secrets/-/deleted/old-one",
+        "/v/kv-test/certificates",
+        "/v/kv-test/certificates/web-tls",
+        "/v/kv-test/keys",
+        "/v/kv-test/keys/app-key",
+    ] {
+        let (_, html) = w.page(p).await;
+        page_basics(&html, p);
+        let disabled: Vec<&str> = html
+            .split("<button")
+            .skip(1)
+            .filter(|b| b[..b.find('>').unwrap()].contains(" disabled"))
+            .collect();
+        assert!(!disabled.is_empty(), "{p}: nothing disabled");
+        for b in disabled {
+            let tag = &b[..b.find('>').unwrap()];
+            assert!(tag.contains("aria-describedby=\""), "{p}: {tag}");
+            let label = &b[b.find('>').unwrap() + 1..b.find("</button>").unwrap()];
+            assert!(
+                !label.trim().is_empty(),
+                "{p}: a disabled button keeps its label"
+            );
+        }
+        assert!(html.contains("Needs Key Vault"), "{p}: the role, as text");
+    }
 }
 
 #[tokio::test]
@@ -581,4 +625,27 @@ fn stylesheet_has_no_dead_or_duplicate_rules() {
     let narrow = css.find("@media (max-width: 48rem)").unwrap();
     assert!(narrow > css.find(".side-nav a[aria-current=\"page\"] {").unwrap());
     assert!(narrow > css.find("@media (forced-colors: active)").unwrap());
+}
+
+#[tokio::test]
+async fn bulk_change_pages_have_labels_and_one_heading() {
+    let w = support::world().await;
+    w.kv.state.put("db-password", "x");
+    w.kv.state.put("api-key", "x");
+    let picked = [
+        ("item", "db-password"),
+        ("item", "api-key"),
+        ("op", "disable"),
+    ];
+    let html = support::body_text(w.post("/v/kv-test/secrets/-/bulk", &picked).await).await;
+    page_basics(&html, "bulk review");
+    assert!(
+        html.contains("for=\"confirm_count\""),
+        "the count is labelled"
+    );
+    let mut run = picked.to_vec();
+    run.push(("confirm_count", "2"));
+    let html = support::body_text(w.post("/v/kv-test/secrets/-/bulk/apply", &run).await).await;
+    page_basics(&html, "bulk results");
+    assert!(html.contains("Changed 2 secrets"), "{html}");
 }

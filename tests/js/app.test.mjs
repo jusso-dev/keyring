@@ -353,6 +353,74 @@ test("Use this value stays hidden without a same-origin opener", () => {
   assert.equal(reveal({ use: true, opener: other }).use.hidden, true);
 });
 
+// A typed secret's reveal: one field and one Copy per field, in one panel,
+// as templates/secrets/revealed.html renders it.
+function typedReveal() {
+  const p = page((h) => [
+    h("section", { "data-reveal": "", "data-clear-after": "30" }, [
+      h("input", { id: "field-username", "data-secret-value": "", value: "svc-user" }),
+      h("button", { "data-copy": "field-username", hidden: true, text: "Copy Username" }),
+      h("input", { id: "field-password", "data-secret-value": "", value: SECRET }),
+      h("button", { "data-copy": "field-password", hidden: true, text: "Copy Password" }),
+      h("div", { class: "actions" }, [
+        h("button", { "data-extend": "", hidden: true, text: "Show for longer" }),
+        h("a", { href: "/secrets/db", "data-hide-link": "" }),
+        h("span", { role: "status", "data-copy-status": "" }),
+      ]),
+      h("p", { "data-countdown": "", hidden: true }, [
+        h("span", { "data-countdown-secs": "", text: "30" }),
+        h("span", { role: "status", "data-countdown-announce": "" }),
+      ]),
+    ]),
+  ]);
+  const all = (s) => p.main.querySelectorAll(s);
+  return { ...p, fields: all("[data-secret-value]"), copies: all("[data-copy]"), hideLink: p.main.querySelector("[data-hide-link]") };
+}
+
+test("each field of a typed secret has its own Copy, and the clipboard is cleared", async () => {
+  const p = typedReveal();
+  assert.equal(p.copies.every((c) => !c.hidden), true);
+  p.copies[0].click();
+  await settle();
+  assert.equal(p.clipboard.text, "svc-user");
+  p.copies[1].click();
+  await settle();
+  assert.equal(p.clipboard.text, SECRET);
+  p.hideLink.click();
+  await spoken(p);
+  assert.equal(p.clipboard.text, "", "the last copied field is cleared");
+  assert.equal(p.fields.every((f) => f.hidden && f.value === ""), true, "every field hidden");
+  assert.equal(p.copies.every((c) => c.hidden), true);
+});
+
+test("each field is hidden when time runs out", async () => {
+  const p = typedReveal();
+  p.clock.advance(31000);
+  await settle();
+  assert.equal(p.fields.every((f) => f.hidden && f.value === ""), true);
+});
+
+test("Use this value fills the field the generator was opened for", async () => {
+  const target = { value: "" };
+  const win = {
+    closed: false,
+    location: { origin: "https://keyring.example" },
+    document: { getElementById: (id) => (id === "passphrase" ? target : null) },
+  };
+  const p = page((h) => [
+    h("section", { "data-reveal": "", "data-clear-after": "30" }, [
+      h("textarea", { id: "secret-value", "data-secret-value": "", value: SECRET }),
+      h("button", { "data-copy": "", hidden: true }),
+      h("button", { "data-use-value": "passphrase", hidden: true }),
+      h("span", { "data-copy-status": "" }),
+      h("p", { "data-countdown": "", hidden: true }, [h("span", { "data-countdown-secs": "" }), h("span", { "data-countdown-announce": "" })]),
+    ]),
+  ], { opener: win });
+  p.main.querySelector("[data-use-value]").click();
+  await settle();
+  assert.equal(target.value, SECRET);
+});
+
 // The key page's two plain copy buttons, sharing one status line.
 function keyPage(opts) {
   return page(

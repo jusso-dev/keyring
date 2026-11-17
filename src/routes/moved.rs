@@ -79,6 +79,10 @@ fn section_for(path: &str) -> Section {
         Section::Keys
     } else if path.starts_with("/audit") {
         Section::Audit
+    } else if path.starts_with("/access") {
+        Section::Access
+    } else if path.starts_with("/my-access") {
+        Section::MyAccess
     } else {
         Section::Secrets
     }

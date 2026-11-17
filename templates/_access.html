@@ -1,0 +1,64 @@
+{#- Who has access, for the vault's Access page and each item's Access
+    section. Needs `access`, and `prefix` to keep caption ids unique. -#}
+{%- import "_ui.html" as ui -%}
+{% if let Some(u) = access.unavailable %}
+<div class="empty-state">
+  <p>{{ u.message }}</p>
+  {% if !u.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ u.hint }}</p>{% endif %}
+</div>
+{% else %}
+<p class="muted">People, groups and apps are shown by their Entra object ID and type, with a link to them in the Azure portal. Keyring doesn't look up their names. Group members aren't listed: open the group to see them.</p>
+{% if !access.rbac %}
+<p>This vault uses <strong>access policies</strong>, not Azure RBAC. Key Vault data roles don't apply to it. The policies decide who can read and change its contents, and anyone who can change the vault can add a policy for themselves.</p>
+{% if access.for_item %}<p class="muted">Access policies apply to the whole vault, not one item. These are the ones that cover this kind of item.</p>{% endif %}
+{% if access.policies.is_empty() %}
+<div class="empty-state"><p>No access policy here covers {% if access.for_item %}this kind of item{% else %}secrets, keys or certificates{% endif %}.</p></div>
+{% else %}
+{% call ui::table_wrap(prefix ~ "policies-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="{{ prefix }}policies-caption">Access policies{% if access.for_item %} covering this item{% endif %}</caption>
+  <thead><tr><th scope="col">Object ID</th><th scope="col">Allows</th></tr></thead>
+  <tbody>
+    {% for p in access.policies %}
+    <tr>
+      <th scope="row" class="mono">{{ p.object_id }}{% if !p.application_id.is_empty() %}<br><span class="muted small">Only through the app <span class="mono">{{ p.application_id }}</span></span>{% endif %}</th>
+      <td>{% for (k, w) in p.lines %}<span class="nowrap">{{ k }}:</span> {{ w }}{% if !loop.last %}<br>{% endif %}{% endfor %}{% if p.reads_secret_values %} <span class="badge badge-warn">Reads secret values</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% endif %}
+
+{% if let Some(u) = access.assignments_unavailable %}
+<div class="empty-state">
+  <p>{{ u.message }}</p>
+  {% if !u.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ u.hint }}</p>{% endif %}
+</div>
+{% else %}
+{% if !access.rbac %}<p>Role assignments that can change the vault, and so can add an access policy:</p>{% endif %}
+{% if access.entries.is_empty() %}
+<div class="empty-state"><p>{% if access.rbac %}No role assignment that reaches {% if access.for_item %}this item{% else %}this vault{% endif %} gives access to its contents or can grant it.{% else %}None found.{% endif %}</p></div>
+{% else %}
+<p class="muted">{{ access.entries.len() }} assignment{% if access.entries.len() != 1 %}s{% endif %}{% if access.groups() > 0 %}, {{ access.groups() }} of them to groups{% endif %}. "Can grant itself access" means the role doesn't reach the contents itself, but can add a role or policy that does. "Eligible" means a PIM assignment the person has to turn on first.</p>
+{% call ui::table_wrap(prefix ~ "access-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="{{ prefix }}access-caption">Role assignments that reach {% if access.for_item %}this item{% else %}this vault{% endif %}</caption>
+  <thead><tr><th scope="col">Who</th><th scope="col">Type</th><th scope="col">Role</th><th scope="col">Comes from</th></tr></thead>
+  <tbody>
+    {% for e in access.entries %}
+    <tr>
+      <th scope="row" class="mono small">{% if e.portal_url.is_empty() %}{{ e.principal_id }}{% else %}<a href="{{ e.portal_url }}" rel="noopener noreferrer">{{ e.principal_id }}<span class="visually-hidden"> in the Azure portal</span></a>{% endif %}</th>
+      <td>{{ e.principal_type }}</td>
+      <td>{{ e.role }}{% if e.eligible %} <span class="badge badge-muted">Eligible</span>{% endif %}{% if e.can_grant %} <span class="badge badge-warn">Can grant itself access</span>{% endif %}{% if e.has_condition %} <span class="muted small">(with a condition)</span>{% endif %}</td>
+      <td>{{ e.origin.label() }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+{% endif %}
+{% for n in access.notes %}<p class="notice notice-warn">{{ n }}</p>{% endfor %}
+{% endif %}

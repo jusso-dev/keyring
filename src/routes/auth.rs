@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::auth::entra::EntraAdvice;
-use crate::auth::oidc::{PendingLogin, SignInError};
+use crate::auth::oidc::{PendingLogin, SignInError, StepUpAsk};
 use crate::auth::session::{ABSOLUTE_TIMEOUT, IDLE_TIMEOUT};
 use crate::auth::{CurrentSession, LOGIN_COOKIE, SESSION_COOKIE, cookies, crypto, return_to};
 use crate::routes::assets::render;
@@ -44,6 +44,14 @@ struct ProblemPage {
     /// For an admin, such as the Entra error code. Never Entra's own text.
     detail: Option<String>,
     retry_url: String,
+}
+
+#[derive(Template)]
+#[template(path = "auth/step_up_not_met.html")]
+struct StepUpNotMetPage {
+    shell: Shell,
+    /// The confirmation step, never sign-in again.
+    back_url: String,
 }
 
 #[derive(Template)]
@@ -102,11 +110,27 @@ pub(super) async fn start(
     let return_to = return_to::sanitise(q.return_to.as_deref());
     // A claims challenge from this browser's current session, if any. It
     // comes from Entra, never from the request.
-    let claims = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
+    let challenge = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
         .and_then(|id| state.sessions.get(id))
         .and_then(|s| s.claims_challenge());
     let unsaved = q.reason.as_deref() == Some(REASON_UNSAVED);
-    match state.oidc.begin(return_to.clone(), unsaved, claims).await {
+    // A step-up sign-in before a sensitive action. What it asks for comes
+    // from Keyring's settings, never from the request.
+    let policy = &state.config.step_up;
+    let step_up = (q.reason.as_deref() == Some(crate::routes::step_up::REASON) && policy.is_on())
+        .then_some(StepUpAsk {
+            max_age: policy.max_age,
+        });
+    let claims = if step_up.is_some() {
+        policy.claims(challenge.as_deref())
+    } else {
+        challenge
+    };
+    match state
+        .oidc
+        .begin_with(return_to.clone(), unsaved, claims, step_up)
+        .await
+    {
         Ok((url, pending)) => {
             let name = state.cookies.name(LOGIN_COOKIE);
             let json = serde_json::to_vec(&pending).expect("pending login serialises");
@@ -174,12 +198,12 @@ pub(super) async fn callback(
             codes: Vec::new(),
         }),
         (Ok(p), None, Some(code)) => {
-            let (return_to, unsaved) = (p.return_to.clone(), p.unsaved);
+            let (return_to, unsaved, step_up) = (p.return_to.clone(), p.unsaved, p.step_up);
             state
                 .oidc
                 .finish(p, code)
                 .await
-                .map(|ok| (ok, return_to, unsaved))
+                .map(|ok| (ok, return_to, unsaved, step_up))
         }
         (Ok(_), None, None) => Err(SignInError::Stale("no code returned".into())),
     };
@@ -188,14 +212,34 @@ pub(super) async fn callback(
     let consumed = !matches!(result, Err(SignInError::Stale(_)));
 
     let mut res = match result {
-        Ok(((user, tokens), return_to, unsaved)) => {
+        // A step-up that came back without what was asked for. Refused,
+        // and the old session kept as it was. The page links back to the
+        // confirmation step, not to sign-in, so it can't loop.
+        Ok(((user, _, facts), return_to, _, true))
+            if state
+                .config
+                .step_up
+                .check(&facts, std::time::SystemTime::now())
+                .is_err() =>
+        {
+            tracing::warn!("step-up sign-in did not meet KEYRING_STEP_UP_*");
+            crate::audit::set_action(crate::audit::Action::SessionSignInFailed);
+            crate::audit::note_user(&user);
+            crate::audit::refuse(crate::audit::Refusal::StepUpNotMet);
+            step_up_not_met(&return_to)
+        }
+        Ok(((user, tokens, facts), return_to, unsaved, _)) => {
             let session_name = state.cookies.name(SESSION_COOKIE);
             // Fresh ID every sign-in, and drop any old session.
             if let Some(old) = cookies::get(&headers, &session_name) {
                 state.sessions.remove(old);
             }
-            tracing::info!(subject = %user.subject, "signed in");
             let id = state.sessions.create(user, tokens);
+            if let Some(s) = state.sessions.get(&id) {
+                s.set_sign_in_facts(facts);
+                crate::audit::note_session(&s);
+            }
+            crate::audit::set_action(crate::audit::Action::SessionSignIn);
             let mut res = Redirect::to(&return_to).into_response();
             append_cookie(&mut res, &state.cookies.set(&session_name, &id, None));
             if unsaved {
@@ -211,6 +255,8 @@ pub(super) async fn callback(
         }
         Err(err) => {
             tracing::warn!(error = ?err.to_string(), "sign-in failed");
+            crate::audit::set_action(crate::audit::Action::SessionSignInFailed);
+            sign_in_failure(&err);
             let (heading, message, detail) = describe(&err);
             problem(StatusCode::BAD_REQUEST, heading, message, detail, "/")
         }
@@ -235,14 +281,19 @@ pub(super) async fn sign_out(
 ) -> Response {
     let session_name = state.cookies.name(SESSION_COOKIE);
     let Some(id) = cookies::get(&headers, &session_name) else {
+        crate::audit::end(crate::audit::Outcome::Failed, "no_session");
         return Redirect::to("/auth/signed-out").into_response();
     };
     match state.sessions.get(id) {
         // Sign-out doesn't act on a vault, so a form from any vault will do.
         Some(s) if !s.csrf_matches_any(&form.csrf) => {
+            crate::audit::note_session(&s);
+            crate::audit::refuse(crate::audit::Refusal::Csrf);
             return PageError::new(Shell::anonymous(), Problem::stale_form()).into_response();
         }
-        _ => {}
+        Some(s) => crate::audit::note_session(&s),
+        // Already gone: expired, or signed out in another tab.
+        None => crate::audit::end(crate::audit::Outcome::Failed, "no_session"),
     }
     state.sessions.remove(id);
     let target = state
@@ -269,6 +320,19 @@ pub(super) async fn signed_out() -> Response {
     .into_response()
 }
 
+/// Note why a sign-in failed on its audit event. Who it was isn't known:
+/// Keyring only believes the ID token once it has passed every check.
+fn sign_in_failure(err: &SignInError) {
+    use crate::audit::{Outcome, Refusal, end, refuse};
+    match err {
+        SignInError::Stale(_) => refuse(Refusal::StaleSignIn),
+        SignInError::Rejected(_) => refuse(Refusal::IdTokenRejected),
+        // Entra said no, with an OAuth code checked by `safe_code`.
+        SignInError::Provider { code, .. } => end(Outcome::Denied, code),
+        SignInError::Unreachable(_) => end(Outcome::Failed, "entra_unreachable"),
+    }
+}
+
 fn describe(err: &SignInError) -> (&'static str, &'static str, Option<String>) {
     match (err, err.advice()) {
         (_, Some(EntraAdvice::Cancelled)) => (
@@ -285,6 +349,11 @@ fn describe(err: &SignInError) -> (&'static str, &'static str, Option<String>) {
             "Microsoft sign-in needs another try",
             "Entra ID asked for a fresh sign-in, for example to check a second factor. Start again from the sign-in page.",
             None,
+        ),
+        (_, Some(EntraAdvice::PolicyNotMet { code })) => (
+            "Your organisation's sign-in rules weren't met",
+            "Entra ID didn't let this sign-in through, for example because of the device or place you're signing in from, or a sign-in method you haven't set up. Signing in again won't change that. Ask your admin which Conditional Access policy applies.",
+            Some(format!("Entra ID gave the code {code}.")),
         ),
         (_, Some(EntraAdvice::Configuration { code })) => (
             "Microsoft sign-in didn't finish",
@@ -307,6 +376,16 @@ fn describe(err: &SignInError) -> (&'static str, &'static str, Option<String>) {
             None,
         ),
     }
+}
+
+/// The page for a step-up sign-in that came back without the
+/// authentication context or a fresh enough sign-in.
+fn step_up_not_met(return_to: &str) -> Response {
+    let page = StepUpNotMetPage {
+        shell: Shell::anonymous(),
+        back_url: return_to::sanitise(Some(return_to)),
+    };
+    (StatusCode::FORBIDDEN, render(&page)).into_response()
 }
 
 fn problem(

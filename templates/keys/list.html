@@ -2,8 +2,8 @@
 {% import "_ui.html" as ui %}
 {% block title %}Keys in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Keys <span class="muted">in {{ vault }}</span></h1>
-<p class="actions"><a class="button" href="{{ shell.vault_prefix() }}/keys/-/new">Create a key</a> <a href="{{ shell.vault_prefix() }}/keys/-/deleted">Deleted keys</a></p>
+<h1 data-pin="vault" data-pin-vault="{{ vault }}">Keys <span class="muted">in {{ vault }}</span></h1>
+<p class="actions">{{ ui::link_button(hints.needs(Action::CreateKey), "create", "{}/keys/-/new"|format(shell.vault_prefix()), "button", "Create a key") }} <a href="{{ shell.vault_prefix() }}/keys/-/deleted">Deleted keys</a></p>
 <p class="muted">Keys never leave Key Vault. Keyring only shows their public parts.</p>
 {% if total == 0 %}
 <div class="empty-state">
@@ -21,15 +21,18 @@
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No keys match. Try a shorter search.</p></div>
 {% else %}
+{% let bulk_needs = hints.needs(Action::UpdateKey) %}{% let bulk_expiry = true %}{% let bulk_base = "/keys" %}{% let bulk_plural = "keys" %}
+{% include "bulk/_form.html" %}
 {% call ui::table_wrap("key-table-caption") %}
 <table id="key-table">
   <caption class="visually-hidden" id="key-table-caption">Keys in {{ vault }}</caption>
-  <thead><tr><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+  <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
+      <td><input type="checkbox" id="pick-{{ row.name }}" name="item" value="{{ row.name }}" form="bulk-form"><label for="pick-{{ row.name }}" class="visually-hidden">Select {{ row.name }}</label></td>
       <th scope="row"><a class="mono" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</td>
+      <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
       <td class="nowrap">{{ ui::or_none(row.created) }}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td>{{ ui::tags(row.tags) }}</td>

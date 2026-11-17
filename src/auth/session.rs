@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::auth::crypto::{constant_time_eq, random_token};
+use crate::auth::step_up::SignInFacts;
 use crate::azure::token::TokenCache;
 use crate::secret::Secret;
 
@@ -25,6 +26,19 @@ pub const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 /// How long a vault's list of names and properties is reused by search and
 /// the expiry dashboard before Key Vault is asked again.
 pub const LIST_TTL: Duration = Duration::from_secs(60);
+
+/// How long the signed-in person's own permissions at a scope are reused
+/// to grey out buttons before ARM is asked again. See
+/// [`crate::routes::hints`].
+pub const PERMISSIONS_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// The person's permissions at one scope, as last read. `None` means
+/// "don't hint": an access policy vault, where they don't cover data
+/// access. Memory only, dropped with the session.
+struct CachedPermissions {
+    read_at: Instant,
+    perms: Option<Arc<crate::azure::authz::Permissions>>,
+}
 
 /// One vault's secrets, certificates and keys as last read: names and
 /// properties only, never values. Memory only, dropped with the session.
@@ -54,6 +68,56 @@ impl std::fmt::Debug for PendingUpload {
         f.debug_struct("PendingUpload")
             .field("vault", &self.vault)
             .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A file of secrets waiting to be imported. Values are [`Secret`]s, so
+/// they are zeroised when this is dropped. Never written anywhere.
+pub struct PendingImport {
+    pub id: String,
+    pub vault: String,
+    pub rows: Vec<PendingSecret>,
+    /// Rows the preview showed that won't be written, with why.
+    pub skipped: Vec<SkippedSecret>,
+    pub created: Instant,
+}
+
+/// A row of an import that won't be written. Never holds the value.
+#[derive(Debug, Clone)]
+pub struct SkippedSecret {
+    pub original: String,
+    pub name: String,
+    pub reason: String,
+}
+
+/// Where a [`PendingImport`] waits. `generation` goes up each time the
+/// person forgets imports, so a preview that started before can tell.
+#[derive(Default)]
+struct ImportSlot {
+    generation: u64,
+    import: Option<PendingImport>,
+}
+
+/// One secret in a [`PendingImport`].
+pub struct PendingSecret {
+    /// The name as written in the file.
+    pub original: String,
+    /// The Key Vault name it becomes.
+    pub name: String,
+    pub value: Secret,
+    pub content_type: Option<String>,
+    pub expires: Option<i64>,
+    pub tags: std::collections::BTreeMap<String, String>,
+    /// The name already has a secret, so this adds a version.
+    pub exists: bool,
+}
+
+impl std::fmt::Debug for PendingImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingImport")
+            .field("vault", &self.vault)
+            .field("rows", &self.rows.len())
             .finish_non_exhaustive()
     }
 }
@@ -126,6 +190,10 @@ pub struct UserTokens {
 /// One signed-in session.
 pub struct Session {
     pub user: User,
+    /// A keyed hash of the session ID, written on Keyring's audit events so
+    /// one session's events join up without the log holding the cookie
+    /// value. See [`SessionStore::new`].
+    pub audit_ref: String,
     /// Per-session key for form tokens. Never sent to the browser; forms
     /// carry a token derived from it and the chosen vault.
     csrf: Secret,
@@ -137,10 +205,21 @@ pub struct Session {
     /// A conditional access challenge from a failed on-behalf-of exchange,
     /// sent with the next sign-in so Entra asks for what's missing.
     claims_challenge: Mutex<Option<String>>,
+    /// `acrs` and `auth_time` from the verified ID token, for step-up. See
+    /// [`crate::auth::step_up`].
+    sign_in: Mutex<SignInFacts>,
     /// A certificate file between "preview" and "import". Memory only.
     pending_upload: Mutex<Option<PendingUpload>>,
+    /// A secrets import between "preview" and "import". Memory only.
+    pending_import: Mutex<ImportSlot>,
     /// Each vault's list, read in full, for [`LIST_TTL`]. See [`CachedList`].
     lists: Mutex<HashMap<String, CachedList>>,
+    /// The person's own permissions by ARM scope (lower case), for
+    /// [`PERMISSIONS_TTL`]. See [`CachedPermissions`].
+    permissions: Mutex<HashMap<String, CachedPermissions>>,
+    /// Goes up each time the permissions are dropped, so a read that
+    /// started before can't put its stale answer back.
+    permissions_generation: std::sync::atomic::AtomicU64,
     tokens: Mutex<UserTokens>,
     created: Instant,
     last_seen: Mutex<Instant>,
@@ -177,6 +256,17 @@ impl Session {
         lock(&self.claims_challenge).clone()
     }
 
+    /// How the person signed in, from the verified ID token.
+    pub fn sign_in_facts(&self) -> SignInFacts {
+        lock(&self.sign_in).clone()
+    }
+
+    /// Keep `acrs` and `auth_time` from the ID token. Set once, by the
+    /// sign-in callback, and by tests.
+    pub fn set_sign_in_facts(&self, facts: SignInFacts) {
+        *lock(&self.sign_in) = facts;
+    }
+
     /// Keep an uploaded certificate until the person confirms it.
     pub fn set_pending_upload(&self, upload: PendingUpload) {
         *lock(&self.pending_upload) = Some(upload);
@@ -189,6 +279,51 @@ impl Session {
         (crate::auth::crypto::constant_time_eq(upload.id.as_bytes(), id.as_bytes())
             && upload.created.elapsed() < PENDING_UPLOAD_TTL)
             .then_some(upload)
+    }
+
+    /// The pending import slot's generation. A preview reads it before it
+    /// starts and hands it to [`Self::set_pending_import`].
+    pub fn pending_import_generation(&self) -> u64 {
+        lock(&self.pending_import).generation
+    }
+
+    /// Keep a previewed import until the person confirms it, if nothing has
+    /// forgotten imports since `generation` was read. Replaces (and so
+    /// drops) any import already waiting. `false` if it was too late: the
+    /// import is dropped, so a preview that finishes after "Start again"
+    /// can't bring its secrets back.
+    pub fn set_pending_import(&self, generation: u64, import: PendingImport) -> bool {
+        let mut slot = lock(&self.pending_import);
+        if slot.generation != generation {
+            return false;
+        }
+        slot.import = Some(import);
+        true
+    }
+
+    /// Take the pending import if it's for this ID and not too old. A
+    /// matching one is removed, so a file is only ever imported once. A
+    /// different ID, from an older preview, leaves a newer import waiting.
+    /// An expired one is removed whatever the ID.
+    pub fn take_pending_import(&self, id: &str) -> Option<PendingImport> {
+        let mut slot = lock(&self.pending_import);
+        let import = slot.import.as_ref()?;
+        if import.created.elapsed() >= PENDING_UPLOAD_TTL {
+            slot.import = None;
+            return None;
+        }
+        if !crate::auth::crypto::constant_time_eq(import.id.as_bytes(), id.as_bytes()) {
+            return None;
+        }
+        slot.import.take()
+    }
+
+    /// Drop any import waiting in this session, and any preview still
+    /// running: one that finishes later isn't kept.
+    pub fn forget_pending_import(&self) {
+        let mut slot = lock(&self.pending_import);
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.import = None;
     }
 
     /// Remember the chosen vault. The caller checks the name is valid.
@@ -277,6 +412,64 @@ impl Session {
         lock(&self.lists).remove(vault);
     }
 
+    /// The permissions read at `scope` within the last
+    /// [`PERMISSIONS_TTL`]. The outer `None` is "not read"; the inner one is
+    /// "read, and nothing to hint".
+    pub(crate) fn cached_permissions_at(
+        &self,
+        scope: &str,
+        now: Instant,
+    ) -> Option<Option<Arc<crate::azure::authz::Permissions>>> {
+        lock(&self.permissions)
+            .get(&scope.to_ascii_lowercase())
+            .filter(|c| now.saturating_duration_since(c.read_at) < PERMISSIONS_TTL)
+            .map(|c| c.perms.clone())
+    }
+
+    /// Drop every permission read, after a role was turned on or off.
+    pub(crate) fn forget_permissions(&self) {
+        let mut kept = lock(&self.permissions);
+        self.permissions_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        kept.clear();
+    }
+
+    /// Take this before reading permissions from Azure, and hand it to
+    /// [`Self::keep_permissions_at`] with the answer.
+    pub(crate) fn permissions_generation(&self) -> u64 {
+        self.permissions_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Keep what was read at `scope`, unless the permissions were dropped
+    /// since `generation` was taken: that read began before a role was
+    /// turned on or off, so its answer may be out of date.
+    pub(crate) fn keep_permissions_at(
+        &self,
+        scope: &str,
+        perms: Option<Arc<crate::azure::authz::Permissions>>,
+        now: Instant,
+        generation: u64,
+    ) {
+        let mut kept = lock(&self.permissions);
+        if generation != self.permissions_generation() {
+            return;
+        }
+        kept.insert(
+            scope.to_ascii_lowercase(),
+            CachedPermissions {
+                read_at: now,
+                perms,
+            },
+        );
+    }
+
+    /// Drop permissions older than [`PERMISSIONS_TTL`].
+    fn drop_stale_permissions(&self, now: Instant) {
+        lock(&self.permissions)
+            .retain(|_, c| now.saturating_duration_since(c.read_at) < PERMISSIONS_TTL);
+    }
+
     /// Drop lists older than [`LIST_TTL`].
     fn drop_stale_lists(&self, now: Instant) {
         lock(&self.lists).retain(|_, c| now.saturating_duration_since(c.read_at) < LIST_TTL);
@@ -287,7 +480,7 @@ impl Session {
             || now.saturating_duration_since(*lock(&self.last_seen)) >= IDLE_TIMEOUT
     }
 
-    /// Drop a pending upload nobody confirmed in time.
+    /// Drop a pending upload or import nobody confirmed in time.
     fn drop_stale_upload(&self, now: Instant) {
         let mut slot = lock(&self.pending_upload);
         if slot
@@ -295,6 +488,15 @@ impl Session {
             .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
         {
             *slot = None;
+        }
+        drop(slot);
+        let mut slot = lock(&self.pending_import);
+        if slot
+            .import
+            .as_ref()
+            .is_some_and(|u| now.saturating_duration_since(u.created) >= PENDING_UPLOAD_TTL)
+        {
+            slot.import = None;
         }
     }
 
@@ -369,15 +571,50 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/// Drop expired sessions, writing an audit event for each. Not tied to
+/// the request in progress, if any, so no browser details.
+fn drop_expired(
+    map: &mut HashMap<String, Arc<Session>>,
+    now: Instant,
+    sink: Option<&crate::audit::sink::AuditSink>,
+) {
+    map.retain(|_, s| {
+        let expired = s.expired_at(now);
+        if expired {
+            record_expired(s, sink);
+        }
+        !expired
+    });
+}
+
+fn record_expired(session: &Session, sink: Option<&crate::audit::sink::AuditSink>) {
+    use crate::audit::{Action, AuditEvent, Outcome, record};
+    record(
+        AuditEvent::new(Action::SessionExpired, Outcome::Success).by(session),
+        sink,
+    );
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     // A panic while holding the lock leaves plain data behind, so carry on.
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// All live sessions, keyed by the random ID in the session cookie.
-#[derive(Default)]
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// Keys each session's [`Session::audit_ref`].
+    audit_key: ring::hmac::Key,
+    /// The audit sink, for session expiry events, when it is set.
+    audit_sink: std::sync::OnceLock<Arc<crate::audit::sink::AuditSink>>,
+}
+
+/// A store whose audit key is random, so its session references join up
+/// only within this process. For tests; Keyring uses [`SessionStore::new`].
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::with_audit_key(random_token(32).as_bytes())
+    }
 }
 
 /// Prints only how many sessions there are. The keys are live session IDs.
@@ -404,6 +641,48 @@ pub fn spawn_sweeper(store: Arc<SessionStore>) -> tokio::task::JoinHandle<()> {
 }
 
 impl SessionStore {
+    /// A store whose session references are keyed from `SESSION_SECRET`,
+    /// so they stay the same across restarts of the same deployment.
+    pub fn new(session_secret: &Secret) -> Self {
+        let salt = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, b"keyring audit v1");
+        let prk = salt.extract(session_secret.expose().as_bytes());
+        let info = [b"session_ref".as_slice()];
+        let okm = prk
+            .expand(&info, ring::hmac::HMAC_SHA256)
+            .expect("valid HKDF length");
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            audit_key: ring::hmac::Key::from(okm),
+            audit_sink: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn with_audit_key(key: &[u8]) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            audit_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key),
+            audit_sink: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Send session expiry events to the audit sink too. Set once, at
+    /// start.
+    pub fn set_audit_sink(&self, sink: Arc<crate::audit::sink::AuditSink>) {
+        let _ = self.audit_sink.set(sink);
+    }
+
+    fn sink(&self) -> Option<&crate::audit::sink::AuditSink> {
+        self.audit_sink.get().map(Arc::as_ref)
+    }
+
+    /// The audit reference for a session ID: the first 16 bytes of its
+    /// HMAC, base64url.
+    fn audit_ref(&self, id: &str) -> String {
+        use base64::Engine;
+        let tag = ring::hmac::sign(&self.audit_key, id.as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&tag.as_ref()[..16])
+    }
+
     /// Start a new session and return its ID for the cookie.
     pub fn create(&self, user: User, tokens: UserTokens) -> String {
         self.create_at(user, tokens, Instant::now())
@@ -412,20 +691,25 @@ impl SessionStore {
     pub fn create_at(&self, user: User, tokens: UserTokens, now: Instant) -> String {
         let id = random_token(32);
         let session = Arc::new(Session {
+            audit_ref: self.audit_ref(&id),
             user,
             csrf: Secret::new(random_token(32)),
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
+            sign_in: Mutex::new(SignInFacts::default()),
             pending_upload: Mutex::new(None),
+            pending_import: Mutex::new(ImportSlot::default()),
             lists: Mutex::new(HashMap::new()),
+            permissions: Mutex::new(HashMap::new()),
+            permissions_generation: std::sync::atomic::AtomicU64::new(0),
             tokens: Mutex::new(tokens),
             created: now,
             last_seen: Mutex::new(now),
         });
         let mut map = lock(&self.sessions);
-        map.retain(|_, s| !s.expired_at(now));
+        drop_expired(&mut map, now, self.sink());
         map.insert(id.clone(), session);
         id
     }
@@ -440,6 +724,14 @@ impl SessionStore {
         let session = map.get(id)?.clone();
         if session.expired_at(now) {
             map.remove(id);
+            // Found by the browser that holds it, so its details belong.
+            use crate::audit::{Action, AuditEvent, Outcome, from_this_browser, record};
+            record(
+                from_this_browser(
+                    AuditEvent::new(Action::SessionExpired, Outcome::Success).by(&session),
+                ),
+                self.sink(),
+            );
             return None;
         }
         *lock(&session.last_seen) = now;
@@ -447,14 +739,16 @@ impl SessionStore {
     }
 
     /// Drop expired sessions, and pending uploads older than
-    /// [`PENDING_UPLOAD_TTL`] and vault lists older than [`LIST_TTL`] in
+    /// [`PENDING_UPLOAD_TTL`], vault lists older than [`LIST_TTL`] and
+    /// permissions older than [`PERMISSIONS_TTL`] in
     /// the sessions that are left.
     pub fn sweep_at(&self, now: Instant) {
         let mut map = lock(&self.sessions);
-        map.retain(|_, s| !s.expired_at(now));
+        drop_expired(&mut map, now, self.sink());
         for s in map.values() {
             s.drop_stale_upload(now);
             s.drop_stale_lists(now);
+            s.drop_stale_permissions(now);
         }
     }
 
@@ -588,6 +882,84 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn sweep_drops_stale_imports_and_take_is_once_only() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let import = |created| PendingImport {
+            id: "im-1".into(),
+            vault: "kv-a".into(),
+            rows: vec![PendingSecret {
+                original: "DB_PASSWORD".into(),
+                name: "DB-PASSWORD".into(),
+                value: Secret::new("v"),
+                content_type: None,
+                expires: None,
+                tags: Default::default(),
+                exists: false,
+            }],
+            skipped: Vec::new(),
+            created,
+        };
+        let g = s.pending_import_generation();
+        assert!(s.set_pending_import(g, import(Instant::now())));
+        assert!(s.take_pending_import("im-1").is_some());
+        assert!(s.take_pending_import("im-1").is_none(), "only once");
+        assert!(s.set_pending_import(g, import(t0)));
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL / 2);
+        assert!(lock(&s.pending_import).import.is_some());
+        store.sweep_at(t0 + PENDING_UPLOAD_TTL);
+        assert!(lock(&s.pending_import).import.is_none());
+        assert!(!format!("{:?}", import(t0)).contains("\"v\""));
+    }
+
+    fn pending(id: &str, created: Instant) -> PendingImport {
+        PendingImport {
+            id: id.into(),
+            vault: "kv-a".into(),
+            rows: Vec::new(),
+            skipped: Vec::new(),
+            created,
+        }
+    }
+
+    #[test]
+    fn a_stale_import_id_leaves_the_newer_import_waiting() {
+        let store = SessionStore::default();
+        let id = store.create(user(), tokens());
+        let s = store.get(&id).unwrap();
+        let g = s.pending_import_generation();
+        assert!(s.set_pending_import(g, pending("im-a", Instant::now())));
+        assert!(s.set_pending_import(g, pending("im-b", Instant::now())));
+        assert!(s.take_pending_import("im-a").is_none(), "replaced by B");
+        assert!(s.take_pending_import("wrong").is_none());
+        assert!(s.take_pending_import("im-b").is_some(), "B still waits");
+        assert!(s.take_pending_import("im-b").is_none(), "only once");
+        // An expired import goes whatever the ID.
+        let old = Instant::now()
+            .checked_sub(PENDING_UPLOAD_TTL + Duration::from_secs(1))
+            .unwrap();
+        assert!(s.set_pending_import(g, pending("im-c", old)));
+        assert!(s.take_pending_import("wrong").is_none());
+        assert!(lock(&s.pending_import).import.is_none());
+    }
+
+    #[test]
+    fn a_preview_that_finishes_after_forgetting_is_not_kept() {
+        let store = SessionStore::default();
+        let id = store.create(user(), tokens());
+        let s = store.get(&id).unwrap();
+        let before = s.pending_import_generation();
+        s.forget_pending_import();
+        assert!(!s.set_pending_import(before, pending("im-a", Instant::now())));
+        assert!(s.take_pending_import("im-a").is_none());
+        let now = s.pending_import_generation();
+        assert!(s.set_pending_import(now, pending("im-b", Instant::now())));
+        assert!(s.take_pending_import("im-b").is_some());
+    }
+
+    #[test]
     fn vault_lists_are_kept_for_a_minute_and_swept() {
         let store = SessionStore::default();
         let t0 = Instant::now();
@@ -601,6 +973,63 @@ pub(crate) mod tests {
         assert!(s.cached_list_at("kv-b", t0).is_none());
         store.sweep_at(t0 + LIST_TTL);
         assert!(lock(&s.lists).is_empty(), "stale lists are dropped");
+    }
+
+    #[test]
+    fn a_read_begun_before_the_permissions_were_dropped_is_not_kept() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let scope = "/subscriptions/s/vaults/kv";
+        // A hints read starts, a role is turned on, then the read lands.
+        let before = s.permissions_generation();
+        s.forget_permissions();
+        s.keep_permissions_at(scope, None, t0, before);
+        assert!(
+            s.cached_permissions_at(scope, t0).is_none(),
+            "the stale answer was kept"
+        );
+        // A read begun after is kept as usual.
+        s.keep_permissions_at(scope, None, t0, s.permissions_generation());
+        assert!(s.cached_permissions_at(scope, t0).is_some());
+    }
+
+    #[test]
+    fn permissions_are_kept_a_few_minutes_by_scope_and_swept() {
+        let store = SessionStore::default();
+        let t0 = Instant::now();
+        let id = store.create_at(user(), tokens(), t0);
+        let s = store.get_at(&id, t0).unwrap();
+        let perms = Arc::new(crate::azure::authz::Permissions::default());
+        let g = s.permissions_generation();
+        s.keep_permissions_at("/subscriptions/S/vaults/KV", Some(perms), t0, g);
+        s.keep_permissions_at("/subscriptions/s/vaults/policy", None, t0, g);
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/kv", t0)
+                .is_some_and(|p| p.is_some()),
+            "scopes match without regard to case"
+        );
+        assert_eq!(
+            s.cached_permissions_at("/subscriptions/s/vaults/policy", t0),
+            Some(None),
+            "nothing to hint, remembered as such"
+        );
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/other", t0)
+                .is_none()
+        );
+        assert!(
+            s.cached_permissions_at("/subscriptions/s/vaults/kv", t0 + PERMISSIONS_TTL)
+                .is_none()
+        );
+        store.sweep_at(t0 + PERMISSIONS_TTL / 2);
+        assert_eq!(lock(&s.permissions).len(), 2);
+        store.sweep_at(t0 + PERMISSIONS_TTL);
+        assert!(
+            lock(&s.permissions).is_empty(),
+            "stale permissions are dropped"
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ use crate::azure::AzureError;
 use crate::azure::fanout::Skipped;
 use crate::azure::secrets::now_ts;
 use crate::expiry::{self, Group, Item, ItemType};
+use crate::rotation::Rotation;
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem};
 use crate::routes::every_vault::{self, MAX_VAULTS};
@@ -49,19 +50,7 @@ impl ExpiryFilter {
         if !self.group.is_empty() && i.group(now).slug() != self.group {
             return false;
         }
-        let tag = self.tag.trim();
-        if !tag.is_empty() {
-            let (k, v) = match tag.split_once('=') {
-                Some((k, v)) => (k.trim(), Some(v.trim())),
-                None => (tag, None),
-            };
-            if !i.tags.iter().any(|(a, b)| {
-                a.eq_ignore_ascii_case(k) && v.is_none_or(|v| b.eq_ignore_ascii_case(v))
-            }) {
-                return false;
-            }
-        }
-        true
+        i.has_tag(&self.tag)
     }
 
     fn query(&self) -> String {
@@ -76,24 +65,26 @@ impl ExpiryFilter {
     }
 }
 
-struct Loaded {
-    items: Vec<Item>,
-    skipped: Vec<Skipped>,
-    vault_names: Vec<String>,
-    capped: bool,
+pub(super) struct Loaded {
+    pub items: Vec<Item>,
+    pub skipped: Vec<Skipped>,
+    pub vault_names: Vec<String>,
+    pub capped: bool,
     /// The vault filter names a vault that isn't in the list.
-    unknown_vault: bool,
+    pub unknown_vault: bool,
 }
 
-async fn load(
+/// Every vault's items, or the one in `vault`, for this page and the age
+/// view.
+pub(super) async fn load(
     state: &AppState,
     session: &CurrentSession,
-    filter: &ExpiryFilter,
+    vault: &str,
 ) -> Result<Loaded, AzureError> {
-    let chosen = every_vault::choose(state, session, &filter.vault).await?;
+    let chosen = every_vault::choose(state, session, vault).await?;
     let read = every_vault::read(state, session, chosen.wanted).await;
-    // Secrets and keys that back a certificate expire with it, so only the
-    // certificate is listed.
+    // Secrets and keys that back a certificate expire and change with it,
+    // so only the certificate is listed.
     let items = read
         .read
         .iter()
@@ -126,11 +117,19 @@ pub(super) struct RowView {
     pub tags: String,
 }
 
+/// A secret whose `rotation-status` tag says `failed`.
+pub(super) struct FailedView {
+    pub vault: String,
+    pub name: String,
+    pub rotation: Rotation,
+}
+
 #[derive(Template)]
 #[template(path = "expiry.html")]
 struct ExpiryPage {
     shell: Shell,
     groups: Vec<GroupView>,
+    failed: Vec<FailedView>,
     total: usize,
     skipped: Vec<Skipped>,
     vault_names: Vec<String>,
@@ -148,7 +147,7 @@ pub(super) async fn page(
     Query(filter): Query<ExpiryFilter>,
 ) -> PageResult {
     let shell = shell.at(Section::Expiry);
-    let loaded = match load(&state, &session, &filter).await {
+    let loaded = match load(&state, &session, &filter.vault).await {
         Ok(l) => l,
         Err(e) => {
             return Err(PageError::new(
@@ -167,6 +166,19 @@ pub(super) async fn page(
     expiry::sort(&mut items);
     let counts = expiry::counts(&items, now);
     let total = items.len();
+    // From the tags the list calls already gave: no extra reads.
+    let failed = items
+        .iter()
+        .filter(|i| i.kind == ItemType::Secret)
+        .filter_map(|i| {
+            let rotation = Rotation::from_tags(&i.tags).filter(Rotation::failed)?;
+            Some(FailedView {
+                vault: i.vault.clone(),
+                name: i.name.clone(),
+                rotation,
+            })
+        })
+        .collect();
     let groups = Group::ALL
         .iter()
         .enumerate()
@@ -192,6 +204,7 @@ pub(super) async fn page(
         csv_url: format!("/expiry.csv?{}", filter.query()),
         shell,
         groups,
+        failed,
         total,
         skipped: loaded.skipped,
         vault_names: loaded.vault_names,
@@ -209,7 +222,7 @@ pub(super) async fn csv(
     shell: Shell,
     Query(filter): Query<ExpiryFilter>,
 ) -> PageResult {
-    let loaded = match load(&state, &session, &filter).await {
+    let loaded = match load(&state, &session, &filter.vault).await {
         Ok(l) => l,
         Err(e) => {
             return Err(PageError::new(

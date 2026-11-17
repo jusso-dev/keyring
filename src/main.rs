@@ -12,13 +12,19 @@ async fn main() -> ExitCode {
         }
     };
 
-    keyring::telemetry::init(&config.log_level);
+    keyring::telemetry::init(&config.log_level, config.log_format);
     keyring::telemetry::quiet_panics();
 
     for name in config.test_overrides() {
         tracing::warn!(
             variable = name,
             "a test-only override is set; user tokens go to the host it names, not to Microsoft. Unset it outside the test suite"
+        );
+    }
+
+    if config.uses_legacy_identity_setting() {
+        tracing::warn!(
+            "KEYRING_FEDERATED_IDENTITY_CLIENT_ID is deprecated and will be removed in a later release. Rename it to KEYRING_MANAGED_IDENTITY_CLIENT_ID"
         );
     }
 
@@ -33,6 +39,10 @@ async fn main() -> ExitCode {
         }
     };
     keyring::auth::session::spawn_sweeper(state.sessions.clone());
+    if state.audit_sink.is_some() {
+        tracing::info!("audit sink on: Keyring's audit events also go to Log Analytics");
+    }
+    let audit_sink = state.audit_sink.clone();
 
     let listener = match tokio::net::TcpListener::bind(listen).await {
         Ok(listener) => listener,
@@ -44,7 +54,13 @@ async fn main() -> ExitCode {
     tracing::info!(addr = %listen, "keyring listening");
 
     let app = keyring::app(state);
-    if let Err(err) = keyring::serve::serve(listener, app, shutdown_signal()).await {
+    let served = keyring::serve::serve(listener, app, shutdown_signal()).await;
+    // After the last request, so its event is queued: send what is left,
+    // for up to ten seconds.
+    if let Some(sink) = audit_sink {
+        sink.shutdown().await;
+    }
+    if let Err(err) = served {
         tracing::error!(error = %err, "server error");
         return ExitCode::FAILURE;
     }

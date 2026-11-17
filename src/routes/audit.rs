@@ -162,6 +162,9 @@ struct AuditPage {
     csv_url: String,
     /// A filter that isn't valid, tied to its field.
     errors: FieldErrors,
+    /// `KEYRING_AUDIT_WORKSPACE_ID` is set, so the Keyring activity view
+    /// exists.
+    keyring_activity: bool,
 }
 
 impl AuditPage {
@@ -196,7 +199,7 @@ impl AuditPage {
 /// Resource Graph. The session keeps one ID, for the vault last used, so
 /// the copy is only used (or stored) while that is this vault: another tab
 /// may have moved on to a different one.
-async fn vault_id(
+pub(super) async fn vault_id(
     state: &AppState,
     session: &CurrentSession,
     vault: &str,
@@ -311,7 +314,7 @@ fn current_vault(
     vault_ctx::path_vault(session, shell, Section::Audit, vault)
 }
 
-fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
+fn empty_page(state: &AppState, shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
     AuditPage {
         csv_url: vault_path(vault, &format!("/audit.csv?{}", filter.query_string())),
         shell,
@@ -325,6 +328,7 @@ fn empty_page(shell: Shell, vault: &str, filter: &AuditFilter) -> AuditPage {
         partial: None,
         capped: false,
         errors: FieldErrors::new(),
+        keyring_activity: state.config.audit_workspace_id.is_some(),
     }
 }
 
@@ -336,7 +340,7 @@ pub(super) async fn page(
     Query(filter): Query<AuditFilter>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
-    let mut page = empty_page(shell, &vault, &filter);
+    let mut page = empty_page(&state, shell, &vault, &filter);
     let q = match build_query(&vault, &filter) {
         Ok(q) => q,
         Err(e) => {
@@ -412,7 +416,7 @@ pub(super) async fn csv(
         // "no events".
         Ok(Err(u)) => {
             let status = u.status();
-            let mut page = empty_page(shell, &vault, &filter);
+            let mut page = empty_page(&state, shell, &vault, &filter);
             page.unavailable = Some(u);
             return Ok((status, render(&page)).into_response());
         }

@@ -38,6 +38,7 @@
   <p class="field-help" id="renew_days-help">From 1 up to {{ max_days }}, which is 27 days for each of the {{ months }} months this certificate is valid. Left blank, Keyring uses {{ default_days }}. Ignored for "Do nothing".</p>
   <input id="renew_days" name="renew_days" type="number" min="1" max="{{ max_days }}" value="{{ form.renew_days }}"{% call ui::aria("renew_days", "renew_days-help") %}{% endcall %}>
   {% include "_field_error.html" %}
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions"><button type="submit">Save</button><a href="{{ shell.vault_prefix() }}/certificates/{{ name }}">Cancel</a></div>
 </form>
 {% endblock %}

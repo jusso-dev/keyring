@@ -3,21 +3,21 @@
 {% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
-<h1 class="mono">{{ row.name }}</h1>
-<p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}</p>
+<h1 class="mono" data-pin="key" data-pin-vault="{{ vault }}" data-pin-name="{{ row.name }}">{{ row.name }}</h1>
+<p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</p>
 <div class="actions">
   {% if !row.managed %}
-  <a class="button" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotate">Rotate now</a>
+  {{ ui::link_button(hints.needs(Action::RotateKey), "rotate", "{}/keys/{}/rotate"|format(shell.vault_prefix(), row.name), "button", "Rotate now") }}
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotation">Rotation policy</a>
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
-  <a class="button button-danger" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/delete">Delete</a>
+  {{ ui::link_button(hints.needs(Action::DeleteKey), "delete", "{}/keys/{}/delete"|format(shell.vault_prefix(), row.name), "button button-danger", "Delete") }}
   {% if row.enabled %}
-  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/disable">Disable</a>
+  {{ ui::link_button(hints.needs(Action::UpdateKey), "disable", "{}/keys/{}/disable"|format(shell.vault_prefix(), row.name), "button button-secondary", "Disable") }}
   {% else %}
   <form method="post" action="{{ shell.vault_prefix() }}/keys/{{ row.name }}/enabled">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <input type="hidden" name="state" value="on">
-    <button type="submit" class="button-secondary">Enable</button>
+    <button type="submit" class="button-secondary"{{ ui::needs_attrs(hints.needs(Action::UpdateKey), "enable") }}>Enable</button>{{ ui::needs_note(hints.needs(Action::UpdateKey), "enable") }}
   </form>
   {% endif %}
   {% else %}
@@ -94,5 +94,13 @@
   </table>
   {% endcall %}
   {% endif %}
+</section>
+
+{% include "_used_by.html" %}
+<section aria-labelledby="access-heading">
+  <h2 id="access-heading">Access</h2>
+  <p>Who can reach this key, including role assignments on the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
+  {% let prefix = "item-" %}
+  {% include "_access.html" %}
 </section>
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Rotate key {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
 <div class="panel narrow">
@@ -7,7 +8,9 @@
   <p class="muted">Older versions stay, so data encrypted or signed with them can still be decrypted or verified.</p>
   <form method="post" action="{{ shell.vault_prefix() }}/keys/{{ name }}/rotate">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
     <div class="actions"><button type="submit">Make a new version</button><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Cancel</a></div>
   </form>
 </div>
+{% include "_used_by.html" %}
 {% endblock %}

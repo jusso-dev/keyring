@@ -6,6 +6,7 @@
   <title>{% block title %}Keyring{% endblock %}</title>
   <link rel="stylesheet" href="{{ crate::routes::assets::url("style.css") }}">
   <script src="{{ crate::routes::assets::url("app.js") }}" defer></script>
+  <script src="{{ crate::routes::assets::url("pins.js") }}" defer></script>
 </head>
 <body data-idle-seconds="{{ shell.idle_seconds() }}">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -27,7 +28,7 @@
     </form>
     <div class="account">
       <span class="account-name">{{ user.name }}</span>
-      <form method="post" action="/auth/sign-out">
+      <form method="post" action="/auth/sign-out" data-pins-clear>
         <input type="hidden" name="csrf" value="{{ user.csrf }}">
         <button type="submit" class="button-link">Sign out</button>
       </form>

@@ -20,10 +20,12 @@ pub enum Section {
     Health,
     Generator,
     Audit,
+    Access,
+    MyAccess,
 }
 
 impl Section {
-    pub const NAV: [Section; 8] = [
+    pub const NAV: [Section; 10] = [
         Section::Vaults,
         Section::Secrets,
         Section::Certificates,
@@ -32,6 +34,8 @@ impl Section {
         Section::Health,
         Section::Generator,
         Section::Audit,
+        Section::Access,
+        Section::MyAccess,
     ];
 
     pub fn label(self) -> &'static str {
@@ -45,6 +49,8 @@ impl Section {
             Self::Health => "Vault health",
             Self::Generator => "Generator",
             Self::Audit => "Audit",
+            Self::Access => "Access",
+            Self::MyAccess => "My access",
         }
     }
 
@@ -52,7 +58,12 @@ impl Section {
     pub fn is_vault_scoped(self) -> bool {
         matches!(
             self,
-            Self::Secrets | Self::Certificates | Self::Keys | Self::Audit
+            Self::Secrets
+                | Self::Certificates
+                | Self::Keys
+                | Self::Audit
+                | Self::Access
+                | Self::MyAccess
         )
     }
 
@@ -67,10 +78,13 @@ impl Section {
             Self::Health => "/vault-health",
             Self::Generator => "/generator",
             Self::Audit => "/audit",
+            Self::Access => "/access",
+            Self::MyAccess => "/my-access",
         }
     }
 }
 
+#[derive(Clone)]
 pub struct ShellUser {
     pub name: String,
     /// Form token, bound to the vault chosen when the page was rendered.
@@ -78,16 +92,36 @@ pub struct ShellUser {
 }
 
 /// The vault picked in the header, if any.
+#[derive(Clone)]
 pub struct ShellVault {
     pub name: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Shell {
     pub user: Option<ShellUser>,
     pub section: Option<Section>,
     pub vault: Option<ShellVault>,
     pub flash: Option<Flash>,
+    /// `KEYRING_REQUIRE_REASON`, for the reason fields on forms.
+    pub reason: ReasonAsk,
+}
+
+/// What the reason fields on a form need to know.
+#[derive(Default, Clone)]
+pub struct ReasonAsk {
+    pub require: crate::reason::RequireReason,
+    /// `KEYRING_REASON_TICKET_PATTERN`, as written, when set.
+    pub ticket_pattern: Option<String>,
+}
+
+impl ReasonAsk {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            require: config.reason.require,
+            ticket_pattern: config.reason.ticket.as_ref().map(|t| t.source().to_owned()),
+        }
+    }
 }
 
 impl Shell {
@@ -159,6 +193,22 @@ impl Shell {
             .unwrap_or_default()
     }
 
+    /// True when a form for a reveal or private key download should ask
+    /// for a reason.
+    pub fn asks_reason_to_reveal(&self) -> bool {
+        self.reason.require != crate::reason::RequireReason::Off
+    }
+
+    /// True when a form that changes something should ask for a reason.
+    pub fn asks_reason_to_change(&self) -> bool {
+        self.reason.require == crate::reason::RequireReason::All
+    }
+
+    /// The ticket pattern, or empty when no ticket is asked for.
+    pub fn ticket_pattern(&self) -> &str {
+        self.reason.ticket_pattern.as_deref().unwrap_or_default()
+    }
+
     /// Seconds without a request before sign-out, for the idle warning
     /// script. Empty when signed out.
     pub fn idle_seconds(&self) -> String {
@@ -181,6 +231,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Shell {
             None => Shell::anonymous(),
         };
         shell.flash = parts.extensions.get::<Flash>().cloned();
+        if let Some(config) = parts
+            .extensions
+            .get::<std::sync::Arc<crate::config::Config>>()
+        {
+            shell.reason = ReasonAsk::from_config(config);
+        }
         Ok(shell)
     }
 }

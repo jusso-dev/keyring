@@ -1,0 +1,9 @@
+AzureDiagnostics
+| where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'
+| project TimeGenerated, ResourceId = _ResourceId, OperationName,
+    Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2]),
+    CallerIpAddress = tostring(column_ifexists('CallerIPAddress', '')),
+    CorrelationId = tostring(column_ifexists('CorrelationId', '')),
+    CallerObjectId = coalesce(
+        tostring(column_ifexists('identity_claim_http_schemas_microsoft_com_identity_claims_objectidentifier_g', '')),
+        tostring(column_ifexists('identity_claim_oid_g', '')))

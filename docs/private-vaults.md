@@ -53,9 +53,12 @@ Keyring still calls each vault as the signed-in person. The network only decides
    | `management.azure.com` | Vault list (Resource Graph) and the audit view's diagnostic settings |
    | `api.loganalytics.io` | Audit view queries |
    | `<vault>.vault.azure.net` | Vaults that are reached publicly, not through a private endpoint |
+   | `<rule>.<region>.ingest.monitor.azure.com` | The audit sink, if it's on: Keyring's own audit events, written as its managed identity |
    | Your container registry, for example `<name>.azurecr.io` and `<name>.<region>.data.azurecr.io` | So the platform can pull the image on start and restart. Without it a restart fails |
 
    If you use an outbound proxy rather than routing, see the README, "Behind a proxy".
+
+   On a network with no route to public Azure Monitor endpoints, use an [Azure Monitor Private Link Scope](https://learn.microsoft.com/azure/azure-monitor/logs/private-link-security) with a private endpoint in Keyring's VNet. Microsoft's guidance for the Logs Ingestion API over private link is to use a data collection endpoint: create one, add it to the scope, associate it with the audit rule, and set `KEYRING_AUDIT_INGESTION_ENDPOINT` to the endpoint's logs ingestion URL (also on `*.ingest.monitor.azure.com`). The templates don't do this for you, and it hasn't been tried against a real tenant yet. Until the sink can reach its endpoint, `/healthz/audit` shows `degraded`, and events still go to standard output.
 
 Keyring's own config vault can be private too: set `configVaultPrivateEndpointSubnetId` and `vaultPrivateDnsZoneId` and the template turns off its public access.
 

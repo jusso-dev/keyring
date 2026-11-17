@@ -83,6 +83,45 @@ param apiScope string = ''
 ])
 param logLevel string = ''
 
+@description('How log lines are written: text (the default) or json, one JSON object per line with Keyring\'s audit events marked "kind":"audit". Leave empty for text.')
+@allowed([
+  ''
+  'text'
+  'json'
+])
+param logFormat string = ''
+
+@description('Conditional Access authentication context ID (c1 to c99) that a reveal, private key download, rollback or purge needs. Leave empty to not ask for one (see docs/deploy.md, "Step-up before sensitive actions").')
+param stepUpAuthContext string = ''
+
+@description('Minutes since the person last signed in for a reveal, private key download, rollback or purge to go ahead. 0 turns this off (see docs/deploy.md, "Step-up before sensitive actions").')
+@minValue(0)
+@maxValue(720)
+param stepUpMaxAge int = 0
+
+@description('Ask for a reason before a secret value is shown or a private key downloaded (reveal), or before every change too (all). The reason goes on Keyring\'s audit event. Not a hard control: the CLI needs no reason (see docs/deploy.md, "A reason before a value is shown").')
+@allowed([
+  ''
+  'off'
+  'reveal'
+  'all'
+])
+param requireReason string = ''
+
+@description('Regular expression a ticket reference must match as a whole, such as (INC|CHG)[0-9]{7}. Shape only. Needs requireReason. Leave empty to ask for a reason only.')
+@maxLength(200)
+param reasonTicketPattern string = ''
+
+@description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
+@minValue(0)
+@maxValue(8)
+param trustedProxyHops int = 1
+
+@description('Days without a new value before secrets, certificates and keys show "Not changed in over a year" (or over N days). 0 for the default, 365.')
+@minValue(0)
+@maxValue(3650)
+param staleAfterDays int = 0
+
 @description('Replicas. Sessions live in memory, so keep this at 1 unless you add session affinity (enabled below for more than 1).')
 @minValue(1)
 @maxValue(10)
@@ -93,6 +132,17 @@ param useFederatedCredential bool = false
 
 @description('Only when moving an existing app to useFederatedCredential: keep the entra-client-secret entry defined (the container no longer reads it), because Container Apps refuses to remove a secret an active revision still uses. Deploy once with this true, then again with it false once the old revision is inactive. See docs/deploy.md.')
 param keepClientSecretEntry bool = false
+
+@description('Resource ID of a Log Analytics workspace for Keyring\'s audit sink. When set, a KeyringAudit_CL table, a data collection rule and Monitoring Metrics Publisher on that rule for Keyring\'s managed identity are made in the workspace\'s resource group (any subscription), and Keyring sends its audit events there as that identity. The audit page also gains a Keyring activity view, read from the table as each person. Leave empty for no sink. See docs/deploy.md, "Audit sink".')
+param auditWorkspaceId string = ''
+
+@description('Days the KeyringAudit_CL table keeps rows.')
+@minValue(30)
+@maxValue(730)
+param auditRetentionInDays int = 365
+
+@description('Refuse reveals and private key downloads while the audit sink has been failing for over a minute. Needs auditWorkspaceId.')
+param auditRequired bool = false
 
 param tags object = {}
 
@@ -107,11 +157,17 @@ var identityName = '${name}-id'
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
 
 // How Keyring proves itself to Entra: the client secret, or (with
-// useFederatedCredential) the app's managed identity. Never both: Keyring
-// refuses to start with both set.
-var credentialEnv = useFederatedCredential
-  ? [{ name: 'KEYRING_FEDERATED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
-  : [{ name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }]
+// useFederatedCredential) the app's managed identity. Keyring's one managed
+// identity is also what the audit sink writes with, so it is named
+// whenever either needs it.
+var useAuditSink = !empty(auditWorkspaceId)
+var auditCheck = useAuditSink || !auditRequired ? 'ok' : fail('auditRequired needs auditWorkspaceId.')
+var credentialEnv = concat(
+  useFederatedCredential || useAuditSink
+    ? [{ name: 'KEYRING_MANAGED_IDENTITY_CLIENT_ID', value: config.outputs.identityClientId }]
+    : [],
+  useFederatedCredential ? [] : [{ name: 'ENTRA_CLIENT_SECRET', secretRef: 'entra-client-secret' }]
+)
 
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
@@ -127,6 +183,41 @@ module config '../modules/config-vault.bicep' = {
     tags: tags
   }
 }
+
+// The audit sink, in the workspace's own resource group and subscription,
+// which may be an existing Sentinel workspace elsewhere.
+var auditWorkspaceParts = split(useAuditSink ? auditWorkspaceId : '/subscriptions/none/resourceGroups/none/providers/Microsoft.OperationalInsights/workspaces/none', '/')
+resource auditWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (useAuditSink) {
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  name: auditWorkspaceParts[8]
+}
+
+module audit '../modules/audit-sink.bicep' = if (useAuditSink) {
+  name: '${name}-audit-sink${auditCheck == 'ok' ? '' : '-invalid'}'
+  scope: resourceGroup(auditWorkspaceParts[2], auditWorkspaceParts[4])
+  params: {
+    workspaceName: auditWorkspaceParts[8]
+    location: auditWorkspace!.location
+    ruleName: '${name}-audit'
+    identityPrincipalId: config.outputs.identityPrincipalId
+    retentionInDays: auditRetentionInDays
+    tags: tags
+  }
+}
+
+// Where the sink writes, from the module, whether reads need it, and where
+// the audit page reads Keyring's own events.
+var auditSettings = useAuditSink
+  ? [
+      { name: 'KEYRING_AUDIT_INGESTION_ENDPOINT', value: audit!.outputs.ingestionEndpoint }
+      { name: 'KEYRING_AUDIT_DCR_ID', value: audit!.outputs.ruleImmutableId }
+      { name: 'KEYRING_AUDIT_STREAM', value: audit!.outputs.streamName }
+      { name: 'KEYRING_AUDIT_REQUIRED', value: string(auditRequired) }
+      // Where the audit page's Keyring activity view reads the table, as
+      // the signed-in person. The identity can't read it.
+      { name: 'KEYRING_AUDIT_WORKSPACE_ID', value: auditWorkspaceId }
+    ]
+  : []
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (!configOnly) {
   name: '${name}-logs'
@@ -246,7 +337,15 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
               { name: 'KEYRING_ALLOW_PURGE', value: string(allowPurge) }
             ],
             empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
-            empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }]
+            empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
+            staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
+            empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
+            [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
+            empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],
+            stepUpMaxAge == 0 ? [] : [{ name: 'KEYRING_STEP_UP_MAX_AGE', value: string(stepUpMaxAge) }],
+            empty(requireReason) ? [] : [{ name: 'KEYRING_REQUIRE_REASON', value: requireReason }],
+            empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
+            auditSettings
           )
           probes: [
             {
@@ -294,6 +393,8 @@ output fqdn string = configOnly ? '' : app!.properties.configuration.ingress.fqd
 output defaultDomain string = configOnly ? '' : env!.properties.defaultDomain
 @description('The environment\'s address: private with internal ingress, public with external.')
 output staticIp string = configOnly ? '' : env!.properties.staticIp
-output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck}'
+output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck} ${auditCheck}'
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
+@description('The audit data collection rule\'s immutable ID, when the audit sink is on.')
+output auditRuleId string = useAuditSink ? audit!.outputs.ruleImmutableId : ''

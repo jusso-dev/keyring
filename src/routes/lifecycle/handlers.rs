@@ -116,27 +116,6 @@ pub(crate) trait DeletedPages: Lifecycle {
     ) -> impl Future<Output = Result<DeletedRow, AzureError>> + Send;
 }
 
-/// Log a change, with the item under a field named for its kind (`secret`,
-/// `certificate` or `key`), as every other change is logged.
-macro_rules! log_change {
-    ($level:ident, $kind:expr, $session:expr, $vault:expr, $name:expr, $what:literal) => {
-        match $kind {
-            Kind::Secret => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, secret = %$name,
-                concat!("secret ", $what)
-            ),
-            Kind::Certificate => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, certificate = %$name,
-                concat!("certificate ", $what)
-            ),
-            Kind::Key => tracing::$level!(
-                subject = %$session.0.user.subject, vault = %$vault, key = %$name,
-                concat!("key ", $what)
-            ),
-        }
-    };
-}
-
 fn current_vault<L: Lifecycle>(
     session: &CurrentSession,
     shell: Shell,
@@ -155,12 +134,16 @@ pub(crate) async fn delete_form<L: Lifecycle>(
     let (name, shell) = checked_name(&name, shell)?;
     // Check first, so a missing item gets its own page before the name is
     // asked for, and the warning can give the vault's real retention.
-    let (shell, recovery) =
-        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form).await?;
-    Ok(super::confirm_page(
+    // Who used it loads beside the check, within its own time limit.
+    let (checked, used_by) = tokio::join!(
+        L::check_delete(&state, &session, &vault, &name, shell, Stage::Form),
+        crate::routes::used_by::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    let (shell, recovery) = checked?;
+    Ok(super::delete_page(
         shell,
         super::delete_view_for(L::KIND, &vault, &name, recovery),
-        StatusCode::OK,
+        used_by,
     ))
 }
 
@@ -184,14 +167,11 @@ pub(crate) async fn delete<L: Lifecycle>(
     let (shell, recovery) =
         L::check_delete(&state, &session, &vault, &name, shell, Stage::Submit).await?;
     match L::delete(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(info, L::KIND, session, vault, name, "deleted");
-            Ok(super::redirect_with(
-                &state,
-                &L::KIND.list_url(&vault),
-                L::deleted_message(&name, recovery),
-            ))
-        }
+        Ok(()) => Ok(super::redirect_with(
+            &state,
+            &L::KIND.list_url(&vault),
+            L::deleted_message(&name, recovery),
+        )),
         Err(e) => Err(azure_problem(
             shell,
             &e,
@@ -228,8 +208,21 @@ pub(crate) async fn deleted_detail<L: DeletedPages>(
 ) -> PageResult {
     let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
-    match L::get_deleted(&state, &session, &vault, &name, now_ts()).await {
-        Ok(row) => Ok(super::deleted_detail(&state, shell, vault, L::KIND, &row)),
+    // Asked at the item's scope like the other item pages, never only at
+    // the vault's: an item-level role may still apply to a deleted item.
+    let (row, hints) = tokio::join!(
+        L::get_deleted(&state, &session, &vault, &name, now_ts()),
+        crate::routes::hints::for_item(&state, &session, &vault, L::KIND, &name),
+    );
+    match row {
+        Ok(row) => Ok(super::deleted_detail(
+            &state,
+            shell,
+            vault,
+            L::KIND,
+            &row,
+            hints,
+        )),
         Err(e) => Err(azure_problem(
             shell,
             &e,
@@ -250,10 +243,7 @@ pub(crate) async fn recover<L: Lifecycle>(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     match L::recover(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(info, L::KIND, session, vault, name, "recovered");
-            Ok(super::recovered(&state, L::KIND, &vault, &name))
-        }
+        Ok(()) => Ok(super::recovered(&state, L::KIND, &vault, &name)),
         Err(e) => Err(azure_problem(
             shell,
             &e,
@@ -261,6 +251,24 @@ pub(crate) async fn recover<L: Lifecycle>(
             &L::KIND.deleted_url(&vault, &name),
         )),
     }
+}
+
+/// Step-up before a purge. Comes back to the purge confirmation page.
+fn purge_step_up<L: Lifecycle>(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<Shell, Halt> {
+    let deleted = L::KIND.deleted_url(vault, name);
+    crate::routes::step_up::require(
+        state,
+        &session.0,
+        shell,
+        &format!("{deleted}/purge"),
+        &deleted,
+    )
 }
 
 pub(crate) async fn purge_form<L: Lifecycle>(
@@ -272,6 +280,7 @@ pub(crate) async fn purge_form<L: Lifecycle>(
     let shell = super::purge_allowed(&state, shell, L::KIND)?;
     let (vault, shell) = current_vault::<L>(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let shell = purge_step_up::<L>(&state, &session, shell, &vault, &name)?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     Ok(super::confirm_page(
         shell,
@@ -298,16 +307,14 @@ pub(crate) async fn purge<L: Lifecycle>(
         shell,
         super::purge_view(L::KIND, &vault, &name),
     )?;
+    let shell = purge_step_up::<L>(&state, &session, shell, &vault, &name)?;
     let shell = L::check_purge(&state, &session, &vault, &name, shell).await?;
     match L::purge(&state, &session, &vault, &name).await {
-        Ok(()) => {
-            log_change!(warn, L::KIND, session, vault, name, "purged");
-            Ok(super::redirect_with(
-                &state,
-                &L::KIND.deleted_list_url(&vault),
-                format!("Permanently deleted {name}."),
-            ))
-        }
+        Ok(()) => Ok(super::redirect_with(
+            &state,
+            &L::KIND.deleted_list_url(&vault),
+            format!("Permanently deleted {name}."),
+        )),
         Err(e) => Err(L::purge_error(shell, &e, &vault, &name)),
     }
 }

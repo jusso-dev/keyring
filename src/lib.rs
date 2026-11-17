@@ -2,6 +2,8 @@
 //!
 //! Every Azure call is made as the signed-in user. Nothing is stored.
 
+pub(crate) mod age;
+pub mod audit;
 pub mod auth;
 pub mod azure;
 pub mod config;
@@ -11,8 +13,11 @@ pub(crate) mod generator;
 pub(crate) mod health;
 pub mod http;
 pub(crate) mod pkcs12;
+pub mod reason;
+pub(crate) mod rotation;
 pub mod routes;
 pub mod secret;
+pub(crate) mod secret_types;
 pub mod serve;
 pub mod telemetry;
 pub mod x509;
@@ -21,7 +26,8 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use crate::auth::assertion::Credential;
+use crate::audit::sink::AuditSink;
+use crate::auth::assertion::{Credential, ManagedIdentityTokens};
 use crate::auth::cookies::CookieOptions;
 use crate::auth::crypto::Sealer;
 use crate::auth::oidc::Oidc;
@@ -47,6 +53,8 @@ pub struct AppState {
     ///
     /// [`Limits::STANDARD`]: crate::azure::fanout::Limits::STANDARD
     pub fanout: azure::fanout::Limits,
+    /// Sends Keyring's own audit events to Log Analytics, when set.
+    pub audit_sink: Option<Arc<AuditSink>>,
 }
 
 impl AppState {
@@ -57,15 +65,39 @@ impl AppState {
     }
 
     /// Build the state. Fails if the outbound HTTP client can't be built,
-    /// for example because the TLS trust store can't be read.
+    /// for example because the TLS trust store can't be read. With the
+    /// audit sink set, starts its sender task, so needs a Tokio runtime.
     pub fn try_new(config: Config) -> Result<Self, http::HttpError> {
         let http = http::client(config.outbound_https_only())?;
-        // One credential, so the managed identity's assertion is cached once.
-        let credential = Credential::new(&config)?;
+        // One managed identity token source, shared by the credential and
+        // the audit sink, so each resource's token is cached once.
+        let identity = config
+            .managed_identity
+            .as_ref()
+            .map(ManagedIdentityTokens::for_identity)
+            .transpose()?
+            .map(Arc::new);
+        let credential = Credential::with_identity(&config, identity.clone());
         let oidc = Oidc::new(&config, http.clone(), credential.clone());
         let broker = Arc::new(TokenBroker::new(&config, http.clone(), credential));
+        // The sink writes with the managed identity only. Config refuses the
+        // sink settings without one.
+        let audit_sink = match (config.audit_ingestion_url(), &config.audit_sink, identity) {
+            (Some(url), Some(settings), Some(identity)) => Some(AuditSink::start(
+                url,
+                settings.tuning,
+                identity,
+                http.clone(),
+            )),
+            _ => None,
+        };
+        let sessions = Arc::new(SessionStore::new(&config.session_secret));
+        if let Some(sink) = &audit_sink {
+            sessions.set_audit_sink(sink.clone());
+        }
         Ok(Self {
-            sessions: Arc::new(SessionStore::default()),
+            audit_sink,
+            sessions,
             oidc: Arc::new(oidc),
             azure: AzureClient::new(http, broker),
             fanout: azure::fanout::Limits::STANDARD,

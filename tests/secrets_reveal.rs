@@ -110,3 +110,48 @@ fn script_is_small_dependency_free_and_same_origin() {
     }
     assert!(js.contains("navigator.clipboard.writeText(\"\")"));
 }
+
+/// static/pins.js, the only other script, keeps to the same rules. It may
+/// use localStorage (that is its job) but nothing else that reaches out or
+/// writes markup.
+#[test]
+fn pins_script_is_small_dependency_free_and_same_origin() {
+    let js = include_str!("../static/pins.js");
+    assert!(js.lines().count() < 200, "keep pins.js small");
+    for banned in [
+        "import ",
+        "require(",
+        "eval(",
+        "new Function",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "http://",
+        "https://",
+        "sessionStorage",
+        "fetch(",
+        "cookie",
+        ".href =",
+        "location",
+    ] {
+        assert!(!js.contains(banned), "pins.js must not use {banned}");
+    }
+    // One storage key, and stored paths are checked before they are links.
+    assert_eq!(js.matches("\"keyring.pins\"").count(), 1);
+    assert!(js.contains("PATH_RE.test(e.path)"));
+    assert!(js.contains("try {\n    start();"));
+}
+
+/// No other script ships: every file under static/ that ends in .js is one
+/// of the two, and both are served.
+#[test]
+fn only_two_scripts_ship() {
+    let mut js: Vec<String> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".js"))
+        .collect();
+    js.sort();
+    assert_eq!(js, ["app.js", "pins.js"]);
+}

@@ -2,13 +2,17 @@
 
 pub mod audit;
 pub mod audit_across;
+pub mod audit_keyring;
+pub mod authz;
 pub mod certs;
 pub mod client;
 pub mod fanout;
 pub mod keys;
 pub mod paging;
+pub mod pim;
 pub mod secrets;
 pub mod token;
+pub mod used_by;
 pub mod vaults;
 
 pub use client::{AzureClient, AzureError};

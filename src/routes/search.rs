@@ -259,6 +259,7 @@ mod tests {
             enabled: true,
             expires: None,
             not_before: None,
+            created: None,
             content_type: String::new(),
             managed: false,
             tags: Vec::new(),

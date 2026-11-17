@@ -23,7 +23,7 @@ decoration: no illustrations, gradients, background art, charts or scores.
     generator): a single column of fields, 40rem wide at most.
   - **Decision pages** (confirm, disable, rotate, rollback, upload preview,
     sign-in, signed out, errors): one narrow panel that ends in its action.
-  - **Ledger pages** (audit, expiry, vault health): the table is the page.
+  - **Ledger pages** (audit, expiry, vault health, access): the table is the page.
     Fully ledger-style.
 
 ## Colour
@@ -179,10 +179,11 @@ One size, one shape, one vocabulary.
 | Active, Enabled | `badge badge-ok` | ok | filled circle |
 | Current | `badge` | accent | filled circle |
 | Expired, Expires within 30 days, Refused | `badge badge-error` | danger | diamond |
-| Expires within 90 days, soft delete Off | `badge badge-warn` | warn | triangle |
+| Expires within 90 days, soft delete Off, Not changed in over a year | `badge badge-warn` | warn | triangle |
 | Disabled, Not active yet, Managed by a certificate | `badge badge-muted` | neutral | ring |
 | No expiry | `badge badge-none` | neutral | dash |
 | Health check: Pass / Warn / Unknown | `badge-ok` / `badge-warn` / `badge-muted` | ok / warn / neutral | circle / triangle / ring |
+| Rotation: OK / Failed / Unknown | `badge-ok` / `badge-error` / `badge-muted` | ok / danger / neutral | circle / diamond / ring |
 
 "None" in an empty cell stays plain muted text, so an empty cell doesn't look
 like a status.
@@ -242,6 +243,16 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   panel. Every way off the page waits for the clipboard clear after a copy
   (static/app.js), so Hide stays the panel's one exit. Generator values aren't
   read from a vault, so the generator has no such note.
+- A typed secret (Login, Database, API key, SSH private key) shows one
+  labelled well per field, each with its own secondary "Copy <field>"
+  button under it; Show for longer and Hide stay in the one row below.
+  A line above says every field is part of the value. Database connection
+  strings sit in a closed `<details>` after the fields. A typed value
+  that doesn't match its type shows as the plain well with a warn notice.
+- The create form picks the type from a row of plain links ("Type of
+  secret"), the current one bold with `aria-current`. Password and key
+  fields are masked inputs; every field follows the usual label, help and
+  error pattern.
 - Values are hidden in print.
 
 ### Expiry dashboard
@@ -254,6 +265,34 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   count, not a status, and keeps the badge's glyph so the tone isn't colour
   alone.
 - Then a ledger table per group, most urgent first. No charts, no score.
+- Before the groups, a "Rotation failed" ledger table (Name with the Failed
+  badge, Vault, Rotated by, Last attempt, Open), only when a secret's
+  `rotation-status` tag is `failed`, with a muted line saying it is what the
+  tags say. On a secret's page the same tags show as one "Rotation" row in
+  the fact list, after Tags, with the status badge and a muted note.
+- Two views share the Expiry section: "By expiry date" (`/expiry`) and "By
+  time since the value changed" (`/expiry/age`). A `p.view-switch` under the
+  heading links the two, inside a `nav` labelled "Expiry views". The open
+  view is ink text at weight 600 with `aria-current="page"` and no
+  underline; the other is a normal link. Not tabs: each is its own page and
+  works without JavaScript.
+
+### Age view
+
+- The same layout as the expiry dashboard: the view switch, filters (vault,
+  type, tag, Download CSV), notes on vaults not read, count tiles, then a
+  ledger table per band.
+- Bands, oldest first: Over a year, 180 to 365 days, 90 to 180 days, Under
+  90 days. A fifth, "Date not given", shows only when it has items. The
+  Over a year tile is warn; the rest are neutral. Age is a prompt to
+  rotate, never an error.
+- Columns: Name, Type, Vault, Value changed (date, "N days ago" muted, and
+  the stale badge), Tags, Open.
+- The stale badge, "Not changed in over a year" (or "over N days" when
+  `KEYRING_STALE_AFTER_DAYS` isn't 365), is `badge-warn`. It shows in the
+  Value changed cell on the age view and the secrets list, and beside the
+  status badges on a secret's page. Never on an item managed by a
+  certificate.
 
 ### Search
 
@@ -268,6 +307,14 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - One ledger table. When, Who, What, Item, Result, From. Times are tabular and
   don't wrap. Allowed is ok-coloured text with a check glyph; Refused is an
   error badge; Unknown stays muted.
+- With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
+  "Key Vault's log" and "Keyring activity", the open one with
+  `aria-current="page"`, as on the expiry views. Keyring activity is the
+  same ledger with When, Who, What (the action name in mono), Item, Result,
+  Why, From. Result: Done is ok-coloured text; "Denied by Azure" and
+  "Refused by Keyring" are error badges; Failed is a muted badge; the
+  reason code sits muted and mono under it. Why is the reason, with
+  "Ticket ..." muted under it, or muted "None".
 - Across vaults (`/audit`): the fixed reports first, as a `.card-list` of
   links. The open one has `aria-current="page"`, the accent tint, an accent
   border and an underline, so it isn't colour alone. Then the same ledger
@@ -290,9 +337,101 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - On the vault list, the Audit logs column is plain "On", a warn badge
   "Off", or muted "Unknown" with the reason.
 
+### Used by in the last 30 days
+
+- A section at the foot of an item's page, and under the form on Set a new
+  value, Roll back, Disable, Rotate and Delete, so the form comes first.
+- One ledger table: Who (sign-in name or app ID, mono), Kind, Object ID,
+  Last, Reads (Uses for a key), From (IP in mono, client info muted under
+  it). Latest first.
+- Nothing found is an empty state: "No reads in the last 30 days, so
+  nothing should break." A log that can't be read is an empty state that
+  says why and "You can still go ahead", with a "What to ask for" hint. It
+  is never an error notice, because it never stops the action.
+- Workspaces left out are a warn notice under the table.
+### Access
+
+- The vault's Access page: heading, a Download CSV link, a muted line saying
+  principals are object IDs with portal links and names aren't looked up,
+  then one ledger table: Who (object ID in mono, linked to the portal), Type,
+  Role, Comes from. Eligible is a muted badge; "Can grant itself access" is
+  a warn badge. Notes on what wasn't read are warn notices under the table.
+- Access policy vaults: a sentence saying so, then a ledger table of object
+  ID and what each policy allows in plain words, with a warn badge "Reads
+  secret values". Then the roles that can grant access.
+- Each secret, certificate and key page ends with an Access section (`h2`)
+  using the same tables, and a link to the whole vault's Access page.
+- When it can't be read: an empty state with the reason and a "What to ask
+  for" hint, never an empty table.
+
+### PIM activation
+
+- On the 403 page, under "What to ask for": one sentence saying the person is eligible, and a primary "Activate {role}" button. Nothing else on the page changes.
+- The activation form follows the other forms: back link, heading with the role muted, one sentence on what turning it on means, a warn notice when PIM needs approval (with approvers as PIM names them), the error summary, then How long (a select up to PIM's maximum), Why you need it (with the note not to type secrets or personal details), Ticket system and Ticket number, each marked optional unless PIM asks for it.
+- The result is a narrow panel: "Role turned on" with Try again, "Waiting for approval" with a link to PIM in the portal, or "PIM didn't turn the role on" with ARM's code under "Details:".
+- My access: heading, one sentence, warn notices for anything not read, then two ledger tables, "On now" (Role with an ok badge "Activated", Comes from, Time left, a secondary Deactivate button) and "Eligible" (Role, Comes from, Eligible until, Activate, or a muted badge "On now" or "Waiting for approval"). Empty states say what isn't there.
+### Reason (KEYRING_REQUIRE_REASON)
+
+- When a reason is asked for, the reveal form and each confirmation page get
+  a plain text field, "Reason", with field help that says it's recorded with
+  the person's name and not to type secrets, passwords or personal details.
+  A "Ticket" field follows only when a ticket pattern is set, showing the
+  pattern in mono.
+- A form that reaches an action without it gets one narrow panel asking
+  "Why ...?", with the usual error summary, the same button words as the
+  form it came from, and Cancel. It never shows a secret value: a create or
+  "set a new value" form, plain or typed, sends the person back to it
+  instead.
+- No new colours, badges or script. It works as a form post without
+  JavaScript.
+
 ### Rollback, rotate
 
 Read as "make a new version". The primary button is the accent, never danger.
+
+### Copy to another vault
+
+- A secondary "Copy to another vault" link button on a secret's page,
+  disabled with the role named when the hints say the person can't read the
+  value. Never shown for a certificate's backing secret.
+- The form is one stacked form: a select of the vaults the person can see,
+  the name, and a fieldset of plain checkboxes for what to bring, all ticked.
+  It is a GET to the review, so nothing is read until the review.
+- The review is a narrow panel: a `dl.props` of From and To, then one line on
+  what is at the target (a warn notice for a new version, an error notice
+  for a deleted name or a certificate's, with no copy button), and a bold
+  "The value isn't shown". The primary button names the target vault.
+
+### Change many at once
+
+- The secrets, certificates and keys lists have a first column of plain
+  checkboxes, each with a visually hidden "Select {name}" label. Above the
+  table, a second toolbar (the `.filters` box, after the filter form, never
+  inside it) holds "With selected": the change, tag name and value, expiry
+  date where it applies, and a primary **Review changes** button, disabled
+  with the role as text when the hint says so.
+- The review page is a framed table of names with a badge each (Will
+  change, No change, Can't change, Not found) and a muted sentence saying
+  exactly what happens. The button is primary, or danger for disable, which
+  also asks for the count typed. Cancel is a text link back to the list.
+- The results page follows the import results: a count heading, an ok or
+  warn notice, and a badge and reason per item.
+
+### Pinned and recently opened
+
+- Kept in the browser by `static/pins.js`, never on the server. Without
+  JavaScript, or when the browser refuses `localStorage`, nothing shows and
+  nothing changes.
+- A small secondary **Pin** button (`button.pin-button`) sits under the
+  heading of each vault list page (secrets, certificates, keys) and each
+  secret, certificate and key page. It has `aria-pressed`, a visually hidden
+  item name, and a CSS star glyph: an outline when off, filled with an
+  accent border and tint when pinned, so state isn't colour alone.
+- The home page and the vault list show **Pinned** and **Recently opened**
+  (last 10) above everything else, each an `h2` and a plain list of mono
+  links with the kind and vault muted after them. Only when non-empty.
+- Under them a muted line says the list is kept in this browser only and is
+  cleared on sign-out, with a **Clear** text button.
 
 ## Motion
 

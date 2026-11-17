@@ -49,12 +49,20 @@ pub(crate) struct KvState {
     pub log: Mutex<Vec<String>>,
     /// Bearer tokens seen.
     pub bearers: Mutex<Vec<String>>,
+    /// `x-ms-client-request-id` of each request, empty if it had none.
+    pub client_request_ids: Mutex<Vec<String>>,
     /// If set, every request fails with this status and code.
     pub fail: Mutex<Option<(u16, &'static str)>>,
     /// If set, only requests whose path contains this fail.
     pub fail_path: Mutex<Option<String>>,
     /// If set, only requests with this method fail.
     pub fail_method: Mutex<Option<Method>>,
+    /// Each `(method, path part, status, code)`: a request with that
+    /// method whose path contains the part fails so. For mixed results in
+    /// one request, such as some items refused and others not. A part
+    /// ending in `$` matches the end of the path only, so a value read
+    /// (`/secrets/{name}$`) can fail while its versions list doesn't.
+    pub fail_each: Mutex<Vec<(Method, String, u16, &'static str)>>,
     pub certs: Mutex<BTreeMap<String, super::certs::StoredCert>>,
     pub deleted_certs: Mutex<BTreeMap<String, super::certs::DeletedCert>>,
     pub imports: Mutex<Vec<super::certs::ImportRecord>>,
@@ -273,6 +281,10 @@ impl KvState {
             sv.content_type = Some("application/x-pkcs12".into());
             sv.version = v.clone();
         });
+        // Key Vault marks a certificate's backing secret `managed`.
+        if let Some(sec) = self.secrets.lock().unwrap().get_mut(name) {
+            sec.managed = true;
+        }
         v
     }
 
@@ -428,6 +440,13 @@ async fn record(
         .lock()
         .unwrap()
         .push(format!("{} {}", req.method(), req.uri().path()));
+    s.client_request_ids.lock().unwrap().push(
+        req.headers()
+            .get("x-ms-client-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+    );
     s.bearers.lock().unwrap().push(
         req.headers()
             .get("authorization")
@@ -459,6 +478,23 @@ async fn record(
     if let Some((status, code)) = fail
         && method_ok
     {
+        return err(status, code);
+    }
+    let each = s
+        .fail_each
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(m, part, _, _)| {
+            m == req.method()
+                && match part.strip_suffix('$') {
+                    // A part ending in `$` matches the end of the path only.
+                    Some(end) => req.uri().path().ends_with(end),
+                    None => req.uri().path().contains(part.as_str()),
+                }
+        })
+        .map(|(_, _, st, code)| (*st, *code));
+    if let Some((status, code)) = each {
         return err(status, code);
     }
     let delay = *s.delay.lock().unwrap();

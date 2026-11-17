@@ -159,12 +159,30 @@ impl AzureClient {
         serde_json::from_slice(&reply).map_err(|_| unreadable(resource, &what))
     }
 
-    /// Make a call as the user and return the raw body of a 2xx reply. If
+    /// Make a call as the user and return the raw body of a 2xx reply.
+    /// A failure is noted on the request's audit draft (status and code
+    /// only), so the event can say Azure refused.
+    pub async fn send(
+        &self,
+        session: &Session,
+        resource: Resource,
+        method: Method,
+        url: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, AzureError> {
+        let res = self.send_inner(session, resource, method, url, body).await;
+        if let Err(e) = &res {
+            crate::audit::note_azure_error(e);
+        }
+        res
+    }
+
+    /// See [`AzureClient::send`]. If
     /// Azure says the token is no good (401), get a fresh one and try once
     /// more. If Azure is throttling (429), wait as asked (up to
     /// [`MAX_RETRY_WAIT`]) and try again, at most [`MAX_THROTTLE_RETRIES`]
     /// times.
-    pub async fn send(
+    async fn send_inner(
         &self,
         session: &Session,
         resource: Resource,
@@ -181,6 +199,16 @@ impl AzureClient {
                 .request(method.clone(), url)
                 .header(AUTHORIZATION, format!("Bearer {}", token.expose()))
                 .header(ACCEPT, "application/json");
+            if resource == Resource::KeyVault {
+                // A new ID for every call, retries included. Key Vault
+                // writes it to its diagnostic log, and the audit event
+                // carries the last one, so the two can be joined.
+                let id = crate::audit::new_uuid();
+                crate::audit::note_kv_request(&id);
+                req = req
+                    .header(CLIENT_REQUEST_ID, &id)
+                    .header("x-ms-return-client-request-id", "true");
+            }
             if let Some(b) = &body {
                 req = req.header(CONTENT_TYPE, "application/json").body(b.clone());
             } else if method == Method::POST {
@@ -230,6 +258,9 @@ impl AzureClient {
         }
     }
 }
+
+/// The header Key Vault records as the caller's request ID.
+pub const CLIENT_REQUEST_ID: &str = "x-ms-client-request-id";
 
 /// `GET /secrets/x`: the method and the URL's path, never its query string.
 fn method_path(method: &Method, url: &str) -> String {

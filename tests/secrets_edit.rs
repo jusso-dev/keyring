@@ -410,7 +410,7 @@ async fn names_that_were_fixed_pages_can_be_created_and_opened() {
         let (status, html) = w.page(&format!("/v/kv-test/secrets/{name}")).await;
         assert_eq!(status, StatusCode::OK, "{name}");
         assert!(
-            html.contains(&format!("<h1 class=\"mono\">{name}</h1>")),
+            html.contains(&format!("data-pin-name=\"{name}\">{name}</h1>")),
             "{name}"
         );
     }

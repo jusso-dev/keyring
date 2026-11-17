@@ -1,0 +1,13 @@
+// Requests Keyring refused as a forged form or a cross-site post: a possible
+// attack on Keyring itself.
+// Looks back window + delay for late rows; alerts only when a row counted
+// arrived in the last window.
+// Set by main.bicep: window, delay, attackThreshold
+KeyringAudit_CL
+| where TimeGenerated > ago(window + delay)
+| where Outcome == "refused" and ReasonCode in ("csrf", "cross_site")
+| summarize Refused = count(), Reasons = make_set(ReasonCode, 5), Actions = make_set(Action, 10),
+    UserAgents = make_set(UserAgent, 5), take_any(ActorObjectId, ActorUpn),
+    LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated), LastArrived = max(coalesce(ingestion_time(), TimeGenerated))
+    by ClientIp
+| where Refused >= attackThreshold and LastArrived > ago(window)

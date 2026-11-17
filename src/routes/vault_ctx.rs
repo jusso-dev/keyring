@@ -24,6 +24,8 @@ pub(crate) fn no_vault_page(shell: Shell, section: Section) -> axum::response::R
     let noun = match section {
         Section::Certificates => "Certificates",
         Section::Keys => "Keys",
+        Section::Access => "Access",
+        Section::MyAccess => "My access",
         _ => "Secrets",
     };
     render(&NoVaultPage {
@@ -46,8 +48,10 @@ pub(crate) fn path_vault(
     vault: &str,
 ) -> Result<(String, Shell), Halt> {
     if !is_valid_vault_name(vault) {
+        crate::audit::refuse(crate::audit::Refusal::InvalidRequest);
         return Err(PageError::new(shell.at(section), Problem::not_found()).into());
     }
+    crate::audit::note_vault(vault);
     session.0.note_vault_used(vault);
     Ok((
         vault.to_owned(),
@@ -86,8 +90,10 @@ pub(crate) fn is_valid_object_name(name: &str) -> bool {
 /// name is "not found", so nothing odd reaches a request URL.
 pub(crate) fn checked_name(name: &str, shell: Shell) -> Result<(String, Shell), Halt> {
     if is_valid_object_name(name) {
+        crate::audit::note_item(name);
         Ok((name.to_owned(), shell))
     } else {
+        crate::audit::refuse(crate::audit::Refusal::InvalidRequest);
         Err(PageError::new(shell, Problem::not_found()).into())
     }
 }
@@ -103,6 +109,7 @@ pub(crate) fn check_csrf(
     if session.0.csrf_matches_vault(presented, vault) {
         Ok(shell)
     } else {
+        crate::audit::refuse(crate::audit::Refusal::Csrf);
         Err(PageError::new(shell, stale_form_for(&session.0, presented)).into())
     }
 }

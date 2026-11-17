@@ -16,10 +16,12 @@
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
     <label for="confirm_name">Type <strong class="mono">{{ confirm.expected }}</strong> to confirm</label>
     <input id="confirm_name" name="confirm_name" type="text" required{% call ui::ident() %}{% endcall %}{% if confirm.error.is_some() %} aria-invalid="true" aria-describedby="confirm_name-error"{% endif %}>
+    {% if shell.asks_reason_to_change() || (confirm.reveals && shell.asks_reason_to_reveal()) %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
     <div class="actions">
       <button type="submit" class="button-danger">{{ confirm.button }}</button>
       <a href="{{ confirm.cancel_url }}">Cancel</a>
     </div>
   </form>
 </div>
+{% block after_form %}{% endblock %}
 {% endblock %}

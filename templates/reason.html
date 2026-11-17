@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{#- Asks for a reason (KEYRING_REQUIRE_REASON), then posts the same form
+    again with it. -#}
+{% block title %}{{ heading }} - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>{{ heading }}</h1>
+  {% call ui::error_summary(errors) %}{% endcall %}
+  <p>{{ intro }}</p>
+  {% if carry %}
+  <form method="post" action="{{ action }}" class="stacked" novalidate>
+    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+    {% for (k, v) in fields %}
+    <input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% endfor %}
+    {% call ui::reason_fields("", reason, ticket, errors.error_for("reason").unwrap_or_default(), errors.error_for("ticket").unwrap_or_default()) %}{% endcall %}
+    <div class="actions">
+      <button type="submit">{{ button }}</button>
+      <a href="{{ cancel }}">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  <p>Nothing was saved. Go back to the form and fill in the reason there. For your safety, type the value again too.</p>
+  <div class="actions"><a class="button" href="{{ cancel }}">Back</a></div>
+  {% endif %}
+</div>
+{% endblock %}

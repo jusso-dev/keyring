@@ -7,6 +7,7 @@ pub mod entra;
 pub mod oidc;
 pub mod return_to;
 pub mod session;
+pub mod step_up;
 
 use std::sync::Arc;
 
@@ -53,6 +54,7 @@ pub async fn require_session(
     let cookie_name = state.cookies.name(SESSION_COOKIE);
     let id = cookies::get(req.headers(), &cookie_name).map(str::to_owned);
     if let Some(session) = id.as_deref().and_then(|id| state.sessions.get(id)) {
+        crate::audit::note_session(&session);
         req.extensions_mut().insert(CurrentSession(session));
         return next.run(req).await;
     }
@@ -61,6 +63,12 @@ pub async fn require_session(
     // it goes back to the form's own page (from a same-origin `Referer`),
     // and the sign-in page says nothing was saved.
     let is_get = req.method() == Method::GET;
+    if !is_get {
+        // A form post with no session. Refused before routing, so the
+        // action isn't known yet.
+        crate::audit::set_action(crate::audit::Action::RequestRefused);
+        crate::audit::refuse(crate::audit::Refusal::NoSession);
+    }
     let return_to = if is_get {
         req.uri().path_and_query().map(|pq| pq.as_str().to_owned())
     } else {

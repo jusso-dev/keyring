@@ -42,7 +42,7 @@ async fn the_address_decides_the_vault() {
         .select_vault("kv-other".into());
     let (status, html) = w.page("/v/kv-test/secrets/db").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("<h1 class=\"mono\">db</h1>"));
+    assert!(html.contains("data-pin-name=\"db\">db</h1>"));
     // It was read from kv-test, not kv-other.
     let log = w.kv.state.log.lock().unwrap().clone();
     assert!(

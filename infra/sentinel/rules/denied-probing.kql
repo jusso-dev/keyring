@@ -1,0 +1,12 @@
+// One person denied by Key Vault in several vaults: probing for access.
+// Looks back window + delay for late rows; alerts only when a row counted
+// arrived in the last window.
+// Set by main.bicep: window, delay, probingVaults, probingDenied
+KeyringAudit_CL
+| where TimeGenerated > ago(window + delay)
+| where Outcome == "denied" and isnotempty(Vault)
+| summarize Denied = count(), VaultCount = dcount(Vault), Vaults = make_set(Vault, 20),
+    Actions = make_set(Action, 10), ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),
+    TimeGenerated = max(TimeGenerated), LastArrived = max(coalesce(ingestion_time(), TimeGenerated))
+    by ActorObjectId
+| where VaultCount >= probingVaults and Denied >= probingDenied and LastArrived > ago(window)

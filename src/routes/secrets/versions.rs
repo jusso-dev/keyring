@@ -42,7 +42,7 @@ impl VersionRow {
             enabled: a.is_enabled(),
             expires: a.expires.map(dates::format_date).unwrap_or_default(),
             is_current,
-            content_type: item.content_type.clone().unwrap_or_default(),
+            content_type: super::type_shown(item.content_type.as_deref().unwrap_or_default()),
         }
     }
 }
@@ -122,6 +122,7 @@ struct RollbackPage {
     current: VersionRow,
     /// The current expiry has passed, so the new version won't have one.
     expiry_dropped: bool,
+    used_by: crate::routes::used_by::UsedBy,
 }
 
 /// The current version's expiry, if it hasn't passed. A new version with
@@ -184,9 +185,23 @@ pub(crate) async fn confirm(
     Path((vault, name)): Path<(String, String)>,
     Query(q): Query<RollbackQuery>,
 ) -> PageResult {
-    let (vault, shell, name, items) = load_versions(&state, &session, shell, &vault, &name).await?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    let shell = rollback_step_up(&state, &session, shell, &vault, &name, &q.version)?;
+    let (fetched, used_by) = tokio::join!(
+        fetch_versions(&state, &session, shell, &vault, &name),
+        crate::routes::used_by::for_item(
+            &state,
+            &session,
+            &vault,
+            crate::routes::lifecycle::Kind::Secret,
+            &name
+        ),
+    );
+    let (shell, items) = fetched?;
     let (shell, target) = pick(&items, &q.version, shell, &vault, &name)?;
     Ok(render(&RollbackPage {
+        used_by,
         target: VersionRow::from_item(target, false),
         current: VersionRow::from_item(&items[0], true),
         expiry_dropped: items[0].attributes.expires.is_some()
@@ -196,6 +211,29 @@ pub(crate) async fn confirm(
         name,
     })
     .into_response())
+}
+
+/// Step-up before a rollback. Comes back to the rollback's confirmation
+/// page for the same version.
+fn rollback_step_up(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+    version: &str,
+) -> Result<Shell, Halt> {
+    let versions = vault_path(vault, &format!("/secrets/{name}/versions"));
+    // Only a well-formed version goes in the return path.
+    let confirm = if is_valid_version(version) {
+        vault_path(
+            vault,
+            &format!("/secrets/{name}/rollback?version={version}"),
+        )
+    } else {
+        versions.clone()
+    };
+    crate::routes::step_up::require(state, &session.0, shell, &confirm, &versions)
 }
 
 #[derive(Deserialize)]
@@ -216,6 +254,7 @@ pub(crate) async fn rollback(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &f.csrf, shell)?;
+    let shell = rollback_step_up(&state, &session, shell, &vault, &name, &f.version)?;
     let (shell, items) = fetch_versions(&state, &session, shell, &vault, &name).await?;
     if items[0].managed.unwrap_or(false) {
         return Err(crate::routes::secrets::reveal::managed_problem(
@@ -247,14 +286,9 @@ pub(crate) async fn rollback(
     };
     match secrets.set(&name, &body).await {
         Ok(new) => {
-            tracing::info!(
-                subject = %session.0.user.subject,
-                vault = %vault,
-                secret = %name,
-                from_version = %target.version(),
-                version = %new.version(),
-                "secret rolled back"
-            );
+            // The version restored from. The new version is in Key
+            // Vault's own log, joined by kv_request_id.
+            crate::audit::note_version(target.version());
             let short: String = target.version().chars().take(8).collect();
             let mut res = Redirect::to(&back).into_response();
             let new_short: String = new.version().chars().take(8).collect();

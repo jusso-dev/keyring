@@ -151,6 +151,12 @@ fn config_rules_match_the_readme() {
     assert!(!LOG_LEVELS.contains(&"off"));
     has(README, "README", "including `off`");
     has(DEPLOY, "deploy.md", "including `off`");
+    use keyring::config::{DEFAULT_STALE_AFTER_DAYS, MAX_STALE_AFTER_DAYS};
+    has(
+        README,
+        "README",
+        &format!("from 1 to {MAX_STALE_AFTER_DAYS}, default {DEFAULT_STALE_AFTER_DAYS}"),
+    );
 }
 
 #[test]
@@ -219,4 +225,21 @@ fn search_limits_match_the_architecture_doc() {
         &format!("kept in the session for {} seconds", LIST_TTL.as_secs()),
     );
     has(CHECKLIST, "real-vault-checklist.md", "within 60 seconds");
+}
+
+#[test]
+fn audit_actions_and_reasons_are_in_the_deploy_doc() {
+    use keyring::audit::{Action, Refusal};
+    for a in Action::ALL {
+        has(DEPLOY, "deploy.md", &format!("`{}`", a.as_str()));
+    }
+    for r in Refusal::ALL {
+        has(DEPLOY, "deploy.md", &format!("`{}`", r.as_str()));
+    }
+    has(
+        DEPLOY,
+        "deploy.md",
+        &format!("cut to {} characters", keyring::audit::MAX_USER_AGENT),
+    );
+    has(README, "README.md", "`KEYRING_TRUSTED_PROXY_HOPS`");
 }
