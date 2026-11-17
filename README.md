@@ -14,7 +14,13 @@ Keyring is written in Rust (Axum and Askama) and ships as a single Docker image.
 
 ## Screenshots
 
-These show Keyring running against the mock Azure services from the test suite. Every vault, name and value in them is made up.
+These show the current Keyring app running against the mock Azure services from the test suite. Screenshots refreshed on 17 November 2026; every vault, name and value is made up. The interface uses native system fonts, so text follows the operating system you use.
+
+### Home
+
+Start from the home page, then open a vault or move straight to secrets, certificates, keys and reports.
+
+<img src="docs/images/screenshots/home.png" alt="Keyring home page with the selected vault, quick actions and links to secrets, certificates, keys and reports" width="800">
 
 ### Secrets
 
@@ -26,14 +32,14 @@ A secret's details. The value stays hidden until you choose Show value.
 
 <img src="docs/images/screenshots/secret-detail.png" alt="Details of the secret db-connection-string: an Expires within 30 days badge, buttons to set a new value, edit, view versions, see who used it, delete or disable, a hidden value panel and the current version's dates and tags" width="800">
 
-The value after Show value and Copy. Keyring hides it again after 30 seconds and tries to clear the clipboard. A note says the read is recorded.
+The value after Show value. Keyring hides it again after 30 seconds and tries to clear the clipboard. A note says the read is recorded.
 
-<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string in a bordered monospace box with Copy, Show for longer and Hide, a Copied label saying the clipboard will be cleared in 30 seconds, a Hiding in 30 seconds countdown, and a note that the read is recorded" width="800">
+<img src="docs/images/screenshots/secret-reveal.png" alt="The value of db-connection-string in a bordered monospace box with Copy, Show for longer and Hide, a Hiding in 30 seconds countdown, and a note that the read is recorded" width="800">
 
 <details>
 <summary>Creating a secret, with a mistake caught</summary>
 
-The form keeps what you typed and says what to fix, next to the field and in a summary at the top.
+The form keeps non-secret fields and says what to fix, next to the field and in a summary at the top. The secret value must be entered again.
 
 <img src="docs/images/screenshots/secret-form-error.png" alt="The Create a secret form with an error summary at the top and a message under Expires saying the expiry date has already passed" width="800">
 </details>
@@ -87,6 +93,12 @@ Everything that expires, across every vault you can see, grouped by how soon. A 
 Beside it, **By time since the value changed** (`/expiry/age`) groups the same items by when their current version was made, oldest first, so a secret with no expiry that hasn't changed in three years still shows up. Secrets and keys that belong to a certificate change with it, so only the certificate is listed.
 
 <img src="docs/images/screenshots/expiry.png" alt="Expiry page with a count tile for each of expired, next 7 days, 8 to 30 days, 31 to 90 days, more than 90 days and no expiry set, then a ruled table per group of secrets, certificates and keys from three vaults" width="800">
+
+<img src="docs/images/screenshots/credential-age.png" alt="Credential-age report grouping secrets, keys and certificates by when their current version was created" width="800">
+
+Vault health lists configuration warnings and unavailable checks across the vaults you can see.
+
+<img src="docs/images/screenshots/vault-health.png" alt="Vault health report with configuration checks, warnings and links to each vault" width="800">
 
 Who read or changed what in a vault, from its diagnostic logs, in plain words.
 

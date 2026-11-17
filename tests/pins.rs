@@ -96,15 +96,15 @@ async fn item_and_vault_pages_name_what_to_pin() {
     for (path, hook) in [
         (
             "/v/kv-test/secrets/db-password",
-            "<h1 class=\"mono\" data-pin=\"secret\" data-pin-vault=\"kv-test\" data-pin-name=\"db-password\">db-password</h1>",
+            "<h1 class=\"item-name\" data-pin=\"secret\" data-pin-vault=\"kv-test\" data-pin-name=\"db-password\">db-password</h1>",
         ),
         (
             "/v/kv-test/certificates/web-tls",
-            "<h1 class=\"mono\" data-pin=\"certificate\" data-pin-vault=\"kv-test\" data-pin-name=\"web-tls\">web-tls</h1>",
+            "<h1 class=\"item-name\" data-pin=\"certificate\" data-pin-vault=\"kv-test\" data-pin-name=\"web-tls\">web-tls</h1>",
         ),
         (
             "/v/kv-test/keys/app-key",
-            "<h1 class=\"mono\" data-pin=\"key\" data-pin-vault=\"kv-test\" data-pin-name=\"app-key\">app-key</h1>",
+            "<h1 class=\"item-name\" data-pin=\"key\" data-pin-vault=\"kv-test\" data-pin-name=\"app-key\">app-key</h1>",
         ),
         (
             "/v/kv-test/secrets",

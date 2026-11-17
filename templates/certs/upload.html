@@ -12,7 +12,7 @@
 {% if let Some(m) = azure_message %}
 <div class="notice notice-error">
   <p>Key Vault said:</p>
-  <p class="mono">{{ m }}</p>
+  <p>{{ m }}</p>
 </div>
 {% endif %}
 {% call ui::optional_note() %}{% endcall %}

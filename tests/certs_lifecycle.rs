@@ -118,7 +118,7 @@ async fn delete_needs_typed_name_then_recover() {
     let w = support::world().await;
     w.kv.state.add_cert("web-tls", false, "x");
     let (_, html) = w.page("/v/kv-test/certificates/web-tls/delete").await;
-    assert!(html.contains("Type <strong class=\"mono\">web-tls</strong> to confirm"));
+    assert!(html.contains("Type <strong class=\"item-name\">web-tls</strong> to confirm"));
     let res = w
         .post(
             "/v/kv-test/certificates/web-tls/delete",

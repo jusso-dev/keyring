@@ -174,7 +174,7 @@ async fn a_forbidden_workspace_is_listed_and_the_rest_still_show() {
     assert!(html.contains("api-token"), "shared workspace still read");
     assert!(html.contains("Some Log Analytics workspaces couldn't be read"));
     assert!(html.contains(
-        "<span class=\"mono\">own</span> (for <span class=\"mono\">kv-c</span>): You don&#39;t have the Log Analytics Reader role on it."
+        "<span class=\"item-name\">own</span> (for <span class=\"item-name\">kv-c</span>): You don&#39;t have the Log Analytics Reader role on it."
     ), "{html}");
     let csv = body_text(w.get("/audit.csv?report=reads").await).await;
     assert!(
@@ -187,11 +187,9 @@ async fn a_forbidden_workspace_is_listed_and_the_rest_still_show() {
     w.arm.state.diagnostics_for.lock().unwrap()[0].1 = None;
     let (_, html) = w.page("/audit?report=reads").await;
     assert!(html.contains("couldn't find where these vaults send their logs"));
-    assert!(
-        html.contains(
-            "<span class=\"mono\">kv-a</span>: You can&#39;t see where it sends its logs."
-        )
-    );
+    assert!(html.contains(
+        "<span class=\"item-name\">kv-a</span>: You can&#39;t see where it sends its logs."
+    ));
 }
 
 #[tokio::test]
@@ -421,7 +419,7 @@ async fn a_slow_workspace_is_listed_and_the_rest_still_show() {
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("api-token"), "shared workspace still read");
     assert!(
-        html.contains("<span class=\"mono\">own</span> (for <span class=\"mono\">kv-c</span>): Took too long to answer."),
+        html.contains("<span class=\"item-name\">own</span> (for <span class=\"item-name\">kv-c</span>): Took too long to answer."),
         "{html}"
     );
 }

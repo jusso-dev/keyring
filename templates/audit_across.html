@@ -50,20 +50,20 @@
 {% if !workspaces_not_read.is_empty() %}
 <div class="notice notice-warn">
   <p><strong>Some Log Analytics workspaces couldn't be read</strong>, so their vaults' events are missing:</p>
-  <ul>{% for w in workspaces_not_read %}<li><span class="mono">{{ w.name }}</span> (for <span class="mono">{{ w.vaults }}</span>): {{ w.reason }}.</li>{% endfor %}</ul>
+  <ul>{% for w in workspaces_not_read %}<li><span class="item-name">{{ w.name }}</span> (for <span class="item-name">{{ w.vaults }}</span>): {{ w.reason }}.</li>{% endfor %}</ul>
 </div>
 {% endif %}
 
 {% if !settings_not_read.is_empty() %}
 <div class="notice notice-warn">
   <p><strong>Keyring couldn't find where these vaults send their logs</strong>, so they aren't included:</p>
-  <ul>{% for v in settings_not_read %}<li><span class="mono">{{ v.name }}</span>: {{ v.reason }}.</li>{% endfor %}</ul>
+  <ul>{% for v in settings_not_read %}<li><span class="item-name">{{ v.name }}</span>: {{ v.reason }}.</li>{% endfor %}</ul>
 </div>
 {% endif %}
 
 {% if !no_logging.is_empty() %}
 <div class="notice">
-  <p><strong>{{ no_logging.len() }} {% if no_logging.len() == 1 %}vault doesn't{% else %}vaults don't{% endif %} send audit logs to Log Analytics</strong>, so there is nothing to report for {% if no_logging.len() == 1 %}it{% else %}them{% endif %}: <span class="mono">{{ no_logging|join(", ") }}</span>.</p>
+  <p><strong>{{ no_logging.len() }} {% if no_logging.len() == 1 %}vault doesn't{% else %}vaults don't{% endif %} send audit logs to Log Analytics</strong>, so there is nothing to report for {% if no_logging.len() == 1 %}it{% else %}them{% endif %}: <span class="item-name">{{ no_logging|join(", ") }}</span>.</p>
   <p class="hint"><strong>What to ask for:</strong> a diagnostic setting on each that sends the "audit" log category to a Log Analytics workspace.</p>
 </div>
 {% endif %}
@@ -82,7 +82,7 @@
     {% for x in refusals %}
     <tr>
       <th scope="row">{{ x.who }}</th>
-      <td class="mono">{{ ui::or_none(x.vault) }}</td>
+      <td class="item-name">{{ ui::or_none(x.vault) }}</td>
       <td><span class="badge badge-error">{{ x.count }}</span></td>
       <td class="small nowrap">{{ x.last }}</td>
       <td class="mono small">{{ ui::or_none(x.operations) }}</td>
@@ -105,10 +105,10 @@
     {% for x in rows %}
     <tr>
       <td class="small nowrap">{{ x.event.time }}</td>
-      <td class="mono">{{ ui::or_none(x.vault) }}</td>
+      <td class="item-name">{{ ui::or_none(x.vault) }}</td>
       <td>{{ x.event.who }}</td>
       <th scope="row">{{ x.event.what }}{% if x.event.operation != x.event.what %}<br><span class="muted small mono">{{ x.event.operation }}</span>{% endif %}</th>
-      <td class="mono">{{ ui::or_none(x.event.item) }}</td>
+      <td class="item-name">{{ ui::or_none(x.event.item) }}</td>
       <td>{% if x.event.unknown %}<span class="muted">Unknown</span>{% elif x.event.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ x.event.result }})</span>{% endif %}</td>
       <td class="mono small">{{ ui::or_none(x.event.client_ip) }}</td>
       <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.event.item }} in {{ x.vault }}</span></a>{% endif %}</td>

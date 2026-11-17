@@ -40,7 +40,7 @@
 {% if !skipped.is_empty() %}
 <div class="notice notice-warn">
   <p><strong>Some of what you can see couldn't be read</strong>, so it isn't included:</p>
-  <ul>{% for s in skipped %}<li><span class="mono">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
+  <ul>{% for s in skipped %}<li><span class="item-name">{{ s.vault }}</span>: {{ s.reason }}.</li>{% endfor %}</ul>
 </div>
 {% endif %}
 
@@ -55,7 +55,7 @@
 </nav>
 
 {% if unknown_vault %}
-<div class="empty-state"><p><span class="mono">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry/age">Show all vaults</a></p></div>
+<div class="empty-state"><p><span class="item-name">{{ filter.vault }}</span> isn't one of the vaults you can see. It may have been deleted or renamed, or you may have lost access. <a href="/expiry/age">Show all vaults</a></p></div>
 {% elif total == 0 %}
 <div class="empty-state"><p>Nothing to show. Either nothing matches the filters, or these vaults are empty.</p></div>
 {% endif %}
@@ -71,9 +71,9 @@
     <tbody>
       {% for r in b.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
-        <th scope="row" class="mono">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <th scope="row" class="item-name">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
         <td>{{ r.kind.label() }}</td>
-        <td class="mono">{{ r.vault }}</td>
+        <td class="item-name">{{ r.vault }}</td>
         <td class="nowrap">{% call ui::changed(r.changed, r.note, r.stale) %}{% endcall %}</td>
         <td>{{ ui::or_none(r.tags) }}</td>
         <td>

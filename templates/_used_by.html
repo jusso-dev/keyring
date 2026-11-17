@@ -20,7 +20,7 @@
     <tbody>
       {% for c in used_by.callers %}
       <tr>
-        <th scope="row" class="mono small">{{ c.who }}{% if !c.app_id.is_empty() %}<br><span class="muted">App <span class="mono">{{ c.app_id }}</span></span>{% endif %}</th>
+        <th scope="row" class="small">{{ c.who }}{% if !c.app_id.is_empty() %}<br><span class="muted">App <span class="mono">{{ c.app_id }}</span></span>{% endif %}</th>
         <td>{{ c.kind }}</td>
         <td class="mono small">{% call ui::or_none(c.object_id) %}{% endcall %}</td>
         <td class="nowrap">{{ c.last }}</td>

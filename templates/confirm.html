@@ -14,7 +14,7 @@
   {% endif %}
   <form method="post" action="{{ confirm.action }}">
     <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-    <label for="confirm_name">Type <strong class="mono">{{ confirm.expected }}</strong> to confirm</label>
+    <label for="confirm_name">Type <strong class="item-name">{{ confirm.expected }}</strong> to confirm</label>
     <input id="confirm_name" name="confirm_name" type="text" required{% call ui::ident() %}{% endcall %}{% if confirm.error.is_some() %} aria-invalid="true" aria-describedby="confirm_name-error"{% endif %}>
     {% if shell.asks_reason_to_change() || (confirm.reveals && shell.asks_reason_to_reveal()) %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
     <div class="actions">

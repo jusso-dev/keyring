@@ -3,7 +3,7 @@
 {% block title %}{% if !filter.item.is_empty() %}Who used {{ filter.item }} in {{ vault }}{% else %}Audit for {{ vault }}{% endif %} - Keyring{% endblock %}
 {% block content %}
 {% if !filter.item.is_empty() %}
-<h1>Who used <span class="mono">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
+<h1>Who used <span class="item-name">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
 <p>{% if let Some(back) = back_url() %}<a href="{{ back }}">Back to {{ filter.item }}</a> | {% endif %}<a href="{{ shell.vault_prefix() }}/audit">See all events for {{ vault }}</a></p>
 {% else %}
 <h1>Audit <span class="muted">for {{ vault }}</span></h1>
@@ -80,7 +80,7 @@
       <td class="small">{{ r.time }}</td>
       <td>{{ r.who }}</td>
       <th scope="row">{{ r.what }}{% if r.operation != r.what %}<br><span class="muted small mono">{{ r.operation }}</span>{% endif %}</th>
-      <td class="mono">{{ ui::or_none(r.item) }}</td>
+      <td class="item-name">{{ ui::or_none(r.item) }}</td>
       <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
       <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
     </tr>

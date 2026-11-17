@@ -131,13 +131,11 @@ async fn copy_to_a_new_name() {
         "no-store, max-age=0"
     );
     let html = body_text(res).await;
-    assert!(
-        html.contains(
-            "There's no secret called <span class=\"mono\">db-copy</span> in kv-prod yet."
-        )
-    );
+    assert!(html.contains(
+        "There's no secret called <span class=\"item-name\">db-copy</span> in kv-prod yet."
+    ));
     assert!(html.contains("The value isn't shown"));
-    assert!(html.contains("<dd><span class=\"mono\">db-password</span> in kv-test</dd>"));
+    assert!(html.contains("<dd><span class=\"item-name\">db-password</span> in kv-test</dd>"));
     assert!(!html.contains("C0py-Me"));
     assert_eq!(t.value_reads(), 0, "the review reads no value");
 
@@ -219,7 +217,7 @@ async fn copy_onto_a_deleted_name_is_refused() {
     assert_eq!(res.status(), StatusCode::CONFLICT);
     let html = body_text(res).await;
     assert!(html.contains(
-        "A deleted secret called <span class=\"mono\">gone</span> is still kept in kv-prod"
+        "A deleted secret called <span class=\"item-name\">gone</span> is still kept in kv-prod"
     ));
     assert!(!html.contains("Copy to kv-prod</button>"), "no copy button");
     // A post anyway stops before the value is read.
