@@ -115,11 +115,14 @@ pub enum Action {
     NotifySent,
     /// An email notification that wasn't sent, or that ACS said failed.
     NotifyFailed,
+    /// One delivery from Event Grid to `/hooks/eventgrid`, whatever its
+    /// outcome. No person: the caller is Event Grid.
+    NotifyWebhook,
 }
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 42] = [
+    pub const ALL: [Action; 43] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -162,6 +165,7 @@ impl Action {
         Self::RequestRefused,
         Self::NotifySent,
         Self::NotifyFailed,
+        Self::NotifyWebhook,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -208,6 +212,7 @@ impl Action {
             Self::RequestRefused => "request.refused",
             Self::NotifySent => "notify.sent",
             Self::NotifyFailed => "notify.failed",
+            Self::NotifyWebhook => "notify.webhook",
         }
     }
 
@@ -371,6 +376,9 @@ pub struct AuditEvent {
     /// The recipients' addresses, separated by commas (`notify.*` only).
     /// Personal data: set only with `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`.
     pub notify_recipients: Option<String>,
+    /// How many events an Event Grid delivery held (`notify.webhook`
+    /// only), when it could be read.
+    pub notify_event_count: Option<u64>,
 }
 
 impl AuditEvent {
@@ -401,6 +409,7 @@ impl AuditEvent {
             notify_type: None,
             notify_recipient_count: None,
             notify_recipients: None,
+            notify_event_count: None,
         }
     }
 
@@ -492,6 +501,7 @@ pub fn record_to(ev: AuditEvent, sink: Option<&sink::AuditSink>, observer: Optio
         notify_type = ev.notify_type.map(tracing::field::display),
         notify_recipient_count = ev.notify_recipient_count,
         notify_recipients = opt(&ev.notify_recipients),
+        notify_event_count = ev.notify_event_count,
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         // Last, so in the text format nothing typed can come before a
@@ -536,6 +546,8 @@ struct Draft {
     role: Option<String>,
     role_scope: Option<String>,
     role_duration: Option<String>,
+    notify_type: Option<&'static str>,
+    notify_event_count: Option<u64>,
     /// Watches the request's events, when the health watcher is on.
     observer: Option<Arc<dyn Observe>>,
 }
@@ -587,6 +599,18 @@ pub fn succeed() {
 pub fn end(outcome: Outcome, reason_code: &str) {
     note(|d| {
         d.outcome.get_or_insert((outcome, safe_code(reason_code)));
+    });
+}
+
+/// The notification type and how many events a webhook delivery held.
+/// Also drops the user agent the layer took from the request: on the
+/// webhook it is a header sent by whoever called, not a person's browser,
+/// and request headers there are never logged.
+pub fn note_notify(kind: &'static str, events: Option<u64>) {
+    note(|d| {
+        d.notify_type = Some(kind);
+        d.notify_event_count = events;
+        d.user_agent = None;
     });
 }
 
@@ -892,6 +916,8 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.role = d.role;
     ev.role_scope = d.role_scope;
     ev.role_duration = d.role_duration;
+    ev.notify_type = d.notify_type;
+    ev.notify_event_count = d.notify_event_count;
     Some(ev)
 }
 

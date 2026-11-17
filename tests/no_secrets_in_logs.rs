@@ -571,6 +571,9 @@ async fn values_never_reach_the_logs() {
                 "DoNotReply@mail.example.com".to_owned(),
             ),
             ("KEYRING_NOTIFY_TYPES", "expiry,health".to_owned()),
+            // For the webhook's email. No allow-list, so its
+            // `keyring-notify` header is ignored.
+            ("KEYRING_NOTIFY_ADMINS", "hookadmin@example.com".to_owned()),
             ("KEYRING_REQUIRE_REASON", "reveal".to_owned()),
             ("KEYRING_TEST_NOTIFY_ACS_URL", acs.url()),
         ],
@@ -579,6 +582,9 @@ async fn values_never_reach_the_logs() {
             t.backoff_first = std::time::Duration::from_millis(10);
             t.poll_wait_default = std::time::Duration::from_millis(10);
             t.poll_wait_max = std::time::Duration::from_millis(20);
+            let h = &mut c.notify.as_mut().unwrap().hook_tuning;
+            h.unauth_per_minute = 5;
+            h.rate_window = std::time::Duration::from_millis(1500);
         },
     )
     .await;
@@ -679,6 +685,192 @@ async fn values_never_reach_the_logs() {
         let html = a.body["content"]["html"].as_str().unwrap();
         assert!(!html.contains("<b>bold"), "HTML part not escaped: {html}");
         assert!(html.contains("&#60;b&#62;bold"), "{html}");
+    }
+
+    // The Event Grid webhook on the same world (expiry is on): a good
+    // delivery, a handshake, a bad token, a malformed batch and a token
+    // for another app. Canaries in the token, the body, a header and the
+    // validation code must reach no log line and no email.
+    let webhook_token = {
+        use support::eventgrid as eg;
+        let mut c = eg::claims_v1(&we.idp);
+        c.insert("TOKENCLAIMLEAK".into(), serde_json::json!("TOKENCLAIMLEAK"));
+        eg::sign(&we.idp, &c)
+    };
+    {
+        use axum::body::Body;
+        use axum::http::Request;
+        use support::eventgrid as eg;
+        use tower::ServiceExt;
+        let hook = |token: &str, body: String, extra: Option<(&str, &str)>| {
+            let mut r = Request::post("/hooks/eventgrid")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .header("user-agent", "HEADERLEAK-agent");
+            if let Some((k, v)) = extra {
+                r = r.header(k, v);
+            }
+            r.body(Body::from(body)).unwrap()
+        };
+        let before = acs.state.attempts().len();
+        let mut ev = eg::event(
+            "SecretNearExpiry",
+            "Secret",
+            "db-password",
+            eg::now() + 5 * 86_400,
+        );
+        ev["subject"] = serde_json::json!("BODYLEAK subject https://evil.example/");
+        ev["data"]["Id"] = serde_json::json!("https://evil.example/BODYLEAK");
+        ev["data"]["Extra"] = serde_json::json!("BODYLEAK extra");
+        // A topic that passes the check and still carries a canary (in the
+        // resource group), so the delivery that is sent shows nothing
+        // from `topic` reaches a line or an email either.
+        ev["topic"] = serde_json::json!(
+            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/TOPICLEAK-rg/providers/Microsoft.KeyVault/vaults/kv-test"
+        );
+        let body = serde_json::json!([ev]).to_string();
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                body.clone(),
+                Some(("keyring-notify", "HDRLEAK@example.com")),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                eg::validation("VALCODELEAK-1").to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook("BADTOKENLEAK.x.y", body.clone(), None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let mut other = eg::claims_v1(&we.idp);
+        other.insert(
+            "appid".into(),
+            serde_json::json!("22222222-2222-2222-2222-222222222222"),
+        );
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(&eg::sign(&we.idp, &other), body.clone(), None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let mut bad = ev.clone();
+        bad["data"]["ObjectName"] = serde_json::json!("BODYLEAK\nFORGEDLINE");
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([bad]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // An event from a custom topic: refused, and nothing from `topic`
+        // reaches a line or an email.
+        let mut custom = ev.clone();
+        custom["topic"] = serde_json::json!(
+            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/TOPICLEAK/providers/Microsoft.EventGrid/topics/TOPICLEAK"
+        );
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([custom]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let mut not_topic = ev.clone();
+        not_topic["topic"] = serde_json::json!("TOPICLEAK\nFORGEDLINE");
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([not_topic]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // A flood of bad tokens: two above already counted, three more
+        // under the unauthenticated counter of 5, then 95 answered 429
+        // with no audit event and no line of their own.
+        let mut flood = Vec::new();
+        for _ in 0..98 {
+            let res = we
+                .app
+                .clone()
+                .oneshot(hook("FLOODLEAK.x.y", body.clone(), None))
+                .await
+                .unwrap();
+            flood.push(res.status());
+        }
+        assert!(flood[..3].iter().all(|s| *s == StatusCode::UNAUTHORIZED));
+        assert!(
+            flood[3..]
+                .iter()
+                .all(|s| *s == StatusCode::TOO_MANY_REQUESTS)
+        );
+        // The next window: one warn line with how many were dropped.
+        tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook("FLOODLEAK.x.y", body.clone(), None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let start = std::time::Instant::now();
+        while acs.state.attempts().len() < before + 1 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "the webhook's email"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let mail: String = acs.state.attempts()[before..]
+            .iter()
+            .map(|a| a.raw.clone())
+            .collect();
+        assert!(mail.contains("db-password in kv-test expires on"), "{mail}");
+        assert!(mail.contains("hookadmin@example.com"), "to the admins");
+        for leak in [
+            "Sup3r-S3cret",
+            "BODYLEAK",
+            "evil.example",
+            "HDRLEAK",
+            "HEADERLEAK",
+            "VALCODELEAK",
+            "TOKENCLAIMLEAK",
+            "BADTOKENLEAK",
+            "TOPICLEAK",
+            "FLOODLEAK",
+            webhook_token.as_str(),
+            eg::EVENT_GRID_APP,
+        ] {
+            assert!(!mail.contains(leak), "{leak} reached an email:\n{mail}");
+        }
     }
 
     // Health: a burst of refused deletes, each with a reason (on its audit
@@ -937,6 +1129,79 @@ async fn values_never_reach_the_logs() {
         logs.contains("notify_type=expiry") && logs.contains("notify_recipient_count=1"),
         "{logs}"
     );
+
+    // The webhook: no token, claim, body, header or validation code in
+    // any line, in either format; one audit event per delivery, with a
+    // fixed reason code.
+    let json_text = String::from_utf8(json.0.lock().unwrap().clone()).unwrap();
+    for leak in [
+        "BODYLEAK",
+        "HDRLEAK",
+        "HEADERLEAK",
+        "VALCODELEAK",
+        "TOKENCLAIMLEAK",
+        "BADTOKENLEAK",
+        "TOPICLEAK",
+        "FLOODLEAK",
+        "FORGEDLINE",
+        "FORGEDLINE subject",
+        "hookadmin@",
+        support::eventgrid::EVENT_GRID_APP,
+        "22222222-2222-2222-2222-222222222222",
+        webhook_token.as_str(),
+        &webhook_token[..40],
+    ] {
+        assert!(!logs.contains(leak), "{leak} leaked into logs:\n{logs}");
+        assert!(!json_text.contains(leak), "{leak} leaked into JSON logs");
+    }
+    let hook_events: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("action=notify.webhook"))
+        .collect();
+    // Good, handshake, bad token, other app, bad event, two bad topics,
+    // three of the flood under the counter and one in the next window:
+    // the 95 over the counter wrote nothing.
+    assert_eq!(hook_events.len(), 11, "bounded: {hook_events:#?}");
+    assert_eq!(
+        hook_events
+            .iter()
+            .filter(|l| l.contains("reason_code=token_malformed"))
+            .count(),
+        5,
+        "{hook_events:#?}"
+    );
+    let dropped: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("eventgrid: requests with a refused token over the limit"))
+        .collect();
+    assert_eq!(dropped.len(), 1, "{dropped:#?}");
+    assert!(dropped[0].contains("dropped=95"), "{}", dropped[0]);
+    assert_eq!(
+        logs.lines()
+            .filter(|l| l.contains("eventgrid: delivery"))
+            .count(),
+        11,
+        "one line per audited request, none for the dropped"
+    );
+    for code in ["token_caller", "token_malformed", "bad_event", "bad_topic"] {
+        assert!(
+            hook_events
+                .iter()
+                .any(|l| l.contains(&format!("reason_code={code}"))),
+            "{code}: {hook_events:#?}"
+        );
+    }
+    assert!(
+        hook_events
+            .iter()
+            .any(|l| l.contains("reason_code=queued") && l.contains("notify_event_count=1")),
+        "{hook_events:#?}"
+    );
+    for l in &hook_events {
+        assert!(l.contains("notify_type=expiry"), "{l}");
+        assert!(!l.contains("actor_"), "no person: {l}");
+        assert!(!l.contains("notify_recipients="), "no address: {l}");
+    }
 
     // The same rules for the JSON lines, which must each parse.
     let json = String::from_utf8(json.0.lock().unwrap().clone()).unwrap();

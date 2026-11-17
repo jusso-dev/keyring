@@ -33,6 +33,7 @@ fn quick() -> Tuning {
         retry_after_max: Duration::from_secs(2),
         degraded_after: Duration::from_millis(200),
         shutdown_grace: Duration::from_secs(2),
+        rate_window: Duration::from_secs(3600),
     }
 }
 
@@ -393,9 +394,10 @@ async fn the_rate_limit_holds_each_recipient_and_type() {
     for _ in 0..2 {
         assert!(r.n.enqueue(notice(&["alex@example.com"])).is_queued());
     }
+    // Only the rate limit left alex out, so a later try could send.
     assert_eq!(
         r.n.enqueue(notice(&["alex@example.com"])),
-        Enqueued::NoRecipients
+        Enqueued::RateLimited
     );
     // Others still get it, and alex is left out.
     assert_eq!(
@@ -433,6 +435,24 @@ async fn the_allow_list_holds_every_recipient() {
     let a = r.acs.state.attempts();
     assert!(!a[0].raw.contains("evil.com"));
     assert_eq!(r.n.health().not_allowed, 4);
+    // Over the limit, with someone else outside the allow-list: a later
+    // try can still reach the one over the limit, so it isn't permanent.
+    let r = rig_with(|s| {
+        s.allowed_domains = Some(vec!["example.com".into()]);
+        s.per_hour = 1;
+    })
+    .await;
+    assert!(r.n.enqueue(notice(&["alex@example.com"])).is_queued());
+    assert_eq!(
+        r.n.enqueue(notice(&["alex@example.com", "eve@evil.com"])),
+        Enqueued::RateLimited
+    );
+    // Nobody given at all is not the rate limit's doing.
+    assert_eq!(r.n.enqueue(notice(&[])), Enqueued::NoRecipients);
+    assert_eq!(
+        r.n.enqueue(notice(&["alex@example.com"])),
+        Enqueued::RateLimited
+    );
 }
 
 #[tokio::test]

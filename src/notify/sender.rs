@@ -81,6 +81,8 @@ pub struct Tuning {
     pub degraded_after: Duration,
     /// How long shutdown waits to send what is queued.
     pub shutdown_grace: Duration,
+    /// The per-recipient rate limit's window. One hour outside tests.
+    pub rate_window: Duration,
 }
 
 impl Default for Tuning {
@@ -95,6 +97,7 @@ impl Default for Tuning {
             retry_after_max: Duration::from_secs(60),
             degraded_after: Duration::from_secs(60),
             shutdown_grace: Duration::from_secs(10),
+            rate_window: Duration::from_secs(3600),
         }
     }
 }
@@ -267,7 +270,11 @@ impl Notifier {
         );
         let (stop, stop_rx) = watch::channel(false);
         let n = Arc::new(Self {
-            rate: RateLimit::hourly(settings.per_hour),
+            rate: RateLimit::new(
+                settings.per_hour,
+                settings.tuning.rate_window,
+                crate::notify::rate::DEFAULT_MAX_ENTRIES,
+            ),
             settings,
             identity,
             http,
@@ -299,7 +306,11 @@ impl Notifier {
     /// Queue a notification. Returns at once, never blocks on the network
     /// and never fails the caller. See [`Enqueued`] for what happened.
     /// Recipients outside `KEYRING_NOTIFY_ALLOWED_DOMAINS` or over their
-    /// rate limit are left out; the rest get one email together.
+    /// rate limit are left out; the rest get one email together, and that
+    /// counts as queued. With nobody left, [`Enqueued::RateLimited`] when
+    /// the rate limit left out at least one recipient who could otherwise
+    /// be sent to, otherwise [`Enqueued::NoRecipients`] (nobody given, or
+    /// nobody allowed).
     pub fn enqueue<B: EmailBody>(&self, n: Notification<B>) -> Enqueued {
         if !self.is_on(n.kind) {
             return Enqueued::Off;
@@ -341,6 +352,9 @@ impl Notifier {
             }
         };
         let mut to: Vec<Address> = Vec::new();
+        // Was anyone left out only by the rate limit? Then a later try can
+        // reach them, whoever else can never be sent to.
+        let mut limited = false;
         for a in n.to {
             // One mailbox once, however its address is written.
             let key = a.mailbox_key();
@@ -353,6 +367,7 @@ impl Notifier {
             }
             if !self.rate.allow(n.kind, &a) {
                 self.counts.rate_limited.fetch_add(1, Ordering::Relaxed);
+                limited = true;
                 continue;
             }
             to.push(a);
@@ -362,7 +377,13 @@ impl Notifier {
                 kind = n.kind.as_str(),
                 "notify: no recipient left after the allow-list and rate limit"
             );
-            return Enqueued::NoRecipients;
+            // Someone was over their limit: a later try can reach them.
+            // Nobody given, or nobody allowed: a retry changes nothing.
+            return if limited {
+                Enqueued::RateLimited
+            } else {
+                Enqueued::NoRecipients
+            };
         }
         let body = json!({
             "senderAddress": self.settings.sender.as_str(),
