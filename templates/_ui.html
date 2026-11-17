@@ -66,6 +66,20 @@
 {%- if list.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in list.iter() %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}{% endif -%}
 {%- endmacro -%}
 
+{#- A description in a list cell: cut to one short line, with the whole
+    note as the cell's accessible text. -#}
+{%- macro note_cell(text) -%}
+{%- if text.is_empty() %}<span class="muted">None</span>
+{%- elif crate::description::is_cut(text) %}<span aria-hidden="true">{{ crate::description::short(text) }}</span><span class="visually-hidden">{{ text }}</span>
+{%- else %}{{ text }}{% endif -%}
+{%- endmacro -%}
+
+{#- A description under an item's heading, line breaks kept. Nothing when
+    there isn't one. -#}
+{%- macro note(text) -%}
+{%- if !text.is_empty() %}<p class="item-note">{{ text }}</p>{% endif -%}
+{%- endmacro -%}
+
 {#- A value, or a muted "None" so an empty cell doesn't read as a fault. -#}
 {%- macro or_none(text) -%}
 {%- if text.is_empty() %}<span class="muted">None</span>{% else %}{{ text }}{% endif -%}
@@ -90,6 +104,20 @@
   <label for="name">Name</label>
   <p class="field-help" id="name-help">Letters, numbers and hyphens, up to 127 characters. You can't rename a {{ noun }} later.</p>
   <input id="name" name="name" type="text" value="{{ value }}" required maxlength="127" pattern="[A-Za-z0-9-]+"{% call ident() %}{% endcall %}{% call aria("name", "name-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+{%- endmacro -%}
+
+{#- The note on a secret, certificate or key, kept in its `description`
+    tag (src/description.rs). maxlength counts as Key Vault does; the server
+    checks it again. The count line is filled in by the script, and says
+    the limit without it. Not a live region, so typing isn't read out; it
+    is read with the field. -#}
+{%- macro description_field(value, noun) -%}
+{%- let field_name = "description" %}
+  <label for="description">Description <span class="muted">(optional)</span></label>
+  <p class="field-help" id="description-help">What this {{ noun }} is for. It's saved as the {{ noun }}'s <span class="mono">description</span> tag, so anyone who can see its tags can read it. Don't put secrets, passwords or personal details here. Leave it empty to remove it.</p>
+  <textarea id="description" name="description" rows="3" maxlength="256"{% call ident() %}{% endcall %}{% call aria("description", "description-help description-count") %}{% endcall %}>{{ value }}</textarea>
+  <p class="field-help" id="description-count" data-count-for="description">Up to 256 characters.</p>
   {% include "_field_error.html" %}
 {%- endmacro -%}
 

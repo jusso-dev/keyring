@@ -8,6 +8,7 @@ pub mod auth;
 pub mod azure;
 pub mod config;
 pub mod dates;
+pub mod description;
 pub(crate) mod expiry;
 pub(crate) mod generator;
 pub(crate) mod health;

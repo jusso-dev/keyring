@@ -21,7 +21,7 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::{CsrfForm, FieldErrors};
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::parse_tags;
+use crate::routes::secrets::form::{parse_tags, with_note};
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
@@ -161,6 +161,9 @@ pub(crate) struct CreateForm {
     pub format: String,
     #[serde(default)]
     pub tags: String,
+    /// The note, kept in the `description` tag.
+    #[serde(default)]
+    pub description: String,
 }
 
 fn is_dns_name(s: &str) -> bool {
@@ -285,6 +288,7 @@ pub(crate) fn build(
         errors.push("tags", m);
         Default::default()
     });
+    let tags = with_note(&tags, &f.description, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }

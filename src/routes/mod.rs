@@ -12,6 +12,7 @@ pub(crate) mod batch;
 mod bulk;
 mod certs;
 pub(crate) mod confirm;
+mod details;
 pub mod error;
 mod every_vault;
 mod expiry;
@@ -239,6 +240,13 @@ fn vault_routes() -> Router<AppState> {
             get(certs::detail).post(moved::post_item),
         )
         .route(
+            "/certificates/{name}/details",
+            get(details::form::<details::Certificates>).merge(audited(
+                Action::CertificateUpdate,
+                details::save::<details::Certificates>,
+            )),
+        )
+        .route(
             "/certificates/{name}/enabled",
             audited(Action::CertificateEnabledSet, certs::toggle),
         )
@@ -296,6 +304,11 @@ fn vault_routes() -> Router<AppState> {
             )),
         )
         .route("/keys/{name}", get(keys::detail).post(moved::post_item))
+        .route(
+            "/keys/{name}/details",
+            get(details::form::<details::Keys>)
+                .merge(audited(Action::KeyUpdate, details::save::<details::Keys>)),
+        )
         .route(
             "/keys/{name}/enabled",
             audited(Action::KeyEnabledSet, keys::toggle),

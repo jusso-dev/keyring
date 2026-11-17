@@ -601,6 +601,18 @@ table.ledger th.mono,
   font-variant-numeric: tabular-nums;
 }
 
+/* A description: under an item's heading with its line breaks, and cut to
+   one short line in a list cell. */
+.item-note {
+  max-width: 40rem;
+  margin: 0 0 var(--space-xs);
+  color: var(--color-ink-2);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+td.note-cell { min-width: 12rem; max-width: 24rem; font-size: var(--text-sm); }
+dd.note { white-space: pre-line; }
+
 .tag {
   display: inline-block;
   font-size: var(--text-sm);

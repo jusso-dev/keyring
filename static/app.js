@@ -100,14 +100,12 @@
     var copied = false; // We wrote the value and haven't cleared it yet.
     var clearing = null;
     var gone = false;
-
     // Count from a fixed deadline, because background tabs slow timers.
     function restart() {
       deadline = Date.now() + delay * 1000;
       warned = delay <= 20;
       secs.textContent = String(delay);
     }
-
     // Overwrite the clipboard if it still holds our value. If it can't be
     // read, overwrite anyway: we wrote it moments ago. Browsers refuse this
     // in a background tab, so a failure is tried again when the page is back.
@@ -141,7 +139,6 @@
       });
       return clearing;
     }
-
     function hide(message) {
       message = message || "Value hidden.";
       if (!gone) {
@@ -169,7 +166,6 @@
       }
       return clearClipboard(message);
     }
-
     function tick() {
       var left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       secs.textContent = String(left);
@@ -181,13 +177,11 @@
         hide();
       }
     }
-
     restart();
     countdown.hidden = false;
     say(announce, "Shown for " + delay + " seconds, then hidden." +
       (extend ? " Choose Show for longer to keep it." : ""));
     var timer = setInterval(tick, 1000);
-
     // Anyone can ask for more time, as often as they need.
     if (extend) {
       extend.hidden = false;
@@ -196,7 +190,6 @@
         say(announce, "Shown for another " + delay + " seconds.");
       });
     }
-
     copies.forEach(function (copy) {
       if (!navigator.clipboard || !navigator.clipboard.writeText) {
         return;
@@ -214,7 +207,6 @@
         });
       });
     });
-
     // From the generator, opened by a secret form: hand the value back.
     var sameOrigin = false;
     try {
@@ -242,7 +234,6 @@
         });
       });
     }
-
     // After a copy, any way off the page in this tab (Hide, Back, the nav,
     // Sign out) clears the clipboard first, then leaves: once the clear is
     // done, or after 1.5 s if the browser waits on a paste prompt. A clear
@@ -288,7 +279,6 @@
         }
       });
     });
-
     // Back on the page: catch up on an overdue hide, or retry a failed clear.
     function back() {
       if (!gone) {
@@ -356,7 +346,6 @@
     var main = document.getElementById("main") || body;
     main.insertBefore(done, main.firstChild);
     main.insertBefore(region, done);
-
     function reset() {
       deadline = Date.now() + limit * 1000;
       state = "";
@@ -365,7 +354,6 @@
       text.textContent = "";
       done.textContent = "";
     }
-
     function signedOut() {
       state = "out";
       stay.hidden = true;
@@ -441,6 +429,19 @@
     resizing = setTimeout(fit, 150);
   });
 
+  // Characters left under a field with maxlength. Without the script the
+  // line says the limit; the server checks it either way.
+  document.querySelectorAll("[data-count-for]").forEach(function (line) {
+    var box = document.getElementById(line.getAttribute("data-count-for"));
+    var max = box ? parseInt(box.getAttribute("maxlength"), 10) : 0;
+    function show() {
+      line.textContent = (max - box.value.length) + " of " + max + " characters left.";
+    }
+    if (max > 0) {
+      show();
+      box.addEventListener("input", show);
+    }
+  });
   document.querySelectorAll("form[data-live-filter]").forEach(liveFilter);
   document.querySelectorAll("[data-copy-plain]").forEach(copyPlain);
   document.querySelectorAll("[data-reveal]").forEach(reveal);

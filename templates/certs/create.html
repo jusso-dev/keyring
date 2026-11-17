@@ -45,6 +45,8 @@
   </select>
   {% let field_name = "issuer" %}{% include "_field_error.html" %}
 
+  {% call ui::description_field(form.description, "certificate") %}{% endcall %}
+
   <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() || azure_message.is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 

@@ -231,6 +231,102 @@ async fn values_never_reach_the_logs() {
         assert!(!support::body_text(res).await.contains("TYPLEAK"));
     }
 
+    // Descriptions (#254): the note is a tag, which could hold sensitive
+    // context, so it never reaches a log line or an audit event. Create,
+    // edit, a refused edit, and Edit details on a certificate and a key,
+    // with a failure from Key Vault on each Edit details path.
+    {
+        let note = "NOTELEAK one\r\nNOTELEAK two";
+        let res = w
+            .post(
+                "/v/kv-test/secrets/-/new",
+                &[("name", "noted"), ("value", "v"), ("description", note)],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let (_, html) = w.page("/v/kv-test/secrets/noted/edit").await;
+        let version = support::hidden_value(&html, "version").unwrap();
+        let updated = support::hidden_value(&html, "updated").unwrap();
+        let edit = |d: &'static str| {
+            [
+                ("version", version.clone()),
+                ("updated", updated.clone()),
+                ("description", d.to_owned()),
+            ]
+        };
+        for d in ["NOTELEAK \u{202E}refused", "NOTELEAK edited"] {
+            let f = edit(d);
+            let f: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let _ = w.post("/v/kv-test/secrets/noted/edit", &f).await;
+        }
+        assert_eq!(
+            w.kv.state.current("noted").unwrap().tags["description"],
+            "NOTELEAK edited"
+        );
+        w.kv.state.add_cert("noted-cert", false, "x");
+        w.kv.state.add_key_with("noted-key", "RSA", |_| {});
+        for (path, fail) in [
+            (
+                "/v/kv-test/certificates/noted-cert/details",
+                "/certificates/noted-cert/",
+            ),
+            ("/v/kv-test/keys/noted-key/details", "/keys/noted-key/"),
+        ] {
+            let (_, html) = w.page(path).await;
+            let version = support::hidden_value(&html, "version").unwrap();
+            let updated = support::hidden_value(&html, "updated").unwrap();
+            let f = [
+                ("version", version.as_str()),
+                ("updated", updated.as_str()),
+                ("description", "NOTELEAK on the details form"),
+            ];
+            // Key Vault refuses the write first, then takes it.
+            w.kv.state.fail_each.lock().unwrap().push((
+                axum::http::Method::PATCH,
+                fail.into(),
+                403,
+                "ForbiddenByRbac",
+            ));
+            let res = w.post(path, &f).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+            assert!(!support::body_text(res).await.contains("NOTELEAK"));
+            w.kv.state.fail_each.lock().unwrap().clear();
+            let res = w.post(path, &f).await;
+            assert_eq!(res.status(), StatusCode::SEE_OTHER, "{path}");
+            // The flash cookie is sealed, so looking at the cookie proves
+            // nothing. Follow the redirect with it and read the message
+            // the page shows.
+            let flash = res
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .map(|v| v.to_str().unwrap().split(';').next().unwrap().to_owned())
+                .find(|c| c.starts_with("keyring_flash="))
+                .expect("a saved change sets a flash message");
+            let item = support::location(&res).to_owned();
+            let _ = support::body_text(res).await;
+            let shown = {
+                use tower::ServiceExt;
+                let req = axum::http::Request::get(&item)
+                    .header("cookie", format!("{}; {flash}", w.cookie))
+                    .body(axum::body::Body::empty())
+                    .unwrap();
+                support::body_text(w.app.clone().oneshot(req).await.unwrap()).await
+            };
+            let message = shown
+                .split("data-flash>")
+                .nth(1)
+                .and_then(|rest| rest.split("</p>").next())
+                .expect("the page shows the flash message");
+            assert!(message.starts_with("Saved changes to noted-"), "{message}");
+            assert!(!message.contains("NOTELEAK"), "{path}: {message}");
+        }
+        assert_eq!(
+            w.kv.state.certs.lock().unwrap()["noted-cert"].versions[0].tags["description"],
+            "NOTELEAK on the details form"
+        );
+    }
+
     // A certificate upload with a password, through to import.
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
     let res = w
@@ -726,6 +822,25 @@ async fn values_never_reach_the_logs() {
         "the import is logged per secret: {logs}"
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
+    assert!(!logs.contains("NOTELEAK"), "a description leaked:\n{logs}");
+    for (action, item) in [
+        ("secret.create", "noted"),
+        ("secret.update", "noted"),
+        ("certificate.update", "noted-cert"),
+        ("key.update", "noted-key"),
+    ] {
+        assert!(
+            logs.lines().any(|l| l.contains("kind=audit")
+                && l.contains(&format!("action={action} outcome=success"))
+                && l.contains(&format!("item_name={item}"))),
+            "{action} on {item} is an audit event:\n{logs}"
+        );
+    }
+    assert!(
+        logs.lines()
+            .any(|l| l.contains("action=certificate.update outcome=denied")),
+        "a refused Edit details is an audit event:\n{logs}"
+    );
     assert!(
         !logs.contains("TYPLEAK"),
         "a typed secret's field leaked:\n{logs}"
@@ -893,6 +1008,7 @@ async fn values_never_reach_the_logs() {
         "Upl0ad-Passw0rd",
         "GENLEAK_",
         "Imp0rtLeak",
+        "NOTELEAK",
         "user-api-token",
         "obo:",
         support::MI_MONITOR_TOKEN,

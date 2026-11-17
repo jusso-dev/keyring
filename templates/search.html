@@ -64,13 +64,14 @@
   {% call ui::table_wrap("vault-{}-caption"|format(g.vault)) %}
   <table>
     <caption class="visually-hidden" id="vault-{{ g.vault }}-caption">Matches in {{ g.vault }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Content type</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Description</th><th scope="col">Content type</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.status.enabled %} class="row-muted"{% endif %}>
         <th scope="row"><a class="item-name" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
         <td>{{ r.kind.label() }}</td>
         <td>{% call ui::status(r.status.enabled, r.status.expired, r.status.within30, r.status.within90, r.status.not_yet, r.status.managed) %}{% endcall %}</td>
+        <td class="note-cell">{% call ui::note_cell(r.description) %}{% endcall %}</td>
         <td>{% call ui::or_none(r.content_type) %}{% endcall %}</td>
         <td>{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
         <td>{% call ui::tags(r.tags) %}{% endcall %}</td>
