@@ -181,6 +181,16 @@ jobs:
               rm "$p"
             done
           done
+          # Expiry alerts in both modes: the examples above build the action
+          # group mode and Keyring's webhook mode; this builds the webhook
+          # mode again with dead-lettering on and an existing topic.
+          p="alerts/keyring-ci.bicepparam"
+          { sed -e '/^param deadLetterContainerId/d' -e '/^param existingSystemTopicName/d' alerts/keyring.example.bicepparam
+            echo "param deadLetterContainerId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/st/blobServices/default/containers/deadletter'"
+            echo "param existingSystemTopicName = 'kv-app-prod-events'"
+          } > "$p"
+          az bicep build-params --file "$p" --stdout > /dev/null || status=1
+          rm "$p"
           # Sentinel with every rule on and Keyring's address given, so the
           # two rules left out without one are built too, on both tables.
           for table in AzureDiagnostics AZKVAuditLogs; do

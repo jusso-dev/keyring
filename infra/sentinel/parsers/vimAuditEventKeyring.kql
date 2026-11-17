@@ -77,6 +77,7 @@ KeyringAudit_CL
         "NotifyType", column_ifexists("NotifyType", ""),
         "NotifyRecipientCount", column_ifexists("NotifyRecipientCount", int(null)),
         "NotifyRecipients", column_ifexists("NotifyRecipients", ""),
+        "NotifyEventCount", column_ifexists("NotifyEventCount", int(null)),
         "WriterIdentityClientId", WriterIdentityClientId,
         "KeyringInstance", KeyringInstance)
 | where array_length(object_has_any) == 0 or Object has_any (object_has_any)

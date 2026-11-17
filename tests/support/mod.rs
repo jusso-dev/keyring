@@ -4,6 +4,7 @@
 
 pub(crate) mod acs;
 pub(crate) mod certs;
+pub(crate) mod eventgrid;
 pub(crate) mod ingestion;
 pub(crate) mod keys;
 pub(crate) mod keyvault;
@@ -213,8 +214,8 @@ pub(crate) struct MockIdp {
 
 pub(crate) struct IdpState {
     issuer: String,
-    key: CoreRsaPrivateSigningKey,
-    other_key: CoreRsaPrivateSigningKey,
+    pub key: CoreRsaPrivateSigningKey,
+    pub other_key: CoreRsaPrivateSigningKey,
     pub behaviour: Mutex<TokenBehaviour>,
     /// Nonce the next ID token should carry (taken from the authorise URL by the test).
     pub nonce: Mutex<Option<String>>,

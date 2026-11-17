@@ -37,6 +37,7 @@ use crate::auth::oidc::Oidc;
 use crate::auth::session::SessionStore;
 use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
+use crate::notify::expiry::ExpiryHook;
 use crate::notify::health::{self as health_notify, HealthWatch, SystemClock};
 use crate::notify::sender::{self as notify_sender, Notifier};
 
@@ -62,6 +63,8 @@ pub struct AppState {
     pub audit_sink: Option<Arc<AuditSink>>,
     /// Sends email through Azure Communication Services, when set.
     pub notifier: Option<Arc<Notifier>>,
+    /// The Event Grid webhook's state, when email is on with `expiry`.
+    pub expiry_hook: Option<Arc<ExpiryHook>>,
     /// Emails the admins about Keyring's own health, with email on and
     /// `health` in `KEYRING_NOTIFY_TYPES`. Watches audit events as they
     /// are recorded. Its timer is started by `main`.
@@ -127,6 +130,18 @@ impl AppState {
             )),
             _ => None,
         };
+        // The webhook only exists with email on and `expiry` in the types.
+        let expiry_hook = config
+            .notify
+            .as_ref()
+            .filter(|n| n.types.contains(&crate::notify::NotifyType::Expiry))
+            .map(|n| {
+                Arc::new(ExpiryHook::new(
+                    config.eventgrid_expect(),
+                    n.hook_tuning,
+                    config.base_url.clone(),
+                ))
+            });
         let health = match (&notifier, &config.notify) {
             (Some(n), Some(c)) if n.is_on(notify::NotifyType::Health) => Some(HealthWatch::new(
                 health_notify::Settings {
@@ -146,6 +161,7 @@ impl AppState {
             sessions.set_audit_sink(sink.clone());
         }
         Ok(Self {
+            expiry_hook,
             health,
             notifier,
             audit_sink,

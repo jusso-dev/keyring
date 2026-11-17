@@ -57,6 +57,16 @@ async fn main() -> ExitCode {
             tracing::info!(types = %types.join(","), admins = n.admins().len(), "email on: notices go through Azure Communication Services");
         }
     }
+    if state.expiry_hook.is_some()
+        && state
+            .notifier
+            .as_ref()
+            .is_some_and(|n| n.admins().is_empty())
+    {
+        tracing::warn!(
+            "expiry notices are on, but KEYRING_NOTIFY_ADMINS is empty: an expiry event is only emailed when the subscription's keyring-notify header names someone and KEYRING_NOTIFY_ALLOWED_DOMAINS is set"
+        );
+    }
     match (&state.health, state.config.client_secret_expires) {
         (Some(h), _) => {
             if state
