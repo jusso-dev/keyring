@@ -381,6 +381,24 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - When it can't be read: an empty state with the reason and a "What to ask
   for" hint, never an empty table.
 
+### Access review
+
+- The vault's Access page and its Access review share a `.view-switch`
+  under the heading: "Who has access" and "Access review", the open one
+  with `aria-current="page"`, as on the expiry and audit views.
+- Heading, one line on what it is, a Download CSV link, then three
+  sections: Used by in the last 90 days (what couldn't be read as warn
+  notices, with a "What to ask for" hint, then the muted coverage and
+  limits line), Who has access to the whole vault (the Access page's own
+  tables, once), then Items: one ledger table. Name (row header, linked to
+  the item), Type, Expires, Owner, Description, Value changed, Used by (90
+  days), Access on this item, Rotation.
+- A cell Keyring couldn't fill says muted "Not known", never blank and
+  never "None". "None found" is muted, and only when the whole log was
+  read. Item access is muted "As the vault", or "As the vault, and:" with
+  the item's own assignments. Rotation uses the rotation badges, or muted
+  "Not tagged".
+
 ### PIM activation
 
 - On the 403 page, under "What to ask for": one sentence saying the person is eligible, and a primary "Activate {role}" button. Nothing else on the page changes.

@@ -166,7 +166,10 @@ fn assert_coverage(p: &str, answered: usize, of: usize) {
 
 #[test]
 fn no_template_or_panel_code_promises_a_change_is_safe() {
-    let mut files = vec!["src/routes/used_by.rs".to_owned()];
+    let mut files = vec![
+        "src/routes/used_by.rs".to_owned(),
+        "src/routes/access_review.rs".to_owned(),
+    ];
     let mut dirs = vec![std::path::PathBuf::from("templates")];
     while let Some(d) = dirs.pop() {
         for e in std::fs::read_dir(d).unwrap() {

@@ -38,7 +38,7 @@ pub(crate) struct CallerRow {
 }
 
 impl CallerRow {
-    fn from(c: &Caller) -> Self {
+    pub(crate) fn from(c: &Caller) -> Self {
         let who = if !c.upn.is_empty() {
             c.upn.clone()
         } else if !c.app_id.is_empty() {
@@ -64,7 +64,7 @@ impl CallerRow {
 }
 
 /// `2026-11-09T10:00:00.123Z` as `2026-11-09 10:00:00 UTC`.
-fn time(t: &str) -> String {
+pub(crate) fn time(t: &str) -> String {
     if t.is_empty() {
         return String::new();
     }
@@ -206,13 +206,13 @@ const EMPTY: &str = "No {activity} found in the available logs for this period. 
 const EMPTY_PARTIAL: &str = "No {activity} found in the logs Keyring could read for this period. Some of the log is missing (see below), so check consumers before changing this {noun}.";
 /// The workspaces answered, but nothing from this vault has arrived.
 const NOT_ARRIVED: &str = "No audit events from this vault have arrived in its Log Analytics workspace for this period, so Keyring can't tell what uses this {noun}. A diagnostic setting that was just turned on can take a while to send its first events. Check consumers before changing this {noun}.";
-const HINT_ARRIVED: &str = "someone who manages the vault to check its diagnostic setting sends the \"audit\" log category to the workspace, then try again later.";
+pub(crate) const HINT_ARRIVED: &str = "someone who manages the vault to check its diagnostic setting sends the \"audit\" log category to the workspace, then try again later.";
 
-const HINT_READER: &str = "the Reader role on the vault (or its resource group), so Keyring can find where its audit log goes.";
-const HINT_LOGGING: &str = "a diagnostic setting on the vault that sends the \"audit\" log category to a Log Analytics workspace.";
-const HINT_WORKSPACE: &str =
+pub(crate) const HINT_READER: &str = "the Reader role on the vault (or its resource group), so Keyring can find where its audit log goes.";
+pub(crate) const HINT_LOGGING: &str = "a diagnostic setting on the vault that sends the \"audit\" log category to a Log Analytics workspace.";
+pub(crate) const HINT_WORKSPACE: &str =
     "the Log Analytics Reader role on the workspace the vault's diagnostic setting uses.";
-const HINT_CONSENT: &str = "the delegated permission Log Analytics API, Data.Read, on the Keyring app registration, with admin consent.";
+pub(crate) const HINT_CONSENT: &str = "the delegated permission Log Analytics API, Data.Read, on the Keyring app registration, with admin consent.";
 
 /// Plain words for an error that stopped the whole read.
 fn failed(panel: UsedBy, e: &AzureError) -> UsedBy {
