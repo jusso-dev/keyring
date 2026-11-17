@@ -147,12 +147,18 @@ pub struct NotifySettings {
     /// `KEYRING_EVENTGRID_AUDIENCE`: the `aud` Event Grid's token must
     /// have. `None` means Keyring's app ID URI, `api://<client ID>`.
     pub eventgrid_audience: Option<String>,
+    /// `KEYRING_EVENTGRID_SUBSCRIPTIONS`: the subscription IDs, lower case,
+    /// whose Key Vaults may send expiry events. `None` allows any.
+    pub eventgrid_subscriptions: Option<Vec<String>>,
     /// The webhook's rate limit and dedupe sizes. Always the defaults
     /// outside tests.
     pub hook_tuning: crate::notify::expiry::HookTuning,
     /// Health check timings. Always the defaults outside tests.
     pub health_tuning: crate::notify::health::Tuning,
 }
+
+/// Most entries in `KEYRING_EVENTGRID_SUBSCRIPTIONS`.
+pub const MAX_EVENTGRID_SUBSCRIPTIONS: usize = 50;
 
 /// Largest `KEYRING_NOTIFY_RATE_PER_HOUR`.
 pub const MAX_NOTIFY_PER_HOUR: u32 = 1000;
@@ -739,8 +745,9 @@ fn notify_settings(
     get: &impl Fn(&str) -> Option<String>,
     has_identity: bool,
 ) -> Result<Option<NotifySettings>, ConfigError> {
-    const OTHERS: [&str; 8] = [
+    const OTHERS: [&str; 9] = [
         "KEYRING_EVENTGRID_AUDIENCE",
+        "KEYRING_EVENTGRID_SUBSCRIPTIONS",
         "KEYRING_NOTIFY_BURST_THRESHOLD",
         "KEYRING_NOTIFY_SENDER",
         "KEYRING_NOTIFY_ADMINS",
@@ -831,6 +838,16 @@ fn notify_settings(
             "is only used with expiry in KEYRING_NOTIFY_TYPES".into(),
         ));
     }
+    let eventgrid_subscriptions = get("KEYRING_EVENTGRID_SUBSCRIPTIONS")
+        .map(|v| checked_subscriptions(&v))
+        .transpose()
+        .map_err(|r| invalid("KEYRING_EVENTGRID_SUBSCRIPTIONS", r))?;
+    if eventgrid_subscriptions.is_some() && !types.contains(&crate::notify::NotifyType::Expiry) {
+        return Err(invalid(
+            "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+            "is only used with expiry in KEYRING_NOTIFY_TYPES".into(),
+        ));
+    }
     let burst_threshold = match get("KEYRING_NOTIFY_BURST_THRESHOLD") {
         None => crate::notify::health::DEFAULT_BURST_THRESHOLD,
         Some(v) => v
@@ -849,6 +866,7 @@ fn notify_settings(
     };
     Ok(Some(NotifySettings {
         eventgrid_audience,
+        eventgrid_subscriptions,
         hook_tuning: crate::notify::expiry::HookTuning::default(),
         endpoint,
         sender,
@@ -861,6 +879,33 @@ fn notify_settings(
         tuning: crate::notify::sender::Tuning::default(),
         health_tuning: crate::notify::health::Tuning::default(),
     }))
+}
+
+/// Check `KEYRING_EVENTGRID_SUBSCRIPTIONS`: 1 to
+/// [`MAX_EVENTGRID_SUBSCRIPTIONS`] subscription IDs (GUIDs), separated by
+/// commas, with spaces around each ignored. Returned lower case, each
+/// once. An empty entry is refused, so a stray comma can't mean "any".
+/// The reason never repeats the value.
+pub fn checked_subscriptions(raw: &str) -> Result<Vec<String>, String> {
+    let mut list: Vec<String> = Vec::new();
+    for (i, entry) in raw.split(',').map(str::trim).enumerate() {
+        if !is_guid(entry) {
+            return Err(format!(
+                "entry {} isn't a subscription ID; use GUIDs separated by commas",
+                i + 1
+            ));
+        }
+        let id = entry.to_ascii_lowercase();
+        if !list.contains(&id) {
+            list.push(id);
+        }
+    }
+    if list.len() > MAX_EVENTGRID_SUBSCRIPTIONS {
+        return Err(format!(
+            "use at most {MAX_EVENTGRID_SUBSCRIPTIONS} subscription IDs"
+        ));
+    }
+    Ok(list)
 }
 
 /// Check `KEYRING_EVENTGRID_AUDIENCE`: an app ID URI (`api://...` or
@@ -1765,6 +1810,69 @@ pub(crate) mod tests {
         let mut off = new_identity_env();
         off.insert("KEYRING_EVENTGRID_AUDIENCE", "api://keyring-events".into());
         assert!(load(&off).is_err());
+    }
+
+    #[test]
+    fn the_eventgrid_subscriptions_are_checked() {
+        let mut env = with_notify(new_identity_env());
+        env.insert("KEYRING_NOTIFY_TYPES", "expiry".into());
+        let subs = |env: &HashMap<&'static str, String>| {
+            load(env).unwrap().notify.unwrap().eventgrid_subscriptions
+        };
+        assert_eq!(subs(&env), None, "unset allows any");
+        let a = "0A1B2C3D-4E5F-6789-ABCD-EF0123456789";
+        let b = "11111111-2222-3333-4444-555555555555";
+        env.insert(
+            "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+            format!(" {a} , {b},{}", a.to_ascii_lowercase()),
+        );
+        assert_eq!(
+            subs(&env),
+            Some(vec![a.to_ascii_lowercase(), b.to_owned()]),
+            "trimmed, lower case, each once"
+        );
+        let many: Vec<String> = (0..=MAX_EVENTGRID_SUBSCRIPTIONS)
+            .map(|i| format!("00000000-0000-0000-0000-{i:012}"))
+            .collect();
+        for bad in [
+            format!("{a},"),
+            format!("{a},,{b}"),
+            ",".to_owned(),
+            "not-a-guid".to_owned(),
+            format!("{a};{b}"),
+            a.replace('-', ""),
+            many.join(","),
+        ] {
+            env.insert("KEYRING_EVENTGRID_SUBSCRIPTIONS", bad.clone());
+            let err = load(&env).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        name: "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+                        ..
+                    }
+                ),
+                "{bad}"
+            );
+            assert!(!err.to_string().contains("not-a-guid"), "{err}");
+        }
+        let fifty = many[..MAX_EVENTGRID_SUBSCRIPTIONS].join(",");
+        env.insert("KEYRING_EVENTGRID_SUBSCRIPTIONS", fifty);
+        assert_eq!(subs(&env).unwrap().len(), MAX_EVENTGRID_SUBSCRIPTIONS);
+        // Only with expiry on, and only with email on.
+        env.insert("KEYRING_EVENTGRID_SUBSCRIPTIONS", b.into());
+        env.insert("KEYRING_NOTIFY_TYPES", "health".into());
+        assert!(load(&env).is_err());
+        let mut off = new_identity_env();
+        off.insert("KEYRING_EVENTGRID_SUBSCRIPTIONS", b.into());
+        assert!(matches!(
+            load(&off),
+            Err(ConfigError::Invalid {
+                name: "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+                ..
+            })
+        ));
     }
 
     #[test]
