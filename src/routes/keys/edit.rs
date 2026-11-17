@@ -20,8 +20,9 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::forms::{CsrfForm, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::{parse_tags, with_note};
+use crate::routes::secrets::form::with_note;
 use crate::routes::shell::Shell;
+use crate::routes::tag_rows::{self, Suggestions, TagField, TagPost};
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
 use super::{api, current_vault, unmanaged_key};
@@ -54,7 +55,7 @@ pub(crate) struct CreateForm {
     pub hsm: bool,
     pub ops: Vec<String>,
     pub expires: String,
-    pub tags: String,
+    pub tag_rows: TagPost,
     /// The note, kept in the `description` tag.
     pub description: String,
 }
@@ -68,7 +69,7 @@ impl CreateForm {
             hsm: false,
             ops: Vec::new(),
             expires: String::new(),
-            tags: String::new(),
+            tag_rows: TagPost::default(),
             description: String::new(),
         };
         for (k, v) in pairs {
@@ -79,9 +80,10 @@ impl CreateForm {
                 "hsm" => f.hsm = true,
                 "ops" => f.ops.push(v),
                 "expires" => f.expires = v,
-                "tags" => f.tags = v,
                 "description" => f.description = v,
-                _ => {}
+                k => {
+                    f.tag_rows.take(k, v);
+                }
             }
         }
         f
@@ -95,7 +97,7 @@ impl CreateForm {
             hsm: false,
             ops: Vec::new(),
             expires: String::new(),
-            tags: String::new(),
+            tag_rows: TagPost::default(),
             description: String::new(),
         }
     }
@@ -167,10 +169,8 @@ pub(crate) fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Fie
             }
         },
     };
-    let tags: BTreeMap<String, String> = parse_tags(&f.tags).unwrap_or_else(|m| {
-        errors.push("tags", m);
-        BTreeMap::new()
-    });
+    let tags: BTreeMap<String, String> =
+        tag_rows::check(&f.tag_rows, &BTreeMap::new(), &mut errors);
     let tags = with_note(&tags, &f.description, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -201,6 +201,7 @@ struct CreatePage {
     errors: FieldErrors,
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
+    tags: TagField,
 }
 
 impl CreatePage {
@@ -221,19 +222,20 @@ impl CreatePage {
 fn create_page(
     shell: Shell,
     vault: String,
-    form: CreateForm,
+    (form, suggest): (CreateForm, Suggestions),
     errors: FieldErrors,
 ) -> axum::response::Response {
-    create_page_with(shell, vault, form, errors, None)
+    create_page_with(shell, vault, (form, suggest), errors, None)
 }
 
 fn create_page_with(
     shell: Shell,
     vault: String,
-    form: CreateForm,
+    (form, suggest): (CreateForm, Suggestions),
     errors: FieldErrors,
     azure_message: Option<String>,
 ) -> axum::response::Response {
+    let tags = TagField::posted(&form.tag_rows, &BTreeMap::new()).with(suggest);
     let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
@@ -247,6 +249,7 @@ fn create_page_with(
             form,
             errors,
             azure_message,
+            tags,
         }),
     )
         .into_response()
@@ -263,15 +266,17 @@ fn is_hsm_refusal(err: &AzureError) -> bool {
 }
 
 pub(crate) async fn create_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(vault): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let suggest = tag_rows::for_vault(&state, &session, &vault).await;
     Ok(create_page(
         shell,
         vault,
-        CreateForm::defaults(),
+        (CreateForm::defaults(), suggest),
         FieldErrors::new(),
     ))
 }
@@ -291,7 +296,10 @@ pub(crate) async fn create(
             crate::audit::note_item(&ok.0);
             ok
         }
-        Err(errors) => return Ok(create_page(shell, vault, f, errors)),
+        Err(errors) => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            return Ok(create_page(shell, vault, (f, suggest), errors));
+        }
     };
     let keys = api(&state, &session, &vault);
     // Creating over an existing name adds a version, so refuse. Key Vault
@@ -304,7 +312,8 @@ pub(crate) async fn create(
                     "There's already a key called {name}. Pick another name, or open it and rotate it."
                 ),
             );
-            return Ok(create_page(shell, vault, f, errors));
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            return Ok(create_page(shell, vault, (f, suggest), errors));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
         Err(e) => {
@@ -329,23 +338,28 @@ pub(crate) async fn create(
                     "A deleted key called {name} is still being kept. Recover it from deleted keys, or pick another name."
                 ),
             );
-            Ok(create_page(shell, vault, f, errors))
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            Ok(create_page(shell, vault, (f, suggest), errors))
         }
         Err(e) if f.hsm && is_hsm_refusal(&e) => {
             let errors = FieldErrors::one(
                 "key_type",
                 "This vault can't make HSM-protected keys. It needs the Premium tier. Untick HSM, or use a Premium vault.",
             );
-            Ok(create_page(shell, vault, f, errors))
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            Ok(create_page(shell, vault, (f, suggest), errors))
         }
         Err(e) => match rejection_message(&e) {
-            Some(m) => Ok(create_page_with(
-                shell,
-                vault,
-                f,
-                FieldErrors::new(),
-                Some(m),
-            )),
+            Some(m) => {
+                let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+                Ok(create_page_with(
+                    shell,
+                    vault,
+                    (f, suggest),
+                    FieldErrors::new(),
+                    Some(m),
+                ))
+            }
             None => Err(azure_problem(
                 shell,
                 &e,

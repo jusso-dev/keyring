@@ -36,7 +36,7 @@
     <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
     <dt>Created</dt><dd>{{ ui::or_none(row.created) }}</dd>
     <dt>Expires</dt><dd>{{ ui::expires(row.expires, row.expires_note) }}</dd>
-    <dt>Tags</dt><dd>{{ ui::tags(row.tags) }}</dd>
+    <dt>Tags</dt><dd>{{ ui::tag_links(row.tags, "{}/keys"|format(shell.vault_prefix())) }}</dd>
   </dl>
 </section>
 

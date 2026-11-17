@@ -33,9 +33,10 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::FieldErrors;
 use crate::routes::lifecycle::{Kind, redirect_with};
-use crate::routes::secrets::form::{format_tags, parse_tags, tags_editable, with_note};
+use crate::routes::secrets::form::with_note;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
+use crate::routes::tag_rows::{self, TagField, TagPost};
 use crate::routes::vault_ctx::{self, azure_problem, check_csrf, checked_name, vault_path};
 
 /// What the form posts.
@@ -45,10 +46,9 @@ pub(crate) struct DetailsForm {
     pub csrf: String,
     #[serde(default)]
     pub description: String,
-    /// One `name=value` per line, without the description. Not posted
-    /// when the item's tags can't be shown in the box.
-    #[serde(default)]
-    pub tags: String,
+    /// The tag rows, without the description.
+    #[serde(flatten)]
+    pub tag_rows: TagPost,
     /// The version the form was opened on, and its `updated` time.
     #[serde(default)]
     pub version: String,
@@ -60,6 +60,7 @@ impl std::fmt::Debug for DetailsForm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DetailsForm")
             .field("version", &self.version)
+            .field("tag_rows", &self.tag_rows)
             .finish_non_exhaustive()
     }
 }
@@ -81,21 +82,13 @@ impl Current {
 }
 
 /// The tags to write, from the form and the current tags. `Ok(None)` when
-/// nothing would change. Tags the box can't show are kept as they are and
-/// only the description changes.
+/// nothing would change. Tags a row can't show are kept as they are.
 pub(crate) fn new_tags(
     form: &DetailsForm,
     current: &BTreeMap<String, String>,
 ) -> Result<Option<BTreeMap<String, String>>, FieldErrors> {
     let mut errors = FieldErrors::new();
-    let base = if tags_editable(current) {
-        parse_tags(&form.tags).unwrap_or_else(|m| {
-            errors.push("tags", m);
-            BTreeMap::new()
-        })
-    } else {
-        description::without(current)
-    };
+    let base = tag_rows::check(&form.tag_rows, current, &mut errors);
     let tags = with_note(&base, &form.description, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -111,9 +104,7 @@ struct DetailsPage {
     kind: Kind,
     name: String,
     description: String,
-    tags: String,
-    /// Tags the box can't show without changing them, listed and kept.
-    locked_tags: Option<Vec<(String, String)>>,
+    tags: TagField,
     version: String,
     updated: String,
     errors: FieldErrors,
@@ -126,6 +117,7 @@ impl DetailsPage {
 }
 
 /// The form, filled from `current`, or from `posted` after an error.
+#[allow(clippy::too_many_arguments)]
 fn page(
     shell: Shell,
     vault: String,
@@ -134,15 +126,18 @@ fn page(
     current: &Current,
     posted: Option<&DetailsForm>,
     errors: FieldErrors,
+    suggest: tag_rows::Suggestions,
 ) -> Response {
-    let editable = tags_editable(&current.tags);
     let (description, tags) = match posted {
-        Some(f) => (f.description.clone(), f.tags.clone()),
+        Some(f) => (
+            f.description.clone(),
+            TagField::posted(&f.tag_rows, &current.tags),
+        ),
         None => (
             description::of(&current.tags)
                 .unwrap_or_default()
                 .to_owned(),
-            format_tags(&current.tags),
+            TagField::of(&current.tags),
         ),
     };
     let status = if errors.is_empty() {
@@ -159,9 +154,7 @@ fn page(
                 kind,
                 name,
                 description,
-                tags: if editable { tags } else { String::new() },
-                locked_tags: (!editable)
-                    .then(|| description::without(&current.tags).into_iter().collect()),
+                tags: tags.with(suggest),
                 version: current.version.clone(),
                 updated: current.updated(),
                 errors,
@@ -343,7 +336,12 @@ pub(crate) async fn form<E: Editable>(
     Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
     let (vault, name, shell) = place::<E>(&session, shell, &vault, &name)?;
-    let (current, shell) = E::current(&state, &session, &vault, &name, shell).await?;
+    // The tag suggestions load beside the item, within their own limit.
+    let (current, suggest) = tokio::join!(
+        E::current(&state, &session, &vault, &name, shell),
+        tag_rows::for_vault(&state, &session, &vault),
+    );
+    let (current, shell) = current?;
     Ok(page(
         shell,
         vault,
@@ -352,6 +350,7 @@ pub(crate) async fn form<E: Editable>(
         &current,
         None,
         FieldErrors::new(),
+        suggest,
     ))
 }
 
@@ -381,6 +380,7 @@ pub(crate) async fn save<E: Editable>(
         }
         Err(errors) => {
             crate::audit::refuse(crate::audit::Refusal::InvalidRequest);
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             return Ok(page(
                 shell,
                 vault,
@@ -389,6 +389,7 @@ pub(crate) async fn save<E: Editable>(
                 &current,
                 Some(&f),
                 errors,
+                suggest,
             ));
         }
     };
@@ -418,10 +419,10 @@ mod tests {
             .collect()
     }
 
-    fn form(description: &str, tags: &str) -> DetailsForm {
+    fn form(description: &str, rows: &[(&str, &str)]) -> DetailsForm {
         DetailsForm {
             description: description.into(),
-            tags: tags.into(),
+            tag_rows: TagPost::rows(rows),
             ..DetailsForm::default()
         }
     }
@@ -429,7 +430,7 @@ mod tests {
     #[test]
     fn note_is_merged_with_the_tags() {
         let cur = tags(&[("env", "prod")]);
-        let t = new_tags(&form("Web front end", "env=prod"), &cur)
+        let t = new_tags(&form("Web front end", &[("env", "prod")]), &cur)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -438,39 +439,50 @@ mod tests {
         );
         // Unchanged: nothing to send.
         assert!(
-            new_tags(&form("Web front end", "env=prod"), &t)
+            new_tags(&form("Web front end", &[("env", "prod")]), &t)
                 .unwrap()
                 .is_none()
         );
         // Empty removes the note and keeps the rest.
-        let t2 = new_tags(&form("", "env=prod"), &t).unwrap().unwrap();
+        let t2 = new_tags(&form("", &[("env", "prod")]), &t)
+            .unwrap()
+            .unwrap();
         assert_eq!(t2, cur);
     }
 
     #[test]
-    fn tags_the_box_cant_show_are_kept() {
-        let cur = tags(&[("a=b", " c "), ("description", "old")]);
-        // The box isn't shown, so nothing is posted for it.
-        let t = new_tags(&form("new", ""), &cur).unwrap().unwrap();
-        assert_eq!(t, tags(&[("a=b", " c "), ("description", "new")]));
+    fn tags_a_row_cant_show_are_kept() {
+        let cur = tags(&[("a=b", " c "), ("two", "x\ny"), ("description", "old")]);
+        // a=b has a row and comes back as it was; the other is kept.
+        let t = new_tags(&form("new", &[("a=b", " c ")]), &cur)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            t,
+            tags(&[("a=b", " c "), ("two", "x\ny"), ("description", "new")])
+        );
     }
 
     #[test]
     fn problems_are_refused_before_azure() {
         let full: BTreeMap<String, String> =
             (0..15).map(|i| (format!("k{i}"), "v".into())).collect();
-        let text = format_tags(&full);
-        let e = new_tags(&form("note", &text), &full).unwrap_err();
+        let rows: Vec<(&str, &str)> = full.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let e = new_tags(&form("note", &rows), &full).unwrap_err();
         assert!(e.error_for("description").unwrap().contains("15 tags"));
-        let e = new_tags(&form("", "description=sneaky"), &BTreeMap::new()).unwrap_err();
-        assert!(e.error_for("tags").unwrap().contains("Description field"));
-        let e = new_tags(&form("a\u{202E}b", ""), &BTreeMap::new()).unwrap_err();
+        let e = new_tags(&form("", &[("description", "sneaky")]), &BTreeMap::new()).unwrap_err();
+        assert!(
+            e.error_for("tag-name-1")
+                .unwrap()
+                .contains("Description field")
+        );
+        let e = new_tags(&form("a\u{202E}b", &[]), &BTreeMap::new()).unwrap_err();
         assert!(e.error_for("description").is_some());
     }
 
     #[test]
     fn debug_hides_the_note() {
-        let f = form("TOPSECRETNOTE", "");
+        let f = form("TOPSECRETNOTE", &[]);
         assert!(!format!("{f:?}").contains("TOPSECRETNOTE"));
     }
 }

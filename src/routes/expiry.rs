@@ -138,6 +138,8 @@ struct ExpiryPage {
     filter: ExpiryFilter,
     csv_url: String,
     max_vaults: usize,
+    /// Suggestions for the tag filter, from the items read.
+    tag_options: Vec<String>,
 }
 
 pub(super) async fn page(
@@ -158,6 +160,7 @@ pub(super) async fn page(
         }
     };
     let now = now_ts();
+    let tag_options = crate::routes::tag_rows::filter_options_of(&loaded.items);
     let mut items: Vec<Item> = loaded
         .items
         .into_iter()
@@ -212,6 +215,7 @@ pub(super) async fn page(
         unknown_vault: loaded.unknown_vault,
         filter,
         max_vaults: MAX_VAULTS,
+        tag_options,
     })
     .into_response())
 }

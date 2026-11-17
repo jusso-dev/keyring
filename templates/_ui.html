@@ -121,6 +121,62 @@
   {% include "_field_error.html" %}
 {%- endmacro -%}
 
+{#- Tags as rows (src/routes/tag_rows.rs): a name and a value input per
+    tag, numbered, so an error sits beside its row. `t` is a TagField. The
+    datalists suggest names and values from the vault's own lists, with no
+    script; static/tags.js swaps a row's value list when its name changes,
+    and adds and removes rows. Tags a row can't show are listed and kept. -#}
+{%- macro tag_field(t, help) -%}
+{%- let field_name = "tags" %}
+  <fieldset class="tag-rows" id="tags" data-tag-rows data-tag-max="{{ crate::routes::tag_rows::MAX_ROWS }}"{% call aria("tags", "tags-help") %}{% endcall %}>
+    <legend>Tags <span class="muted">(optional)</span></legend>
+    <input type="hidden" name="tag-rows" value="1">
+    <p class="field-help" id="tags-help">{{ help }} Clear a row's name and value to remove that tag.</p>
+    {% include "_field_error.html" %}
+    {%- if !t.locked.is_empty() %}
+    <p class="field-help">This form can't show these tags, because they have a line break in them. They're kept as they are. Change them in the Azure portal or the Azure CLI.</p>
+    <ul class="tag-locked">{% for (k, v) in t.locked %}<li class="mono">{{ k }}: {{ v }}</li>{% endfor %}</ul>
+    {%- endif %}
+    {%- for r in t.rows %}
+    <div class="tag-row" data-tag-row>
+      <div>
+        <label for="{{ r.name_id }}">Tag {{ r.n }} name</label>
+        <input id="{{ r.name_id }}" name="{{ r.name_id }}" type="text" value="{{ r.name }}" maxlength="512" list="tag-names" data-tag-name{% call ident() %}{% endcall %}{% call aria(r.name_id) %}{% endcall %}>
+        {%- if let Some(msg) = error_for(r.name_id) %}<p class="field-error" id="{{ r.name_id }}-error">{{ msg }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="{{ r.value_id }}">Tag {{ r.n }} value</label>
+        <input id="{{ r.value_id }}" name="{{ r.value_id }}" type="text" value="{{ r.value }}" maxlength="256" list="{{ t.suggest.list_for(r.name) }}" data-tag-value{% call ident() %}{% endcall %}{% call aria(r.value_id) %}{% endcall %}>
+        {%- if let Some(msg) = error_for(r.value_id) %}<p class="field-error" id="{{ r.value_id }}-error">{{ msg }}</p>{% endif %}
+      </div>
+    </div>
+    {%- endfor %}
+  </fieldset>
+  {% call tag_lists(t.suggest) %}{% endcall %}
+{%- endmacro -%}
+
+{#- The suggestion lists for tag rows and the bulk change: names, the most
+    used values, and each name's values. Every option is escaped. -#}
+{%- macro tag_lists(s) -%}
+<datalist id="tag-names">{% for n in s.names %}<option value="{{ n.name }}">{% endfor %}</datalist>
+<datalist id="{{ crate::routes::tag_rows::ANY_VALUES }}">{% for v in s.values %}<option value="{{ v }}">{% endfor %}</datalist>
+{%- for n in s.names %}{% if !n.values.is_empty() %}
+<datalist id="{{ n.list_id }}" data-tag-for="{{ n.name }}">{% for v in n.values %}<option value="{{ v }}">{% endfor %}</datalist>
+{%- endif %}{% endfor %}
+{%- endmacro -%}
+
+{#- Suggestions for a filter box: `name` and `name=value` from the items
+    the page read. The box points at it with list="tag-filter-options". -#}
+{%- macro filter_options(options) -%}
+<datalist id="tag-filter-options">{% for o in options %}<option value="{{ o }}">{% endfor %}</datalist>
+{%- endmacro -%}
+
+{#- An item's tags on its page, each a link to the list filtered by that
+    tag. A tag the filter couldn't find again is shown without a link. -#}
+{%- macro tag_links(list, base) -%}
+{%- if list.is_empty() %}<span class="muted">None</span>{% else %}<ul class="tag-list">{% for (k, v) in list.iter() %}<li>{% if let Some(href) = crate::routes::tag_rows::filter_href(base, k, v) %}<a class="tag" href="{{ href }}">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</a>{% else %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span>{% endif %}</li>{% endfor %}</ul>{% endif -%}
+{%- endmacro -%}
+
 {#- Said once at the top of each form, so "(optional)" is the only marker. -#}
 {%- macro optional_note() -%}
 <p class="muted">Every field is needed unless it says optional.</p>

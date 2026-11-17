@@ -40,7 +40,9 @@ async fn rotation_line_from_the_tags() {
     ));
     assert!(html.contains("not checked by Keyring"));
     // Still in the tag list too.
-    assert!(html.contains(r#"<span class="tag">rotation-status=ok</span>"#));
+    assert!(html.contains(
+        r#"<a class="tag" href="/v/kv-test/secrets?tag=rotation-status%3Dok">rotation-status=ok</a>"#
+    ));
     assert!(w.kv.state.value_reads().is_empty());
 }
 

@@ -96,6 +96,9 @@ Nine of the Key Vault REST rows (four secrets rows, the HSM key row, and the sel
 | Enable and disable | Disable a key, then enable it | PATCH `attributes.enabled` on `/keys/{name}/{version}` works both ways | `src/azure/keys.rs` (`set_enabled`) | ok |
 | Listing with the smallest role | As Key Vault Reader only, list keys and copy a public key | Both work | `src/routes/keys/mod.rs` | |
 | Key Edit details | On a key with tags, use **Edit details** to add then clear a description | `PATCH /keys/{name}/{version}` with `tags` only keeps the other tags, the operations and the dates, and makes no new version | `src/routes/details.rs`, `src/azure/keys.rs` (`update`) | |
+| Tag rows round trip | On a secret with tags `env=prod`, ` padded `=`a = b` and one set with the CLI holding a line break (`az keyvault secret set-attributes --tags note=$'one\ntwo'`), open **Edit details**, save without changes, then clear the env row and save | The first save sends nothing (no new `updated` time). The second removes only `env`; ` padded ` and the line-break tag are unchanged in `az keyvault secret show` | `src/routes/tag_rows.rs` | |
+| Tag suggestions as the person | Sign in as someone with Key Vault Secrets User only on a vault (no certificates or keys role) and open **Create a secret** | The form opens within about 2 seconds, the tag name dropdown lists the secrets' tag names, and nothing from certificates or keys. No error shows | `src/routes/tag_rows.rs` (`for_vault`), `src/routes/every_vault.rs` | |
+| Tag dropdowns in each browser | In Chrome, Firefox and Safari, on a create form, type in a tag name, pick a suggestion, then open the value dropdown; repeat with JavaScript off | The name list shows; with JavaScript the value list changes to that name's values; without it, the overall values show. Add a tag and Remove work with the keyboard | `templates/_ui.html` (`tag_field`), `static/tags.js` | |
 
 ## Expiry and audit
 

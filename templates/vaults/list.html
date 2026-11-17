@@ -32,7 +32,8 @@
   <div>
     <label for="tag">Tag</label>
     <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
-    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
+    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" list="tag-filter-options" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
+    {% call ui::filter_options(tag_options) %}{% endcall %}
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>

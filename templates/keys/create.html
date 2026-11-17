@@ -47,11 +47,7 @@
     <p class="field-help" id="expires-help">A date in UTC. The key works until the end of that day. Leave blank for no expiry.</p>
     <input id="expires" name="expires" type="date" value="{{ form.expires }}"{% call ui::aria("expires", "expires-help") %}{% endcall %}>
     {% include "_field_error.html" %}
-    {% let field_name = "tags" %}
-    <label for="tags">Tags <span class="muted">(optional)</span></label>
-    <p class="field-help" id="tags-help">One per line, as name=value. Up to 15, each name used once.</p>
-    <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
-    {% include "_field_error.html" %}
+    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
   </details>
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions"><button type="submit">Create key</button><a href="{{ shell.vault_prefix() }}/keys">Cancel</a></div>

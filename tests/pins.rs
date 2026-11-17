@@ -61,9 +61,9 @@ async fn csp_is_unchanged_and_allows_no_inline_script() {
     assert!(csp.contains("default-src 'none'"), "{csp}");
     assert!(csp.contains("script-src 'self'"), "{csp}");
     assert!(!csp.contains("unsafe-"), "{csp}");
-    // Both scripts are same-origin files; no page carries inline script or
+    // The scripts are same-origin files; no page carries inline script or
     // inline handlers for the pins.
-    assert_eq!(home.matches("<script").count(), 2);
+    assert_eq!(home.matches("<script").count(), 3);
     assert!(!home.contains("<script>"));
     assert!(!home.contains("onsubmit") && !home.contains("onclick"));
 }

@@ -1,8 +1,9 @@
 {#- "With selected" on a list (src/routes/bulk.rs). The row checkboxes sit
     in the table and join this form through their form attribute, so it
     isn't nested in the filter form and works without the script. Set
-    bulk_needs (the role hint) and bulk_expiry before including. -#}
-<form id="bulk-form" class="filters" method="post" action="{{ shell.vault_prefix() }}{{ bulk_base }}/-/bulk">
+    bulk_needs (the role hint) and bulk_expiry before including. The tag
+    name and value suggest from tag_suggest, the list the page read. -#}
+<form id="bulk-form" class="filters" method="post" action="{{ shell.vault_prefix() }}{{ bulk_base }}/-/bulk" data-tag-row>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <div>
     <label for="bulk-op">With selected</label>
@@ -19,11 +20,11 @@
   </div>
   <div>
     <label for="bulk-tag-name">Tag name</label>
-    <input id="bulk-tag-name" name="tag_name" type="text" maxlength="512"{% call ui::ident() %}{% endcall %}>
+    <input id="bulk-tag-name" name="tag_name" type="text" maxlength="512" list="tag-names" data-tag-name{% call ui::ident() %}{% endcall %}>
   </div>
   <div>
     <label for="bulk-tag-value">Tag value (optional)</label>
-    <input id="bulk-tag-value" name="tag_value" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
+    <input id="bulk-tag-value" name="tag_value" type="text" maxlength="256" list="{{ crate::routes::tag_rows::ANY_VALUES }}" data-tag-value{% call ui::ident() %}{% endcall %}>
   </div>
   <div>
     <label for="bulk-description">Description (for Set the description)</label>
@@ -36,6 +37,7 @@
     <input id="bulk-expires" name="expires" type="date" aria-describedby="bulk-expires-help">
   </div>
   {% endif %}
+  {% call ui::tag_lists(tag_suggest) %}{% endcall %}
   <div class="filters-submit">
     <button type="submit"{{ ui::needs_attrs(bulk_needs, "bulk") }}>Review changes</button>{{ ui::needs_note(bulk_needs, "bulk") }}
   </div>

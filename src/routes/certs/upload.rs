@@ -30,9 +30,10 @@ use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::FieldErrors;
-use crate::routes::secrets::form::{parse_tags, with_note};
+use crate::routes::secrets::form::with_note;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
+use crate::routes::tag_rows::{self, TagField, TagPost};
 use crate::routes::vault_ctx::{azure_problem, check_csrf, vault_path};
 use crate::secret::Secret;
 use crate::x509;
@@ -51,7 +52,7 @@ pub(crate) const PEM: &str = "application/x-pem-file";
 /// Fields put back into the form after an error. Never the file or password.
 pub(crate) struct UploadView {
     pub name: String,
-    pub tags: String,
+    pub tags: TagField,
     pub description: String,
     pub enabled: bool,
     pub exportable: bool,
@@ -62,7 +63,7 @@ impl Default for UploadView {
     fn default() -> Self {
         Self {
             name: String::new(),
-            tags: String::new(),
+            tags: TagField::default(),
             description: String::new(),
             enabled: true,
             exportable: true,
@@ -148,13 +149,19 @@ struct PreviewPage {
     exportable: bool,
 }
 
-fn upload_page(
+/// The form, with tag suggestions from the vault's lists when `reader` is
+/// given. Not before the form token is checked.
+async fn upload_page(
+    reader: Option<(&AppState, &CurrentSession)>,
     shell: Shell,
     vault: String,
-    form: UploadView,
+    mut form: UploadView,
     errors: FieldErrors,
     azure_message: Option<String>,
 ) -> axum::response::Response {
+    if let Some((state, session)) = reader {
+        form.tags.suggest = tag_rows::for_vault(state, session, &vault).await;
+    }
     let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
@@ -191,6 +198,7 @@ fn too_big_message() -> String {
 }
 
 pub(crate) async fn form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(vault): Path<String>,
@@ -199,12 +207,14 @@ pub(crate) async fn form(
     // A fresh form means any file waiting from before isn't wanted.
     forget_pending_upload(&session);
     Ok(upload_page(
+        Some((&state, &session)),
         shell,
         vault,
         UploadView::default(),
         FieldErrors::new(),
         None,
-    ))
+    )
+    .await)
 }
 
 #[derive(Deserialize)]
@@ -241,7 +251,7 @@ pub(crate) async fn cancel(
 struct Posted {
     csrf: String,
     name: String,
-    tags: String,
+    tag_rows: TagPost,
     description: String,
     enabled: bool,
     exportable: bool,
@@ -297,11 +307,14 @@ async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadErr
             }
             "csrf" => p.csrf = field.text().await?,
             "name" => p.name = field.text().await?.trim().to_owned(),
-            "tags" => p.tags = field.text().await?,
             "description" => p.description = field.text().await?,
             "enabled" => p.enabled = true,
             "exportable" => p.exportable = true,
-            _ => {}
+            other => {
+                if tag_rows::is_tag_field(other) {
+                    p.tag_rows.take(other, field.text().await?);
+                }
+            }
         }
     }
     Ok(())
@@ -432,18 +445,12 @@ pub(crate) async fn preview(
     // token before anything else.
     if matches!(read, Err(ReadError::TooBig)) && p.csrf.is_empty() {
         let errors = FieldErrors::one("file", too_big_message());
-        return Ok(upload_page(
-            shell,
-            vault,
-            UploadView::default(),
-            errors,
-            None,
-        ));
+        return Ok(upload_page(None, shell, vault, UploadView::default(), errors, None).await);
     }
     let shell = check_csrf(&session, &vault, &p.csrf, shell)?;
     let view = UploadView {
         name: p.name.clone(),
-        tags: p.tags.clone(),
+        tags: TagField::posted(&p.tag_rows, &BTreeMap::new()),
         description: p.description.clone(),
         enabled: p.enabled,
         exportable: p.exportable,
@@ -455,26 +462,27 @@ pub(crate) async fn preview(
             // to how the form first opened.
             let view = UploadView {
                 name: p.name,
-                tags: p.tags,
+                tags: TagField::posted(&p.tag_rows, &BTreeMap::new()),
                 description: p.description,
                 ..UploadView::default()
             };
             let errors = FieldErrors::one("file", too_big_message());
-            return Ok(upload_page(shell, vault, view, errors, None));
+            return Ok(
+                upload_page(Some((&state, &session)), shell, vault, view, errors, None).await,
+            );
         }
         Err(ReadError::Broken) => {
             let errors = FieldErrors::one("file", "The upload didn't come through. Try again.");
-            return Ok(upload_page(shell, vault, view, errors, None));
+            return Ok(
+                upload_page(Some((&state, &session)), shell, vault, view, errors, None).await,
+            );
         }
     }
     let mut errors = FieldErrors::new();
     if let Some(m) = new_name_problem(&p.name) {
         errors.push("name", m);
     }
-    let tags = parse_tags(&p.tags).unwrap_or_else(|m| {
-        errors.push("tags", m);
-        BTreeMap::new()
-    });
+    let tags = tag_rows::check(&p.tag_rows, &BTreeMap::new(), &mut errors);
     let tags = with_note(&tags, &p.description, &mut errors);
     let parsed = if p.too_big {
         errors.push("file", too_big_message());
@@ -495,7 +503,7 @@ pub(crate) async fn preview(
         }
     };
     let (Some(parsed), true) = (parsed, errors.is_empty()) else {
-        return Ok(upload_page(shell, vault, view, errors, None));
+        return Ok(upload_page(Some((&state, &session)), shell, vault, view, errors, None).await);
     };
     // Importing onto an existing name adds a new current version, so show
     // what's there now next to the new file.
@@ -636,7 +644,7 @@ pub(crate) async fn confirm(
     let is_pfx = up.content_type == PFX;
     let view = UploadView {
         name: up.name.clone(),
-        tags: crate::routes::secrets::form::format_tags(&up.tags),
+        tags: TagField::of(&up.tags),
         description: crate::description::of(&up.tags)
             .unwrap_or_default()
             .to_owned(),
@@ -680,7 +688,9 @@ pub(crate) async fn confirm(
                 "Key Vault couldn't read this PEM file. It needs the certificate and an unencrypted PKCS #8 private key that belongs to it. Nothing was uploaded."
             };
             let errors = FieldErrors::one("file", message);
-            Ok(upload_page(shell, vault, view, errors, rejection_message(&e)))
+            Ok(upload_page(
+            Some((&state, &session)),
+            shell, vault, view, errors, rejection_message(&e)).await)
         }
         // An existing live certificate never gives 409 on import. Only a
         // deleted one that can still be recovered does.

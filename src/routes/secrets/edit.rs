@@ -1,5 +1,7 @@
 //! Create a secret, set a new value, edit properties, enable and disable.
 
+use std::collections::BTreeMap;
+
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, Query, State};
@@ -20,6 +22,7 @@ use crate::routes::secrets::form::{self, SecretForm};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::secrets::{api, azure_problem, checked_name, current_vault};
 use crate::routes::shell::Shell;
+use crate::routes::tag_rows::{self, Suggestions, TagField};
 use crate::routes::used_by::{self, UsedBy};
 use crate::routes::vault_ctx::check_csrf;
 use crate::routes::vault_ctx::vault_path;
@@ -40,13 +43,11 @@ pub(crate) struct FormView {
     pub content_type: String,
     pub expires: String,
     pub not_before: String,
-    pub tags: String,
+    /// The tag rows, the tags a row can't show, and the suggestions.
+    pub tags: TagField,
     /// The note in the `description` tag, as typed or as it is.
     pub description: String,
     pub enabled: bool,
-    /// Tags the textarea can't show without changing them. When set, the
-    /// form lists them and keeps them as they are.
-    pub locked_tags: Option<Vec<(String, String)>>,
     /// The version the edit form was opened on, and its `updated` time.
     pub version: String,
     pub updated: String,
@@ -56,16 +57,17 @@ pub(crate) struct FormView {
 }
 
 impl FormView {
-    fn from_form(f: &SecretForm) -> Self {
+    /// The form as posted. `current` is the item's tags, for the ones a
+    /// row can't show.
+    fn from_form(f: &SecretForm, current: &BTreeMap<String, String>) -> Self {
         Self {
             name: f.name.trim().to_owned(),
             content_type: f.content_type.clone(),
             expires: f.expires.clone(),
             not_before: f.not_before.clone(),
-            tags: f.tags.clone(),
+            tags: TagField::posted(&f.tag_rows, current),
             description: f.description.clone(),
             enabled: f.enabled.is_some(),
-            locked_tags: None,
             version: f.version.clone(),
             updated: f.updated.clone(),
             secret_type: f.chosen_type().ok().flatten(),
@@ -92,31 +94,20 @@ impl FormView {
             content_type: item.content_type.clone().unwrap_or_default(),
             expires: a.expires.map(dates::iso_date).unwrap_or_default(),
             not_before: a.not_before.map(dates::iso_date).unwrap_or_default(),
-            tags: form::format_tags(item.tags()),
+            tags: TagField::of(item.tags()),
             description: crate::description::of(item.tags())
                 .unwrap_or_default()
                 .to_owned(),
             enabled: a.is_enabled(),
-            locked_tags: None,
             version: item.version().to_owned(),
             updated: updated_stamp(item),
             secret_type: None,
         }
-        .locking_tags_of(item)
         .typed_as(item)
     }
 
-    /// Lock the tags when the item's can't round-trip through the form.
-    fn locking_tags_of(mut self, item: &SecretItem) -> Self {
-        if !form::tags_editable(item.tags()) {
-            self.tags.clear();
-            self.locked_tags = Some(
-                crate::description::without(item.tags())
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-            );
-        }
+    fn suggesting(mut self, s: Suggestions) -> Self {
+        self.tags.suggest = s;
         self
     }
 }
@@ -280,6 +271,7 @@ pub(crate) struct NewQuery {
 }
 
 pub(crate) async fn new_form(
+    State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path(vault): Path<String>,
@@ -291,7 +283,8 @@ pub(crate) async fn new_form(
         enabled: true,
         secret_type: SecretType::from_slug(&q.kind),
         ..FormView::default()
-    };
+    }
+    .suggesting(tag_rows::for_vault(&state, &session, &vault).await);
     Ok(form_page(
         shell,
         vault,
@@ -322,11 +315,12 @@ pub(crate) async fn create(
             ok
         }
         Err(errors) => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::Create,
-                FormView::from_form(&f),
+                FormView::from_form(&f, &BTreeMap::new()).suggesting(suggest),
                 errors,
                 None,
             ));
@@ -347,11 +341,12 @@ pub(crate) async fn create(
                     "There's already a secret called {name}. Pick another name, or open it and set a new value."
                 ),
             );
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::Create,
-                FormView::from_form(&f),
+                FormView::from_form(&f, &BTreeMap::new()).suggesting(suggest),
                 errors,
                 None,
             ));
@@ -374,11 +369,12 @@ pub(crate) async fn create(
             format!("Created {name}."),
         )),
         Err(AzureError::Status { status: 409, .. }) if is_soft_deleted(&api, &name).await => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             Ok(form_page(
                 shell,
                 vault,
                 Mode::Create,
-                FormView::from_form(&f),
+                FormView::from_form(&f, &BTreeMap::new()).suggesting(suggest),
                 FieldErrors::new(),
                 Some(name),
             ))
@@ -390,19 +386,6 @@ pub(crate) async fn create(
             &vault_path(&vault, "/secrets/-/new"),
         )),
     }
-}
-
-async fn load(
-    state: &AppState,
-    session: &CurrentSession,
-    shell: Shell,
-    vault: &str,
-    name: &str,
-) -> Result<(String, Shell, SecretItem), Halt> {
-    let (vault, shell) = current_vault(session, shell, vault)?;
-    let (name, shell) = checked_name(name, shell)?;
-    let (shell, item) = fetch(state, session, shell, &vault, &name).await?;
-    Ok((vault, shell, item))
 }
 
 /// The current version's properties, refusing a certificate's backing
@@ -439,16 +422,18 @@ pub(crate) async fn value_form(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     // Who used it loads beside the secret, within its own time limit.
-    let (fetched, used_by) = tokio::join!(
+    // So do the tag suggestions.
+    let (fetched, used_by, suggest) = tokio::join!(
         fetch(&state, &session, shell, &vault, &name),
         used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
+        tag_rows::for_vault(&state, &session, &vault),
     );
     let (shell, item) = fetched?;
     Ok(form_page_with(
         shell,
         vault,
         Mode::NewValue,
-        FormView::from_item(&item),
+        FormView::from_item(&item).suggesting(suggest),
         FieldErrors::new(),
         None,
         Some(used_by),
@@ -482,13 +467,14 @@ pub(crate) async fn set_value(
     let body = match form::for_new_value(&f, &item, now_ts()) {
         Ok(b) => b,
         Err(errors) => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::NewValue,
-                FormView::from_form(&f)
-                    .locking_tags_of(&item)
-                    .typed_as(&item),
+                FormView::from_form(&f, item.tags())
+                    .typed_as(&item)
+                    .suggesting(suggest),
                 errors,
                 None,
             ));
@@ -515,12 +501,19 @@ pub(crate) async fn edit_form(
     shell: Shell,
     Path((vault, name)): Path<(String, String)>,
 ) -> PageResult {
-    let (vault, shell, item) = load(&state, &session, shell, &vault, &name).await?;
+    let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let (name, shell) = checked_name(&name, shell)?;
+    // The tag suggestions load beside the secret, within their own limit.
+    let (fetched, suggest) = tokio::join!(
+        fetch(&state, &session, shell, &vault, &name),
+        tag_rows::for_vault(&state, &session, &vault),
+    );
+    let (shell, item) = fetched?;
     Ok(form_page(
         shell,
         vault,
         Mode::Properties,
-        FormView::from_item(&item),
+        FormView::from_item(&item).suggesting(suggest),
         FieldErrors::new(),
         None,
     ))
@@ -547,13 +540,14 @@ pub(crate) async fn update(
     let body = match form::for_update(&f, &item, now_ts()) {
         Ok(b) => b,
         Err(errors) => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
             return Ok(form_page(
                 shell,
                 vault,
                 Mode::Properties,
-                FormView::from_form(&f)
-                    .locking_tags_of(&item)
-                    .typed_as(&item),
+                FormView::from_form(&f, item.tags())
+                    .typed_as(&item)
+                    .suggesting(suggest),
                 errors,
                 None,
             ));

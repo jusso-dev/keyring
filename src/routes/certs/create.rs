@@ -21,8 +21,9 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::{CsrfForm, FieldErrors};
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::{parse_tags, with_note};
+use crate::routes::secrets::form::with_note;
 use crate::routes::shell::Shell;
+use crate::routes::tag_rows::{self, Suggestions, TagField, TagPost};
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
 
 use super::{api, current_vault, new_name_problem};
@@ -159,8 +160,9 @@ pub(crate) struct CreateForm {
     /// `pfx` or `pem`.
     #[serde(default)]
     pub format: String,
-    #[serde(default)]
-    pub tags: String,
+    /// The tag rows.
+    #[serde(flatten)]
+    pub tag_rows: TagPost,
     /// The note, kept in the `description` tag.
     #[serde(default)]
     pub description: String,
@@ -284,10 +286,7 @@ pub(crate) fn build(
             errors.push(field, message);
             Vec::new()
         });
-    let tags = parse_tags(&f.tags).unwrap_or_else(|m| {
-        errors.push("tags", m);
-        Default::default()
-    });
+    let tags = tag_rows::check(&f.tag_rows, &Default::default(), &mut errors);
     let tags = with_note(&tags, &f.description, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
@@ -335,11 +334,16 @@ struct CreatePage {
     issuers: Issuers,
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
+    tags: TagField,
 }
 
 impl CreatePage {
     fn error_for(&self, field: &str) -> Option<&str> {
         self.errors.error_for(field)
+    }
+    /// A problem with the tags, so the options open to show it.
+    fn tags_error(&self) -> bool {
+        self.errors.iter().any(|e| e.field.starts_with("tag"))
     }
     fn key_choices(&self) -> &'static [(&'static str, &'static str)] {
         &KEY_CHOICES
@@ -357,9 +361,10 @@ fn page(
     vault: String,
     form: CreateForm,
     errors: FieldErrors,
-    issuers: Issuers,
+    (issuers, suggest): (Issuers, Suggestions),
     azure_message: Option<String>,
 ) -> axum::response::Response {
+    let tags = TagField::posted(&form.tag_rows, &Default::default()).with(suggest);
     let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
@@ -374,6 +379,7 @@ fn page(
             errors,
             issuers,
             azure_message,
+            tags,
         }),
     )
         .into_response()
@@ -386,7 +392,12 @@ pub(crate) async fn form(
     Path(vault): Path<String>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
-    let issuers = load_issuers(&api(&state, &session, &vault)).await;
+    // The tag suggestions load beside the issuers, within their own limit.
+    let certs = api(&state, &session, &vault);
+    let (issuers, suggest) = tokio::join!(
+        load_issuers(&certs),
+        tag_rows::for_vault(&state, &session, &vault),
+    );
     let defaults = CreateForm {
         validity_months: "12".into(),
         exportable: Some("on".into()),
@@ -401,7 +412,7 @@ pub(crate) async fn form(
         vault,
         defaults,
         FieldErrors::new(),
-        issuers,
+        (issuers, suggest),
         None,
     ))
 }
@@ -422,7 +433,10 @@ pub(crate) async fn create(
             crate::audit::note_item(&ok.0);
             ok
         }
-        Err(errors) => return Ok(page(shell, vault, f, errors, issuers, None)),
+        Err(errors) => {
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            return Ok(page(shell, vault, f, errors, (issuers, suggest), None));
+        }
     };
     // Creating over an existing name adds a version. Refuse, like secrets.
     // Key Vault may answer an unknown name with 404 or with an empty list.
@@ -432,7 +446,8 @@ pub(crate) async fn create(
                 "name",
                 format!("There's already a certificate called {name}. Pick another name."),
             );
-            return Ok(page(shell, vault, f, errors, issuers, None));
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            return Ok(page(shell, vault, f, errors, (issuers, suggest), None));
         }
         Ok(_) | Err(AzureError::Status { status: 404, .. }) => {}
         Err(e) => {
@@ -474,10 +489,21 @@ pub(crate) async fn create(
                     "A deleted certificate called {name} is still being kept. Recover it from deleted certificates, or pick another name."
                 ),
             );
-            Ok(page(shell, vault, f, errors, issuers, None))
+            let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+            Ok(page(shell, vault, f, errors, (issuers, suggest), None))
         }
         Err(e) => match rejection_message(&e) {
-            Some(m) => Ok(page(shell, vault, f, FieldErrors::new(), issuers, Some(m))),
+            Some(m) => {
+                let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+                Ok(page(
+                    shell,
+                    vault,
+                    f,
+                    FieldErrors::new(),
+                    (issuers, suggest),
+                    Some(m),
+                ))
+            }
             None => Err(azure_problem(
                 shell,
                 &e,
