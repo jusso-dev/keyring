@@ -110,6 +110,8 @@ await visit(page, `${vault}/keys`, "keys-list", 900);
 await visit(page, `${vault}/keys/payments-signing`, "key-detail", 650);
 await visit(page, `${vault}/keys/payments-signing/rotation`, "key-rotation");
 await visit(page, "/expiry", "expiry");
+await visit(page, "/expiry/age", "credential-age");
+await visit(page, "/vault-health", "vault-health");
 await visit(page, `${vault}/audit`, "audit");
 await visit(page, `${vault}/secrets/-/deleted`, "deleted", 900);
 await desktop.close();
