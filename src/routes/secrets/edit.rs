@@ -186,6 +186,15 @@ impl FormPage {
         )
     }
 
+    /// The plain Value box's policy line: every plain value counts as a
+    /// password, so a key or connection string is checked too.
+    fn value_policy_help(&self) -> String {
+        format!(
+            "{} Every plain value is checked as a password, so for a key, PEM block or connection string choose its type (SSH private key, API key, Database) or use the Azure CLI.",
+            self.policy_help()
+        )
+    }
+
     /// The help a typed field's `aria-describedby` names, if any.
     fn field_help_ids(&self, f: &Field) -> String {
         let mut ids = Vec::new();

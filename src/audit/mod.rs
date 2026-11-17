@@ -803,6 +803,19 @@ impl ItemEvents {
     }
 }
 
+impl ItemEvents {
+    /// Write one `refused` event for an item Keyring didn't send to Key
+    /// Vault, with the fixed reason code only.
+    pub async fn refused(&self, item: &str, why: Refusal) {
+        let _ = self
+            .run(item, async {
+                refuse(why);
+                Ok::<(), ()>(())
+            })
+            .await;
+    }
+}
+
 /// Middleware, outside everything but the request log: hold a draft for
 /// the request and write its event when the request finishes, if the
 /// request was for an audited action.

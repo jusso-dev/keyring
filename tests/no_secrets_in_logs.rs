@@ -299,6 +299,43 @@ async fn values_never_reach_the_logs() {
         let res = wp.post(path, &post).await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER, "{post:?}");
     }
+    // Set a new value on a Login (pol-f), refused and accepted.
+    let res = wp
+        .post(
+            "/v/kv-test/secrets/pol-f/value",
+            &[("password", "POLLEAKloginpw")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!support::body_text(res).await.contains("POLLEAK"));
+    let res = wp
+        .post(
+            "/v/kv-test/secrets/pol-f/value",
+            &[("password", "POLLEAK-Login-Newer-Value-8")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    // An import with one row the policy refuses and one it accepts.
+    let res = wp
+        .post_multipart(
+            "/v/kv-test/secrets/-/import",
+            &[support::Part::File(
+                "file",
+                ".env",
+                b"POL_IMP_BAD=POLLEAKimp\nPOL_IMP_OK=POLLEAK-Import-Accepted-5\n",
+            )],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    assert!(!html.contains("POLLEAK"));
+    let id = support::hidden_value(&html, "import_id").unwrap();
+    let res = wp
+        .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(!support::body_text(res).await.contains("POLLEAK"));
+    assert!(wp.kv.state.current("POL-IMP-OK").is_some());
+    assert!(wp.kv.state.current("POL-IMP-BAD").is_none());
 
     // Descriptions (#254): the note is a tag, which could hold sensitive
     // context, so it never reaches a log line or an audit event. Create,
@@ -870,7 +907,10 @@ async fn values_never_reach_the_logs() {
     );
     // Password policy: no value, list entry or length; the refusals carry
     // the fixed code only.
-    assert!(!logs.contains("POLLEAK"), "a policy value leaked:\n{logs}");
+    assert!(
+        !logs.to_lowercase().contains("polleak"),
+        "a policy value leaked:\n{logs}"
+    );
     assert!(
         !logs.to_lowercase().contains("trustno1"),
         "a common-list entry leaked:\n{logs}"
@@ -879,14 +919,16 @@ async fn values_never_reach_the_logs() {
         .lines()
         .filter(|l| l.contains("reason_code=password_policy"))
         .collect();
-    assert_eq!(refused.len(), 5, "one per refused save:\n{logs}");
+    assert_eq!(refused.len(), 7, "one per refused save:\n{logs}");
     for l in &refused {
         assert!(
             l.contains("kind=audit") && l.contains("outcome=refused"),
             "{l}"
         );
         assert!(
-            l.contains("action=secret.create") || l.contains("action=secret.set"),
+            l.contains("action=secret.create")
+                || l.contains("action=secret.set")
+                || (l.contains("action=secret.import") && l.contains("item_name=POL-IMP-BAD")),
             "{l}"
         );
         for word in ["length", "common", "upper", "repeat", "characters"] {
@@ -1042,7 +1084,6 @@ async fn values_never_reach_the_logs() {
         "Imp0rtLeak",
         "NOTELEAK",
         "POLLEAK",
-        "rustno1",
         "user-api-token",
         "obo:",
         support::MI_MONITOR_TOKEN,
@@ -1060,6 +1101,13 @@ async fn values_never_reach_the_logs() {
     ] {
         assert!(!json.contains(leak), "{leak} leaked into JSON logs");
     }
+    // In any case: `TrustNo1` was submitted as typed.
+    for leak in ["polleak", "trustno1"] {
+        assert!(
+            !json.to_lowercase().contains(leak),
+            "{leak} leaked into JSON logs"
+        );
+    }
     let lines: Vec<serde_json::Value> = json
         .lines()
         .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("not JSON: {l}")))
@@ -1069,6 +1117,14 @@ async fn values_never_reach_the_logs() {
             .iter()
             .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
         "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.import"
+            && l["item_name"] == "POL-IMP-BAD"
+            && l["outcome"] == "refused"
+            && l["reason_code"] == "password_policy"),
+        "a refused import row is an audit event"
     );
     assert!(
         lines.iter().any(|l| l["kind"] == "audit"

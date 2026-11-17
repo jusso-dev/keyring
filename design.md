@@ -252,7 +252,13 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - With `KEYRING_PASSWORD_POLICY` set, the Password value box and a Login's
   password field get a second field help line, after the usual help, that
   says what the policy asks for and that the Azure CLI and portal don't
-  apply it. A policy error is an ordinary field error on that field.
+  apply it. On the plain Value box it adds that every plain value is
+  checked as a password, and to choose the type that fits for a key, PEM
+  block or connection string. A policy error is an ordinary field error on
+  that field.
+- The import preview says once, above the table, what the policy asks
+  for. A row that misses it is "Can't import" with fixed words that name
+  no rule.
 - Values are hidden in print.
 
 ### Expiry dashboard

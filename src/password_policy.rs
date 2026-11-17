@@ -41,7 +41,8 @@ pub fn common_count() -> usize {
 /// What `KEYRING_PASSWORD_POLICY` asks for. The default asks for nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PasswordPolicy {
-    /// Fewest characters (Unicode scalar values, not bytes).
+    /// Fewest characters (Unicode scalar values, not bytes), not counting
+    /// invisible characters or combining marks.
     pub min: Option<usize>,
     pub upper: bool,
     pub lower: bool,
@@ -65,9 +66,30 @@ fn is_lower(c: char) -> bool {
 fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
-/// Anything that isn't a letter, a number, a space or a control character.
+/// Anything that isn't a letter, a number, a space or a character that
+/// doesn't count (see [`counts`]).
 fn is_symbol(c: char) -> bool {
-    !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
+    counts(c) && !c.is_alphanumeric() && !c.is_whitespace()
+}
+
+/// Unicode general category M (combining marks), such as the accent in a
+/// decomposed `é`. The regex crate is already a dependency, with its
+/// Unicode tables.
+static MARK: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^\p{M}$").expect("a fixed pattern"));
+
+/// Whether a character counts towards `min` and can be a symbol. Control,
+/// format and other invisible characters ([`crate::reason::is_unsafe`]:
+/// zero-width spaces and joiners, the soft hyphen, the byte order mark,
+/// bidi marks, private use) and combining marks don't: they add nothing
+/// anyone can see. A value may still hold them; they just don't meet a
+/// rule.
+fn counts(c: char) -> bool {
+    if crate::reason::is_unsafe(c) {
+        return false;
+    }
+    let mut buf = [0u8; 4];
+    !MARK.is_match(c.encode_utf8(&mut buf))
 }
 
 impl PasswordPolicy {
@@ -111,6 +133,8 @@ impl PasswordPolicy {
             seen.push(key);
             let n = |lo: usize, hi: usize| -> Result<usize, String> {
                 number
+                    // Digits only: Rust's parser would take `+14`.
+                    .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
                     .and_then(|v| v.parse::<usize>().ok())
                     .filter(|n| (lo..=hi).contains(n))
                     .ok_or_else(|| {
@@ -179,7 +203,7 @@ impl PasswordPolicy {
             return None;
         }
         let v = value.expose();
-        let length = v.chars().count();
+        let length = v.chars().filter(|&c| counts(c)).count();
         let mut needs: Vec<String> = Vec::new();
         if let Some(n) = self.min
             && length < n
@@ -300,6 +324,10 @@ mod tests {
             "maxrepeat=3",
             "digits",
             "min=8;upper",
+            "min=+14",
+            "max-repeat=+3",
+            "min=1_4",
+            "min=0x0E",
         ] {
             assert!(
                 PasswordPolicy::parse(bad).is_err(),
@@ -353,6 +381,40 @@ mod tests {
         // A space is not a symbol.
         assert!(check("symbol", "a b").is_some());
         assert_eq!(check("symbol", "a_b"), None);
+    }
+
+    #[test]
+    fn invisible_characters_and_marks_meet_no_rule() {
+        let policy = "min=14,upper,lower,digit,symbol";
+        // Looks like `Password1`: five zero-width characters don't make
+        // it 14 long or give it a symbol.
+        let padded = "Password1\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}";
+        assert_eq!(
+            check(policy, padded).as_deref(),
+            Some("Password needs at least 14 characters and a symbol, such as ! # or %.")
+        );
+        for c in [
+            '\u{200B}', '\u{200C}', '\u{200D}', '\u{2060}', '\u{FEFF}', '\u{00AD}',
+        ] {
+            assert!(!is_symbol(c), "{c:?}");
+            assert!(check("symbol", &format!("ab{c}")).is_some(), "{c:?}");
+            assert!(check("min=3", &format!("ab{c}")).is_some(), "{c:?}");
+        }
+        // Combining marks: not a symbol, and not counted. A decomposed
+        // `é` (e and U+0301) is one character, as is the composed one.
+        for c in ['\u{0301}', '\u{0308}', '\u{20DD}', '\u{0903}'] {
+            assert!(!is_symbol(c), "{c:?}");
+        }
+        assert!(check("symbol", "abc\u{0301}\u{0301}").is_some());
+        assert_eq!(check("min=3", "cafe\u{0301}"), None);
+        assert!(check("min=5", "cafe\u{0301}").is_some());
+        assert!(check("min=5", "caf\u{e9}\u{0301}\u{0301}\u{0301}").is_some());
+        // Still allowed in a value: they just don't meet a rule.
+        assert_eq!(check(policy, "Password1!-long\u{200B}"), None);
+        // Visible symbols still count.
+        for c in ['!', '_', '\u{00BF}', '\u{20AC}', '\u{1F511}'] {
+            assert!(is_symbol(c), "{c:?}");
+        }
     }
 
     #[test]

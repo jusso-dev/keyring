@@ -1,5 +1,6 @@
-//! `KEYRING_PASSWORD_POLICY`: checked on every route that saves a typed
-//! password into a Password or Login secret, and nowhere else.
+//! `KEYRING_PASSWORD_POLICY`: checked on every route that saves a new
+//! value into a Password or Login secret (create, Set a new value and
+//! import), and not on copy or rollback.
 
 mod support;
 
@@ -37,12 +38,17 @@ async fn the_form_says_what_the_policy_asks_for_before_typing() {
         )
     );
     assert!(html.contains("The Azure CLI and portal don&#39;t apply it."));
+    assert!(html.contains("Every plain value is checked as a password, so for a key, PEM block or connection string choose its type"));
     assert!(html.contains(r#"name="value" rows="3" required minlength="14""#));
     assert!(html.contains(r#"aria-describedby="value-help value-policy""#));
 
     // Login: on the password field only.
     let (_, html) = w.page("/v/kv-test/secrets/-/new?type=login").await;
     assert!(html.contains(r#"id="password-policy""#));
+    assert!(
+        !html.contains("Every plain value"),
+        "the Login password isn't plain"
+    );
     assert!(html.contains(r#"name="password" type="password" minlength="14""#));
     assert!(html.contains(r#"aria-describedby="password-policy""#));
     assert_eq!(html.matches("minlength=").count(), 1);
@@ -324,24 +330,134 @@ async fn edit_details_cant_turn_a_secret_into_a_login() {
     }
 }
 
-#[tokio::test]
-async fn import_copy_and_rollback_are_not_typed_values() {
-    let w = policy_world().await;
-    // Import: values in a file are stored as written.
+/// Preview a file, then import it. The preview's HTML and the results'.
+async fn import(w: &support::World, file_name: &str, file: &[u8]) -> (String, String) {
     let res = w
         .post_multipart(
             "/v/kv-test/secrets/-/import",
-            &[Part::File("file", ".env", b"WEAK=password\n")],
+            &[Part::File("file", file_name, file)],
         )
         .await;
-    let html = body_text(res).await;
-    let id = hidden_value(&html, "import_id").expect("preview");
+    let preview = body_text(res).await;
+    let Some(id) = hidden_value(&preview, "import_id") else {
+        return (preview, String::new());
+    };
     let res = w
         .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
         .await;
     assert_eq!(res.status(), StatusCode::OK);
-    assert_eq!(w.kv.state.current("WEAK").unwrap().value, "password");
+    (preview, body_text(res).await)
+}
 
+const POLICY_ROW: &str = "Its value doesn&#39;t meet Keyring&#39;s password policy.";
+const LOGIN_CT: &str = "application/vnd.keyring.login+json;v=1";
+
+#[tokio::test]
+async fn import_checks_each_value_against_the_policy() {
+    let w = policy_world().await;
+    // (a) An existing Password can't get a weak new version from a file.
+    w.kv.state.put("db-password", GOOD);
+    let (preview, results) = import(&w, ".env", b"db-password=password\n").await;
+    assert!(preview.contains(POLICY_ROW), "{preview}");
+    assert!(
+        preview.contains("Keyring's password policy: at least 14 characters"),
+        "said once above the table: {preview}"
+    );
+    assert_eq!(preview.matches("password policy:").count(), 1);
+    assert!(preview.contains("Nothing in this file can be imported"));
+    assert!(results.is_empty(), "nothing to confirm");
+    assert_eq!(w.kv.state.version_count("db-password"), 1);
+    assert_eq!(w.kv.state.current("db-password").unwrap().value, GOOD);
+
+    // A mixed file: good rows are written, bad ones skipped and named.
+    let file =
+        format!("GOOD_ONE={GOOD}\nWEAK=password\nREPEATS={REPEATS}\nGOOD_TWO=Another-G00d-Value\n");
+    let (preview, results) = import(&w, ".env", file.as_bytes()).await;
+    assert_eq!(preview.matches(POLICY_ROW).count(), 2, "{preview}");
+    // The problem names no rule and nothing about the value.
+    for word in ["characters", "repeat", "in a row", "common", "upper"] {
+        assert!(!preview.contains(&format!("{word}.</p>")), "{word}");
+    }
+    assert!(!preview.contains(REPEATS) && !preview.contains(GOOD));
+    assert!(results.contains("Imported 2 secrets"), "{results}");
+    assert_eq!(results.matches(POLICY_ROW).count(), 2, "{results}");
+    assert_eq!(w.kv.state.current("GOOD-ONE").unwrap().value, GOOD);
+    assert!(w.kv.state.current("GOOD-TWO").is_some());
+    assert!(w.kv.state.current("WEAK").is_none());
+    assert!(w.kv.state.current("REPEATS").is_none());
+
+    // A row that meets the policy is written, as a new version too.
+    let (_, results) = import(&w, ".env", b"db-password=Corr3ct-Horse-Battery-2\n").await;
+    assert!(results.contains("Imported 1 secret"), "{results}");
+    assert_eq!(w.kv.state.version_count("db-password"), 2);
+}
+
+#[tokio::test]
+async fn import_never_makes_a_typed_secret() {
+    // With a policy and without: a Keyring content type is never imported.
+    for w in [policy_world().await, support::world().await] {
+        // (b) A Login made from a CSV row, or a Password turned into one.
+        w.kv.state.put("existing", GOOD);
+        let login = r#""{""username"":""a"",""password"":""password""}""#;
+        let file = format!(
+            "name,value,content_type\nnew-login,{login},{LOGIN_CT}\nexisting,{login},{LOGIN_CT}\ndb,x,application/vnd.keyring.database+json;v=1\nfuture,x,application/vnd.keyring.other+json;v=9\n"
+        );
+        let (preview, results) = import(&w, "s.csv", file.as_bytes()).await;
+        assert_eq!(
+            preview
+                .matches("Typed secrets are made on the Create form")
+                .count(),
+            4,
+            "{preview}"
+        );
+        assert!(results.is_empty(), "nothing to confirm");
+        assert!(w.kv.state.current("new-login").is_none());
+        assert!(w.kv.state.current("db").is_none());
+        let existing = w.kv.state.current("existing").unwrap();
+        assert_eq!(existing.content_type, None);
+        assert_eq!(w.kv.state.version_count("existing"), 1);
+    }
+}
+
+#[tokio::test]
+async fn import_over_a_typed_secret_writes_a_checked_plain_secret() {
+    // Import treats a name in the vault the way it always has: the file's
+    // value and content type make the new version. Over a Login, that is
+    // a plain secret (a Password), so the policy applies, and it can never
+    // be a Login holding a password Keyring didn't check.
+    let w = policy_world().await;
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/new",
+            &[
+                ("name", "site"),
+                ("secret_type", "login"),
+                ("username", "a"),
+                ("password", GOOD),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let (preview, _) = import(&w, ".env", b"site=password\n").await;
+    assert!(preview.contains(POLICY_ROW), "{preview}");
+    assert_eq!(w.kv.state.version_count("site"), 1);
+    assert_eq!(
+        w.kv.state.current("site").unwrap().content_type.as_deref(),
+        Some(LOGIN_CT)
+    );
+
+    let (_, results) = import(&w, ".env", b"site=Corr3ct-Horse-Battery-3\n").await;
+    assert!(results.contains("Imported 1 secret"), "{results}");
+    let now = w.kv.state.current("site").unwrap();
+    assert_eq!(now.content_type, None, "a plain secret now");
+    assert_eq!(now.value, "Corr3ct-Horse-Battery-3");
+    let html = body_text(w.post("/v/kv-test/secrets/site/reveal", &[]).await).await;
+    assert!(!html.contains("Username"), "shown as a Password: {html}");
+}
+
+#[tokio::test]
+async fn copy_and_rollback_are_not_typed_values() {
+    let w = policy_world().await;
     // Rollback restores an old value as it was.
     let v1 = w.kv.state.put("rolled", "password");
     w.kv.state.put("rolled", GOOD);
@@ -373,13 +489,16 @@ async fn a_generated_default_password_passes_a_typical_policy() {
     let html = body_text(res).await;
     let start = html.find("data-secret-value>").unwrap() + "data-secret-value>".len();
     let end = start + html[start..].find("</textarea>").unwrap();
+    // Askama writes numeric entities (`&#60;`, `&#62;`, `&#38;`, `&#34;`,
+    // `&#39;`). `&#38;` last, so `&` followed by `#60;` stays as typed.
     let value = html[start..end]
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
+        .replace("&#60;", "<")
+        .replace("&#62;", ">")
         .replace("&#34;", "\"")
-        .replace("&#39;", "'");
+        .replace("&#39;", "'")
+        .replace("&#38;", "&");
     let value = value.trim_start_matches('\n');
+    assert_eq!(value.chars().count(), 24, "the real generated value");
     let res = w
         .post(
             "/v/kv-test/secrets/-/new",
