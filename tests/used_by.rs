@@ -302,6 +302,24 @@ async fn a_partial_answer_from_log_analytics_says_so() {
     assert!(p.contains("No secret reads found in the logs Keyring could read"));
     assert!(!p.contains(EMPTY));
     assert_no_assurance(p);
+
+    // Cut short before the vault's count row: the callers still show.
+    *w.arm.state.used_by_no_summary.lock().unwrap() = true;
+    w.kv.state.put("db-password", "v");
+    let (_, html) = w.page("/v/kv-test/secrets/db-password/delete").await;
+    let p = panel(&html);
+    assert!(p.contains("alex@example.com"));
+    assert!(!p.contains(NOT_ARRIVED));
+    assert!(p.contains("Log Analytics returned only part of the answer"));
+
+    // A partial answer with nothing from the vault keeps its note.
+    setup(&w, true, Vec::new());
+    *w.arm.state.used_by_no_summary.lock().unwrap() = false;
+    let (_, html) = w.page("/v/kv-test/secrets/quiet/delete").await;
+    let p = panel(&html);
+    assert!(p.contains(NOT_ARRIVED));
+    assert!(p.contains("Log Analytics returned only part of the answer"));
+    assert_no_assurance(p);
 }
 
 #[tokio::test]
@@ -340,7 +358,7 @@ async fn a_forbidden_workspace_says_why_and_the_change_still_goes_ahead() {
     assert!(p.contains("You don&#39;t have access to the Log Analytics workspace"));
     assert!(p.contains("You can still go ahead."));
     assert!(p.contains("Log Analytics Reader"));
-    assert!(p.contains(LIMITS));
+    assert_coverage(p, 0, 1);
     assert_no_assurance(p);
     // The form posts as normal.
     let res = w

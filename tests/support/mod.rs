@@ -589,6 +589,9 @@ pub(crate) struct ArmState {
     pub audit_fail_workspace: Mutex<Vec<(String, u16)>>,
     /// Answer "used by" queries with Log Analytics' `PartialError`.
     pub used_by_partial: Mutex<bool>,
+    /// With `used_by_partial`, also leave out the vault's count row, as a
+    /// cut-short answer can.
+    pub used_by_no_summary: Mutex<bool>,
     /// KQL queries received.
     pub audit_queries: Mutex<Vec<String>>,
     /// The path of each Log Analytics query, which names the workspace.
@@ -1083,6 +1086,7 @@ pub(crate) async fn start_arm() -> MockArm {
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
         used_by_partial: Mutex::new(false),
+        used_by_no_summary: Mutex::new(false),
         audit_queries: Mutex::new(Vec::new()),
         audit_paths: Mutex::new(Vec::new()),
         diagnostics_for: Mutex::new(Vec::new()),
@@ -1267,6 +1271,9 @@ async fn arm_fallback(
             let mut answer = answer_used_by(&query, &events);
             if *s.used_by_partial.lock().unwrap() {
                 answer["error"] = json!({"code": "PartialError", "message": "x"});
+                if *s.used_by_no_summary.lock().unwrap() {
+                    answer["tables"][0]["rows"].as_array_mut().unwrap().pop();
+                }
             }
             return json_response(StatusCode::OK, answer);
         }

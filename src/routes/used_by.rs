@@ -311,6 +311,11 @@ async fn read(
             }
         }
     }
+    // Coverage stays on the panel whatever happens next.
+    let mut panel = panel;
+    let m = workspaces.len();
+    panel.workspaces = m;
+    panel.answered = answers.len() + missing;
     if denied == workspaces.len() {
         return panel.unavailable(
             "You don't have access to the Log Analytics workspace this vault logs to, so Keyring can't tell who used it.",
@@ -323,17 +328,18 @@ async fn read(
     {
         return failed(panel, &e);
     }
-    let mut panel = panel;
-    let m = workspaces.len();
-    panel.workspaces = m;
-    panel.answered = answers.len() + missing;
     panel.newest = answers
         .iter()
         .map(|a| a.newest.as_str())
         .max()
         .unwrap_or_default()
         .to_owned();
-    let with_events = answers.iter().filter(|a| a.vault_events > 0).count();
+    // A partial answer may carry callers but not the vault's count row:
+    // callers are events from the vault too.
+    let with_events = answers
+        .iter()
+        .filter(|a| a.vault_events > 0 || !a.callers.is_empty())
+        .count();
     let quiet = panel.answered - with_events;
     let incomplete = answers.iter().any(|a| a.incomplete);
     let unread = denied + failed_count;
@@ -347,6 +353,12 @@ async fn read(
             of(unread)
         ));
     }
+    if incomplete {
+        panel.notes.push(
+            "Log Analytics returned only part of the answer, so some callers may be missing."
+                .to_owned(),
+        );
+    }
     if with_events == 0 {
         // Nothing from the vault at all: the history is unknown, not empty.
         let why = fill(panel.noun, NOT_ARRIVED);
@@ -357,12 +369,6 @@ async fn read(
             "{} had no events from this vault for this period, so its callers, if any, aren't shown.",
             of(quiet)
         ));
-    }
-    if incomplete {
-        panel.notes.push(
-            "Log Analytics returned only part of the answer, so some callers may be missing."
-                .to_owned(),
-        );
     }
     if !panel.notes.is_empty() {
         panel.empty = fill(panel.noun, EMPTY_PARTIAL);
