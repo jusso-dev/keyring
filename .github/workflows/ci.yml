@@ -148,7 +148,7 @@ jobs:
           done
           # Copy each example the way the docs say (next to its template,
           # as main.bicepparam or access.bicepparam), so a broken `using`
-          # path fails here.
+          # path fails here. This covers infra/alerts and infra/sentinel.
           for f in */*.example.bicepparam; do
             copy="${f%.example.bicepparam}.bicepparam"
             cp "$f" "$copy"
@@ -162,6 +162,19 @@ jobs:
             { sed -e '/^param auditWorkspaceId/d' -e '/^param auditRequired/d' "$t/main.example.bicepparam"
               echo "param auditWorkspaceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sentinel/providers/Microsoft.OperationalInsights/workspaces/law-sentinel'"
               echo "param auditRequired = true"
+            } > "$p"
+            az bicep build-params --file "$p" --stdout > /dev/null || status=1
+            rm "$p"
+          done
+          # Sentinel with every rule on and Keyring's address given, so the
+          # two rules left out without one are built too, on both tables.
+          for table in AzureDiagnostics AZKVAuditLogs; do
+            p="sentinel/all-ci.bicepparam"
+            { sed -e '/^param enable/d' -e '/^param keyVaultTable/d' sentinel/main.example.bicepparam
+              for e in $(sed -n 's/^param \(enable[A-Za-z]*\) bool.*/\1/p' sentinel/main.bicep); do
+                echo "param $e = true"
+              done
+              echo "param keyVaultTable = '$table'"
             } > "$p"
             az bicep build-params --file "$p" --stdout > /dev/null || status=1
             rm "$p"

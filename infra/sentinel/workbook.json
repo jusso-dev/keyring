@@ -1,0 +1,161 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "intro",
+      "content": {
+        "json": "## Keyring audit\nKeyring's own audit events from `KeyringAudit_CL`: what people did through Keyring, including what Keyring refused and Azure denied. Key Vault's own log is separate. No row holds a secret value. Times are UTC."
+      }
+    },
+    {
+      "type": 9,
+      "name": "parameters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "crossComponentResources": [],
+        "parameters": [
+          {
+            "id": "7b1f4c0e-1d2a-4c55-9a0c-000000000001",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 604800000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "7b1f4c0e-1d2a-4c55-9a0c-000000000002",
+            "version": "KqlParameterItem/1.0",
+            "name": "Person",
+            "label": "Person (sign-in name or object ID, for the drill-down)",
+            "type": 1,
+            "value": ""
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      }
+    },
+    {
+      "type": 3,
+      "name": "reveals-over-time",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| where Action in (\"secret.reveal\", \"certificate.download_private_key\")\n| summarize Count = count() by bin(TimeGenerated, 1h), Outcome\n| render timechart",
+        "size": 0,
+        "title": "Secret reveals and private key downloads over time",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      }
+    },
+    {
+      "type": 3,
+      "name": "top-people",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| where Action in (\"secret.reveal\", \"certificate.download_private_key\") and Outcome == \"success\"\n| summarize Reveals = count(), Vaults = dcount(Vault), LastTime = max(TimeGenerated) by ActorUpn, ActorObjectId\n| top 20 by Reveals",
+        "size": 0,
+        "title": "Top people by reveals",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "top-vaults",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| where isnotempty(Vault)\n| summarize Events = count(), Reveals = countif(Action in (\"secret.reveal\", \"certificate.download_private_key\")), People = dcount(ActorObjectId) by Vault\n| top 20 by Events",
+        "size": 0,
+        "title": "Top vaults by activity",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "denied-refused",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| where Outcome in (\"denied\", \"refused\")\n| summarize Count = count(), LastTime = max(TimeGenerated), Addresses = make_set(ClientIp, 5) by Outcome, ReasonCode, Action, ActorUpn\n| order by Count desc",
+        "size": 0,
+        "title": "Denied by Azure and refused by Keyring",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "sink-health",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| make-series Events = count() default = 0 on TimeGenerated from {TimeRange:start} to {TimeRange:end} step 1h by KeyringInstance\n| render timechart",
+        "size": 0,
+        "title": "Audit sink health: events per hour by Keyring instance. A gap while Keyring was in use means the sink stopped. /healthz/audit has the live state",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      }
+    },
+    {
+      "type": 3,
+      "name": "sink-writers",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "KeyringAudit_CL\n| summarize Events = count(), FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), SchemaVersions = make_set(SchemaVersion) by KeyringInstance, KeyringVersion, WriterIdentityClientId\n| extend SinceLast = now() - LastTime\n| order by LastTime desc",
+        "size": 0,
+        "title": "Writers: each Keyring instance, version and identity, and when it last wrote",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "person",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let who = \"{Person:escape}\";\nKeyringAudit_CL\n| where isnotempty(who) and (ActorUpn contains who or ActorObjectId =~ who)\n| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, Reason, Ticket\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "One person's activity (set Person above)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

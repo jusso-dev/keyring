@@ -28,6 +28,10 @@ pub struct Config {
     /// `KEYRING_AUDIT_REQUIRED`: refuse reveals and private key downloads
     /// while the audit sink is degraded.
     pub audit_required: bool,
+    /// `KEYRING_AUDIT_WORKSPACE_ID`: the ARM resource ID of the Log
+    /// Analytics workspace holding `KeyringAudit_CL`. When set, the audit
+    /// page gains a Keyring activity view, read as the signed-in person.
+    pub audit_workspace_id: Option<String>,
     /// Set from `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` alone.
     legacy_identity_setting: bool,
     /// Public base URL with no trailing slash, for example `https://keyring.example.com`.
@@ -258,6 +262,10 @@ impl Config {
             });
         }
 
+        let audit_workspace_id = get("KEYRING_AUDIT_WORKSPACE_ID")
+            .map(|v| checked_workspace_id(&v))
+            .transpose()?;
+
         let base_url = checked_origin("APP_BASE_URL", &take("APP_BASE_URL"))?;
         let authority_host = checked_origin(
             "ENTRA_AUTHORITY_HOST",
@@ -390,6 +398,7 @@ impl Config {
             managed_identity,
             audit_sink,
             audit_required,
+            audit_workspace_id,
             legacy_identity_setting: identity_name == Some(LEGACY_IDENTITY_VAR),
             base_url,
             session_secret: Secret::new(session_secret),
@@ -584,6 +593,28 @@ fn audit_sink(
         stream,
         tuning: crate::audit::sink::Tuning::default(),
     }))
+}
+
+/// Check `KEYRING_AUDIT_WORKSPACE_ID` is a Log Analytics workspace's ARM
+/// resource ID that is safe to put in a query URL, and return it trimmed.
+fn checked_workspace_id(raw: &str) -> Result<String, ConfigError> {
+    let id = raw.trim().trim_end_matches('/');
+    let parts: Vec<&str> = id.split('/').collect();
+    let shape = parts.len() == 9
+        && parts[0].is_empty()
+        && parts[1].eq_ignore_ascii_case("subscriptions")
+        && parts[3].eq_ignore_ascii_case("resourceGroups")
+        && parts[5].eq_ignore_ascii_case("providers")
+        && parts[6].eq_ignore_ascii_case("Microsoft.OperationalInsights")
+        && parts[7].eq_ignore_ascii_case("workspaces")
+        && parts.iter().skip(1).all(|p| !p.is_empty());
+    if !shape || !crate::azure::audit::is_safe_resource_id(id) {
+        return Err(ConfigError::Invalid {
+            name: "KEYRING_AUDIT_WORKSPACE_ID",
+            reason: "expected the workspace's resource ID, /subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.OperationalInsights/workspaces/<name>".into(),
+        });
+    }
+    Ok(id.to_owned())
 }
 
 /// Check the logs ingestion endpoint is `https://` on a host under
@@ -1270,6 +1301,32 @@ pub(crate) mod tests {
         );
         assert!(!config.audit_required);
         assert!(load(&new_identity_env()).unwrap().audit_sink.is_none());
+    }
+
+    #[test]
+    fn the_audit_workspace_is_checked_at_start() {
+        let ws = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sentinel/providers/Microsoft.OperationalInsights/workspaces/law-sentinel";
+        let mut env = new_identity_env();
+        assert!(load(&env).unwrap().audit_workspace_id.is_none());
+        env.insert("KEYRING_AUDIT_WORKSPACE_ID", format!(" {ws}/ "));
+        assert_eq!(load(&env).unwrap().audit_workspace_id.as_deref(), Some(ws));
+        for bad in [
+            "law-sentinel",
+            "00000000-0000-0000-0000-000000000000",
+            "/subscriptions/s/resourceGroups/r/providers/Microsoft.KeyVault/vaults/kv",
+            "/subscriptions/s/resourceGroups/r/providers/Microsoft.OperationalInsights/workspaces/w/tables/t",
+            "/subscriptions/s/resourceGroups/r/providers/Microsoft.OperationalInsights/workspaces/w?x=1",
+            "/subscriptions/s/resourceGroups/../providers/Microsoft.OperationalInsights/workspaces/w",
+            "https://api.loganalytics.io/v1/workspaces/w",
+        ] {
+            env.insert("KEYRING_AUDIT_WORKSPACE_ID", bad.into());
+            match load(&env) {
+                Err(ConfigError::Invalid { name, .. }) => {
+                    assert_eq!(name, "KEYRING_AUDIT_WORKSPACE_ID", "{bad}")
+                }
+                other => panic!("{bad}: {other:?}"),
+            }
+        }
     }
 
     #[test]

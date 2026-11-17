@@ -1,0 +1,8 @@
+// What Keyring refused, or Azure denied, counted by person, vault and reason.
+let who = "";
+KeyringAudit_CL
+| where Outcome in ("refused", "denied")
+| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who
+| summarize Count = count(), LastTime = max(TimeGenerated), Actions = make_set(Action, 10), Addresses = make_set(ClientIp, 10)
+    by ActorObjectId, ActorUpn, Vault, Outcome, ReasonCode
+| order by Count desc

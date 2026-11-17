@@ -6,6 +6,7 @@ pub mod assets;
 mod audit;
 mod audit_across;
 pub(crate) mod audit_gate;
+mod audit_keyring;
 mod auth;
 pub(crate) mod batch;
 mod bulk;
@@ -313,6 +314,7 @@ fn vault_routes() -> Router<AppState> {
         )
         .route("/audit", get(audit::page))
         .route("/audit.csv", get(audit::csv))
+        .route("/audit/keyring", get(audit_keyring::page))
         .route("/access", get(access::page))
         .route("/access.csv", get(access::csv))
         // A change to a vault drops the list search keeps for it.

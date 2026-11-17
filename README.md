@@ -294,6 +294,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_AUDIT_DCR_ID` | Optional. The rule's immutable ID, `dcr-` and 32 hexadecimal digits |
 | `KEYRING_AUDIT_STREAM` | Optional. The rule's stream. Defaults to `Custom-KeyringAudit_CL` |
 | `KEYRING_AUDIT_REQUIRED` | Optional. `true` to refuse reveals and private key downloads while the audit sink has been failing for over a minute. Off by default. Needs the audit sink |
+| `KEYRING_AUDIT_WORKSPACE_ID` | Optional. The resource ID of the Log Analytics workspace that holds `KeyringAudit_CL`, `/subscriptions/<id>/resourceGroups/<group>/providers/Microsoft.OperationalInsights/workspaces/<name>`. Each vault's audit page then gains a **Keyring activity** view of that table, read as the signed-in person: they need Log Analytics Reader on the workspace. Checked at start. The templates set it from `auditWorkspaceId`. See [Keyring activity](docs/deploy.md#keyring-activity) |
 | `APP_BASE_URL` | Public URL of this app, used for redirects and to check that form posts come from Keyring. Must be `https://` except for `http://localhost`. Scheme, host and port only: Keyring must be at the root of its host, not under a path like `/keyring` |
 | `SESSION_SECRET` | At least 32 random characters, used to encrypt short-lived cookies. Generate one with `openssl rand -base64 48`. Keyring won't start if it's shorter, still the `replace-me` placeholder, or an unresolved Key Vault reference. See [Rotating secrets](docs/deploy.md#rotating-secrets) |
 | `ENTRA_API_SCOPE` | Optional. Defaults to `api://<client ID>/access_as_user` |
@@ -426,6 +427,7 @@ Bicep templates for App Service and Container Apps are in `infra/`, with optiona
 - [docs/deploy.md](docs/deploy.md): step-by-step deployment
 - [docs/private-vaults.md](docs/private-vaults.md): reaching vaults that only accept private traffic
 - [docs/alerts.md](docs/alerts.md): optional expiry emails with Event Grid, and emails when a watched secret is read, something is purged or a caller is refused again and again
+- [docs/sentinel.md](docs/sentinel.md): optional Microsoft Sentinel content for Keyring's own audit table: an ASIM parser, analytic rules (all off until you turn them on), hunting queries and a workbook
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
 - [docs/real-vault-checklist.md](docs/real-vault-checklist.md): what to check on the first run against a real tenant and vault
 

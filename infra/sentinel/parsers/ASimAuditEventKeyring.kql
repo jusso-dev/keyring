@@ -1,0 +1,3 @@
+// The parameter-less ASIM Audit Event parser for Keyring: every row of
+// vimAuditEventKeyring, unfiltered. Deployed as ASimAuditEventKeyring.
+vimAuditEventKeyring()
