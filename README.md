@@ -179,7 +179,7 @@ A `keyring-reveal` tag on a sensitive secret or certificate limits what Keyring 
 
 | Value | Secret | Certificate |
 | --- | --- | --- |
-| `copy-only` | No Show value: **Copy value** puts it on your clipboard, cleared after 30 seconds, without showing it on screen. Copy to another vault still works, and the copy keeps the limit | The private key can't be downloaded (a file has no clipboard to clear), the same as `none` |
+| `copy-only` | No Show value: **Copy value** puts it on your clipboard without showing it on screen, and Keyring tries to clear the clipboard after 30 seconds (a browser can refuse, for example in a background tab). It keeps the value off a screen someone else can see (over a shoulder, a shared or recorded screen); it doesn't stop the signed-in person, who can paste it. Copy to another vault still works, and the copy keeps the limit | The private key can't be downloaded (a file has no clipboard to clear), the same as `none` |
 | `none` | Keyring refuses to show it, copy it, or copy it to another vault, and says to use the app's own identity or the Azure CLI | The private key can't be downloaded. The public certificate can |
 | anything else, or the name in another case | Treated as `none`, shown as it is with a note, and kept until someone changes it. An unknown value never means "no limit" | Same |
 

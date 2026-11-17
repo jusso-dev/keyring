@@ -165,7 +165,7 @@
     <option value="none"{% if r.is("none") %} selected{% endif %}>No reveal</option>
   </select>
   {% include "_field_error.html" %}
-  {%- if shell.asks_reason_to_reveal() && !shell.asks_reason_to_change() && !r.is("") %}
+  {%- if shell.asks_reason_to_reveal() && !shell.asks_reason_to_change() && r.limited %}
   <p class="field-help">If you loosen the limit, give a reason. Otherwise leave it empty.</p>
   {% call reason_fields("") %}{% endcall %}
   {%- endif %}

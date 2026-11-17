@@ -263,7 +263,7 @@ pub(crate) async fn reveal(
     if limit.refuses_reveal() || bundle.item.managed.unwrap_or(false) {
         drop(bundle);
         if limit.refuses_reveal() {
-            return Err(crate::routes::reveal_limit::refused(
+            return Err(crate::routes::reveal_limit::refused_after_read(
                 shell, &vault, "secret", &path,
             ));
         }

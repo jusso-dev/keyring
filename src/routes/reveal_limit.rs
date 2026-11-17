@@ -38,6 +38,27 @@ pub(crate) const HINT: &str = "This is a Keyring control, like step-up. The Azur
 /// The page for a refused reveal, copy or private key download. Writes the
 /// request's one audit event as `refused` with `reveal_limited`.
 pub(crate) fn refused(shell: Shell, vault: &str, noun: &'static str, item_url: &str) -> Halt {
+    refused_page(shell, vault, noun, item_url, false)
+}
+
+/// [`refused`] for the second check, after the value came back from Key
+/// Vault with a limit set in between. The page says it was read and not
+/// shown, since Key Vault's own log has the read.
+pub(crate) fn refused_after_read(
+    shell: Shell,
+    vault: &str,
+    noun: &'static str,
+    item_url: &str,
+) -> Halt {
+    refused_page(shell, vault, noun, item_url, true)
+}
+
+fn refused_page(shell: Shell, vault: &str, noun: &'static str, item_url: &str, read: bool) -> Halt {
+    let last = if read {
+        "The limit was set while Keyring was reading it: Keyring read it from Key Vault, which Key Vault's log shows, and didn't show or keep it."
+    } else {
+        "Nothing was read."
+    };
     crate::audit::refuse(Refusal::RevealLimited);
     crate::routes::secrets::reveal::no_store(
         axum::response::IntoResponse::into_response(PageError::new(
@@ -46,7 +67,7 @@ pub(crate) fn refused(shell: Shell, vault: &str, noun: &'static str, item_url: &
                 StatusCode::FORBIDDEN,
                 "Not shown in Keyring",
                 format!(
-                    "This {noun} in {vault} is set not to be shown, copied or downloaded in Keyring, by its keyring-reveal tag. Apps should read it with their own identity. If you need it yourself, use the Azure CLI with your own access. Nothing was read."
+                    "This {noun} in {vault} is set not to be shown, copied or downloaded in Keyring, by its keyring-reveal tag. Apps should read it with their own identity. If you need it yourself, use the Azure CLI with your own access. {last}"
                 ),
             )
             .with_hint(HINT)
@@ -74,14 +95,21 @@ pub(crate) async fn of_secret(
 /// The strictest of the current version's limit and `version`'s. A
 /// version not in the list counts as the current one only.
 pub(crate) fn of_versions(items: &[SecretItem], version: Option<&str>) -> Limit {
-    let current = items.first().map(SecretItem::tags);
+    // Every version made in the newest second counts as current: Key
+    // Vault's `created` is in whole seconds, so the order of two made in
+    // the same second isn't known.
+    let newest = items.first().map(|i| i.attributes.created);
+    let current = items
+        .iter()
+        .take_while(|i| Some(i.attributes.created) == newest)
+        .map(SecretItem::tags);
     let asked = version.and_then(|v| {
         items
             .iter()
             .find(|i| i.version().eq_ignore_ascii_case(v))
             .map(SecretItem::tags)
     });
-    reveal_limit::strictest(current.into_iter().chain(asked))
+    reveal_limit::strictest(current.chain(asked))
 }
 
 /// The limit on a certificate, from its current version's tags.

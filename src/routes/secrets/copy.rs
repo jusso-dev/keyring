@@ -697,7 +697,7 @@ async fn apply_inner(
     }
     if crate::reveal_limit::of(bundle.item.tags()).refuses_reveal() {
         drop(bundle);
-        return Err(crate::routes::reveal_limit::refused(
+        return Err(crate::routes::reveal_limit::refused_after_read(
             shell,
             &vault,
             "secret",

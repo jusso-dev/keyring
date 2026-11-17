@@ -625,7 +625,13 @@ pub(crate) async fn confirm(
                 // A written row replaces the secret's tags. Its reveal limit
                 // is read again just before the write (properties only) and
                 // carried, so an import can't clear `keyring-reveal`.
-                let current = api.versions(&row.name).await?;
+                // Key Vault may answer an unknown name with 404 or with
+                // an empty list: either way the name is free.
+                let current = match api.versions(&row.name).await {
+                    Ok(c) => c,
+                    Err(AzureError::Status { status: 404, .. }) => Vec::new(),
+                    Err(e) => return Err(e),
+                };
                 let tags = match current.first() {
                     Some(c) => crate::reveal_limit::carry(&row.tags, c.tags()),
                     None => row.tags,

@@ -328,7 +328,7 @@ pub(crate) async fn pfx(
         Ok(l) if !l.refuses_download() && !limit.refuses_download() => {}
         Ok(_) => {
             drop(secret);
-            return Err(crate::routes::reveal_limit::refused(
+            return Err(crate::routes::reveal_limit::refused_after_read(
                 shell,
                 &vault,
                 "certificate",

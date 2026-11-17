@@ -219,6 +219,9 @@ pub struct Field {
     /// The tag as set elsewhere, `name=value`, when Keyring didn't write
     /// it. Shown as it is, with a note.
     pub odd: Option<String>,
+    /// The item has a limit now, whatever is selected: a change could
+    /// loosen it, so the form shows the reason fields.
+    pub limited: bool,
 }
 
 impl Field {
@@ -229,8 +232,10 @@ impl Field {
             [(k, v)] if k.as_str() == TAG && matches!(v.as_str(), COPY_ONLY | NONE) => Self {
                 selected: (*v).clone(),
                 odd: None,
+                limited: true,
             },
             _ => Self {
+                limited: true,
                 selected: KEEP.into(),
                 odd: Some(
                     found
