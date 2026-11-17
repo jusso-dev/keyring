@@ -585,6 +585,88 @@ async fn values_never_reach_the_logs() {
         assert!(html.contains("&#60;b&#62;bold"), "{html}");
     }
 
+    // Health: a burst of refused deletes, each with a reason (on its audit
+    // event) and a canary typed into the form. The burst email names the
+    // person, the count and the reason code, never the reason text or
+    // anything typed.
+    let hacs = support::acs::start().await;
+    let hmi = support::start_identity().await;
+    let wh = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", hmi.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "health".to_owned()),
+            ("KEYRING_NOTIFY_ADMINS", "ops@example.com".to_owned()),
+            ("KEYRING_NOTIFY_BURST_THRESHOLD", "2".to_owned()),
+            ("KEYRING_REQUIRE_REASON", "all".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", hacs.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    wh.kv.state.put("db-password", VALUE);
+    for _ in 0..4 {
+        let res = wh
+            .post(
+                "/v/kv-test/secrets/db-password/delete",
+                &[
+                    ("reason", "BURSTREASONLEAK clearing out"),
+                    ("confirm_name", "BURSTBODYLEAK https://evil.example/x"),
+                ],
+            )
+            .await;
+        let _ = support::body_text(res).await;
+    }
+    {
+        let n = wh.state.notifier.clone().expect("email is on");
+        let start = std::time::Instant::now();
+        while n.health().delivered < 1 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "the burst email"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+    let hbodies = hacs.state.all_bodies();
+    assert_eq!(hacs.state.attempts().len(), 1, "one burst email");
+    assert!(hbodies.contains("Many refused requests"), "{hbodies}");
+    assert!(hbodies.contains("typed_name_mismatch"), "{hbodies}");
+    assert!(hbodies.contains("alex@example.com"), "{hbodies}");
+    for leak in [
+        "BURSTREASONLEAK",
+        "BURSTBODYLEAK",
+        "evil.example",
+        "Sup3r-S3cret",
+        support::MI_ACS_TOKEN,
+        support::IDENTITY_HEADER,
+        "user-api-token",
+        "obo:",
+        wh.cookie.as_str(),
+        wh.csrf.as_str(),
+    ] {
+        assert!(
+            !hbodies.contains(leak),
+            "{leak} reached a health email:\n{hbodies}"
+        );
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -685,6 +767,32 @@ async fn values_never_reach_the_logs() {
         !logs.contains("private detail"),
         "Azure message leaked into logs"
     );
+
+    // Health: the burst is logged without the reason text, the typed
+    // name, the person or the address. The reason is only on the delete's
+    // own audit events.
+    assert!(
+        logs.contains("health: a burst of refused or denied requests"),
+        "{logs}"
+    );
+    assert!(
+        !logs.contains("BURSTBODYLEAK"),
+        "typed text leaked:\n{logs}"
+    );
+    assert!(
+        logs.contains("reason=\"BURSTREASONLEAK"),
+        "the reason was on the refused events: {logs}"
+    );
+    for line in logs.lines().filter(|l| l.contains("BURSTREASONLEAK")) {
+        assert!(
+            line.contains("kind=audit") && line.contains("action=secret.delete"),
+            "{line}"
+        );
+    }
+    for line in logs.lines().filter(|l| l.contains("health:")) {
+        assert!(!line.contains("alex@example.com"), "{line}");
+        assert!(!line.contains("ops@example.com"), "{line}");
+    }
 
     // Email: no address, Azure message, ACS token or body in any line,
     // and the reason only on the reveal's audit event.

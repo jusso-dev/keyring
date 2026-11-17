@@ -680,3 +680,455 @@ fn the_notify_module_grants_two_actions_and_no_keys() {
         }
     }
 }
+
+// ---------------------------------------------------------------------
+// Health notices (`src/notify/health.rs`), with fixed clocks
+// ---------------------------------------------------------------------
+
+mod health {
+    use super::*;
+    use keyring::audit::{Action, AuditEvent, Observe, Outcome};
+    use keyring::notify::health::{self, Clock, HealthWatch, ManualClock};
+    use std::time::SystemTime;
+
+    /// 17 Nov 2026, 00:00 UTC.
+    fn t0() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_794_873_600)
+    }
+
+    fn min(m: u64) -> Duration {
+        Duration::from_secs(m * 60)
+    }
+
+    fn tuning() -> health::Tuning {
+        health::Tuning {
+            tick: Duration::from_secs(3600),
+            ..health::Tuning::default()
+        }
+    }
+
+    fn watch(
+        r: &Rig,
+        clock: &Arc<ManualClock>,
+        sink: Option<Arc<AuditSink>>,
+        f: impl FnOnce(&mut health::Settings),
+    ) -> Arc<HealthWatch> {
+        let mut s = health::Settings {
+            burst_threshold: 20,
+            secret_expires: None,
+            base_url: "https://keyring.example.com".into(),
+            tuning: tuning(),
+        };
+        f(&mut s);
+        HealthWatch::new(s, clock.clone() as Arc<dyn Clock>, r.n.clone(), sink)
+    }
+
+    /// Health emails ACS has been sent, by subject and plain text.
+    fn health_mail(r: &Rig) -> Vec<(String, String, String)> {
+        r.acs
+            .state
+            .attempts()
+            .into_iter()
+            .filter(|a| a.body["content"]["subject"] == "[Keyring] Health")
+            .map(|a| {
+                (
+                    a.body["content"]["plainText"].as_str().unwrap().to_owned(),
+                    a.body["content"]["html"].as_str().unwrap().to_owned(),
+                    a.body["recipients"]["to"][0]["address"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    async fn mails(r: &Rig, n: usize) -> Vec<(String, String, String)> {
+        until("health emails", || health_mail(r).len() >= n).await;
+        // Nothing more is on its way.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let m = health_mail(r);
+        assert_eq!(m.len(), n, "{m:#?}");
+        m
+    }
+
+    fn refused(upn: Option<&str>, ip: &str, code: &str) -> AuditEvent {
+        let mut ev = AuditEvent::new(Action::SecretReveal, Outcome::Refused);
+        ev.actor_upn = upn.map(str::to_owned);
+        ev.actor_oid = upn.map(|u| format!("oid-{u}"));
+        ev.client_ip = Some(ip.to_owned());
+        ev.reason_code = Some(code.to_owned());
+        ev.reason = Some("REASONTEXT never in an email".into());
+        ev
+    }
+
+    #[tokio::test]
+    async fn the_audit_sink_failing_emails_once_at_the_start_and_once_at_the_end() {
+        let r = rig().await;
+        let tokens = Arc::new(ManagedIdentityTokens::new(
+            r.identity.endpoint(),
+            Secret::new(IDENTITY_HEADER),
+            IDENTITY_CLIENT_ID.into(),
+            keyring::http::local_client().unwrap(),
+        ));
+        let sink = AuditSink::start(
+            format!(
+                "{}/dataCollectionRules/{DCR_ID}/streams/{STREAM}?api-version=2023-01-01",
+                r.ingest.url()
+            ),
+            SinkTuning {
+                flush_every: Duration::from_millis(20),
+                degraded_after: Duration::from_millis(100),
+                backoff_first: Duration::from_millis(10),
+                backoff_max: Duration::from_millis(20),
+                ..SinkTuning::default()
+            },
+            tokens,
+            keyring::http::client(false).unwrap(),
+        );
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, Some(sink.clone()), |_| {});
+
+        // Healthy: nothing.
+        w.tick();
+        *r.ingest.state.always.lock().unwrap() = Some(500);
+        for _ in 0..5 {
+            sink.enqueue(&AuditEvent::new(Action::SessionSignOut, Outcome::Success));
+        }
+        until("degraded", || sink.degraded()).await;
+        // Seen degraded, but not for five minutes yet.
+        w.tick();
+        clock.advance(min(4));
+        w.tick();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(health_mail(&r).is_empty());
+        clock.advance(min(1));
+        w.tick();
+        let m = mails(&r, 1).await;
+        assert!(
+            m[0].0.contains("Keyring's audit sink is failing"),
+            "{}",
+            m[0].0
+        );
+        assert!(m[0].0.contains("Dropped so far: 0"), "{}", m[0].0);
+        assert_eq!(m[0].2, "ops@example.com");
+        // Still failing: nothing in between.
+        for _ in 0..5 {
+            clock.advance(min(5));
+            w.tick();
+        }
+        mails(&r, 1).await;
+
+        // Recovers.
+        *r.ingest.state.always.lock().unwrap() = None;
+        sink.enqueue(&AuditEvent::new(Action::SessionSignOut, Outcome::Success));
+        until("recovered", || !sink.degraded() && sink.health().sent > 0).await;
+        clock.advance(min(1));
+        w.tick();
+        let m = mails(&r, 2).await;
+        assert!(m[1].0.contains("has recovered"), "{}", m[1].0);
+        assert!(
+            m[1].0.contains("Failing for about: 31 minutes"),
+            "{}",
+            m[1].0
+        );
+        assert!(m[1].0.contains("Dropped in this incident: 0"), "{}", m[1].0);
+        // Healthy again: nothing more.
+        clock.advance(min(5));
+        w.tick();
+        mails(&r, 2).await;
+        sink.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_refusal_burst_emails_once_per_person_per_incident() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |_| {});
+        let alex = Some("alex.ops@example.com");
+        // 20 in the window is not a burst.
+        for i in 0..20 {
+            let code = if i % 2 == 0 {
+                "step_up_required"
+            } else {
+                "invalid_request"
+            };
+            w.observe(&refused(alex, "203.0.113.7", code));
+            clock.advance(Duration::from_secs(40));
+        }
+        // Successes and failures don't count.
+        w.observe(&AuditEvent::new(Action::SecretReveal, Outcome::Failed));
+        w.observe(&AuditEvent::new(Action::SecretReveal, Outcome::Success));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(health_mail(&r).is_empty());
+        // The 21st, with an Azure code, is.
+        let mut denied = refused(alex, "203.0.113.7", "ForbiddenByRbac");
+        denied.outcome = Outcome::Denied;
+        w.observe(&denied);
+        let m = mails(&r, 1).await;
+        let (text, html, _) = &m[0];
+        assert!(text.contains("Many refused requests"), "{text}");
+        assert!(text.contains("Person: alex.ops@example.com"), "{text}");
+        assert!(text.contains("Refused or denied: 21"), "{text}");
+        assert!(
+            text.contains("Reason codes: ForbiddenByRbac, invalid_request, step_up_required"),
+            "{text}"
+        );
+        let link = "https://keyring.example.com/audit?report=person&range=24h&person=alex.ops%40example.com";
+        assert!(text.contains(link), "{text}");
+        assert!(
+            html.contains(&format!("href=\"{}\"", link.replace('&', "&#38;"))),
+            "{html}"
+        );
+        for body in [text, html] {
+            assert!(!body.contains("REASONTEXT"));
+            assert!(
+                !body.contains("203.0.113.7"),
+                "a person's burst names them, not the IP"
+            );
+        }
+
+        // More in the same incident: no more email.
+        for _ in 0..50 {
+            clock.advance(Duration::from_secs(10));
+            w.observe(&refused(alex, "203.0.113.7", "csrf"));
+        }
+        mails(&r, 1).await;
+        // 15 quiet minutes end it; the next burst is a new incident.
+        clock.advance(min(15));
+        w.tick();
+        assert_eq!(w.tracked(), 0);
+        for _ in 0..21 {
+            w.observe(&refused(alex, "203.0.113.7", "csrf"));
+        }
+        let m = mails(&r, 2).await;
+        assert!(m[1].0.contains("Refused or denied: 21"), "{}", m[1].0);
+        assert!(m[1].0.contains("Reason codes: csrf\n"), "{}", m[1].0);
+    }
+
+    #[tokio::test]
+    async fn refusals_spread_out_are_not_a_burst() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |s| s.burst_threshold = 3);
+        // Four refusals, but never more than three within 15 minutes.
+        for _ in 0..12 {
+            w.observe(&refused(Some("alex@example.com"), "203.0.113.7", "csrf"));
+            clock.advance(min(6));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(health_mail(&r).is_empty());
+    }
+
+    #[tokio::test]
+    async fn with_nobody_signed_in_the_burst_is_by_address() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |s| s.burst_threshold = 3);
+        for _ in 0..4 {
+            w.observe(&refused(None, "2001:db8::7", "no_session"));
+        }
+        // A made-up "address" is never counted or shown.
+        for _ in 0..10 {
+            w.observe(&refused(None, "https://evil.example/x", "no_session"));
+        }
+        // A sign-in name that isn't one is shown as an unnamed caller.
+        for _ in 0..4 {
+            let mut ev = refused(None, "203.0.113.9", "id_token_rejected");
+            ev.actor_upn = Some("visit https://evil.example now".into());
+            w.observe(&ev);
+        }
+        let m = mails(&r, 2).await;
+        assert!(m[0].0.contains("Address: 2001:db8::7"), "{}", m[0].0);
+        assert!(m[0].0.contains("nobody signed in"), "{}", m[0].0);
+        assert!(
+            m[0].0
+                .contains("https://keyring.example.com/audit?report=refused&range=24h"),
+            "{}",
+            m[0].0
+        );
+        assert!(m[1].0.contains("Person: an unnamed caller"), "{}", m[1].0);
+        for (text, html, _) in &m {
+            assert!(!text.contains("evil.example") && !html.contains("evil.example"));
+        }
+    }
+
+    #[tokio::test]
+    async fn email_events_never_count_towards_a_burst() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |s| s.burst_threshold = 1);
+        for action in [Action::NotifyFailed, Action::NotifySent] {
+            for _ in 0..10 {
+                let mut ev = AuditEvent::new(action, Outcome::Refused);
+                ev.client_ip = Some("203.0.113.7".into());
+                ev.actor_upn = Some("alex@example.com".into());
+                w.observe(&ev);
+            }
+        }
+        assert_eq!(w.tracked(), 0);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(health_mail(&r).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_map_is_bounded_and_emails_are_capped() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |s| {
+            s.burst_threshold = 1;
+            s.tuning.max_keys = 5;
+            s.tuning.max_burst_emails_per_hour = 3;
+        });
+        // A flood of made-up addresses: only five are tracked.
+        for i in 0..1000u32 {
+            let ip = format!("198.51.{}.{}", i / 250, i % 250);
+            w.observe(&refused(None, &ip, "csrf"));
+            w.observe(&refused(None, &ip, "csrf"));
+        }
+        assert_eq!(w.tracked(), 5);
+        // Five bursts, but only three emails this hour.
+        mails(&r, 3).await;
+        // Once they go quiet, room is made again.
+        clock.advance(min(61));
+        w.observe(&refused(None, "192.0.2.1", "csrf"));
+        assert_eq!(w.tracked(), 1);
+        w.observe(&refused(None, "192.0.2.1", "csrf"));
+        mails(&r, 4).await;
+    }
+
+    #[tokio::test]
+    async fn the_client_secret_is_emailed_at_30_14_7_and_1_days_then_expired() {
+        let r = rig_with(|s| s.per_hour = 100).await;
+        let expires = keyring::dates::parse_iso_date("2026-12-31").unwrap();
+        let day = |d: i64| {
+            SystemTime::UNIX_EPOCH
+                + Duration::from_secs(u64::try_from(expires - d * 86_400 + 3600).unwrap())
+        };
+        let clock = Arc::new(ManualClock::new(day(45)));
+        let w = watch(&r, &clock, None, |s| s.secret_expires = Some(expires));
+        let mut expect = 0;
+        for (days_left, emails) in [
+            (45, false),
+            (31, false),
+            (30, true),
+            (30, false),
+            (20, false),
+            (14, true),
+            (9, false),
+            (5, true),
+            (2, false),
+            (1, true),
+            (0, true),
+            (-1, false),
+            (-30, false),
+        ] {
+            clock.set(day(days_left));
+            w.tick();
+            w.tick();
+            if emails {
+                expect += 1;
+            }
+            mails(&r, expect).await;
+        }
+        let m = health_mail(&r);
+        assert!(m[0].0.contains("expires in 30 days"), "{}", m[0].0);
+        assert!(m[0].0.contains("Expiry date: 31 Dec 2026"), "{}", m[0].0);
+        assert!(m[2].0.contains("expires in 5 days"), "{}", m[2].0);
+        assert!(m[3].0.contains("expires in 1 day."), "{}", m[3].0);
+        assert!(m[4].0.contains("has expired"), "{}", m[4].0);
+
+        // After a restart nothing is remembered: the current step once more.
+        let w = watch(&r, &clock, None, |s| s.secret_expires = Some(expires));
+        clock.set(day(3));
+        w.tick();
+        w.tick();
+        let m = mails(&r, expect + 1).await;
+        assert!(m.last().unwrap().0.contains("expires in 3 days"));
+    }
+
+    #[tokio::test]
+    async fn email_failing_sends_no_email_about_itself() {
+        let r = rig().await;
+        let clock = Arc::new(ManualClock::new(t0()));
+        let w = watch(&r, &clock, None, |_| {});
+        for _ in 0..200 {
+            r.acs
+                .state
+                .script
+                .lock()
+                .unwrap()
+                .push_back(Answer::Status(500, None));
+        }
+        assert!(r.n.enqueue(notice(&["alex@example.com"])).is_queued());
+        until("degraded", || r.n.degraded()).await;
+        for _ in 0..3 {
+            clock.advance(min(5));
+            w.tick();
+        }
+        // The ticks queued nothing: the one email being tried is off the
+        // queue, and none of its tries is a health email.
+        assert_eq!(r.n.health().queued, 0);
+        assert!(health_mail(&r).is_empty());
+        r.acs.state.script.lock().unwrap().clear();
+    }
+
+    /// Through the app: refused requests as they are recorded, with the
+    /// audit sink off.
+    #[tokio::test]
+    async fn refused_requests_through_the_app_raise_one_burst_email() {
+        let acs = acs::start().await;
+        let identity = support::start_identity().await;
+        let w = support::world_configured(
+            vec![
+                (
+                    "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                    IDENTITY_CLIENT_ID.to_owned(),
+                ),
+                ("IDENTITY_ENDPOINT", identity.endpoint()),
+                ("IDENTITY_HEADER", IDENTITY_HEADER.to_owned()),
+                (
+                    "KEYRING_NOTIFY_ACS_ENDPOINT",
+                    "https://keyring-mail.australia.communication.azure.com".to_owned(),
+                ),
+                (
+                    "KEYRING_NOTIFY_SENDER",
+                    "DoNotReply@mail.example.com".to_owned(),
+                ),
+                ("KEYRING_NOTIFY_TYPES", "health".to_owned()),
+                ("KEYRING_NOTIFY_ADMINS", "ops@example.com".to_owned()),
+                ("KEYRING_NOTIFY_BURST_THRESHOLD", "3".to_owned()),
+                ("KEYRING_TEST_NOTIFY_ACS_URL", acs.url()),
+            ],
+            |c| c.notify.as_mut().unwrap().tuning = quick(),
+        )
+        .await;
+        assert!(w.state.audit_sink.is_none());
+        assert!(w.state.health.is_some());
+        w.kv.state.put("db-password", "value");
+        for _ in 0..6 {
+            let res = w
+                .post(
+                    "/v/kv-test/secrets/db-password/delete",
+                    &[("confirm_name", "not-the-name")],
+                )
+                .await;
+            let _ = support::body_text(res).await;
+        }
+        let n = w.state.notifier.clone().unwrap();
+        until("sent", || n.health().delivered >= 1).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let a = acs.state.attempts();
+        assert_eq!(a.len(), 1, "one email per incident");
+        let text = a[0].body["content"]["plainText"].as_str().unwrap();
+        assert!(text.contains("Person: alex@example.com"), "{text}");
+        assert!(text.contains("Reason codes: typed_name_mismatch"), "{text}");
+        assert!(
+            text.contains(
+                "http://localhost:3000/audit?report=person&range=24h&person=alex%40example.com"
+            ),
+            "{text}"
+        );
+        assert!(acs.state.violations().is_empty());
+    }
+}
