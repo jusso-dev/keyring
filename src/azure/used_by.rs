@@ -178,9 +178,9 @@ impl UsedByQuery {
                  | extend CallerIp = tostring(column_ifexists('CallerIPAddress', ''))\n"
             ));
         }
-        q.push_str(
-            "| where Status between (200 .. 299) or (isnull(Status) and tostring(column_ifexists('ResultSignature', '')) =~ 'OK')\n",
-        );
+        // Allowed or accepted, by the audit view's one rule.
+        q.push_str(&crate::azure::audit::outcome_kql());
+        q.push_str("| where Outcome in ('allowed', 'accepted')\n");
         q.push_str(&format!(
             "| summarize Reads = count(), LastRead = max(TimeGenerated), Managed = countif(isnotempty(ManagedId)), ClientInfo = strcat_array(make_set(ClientInfo, {MAX_SEEN}), ', '), CallerIp = strcat_array(make_set(CallerIp, {MAX_SEEN}), ', ') by ObjectId, AppId, Upn\n\
              | order by LastRead desc\n\
@@ -445,8 +445,9 @@ mod tests {
                 "{op}"
             );
         }
-        // Only allowed calls count.
-        assert!(s.contains("| where Status between (200 .. 299)"));
+        // Only allowed calls count, by the audit view's one rule.
+        assert!(s.contains(&crate::azure::audit::outcome_kql()));
+        assert!(s.contains("| where Outcome in ('allowed', 'accepted')"));
     }
 
     #[test]

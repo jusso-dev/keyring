@@ -221,7 +221,7 @@ async fn each_report_returns_its_rows_on_both_tables() {
             "{table}"
         );
         assert!(
-            !html.contains("Refused (Forbidden)"),
+            !html.contains("Refused (403 Forbidden)"),
             "{table}: only allowed reads"
         );
 
@@ -314,9 +314,9 @@ async fn csv_has_the_vault_and_guards_formulas() {
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(
         lines[0],
-        "Vault,Time (UTC),Who,Action,Operation,Item,Result,Client IP"
+        "Vault,Time (UTC),Who,Action,Operation,Item,Outcome,Result,Client IP"
     );
-    assert!(lines.iter().any(|l| l.starts_with("kv-b,2026-11-09 11:00:00 UTC,sam@example.com,Viewed secret value,SecretGet,api-token,OK")), "{csv}");
+    assert!(lines.iter().any(|l| l.starts_with("kv-b,2026-11-09 11:00:00 UTC,sam@example.com,Viewed secret value,SecretGet,api-token,Allowed,200 OK")), "{csv}");
     assert!(csv.contains(",'=cmd,"), "formula guarded: {csv}");
 
     let csv = body_text(w.get("/audit.csv?report=refused").await).await;
@@ -421,5 +421,57 @@ async fn a_slow_workspace_is_listed_and_the_rest_still_show() {
     assert!(
         html.contains("<span class=\"item-name\">own</span> (for <span class=\"item-name\">kv-c</span>): Took too long to answer."),
         "{html}"
+    );
+}
+
+/// A 202 Accepted is allowed in every report, never counted as refused; a
+/// 401 is refused; a 429 is a failure, not a refusal.
+#[tokio::test]
+async fn reports_use_the_same_outcome_rule() {
+    let w = support::world().await;
+    setup(&w);
+    let extra = [
+        ("2026-11-09T13:00:00Z", "SecretGet", "queued", 202),
+        ("2026-11-09T13:01:00Z", "CertificateCreate", "queued", 202),
+        ("2026-11-09T13:02:00Z", "SecretGet", "nope", 401),
+        ("2026-11-09T13:03:00Z", "SecretGet", "busy", 429),
+    ];
+    w.arm.state.workspace_events.lock().unwrap()[0].1.extend(
+        extra
+            .iter()
+            .map(|(t, op, item, s)| RawEvent::new("kv-a", t, "kim@example.com", op, item, *s)),
+    );
+
+    let (_, html) = w.page("/audit?report=person&person=kim&range=7d").await;
+    assert!(
+        html.contains("<span class=\"result-ok\">Accepted</span> <span class=\"muted small\">(202 Accepted)</span>"),
+        "{html}"
+    );
+    assert!(html.contains("<span class=\"badge badge-error\">Refused (401 Unauthorized)</span>"));
+    assert!(html.contains("<span class=\"badge badge-muted\">Failed (429 TooManyRequests)</span>"));
+    assert!(!html.contains("Refused (202"));
+    let csv = body_text(w.get("/audit.csv?report=person&person=kim&range=7d").await).await;
+    assert!(
+        csv.contains(",CertificateCreate,queued,Accepted,202 Accepted,"),
+        "{csv}"
+    );
+    assert!(csv.contains(",nope,Refused,401 Unauthorized,"), "{csv}");
+    assert!(csv.contains(",busy,Failed,429 TooManyRequests,"), "{csv}");
+
+    let (_, html) = w.page("/audit?report=reads&range=7d").await;
+    assert!(html.contains("queued"), "an accepted read is a read");
+    assert!(!html.contains("busy") && !html.contains(">nope<"));
+
+    let csv = body_text(w.get("/audit.csv?report=refused&range=7d").await).await;
+    assert!(
+        csv.contains("kv-a,kim@example.com,1,"),
+        "only the 401: {csv}"
+    );
+    // The KQL the reports send counts by the shared rule.
+    let q = w.arm.state.audit_queries.lock().unwrap().clone();
+    assert!(
+        q.iter().any(|k| k.contains("| where Outcome == 'refused'")
+            && k.contains("ResultCode in (401, 403)")),
+        "{q:?}"
     );
 }
