@@ -14,7 +14,7 @@ Keyring is written in Rust (Axum and Askama) and ships as a single Docker image.
 
 ## Screenshots
 
-These show the current Keyring app running against the mock Azure services from the test suite. Screenshots refreshed on 17 November 2026; every vault, name and value is made up.
+These show the current Keyring app running against the mock Azure services from the test suite. Screenshots refreshed on 17 November 2026; every vault, name and value is made up. The interface uses native system fonts, so text follows the operating system you use.
 
 ### Home
 

@@ -112,24 +112,17 @@ the controls carry the meaning, so it has no contrast need.
 
 ## Typography
 
-IBM Plex, served by Keyring from `static/fonts/` (SIL Open Font License,
-`static/fonts/OFL.txt`). Nothing is fetched from a font service; the CSP
-allows `font-src 'self'` only. The owner chose Plex on 13-11-2026 because
-the system stack read as generic: Plex is an engineering face with squared
-curves, which suits a security console.
+Use the operating system's native fonts. The owner requested this on
+17 November 2026 to replace the stylised Plex typography.
 
-- `--font-body`: `"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif`.
-  Used for everything, headings included. One variable file, latin subset,
-  weights 100 to 700.
-- `--font-mono`: `"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`.
-  Weights 400, 500 and 600. Only for values, names and identifiers: vault,
-  secret, certificate and key names, version IDs, thumbprints, tags,
-  operations, IP addresses and the revealed value.
-- Font files carry their Fontsource release in the name
-  (`ibm-plex-sans-5.3.0.woff2`) and are cached for a year. A new release is
-  a new file name. `font-display: swap`, so text shows at once in the
-  fallback.
-- No italic files are shipped. Nothing in Keyring is set in italic.
+- `--font-body`: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
+  Used for the interface, including headings, labels and controls.
+- `--font-mono`: `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`.
+  Only for values, names and identifiers: vault, secret, certificate and key
+  names, version IDs, thumbprints, tags, operations, IP addresses and the
+  revealed value.
+- The UI loads no font files. Rendering follows the user's operating system.
+- Nothing in Keyring is set in italic.
 - Numbers line up: `font-variant-numeric: tabular-nums` on tables, fact lists,
   badges, tiles, the pager and the countdown.
 - Scale: `--text-xs` 0.75rem (column headers, badges), `--text-sm` 0.875rem
@@ -478,8 +471,8 @@ they are.
   --color-accent-rule: oklch(80% 0.05 215);
   --color-accent-ink: oklch(100% 0 0);
   --color-focus: oklch(40% 0.07 215);
-  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --space-3xs: 0.25rem; --space-2xs: 0.5rem; --space-xs: 0.75rem;
   --space-sm: 1rem; --space-md: 1.5rem; --space-lg: 2rem; --space-xl: 3rem;
   --radius: 6px; --radius-sm: 4px;
