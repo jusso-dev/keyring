@@ -1,0 +1,53 @@
+title: "Keyring: Solution Design Document"
+running-title: "Keyring Solution Design Document"
+version: "1.0"
+date: "18-11-2026"
+status: "Draft for review"
+lang: en-AU
+toc-title: Contents
+control: |
+  ## Document control
+
+  | Item | Value |
+  |---|---|
+  | Document | Keyring Solution Design Document |
+  | Version | 1.0 |
+  | Date | 18-11-2026 |
+  | Status | Draft for review |
+  | Owner | Keyring maintainer (to be confirmed) |
+  | Source | `docs/design/` in the `jusso-dev/keyring` repository. The PDF and Word editions are rebuilt with `docs/design/build.sh` |
+  | Describes | `main` at commit `e4ac20d` (18-11-2026) |
+  | Related | `docs/architecture.md` stays the quick engineering reference. This document is the formal record for design review, security assessment and the teams that deploy and run Keyring |
+
+  ## Version history
+
+  | Version | Date | Author | Change |
+  |---|---|---|---|
+  | 1.0 | 18-11-2026 | Keyring maintainers | First formal design document: architecture, components, data, integrations (I-01 to I-27), identity, controls (C1 to C22), STRIDE threat model (T1 to T24), deployment, operations, RAID and appendices, with six draw.io diagrams |
+
+  ## Reviewers
+
+  | Name | Role | Date | Signature |
+  |---|---|---|---|
+  | *To be confirmed* | Solution architect |  |  |
+  | *To be confirmed* | Security architect |  |  |
+  | *To be confirmed* | Identity (Entra ID) administrator |  |  |
+  | *To be confirmed* | Azure platform owner |  |  |
+
+  ## Approvers
+
+  | Name | Role | Date | Signature |
+  |---|---|---|---|
+  | *To be confirmed* | Product owner |  |  |
+  | *To be confirmed* | System owner for the deployment |  |  |
+
+  ## Status of this design
+
+  This is a draft for review. Nobody has reviewed, approved or endorsed it, and nothing in it should be read as saying otherwise.
+
+  Every feature described here is built and tested against mock Entra ID, Resource Graph, ARM, Key Vault, Log Analytics, Logs Ingestion, Communication Services and Event Grid servers that follow Microsoft's REST reference. What has been confirmed against a real Azure tenant is narrower:
+
+  - **Confirmed:** the Key Vault REST calls, run against real vaults on 11-11-2026, 12-11-2026 and 13-11-2026 (by hand and with `tests/real_vault.rs`), and a browser run of Keyring against a real tenant on 17-11-2026.
+  - **Built and tested against mocks only:** sign-in and on-behalf-of in a production deployment, PIM activation, Conditional Access step-up, the Bicep deployments, the Sentinel content, the audit sink, email through Azure Communication Services and the Event Grid webhook.
+
+  `docs/real-vault-checklist.md` lists each check and its result. Section 11.4 lists what is still to confirm.
