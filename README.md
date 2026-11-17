@@ -169,11 +169,13 @@ Keyring stores nothing, so the few things it keeps about an item live in the ite
 | `keyring-owners` | vault (an Azure resource tag, not a Key Vault tag) | The vault's owners: email addresses separated by commas. Keyring reads it from Resource Graph and never changes it. Set it in the vault's **Tags** blade in the Azure portal, or with `az tag update --resource-id <vault ID> --operation merge --tags keyring-owners=ops@example.com` |
 | `rotation`, `rotation-last`, `rotation-status` | secret | What the last rotation did, written by your rotation job and read by Keyring ([docs/rotation.md](docs/rotation.md)) |
 
-Addresses in these tags are personal data that anyone who can read the item's tags (or the vault's) can already see. Keyring shows them, but never logs them, puts them in an audit event, or puts one in a link. Each must be one plain address, such as `alex@example.com`, and in `KEYRING_NOTIFY_ALLOWED_DOMAINS` when that is set. A value set in the portal or the CLI that isn't is shown as it is, with a note, and kept unless you change that field.
+Addresses in these tags are personal data that anyone who can read the item's tags (or the vault's) can already see. Keyring shows them, a plain address as a `mailto:` link, but never logs them, puts them in an audit event or a flash message, or builds one of its own URLs (a query string, redirect, filter suggestion or pager link) with an address in it. Each must be one plain address, such as `alex@example.com`, and in `KEYRING_NOTIFY_ALLOWED_DOMAINS` when that is set. A value set in the portal or the CLI that isn't is shown as it is, with a note, and kept unless you change that field.
 
 ### Owners
 
 **Owned by me** on the secrets, certificates and keys lists shows the items whose `owner`, or one of whose `notify` addresses, is the address you signed in with, ignoring case. It is a tick box in the filter form, so it works without JavaScript and with the other filters and paging, and the link it makes says only `mine=1`: never your address.
+
+The lists' tag filter, the expiry and age pages' tag filter, the search box and the filter-as-you-type box find `owner` and `notify` like any tag: `owner`, `owner=ops@example.com`, or `notify=sam@example.com` for an item whose notify list holds that address. The filter boxes never suggest them, and the tags on an item's page never link to them, so Keyring never builds a link with an address in it. If you type one into a filter, it goes in the page's address, which your browser keeps in its history; Keyring never logs query strings, but a proxy in front of it may. **Owned by me** filters by your own address without that.
 
 With `KEYRING_REQUIRE_OWNER=true`, Keyring refuses to save an item without an `owner`:
 

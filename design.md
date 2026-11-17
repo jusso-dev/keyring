@@ -468,8 +468,10 @@ Read as "make a new version". The primary button is the accent, never danger.
   address is a plain link (`mailto:`); anything else is mono text with
   "(not a plain address)" in muted small text. "None" in muted when empty.
 - Lists have an Owner column after Description, at `--text-sm`, wrapping
-  anywhere. The expiry and age pages have no Description column, so no
-  Owner either; their CSVs have both.
+  anywhere. The expiry and age pages have no Description column, but have
+  an Owner column before Tags, styled the same (`td.owner-cell`), so
+  addresses stay out of the Tags text and a link per address works. Notify
+  is in their CSVs only: the pages have no room for up to five addresses.
 - **Owned by me** is a plain checkbox in the filter row, its help line
   under it, between the last filter and the Filter button.
 - The vault list has an Owners column after Location, and a muted line
@@ -497,7 +499,8 @@ Read as "make a new version". The primary button is the accent, never danger.
   in ink with an accent border and underline on hover and focus. A tag the
   filter can't find again stays a plain chip.
 - Filter boxes for tags (and the search box) suggest `name` and
-  `name=value` with a `<datalist>`.
+  `name=value` with a `<datalist>`. Never `description`, `owner` or
+  `notify`, though the filters find `owner` and `notify` when typed.
 
 ### Pinned and recently opened
 

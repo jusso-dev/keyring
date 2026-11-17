@@ -114,6 +114,9 @@ pub(super) struct KeyRow {
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
@@ -132,18 +135,9 @@ impl KeyRow {
         let description = crate::description::of(k.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = k.name().to_lowercase();
-        for (a, b) in &tags {
-            filter_text.push_str(&format!(" {a}={b}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
-        if !owners.owner.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&owners.filter_text());
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(k.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(k.name(), &filter_tags, &description);
         Self {
             name: k.name().to_owned(),
             version: k.version().to_owned(),
@@ -161,6 +155,7 @@ impl KeyRow {
             description,
             owners,
             managed: k.managed.unwrap_or(false),
+            filter_tags,
             filter_text,
         }
     }
@@ -195,7 +190,7 @@ impl KeyFilter {
     pub(super) fn matches(&self, r: &KeyRow, upn: Option<&str>) -> bool {
         let q = self.q.trim().to_lowercase();
         (q.is_empty() || r.filter_text.contains(&q))
-            && crate::routes::tag_rows::matches_filter(&self.tag, &r.tags)
+            && crate::routes::tag_rows::matches_filter(&self.tag, &r.filter_tags)
             && (!self.mine() || r.owners.names(upn))
     }
 

@@ -75,6 +75,9 @@ pub(super) struct CertRow {
     pub description: String,
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
@@ -94,18 +97,9 @@ impl CertRow {
         let description = crate::description::of(item.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = item.name().to_lowercase();
-        for (k, v) in &tags {
-            filter_text.push_str(&format!(" {k}={v}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
-        if !owners.owner.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&owners.filter_text());
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(item.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(item.name(), &filter_tags, &description);
         Self {
             name: item.name().to_owned(),
             version: item.version().to_owned(),
@@ -123,6 +117,7 @@ impl CertRow {
             tags,
             description,
             owners,
+            filter_tags,
             filter_text,
         }
     }
@@ -199,7 +194,7 @@ impl CertFilter {
         {
             return false;
         }
-        if !crate::routes::tag_rows::matches_filter(&self.tag, &r.tags) {
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &r.filter_tags) {
             return false;
         }
         match self.show.as_str() {

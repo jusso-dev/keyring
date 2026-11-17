@@ -563,7 +563,7 @@ Unset means no policy: the forms behave as they did before. An unknown part, a p
 
 **Where it doesn't.** Rotating a key, rolling back a secret, enable and disable, and certificate renewal keep the item's tags as they are and show no Owner field, so they aren't stopped by an item with no owner.
 
-**What is logged.** Each refusal is an audit event with `outcome` `refused` and `reason_code` `owner_required`; an import writes one per skipped row when it is confirmed. Never the address: addresses in `owner` and `notify` are personal data, shown on the pages to people who can already read the tags, and never logged, put in an audit event, a flash message or a URL. The **Owned by me** filter posts `mine=1` and matches the address from the verified sign-in.
+**What is logged.** Each refusal is an audit event with `outcome` `refused` and `reason_code` `owner_required`; an import writes one per skipped row when it is confirmed. Never the address: addresses in `owner` and `notify` are personal data, shown on the pages to people who can already read the tags (a plain address as a `mailto:` link), and never logged, put in an audit event or a flash message, or put in a URL Keyring builds. A person who types `owner=<address>` into a tag filter puts it in their own query string: Keyring never logs query strings, but a proxy in front of it may. The **Owned by me** filter posts `mine=1` and matches the address from the verified sign-in.
 
 **This isn't a hard control.** Key Vault doesn't know about it. Anyone with access can create an item without an owner with the Azure CLI, the portal or an SDK, or remove the tag later.
 

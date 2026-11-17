@@ -555,6 +555,21 @@ async fn values_never_reach_the_logs() {
         // carries only a flag.
         let (_, html) = wo.page("/v/kv-test/secrets?mine=1").await;
         assert!(!html.contains("mine=alex"));
+        // The tag filter and the search box find an owner or a notify
+        // address typed into them; the expiry and age pages show the owner.
+        *wo.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+        for path in [
+            "/v/kv-test/secrets?tag=owner%3Downerleak5%40example.com",
+            "/v/kv-test/secrets?tag=notify%3Dnotifyleak6%40example.com",
+            "/v/kv-test/secrets?q=notifyleak7%40example.com",
+            "/search?q=notifyleak6%40example.com",
+            "/expiry?show=all&tag=owner%3Downerleak5%40example.com",
+            "/expiry/age?tag=notify%3Dnotifyleak7%40example.com",
+        ] {
+            let (status, html) = wo.page(path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert!(html.contains(">OWN-IMP<"), "{path}");
+        }
     }
 
     // Tag rows (#253): a tag value refused beside its row, one saved, and

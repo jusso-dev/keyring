@@ -52,6 +52,9 @@ pub(super) struct SecretRow {
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
@@ -65,19 +68,9 @@ impl SecretRow {
         let description = crate::description::of(item.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = item.name().to_lowercase();
-        for (k, v) in &tags {
-            filter_text.push(' ');
-            filter_text.push_str(&format!("{k}={v}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
-        if !owners.owner.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&owners.filter_text());
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(item.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(item.name(), &filter_tags, &description);
         Self {
             name: item.name().to_owned(),
             enabled: a.is_enabled(),
@@ -100,6 +93,7 @@ impl SecretRow {
             description,
             owners,
             managed: item.managed.unwrap_or(false),
+            filter_tags,
             filter_text,
         }
     }
@@ -210,7 +204,7 @@ impl SecretFilter {
         if !q.is_empty() && !row.filter_text.contains(&q) {
             return false;
         }
-        if !crate::routes::tag_rows::matches_filter(&self.tag, &row.tags) {
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &row.filter_tags) {
             return false;
         }
         match self.show.as_str() {
@@ -480,6 +474,10 @@ mod tests {
             description: String::new(),
             owners: crate::owner::OfItem::default(),
             managed: false,
+            filter_tags: tags
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
             filter_text: std::iter::once(name.to_lowercase())
                 .chain(tags.iter().map(|(k, v)| format!("{k}={v}").to_lowercase()))
                 .collect::<Vec<_>>()

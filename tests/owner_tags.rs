@@ -897,3 +897,174 @@ fn recipients_for_later_emails() {
         .collect();
     assert_eq!(r, ["ops@example.com"]);
 }
+
+#[tokio::test]
+async fn tag_filter_and_search_find_owner_and_notify_everywhere() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    w.kv.state.put_with("owned", "x", |v| {
+        v.tags.insert("owner".into(), "ops@example.com".into());
+        v.tags.insert(
+            "notify".into(),
+            "sam@example.com, backup@example.com".into(),
+        );
+        v.tags.insert("description".into(), "Billing".into());
+    });
+    w.kv.state.put("other", "x");
+    w.kv.state.add_key_with("k-owned", "RSA", |v| {
+        v.tags.insert("owner".into(), "ops@example.com".into());
+    });
+    w.kv.state.add_key_with("k-other", "RSA", |_| {});
+    w.kv.state.add_cert_version(
+        "c-owned",
+        support::pem_first_cert(support::TEST_CERT_PEM),
+        support::certs::default_policy(true, false),
+        |v| {
+            v.tags.insert("notify".into(), "sam@example.com".into());
+        },
+    );
+    w.kv.state.add_cert("c-other", false, "x");
+    for filter in [
+        "tag=owner",
+        "tag=OWNER%3Dops%40example.com",
+        "tag=notify",
+        "tag=notify%3DSam%40example.com",
+        "tag=notify%3Dsam%40example.com%2C+backup%40example.com",
+        "q=backup%40example.com",
+        "q=owner%3Dops%40example.com",
+        "q=ops%40example.com",
+        "q=notify%3Dsam",
+    ] {
+        let (_, html) = w.page(&format!("/v/kv-test/secrets?{filter}")).await;
+        assert!(
+            html.contains(">owned<") && !html.contains(">other<"),
+            "{filter}"
+        );
+    }
+    // The description stays out of the tag filter.
+    let (_, html) = w.page("/v/kv-test/secrets?tag=description").await;
+    assert!(!html.contains(">owned<"));
+    let (_, html) = w
+        .page("/v/kv-test/keys?tag=owner%3Dops%40example.com")
+        .await;
+    assert!(html.contains(">k-owned<") && !html.contains(">k-other<"));
+    let (_, html) = w
+        .page("/v/kv-test/certificates?tag=notify%3Dsam%40example.com")
+        .await;
+    assert!(html.contains(">c-owned<") && !html.contains(">c-other<"));
+    // The live filter's text holds both, as `name=value`.
+    let (_, html) = w.page("/v/kv-test/secrets").await;
+    assert!(html.contains("owner=ops@example.com"), "{html}");
+    assert!(html.contains("notify=sam@example.com, backup@example.com"));
+    // The tags column and the suggestions still leave them out, and Keyring
+    // never builds a link with an address in it.
+    assert!(!html.contains("<span class=\"tag\">owner"));
+    assert!(!html.contains("?tag=owner") && !html.contains("tag=owner%3D"));
+    let start = html.find("<datalist id=\"tag-filter-options\"").unwrap();
+    let list = &html[start..start + html[start..].find("</datalist>").unwrap()];
+    assert!(!list.contains("owner") && !list.contains("notify") && !list.contains('@'));
+
+    // Expiry, age and search: the same tag filter, and search finds a
+    // notify address.
+    for path in [
+        "/expiry?show=all&tag=notify%3Dbackup%40example.com",
+        "/expiry/age?tag=owner%3Dops%40example.com",
+        "/search?q=backup%40example.com",
+    ] {
+        let (_, html) = w.page(path).await;
+        assert!(
+            html.contains(">owned<") && !html.contains(">other<"),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn expiry_and_age_pages_show_the_owner() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    w.kv.state.put_with("owned", "x", |v| {
+        v.tags.insert("owner".into(), "ops%41@example.com".into());
+        v.tags.insert("notify".into(), "sam@example.com".into());
+        v.tags.insert("env".into(), "prod".into());
+    });
+    w.kv.state.put_with("odd", "x", |v| {
+        v.tags
+            .insert("owner".into(), "Payments <p@example.com>".into());
+    });
+    for path in ["/expiry?show=all", "/expiry/age"] {
+        let (_, html) = w.page(path).await;
+        assert!(
+            html.contains("<th scope=\"col\">Owner</th><th scope=\"col\">Tags</th>"),
+            "{path}"
+        );
+        assert!(
+            html.contains(
+                "<td class=\"owner-cell\"><a href=\"mailto:ops%2541@example.com\">ops%41@example.com</a></td>"
+            ),
+            "{path}: {html}"
+        );
+        assert!(html.contains(
+            "<span class=\"mono\">Payments &#60;p@example.com&#62;</span> <span class=\"muted small\">(not a plain address)</span>"
+        ));
+        assert!(!html.contains("mailto:Payments"));
+        // The tags column has the other tags; notify is in the CSV only.
+        assert!(html.contains("env=prod") && !html.contains("sam@example.com"));
+    }
+}
+
+#[tokio::test]
+async fn a_padded_owner_tag_from_the_portal_never_blocks_a_save() {
+    let w = support::world().await;
+    w.kv.state.add_key_with("app-key", "RSA", |v| {
+        v.tags.insert(" owner ".into(), "set in the portal".into());
+        v.tags.insert(" description ".into(), "also".into());
+        v.tags.insert("env".into(), "prod".into());
+    });
+    let (_, html) = w.page("/v/kv-test/keys/app-key/details").await;
+    let version = hidden_value(&html, "version").unwrap();
+    let updated = hidden_value(&html, "updated").unwrap();
+    // Rows in name order: " description ", " owner ", env.
+    assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\" description \""));
+    assert!(html.contains("name=\"tag-name-2\" type=\"text\" value=\" owner \""));
+    let post = |env: &'static str, extra: Option<(&'static str, &'static str)>| {
+        let mut f = vec![
+            ("version", version.clone()),
+            ("updated", updated.clone()),
+            ("tag-rows", "1".into()),
+            ("tag-name-1", " description ".into()),
+            ("tag-value-1", "also".into()),
+            ("tag-name-2", " owner ".into()),
+            ("tag-value-2", "set in the portal".into()),
+            ("tag-name-3", "env".into()),
+            ("tag-value-3", env.into()),
+            ("owner", String::new()),
+            ("notify", String::new()),
+        ];
+        if let Some((n, v)) = extra {
+            f.push(("tag-name-4", n.into()));
+            f.push(("tag-value-4", v.into()));
+        }
+        f
+    };
+    // Adding a new padded `owner` row is refused with the pointer.
+    let f = post("prod", Some(("  owner", "a@example.com")));
+    let f: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let res = w.post("/v/kv-test/keys/app-key/details", &f).await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        text(body_text(res).await)
+            .contains("The owner and notify tags are set with the Owner and Notify fields")
+    );
+    // An unrelated change saves, and the padded tags stay as they were.
+    let f = post("test", None);
+    let f: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let res = w.post("/v/kv-test/keys/app-key/details", &f).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER, "{}", location(&res));
+    let keys = w.kv.state.keys.lock().unwrap();
+    let tags = &keys["app-key"].versions[0].tags;
+    assert_eq!(tags[" owner "], "set in the portal");
+    assert_eq!(tags[" description "], "also");
+    assert_eq!(tags["env"], "test");
+    assert!(!tags.contains_key("owner"));
+}

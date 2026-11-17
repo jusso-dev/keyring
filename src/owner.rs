@@ -12,9 +12,14 @@
 //! so every form, import and bulk change applies the same ones.
 //!
 //! **Addresses are personal data.** Anyone who can read an item's tags can
-//! read them, so the pages show them, escaped. They are never logged, never
-//! put in an audit event, a flash message or a URL. Error messages name an
-//! entry by its place ("the second address"), never by quoting it.
+//! read them, so the pages show them, escaped, and a parsed address as a
+//! `mailto:` link ([`Shown::mailto`]). They are never logged, never put in
+//! an audit event or a flash message, and never put in a URL Keyring
+//! builds: a query string, a redirect, or a filter, suggestion or pager
+//! link. A person can type `owner=<address>` into a tag filter, which puts
+//! it in their own address bar; Keyring never logs query strings. Error
+//! messages name an entry by its place ("the second address"), never by
+//! quoting it.
 //!
 //! **Values Keyring didn't write.** A tag set in the portal or the CLI may
 //! not be a plain address. It is shown as it is, with a note, and a save
@@ -359,11 +364,6 @@ impl OfItem {
     pub fn names(&self, upn: Option<&str>) -> bool {
         upn.is_some_and(|u| names(&self.owner, &self.notify, u))
     }
-
-    /// Text for the search box and the live filter: the owner, lower case.
-    pub fn filter_text(&self) -> String {
-        self.owner.to_lowercase().replace(['\r', '\n'], " ")
-    }
 }
 
 /// True when the "Owned by me" box was ticked: any non-empty `mine`.
@@ -385,12 +385,28 @@ impl Shown {
             Self::Address(s) | Self::Text(s) => s,
         }
     }
+    /// The `mailto:` link for a parsed address, percent-encoded as RFC
+    /// 6068 asks: letters, digits, `-`, `.`, `_`, `~` and the `@` stay as
+    /// they are, every other byte (`%`, `+`, `'` and so on) is `%XX`, so a
+    /// mail client opens the same mailbox. The link text stays the address.
     pub fn mailto(&self) -> Option<String> {
         match self {
-            Self::Address(s) => Some(format!("mailto:{s}")),
+            Self::Address(s) => Some(format!("mailto:{}", mailto_encode(s))),
             Self::Text(_) => None,
         }
     }
+}
+
+fn mailto_encode(address: &str) -> String {
+    let mut out = String::with_capacity(address.len());
+    for b in address.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'@') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// A tag value split into what is shown: each entry separated by commas,
@@ -737,6 +753,26 @@ mod tests {
         let (t, e) = merged(&BTreeMap::new(), post("alex@example.com", ""), on);
         assert!(e.is_empty());
         assert_eq!(owner_of(&t), Some("alex@example.com"));
+    }
+
+    #[test]
+    fn mailto_links_percent_encode_the_address() {
+        let shown = |a: &str| {
+            let d = Display::of(a);
+            assert!(!d.odd, "{a} parses");
+            d.entries[0].clone()
+        };
+        let p = shown("ops%41@example.com");
+        assert_eq!(p.mailto().unwrap(), "mailto:ops%2541@example.com");
+        assert_eq!(p.text(), "ops%41@example.com");
+        let q = shown("o'neil+keys@example.com");
+        assert_eq!(q.mailto().unwrap(), "mailto:o%27neil%2Bkeys@example.com");
+        assert_eq!(q.text(), "o'neil+keys@example.com");
+        assert_eq!(
+            shown("Alex.B_c-d@sub.example.com").mailto().unwrap(),
+            "mailto:Alex.B_c-d@sub.example.com"
+        );
+        assert_eq!(Shown::Text("a b".into()).mailto(), None);
     }
 
     #[test]

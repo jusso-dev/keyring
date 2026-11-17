@@ -114,6 +114,8 @@ pub(super) struct RowView {
     pub enabled: bool,
     pub expires: String,
     pub note: String,
+    /// The `owner` tag as shown. Notify is in the CSV only.
+    pub owner: crate::owner::Display,
     pub tags: String,
 }
 
@@ -198,6 +200,7 @@ pub(super) async fn page(
                     enabled: i.enabled,
                     expires: i.expires_text(),
                     note: i.expires_note(now),
+                    owner: crate::owner::Display::of_owner(i.owner()),
                     tags: i.tags_text(),
                 })
                 .collect(),

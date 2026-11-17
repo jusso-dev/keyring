@@ -86,7 +86,8 @@ impl SearchQuery {
         self.text().chars().count() > MAX_QUERY_CHARS
     }
 
-    /// Case-insensitive substring of the name, a tag as `name=value`, the
+    /// Case-insensitive substring of the name, a tag as `name=value`
+    /// (`owner` and `notify` included, so an address finds them), the
     /// description, or the content type: the same match as each vault's
     /// own list filter.
     fn matches_text(&self, i: &Item) -> bool {
@@ -97,7 +98,6 @@ impl SearchQuery {
                 .any(|(k, v)| format!("{k}={v}").to_lowercase().contains(&q))
             || i.content_type.to_lowercase().contains(&q)
             || i.description().to_lowercase().contains(&q)
-            || i.owner().to_lowercase().contains(&q)
     }
 
     fn matches(&self, i: &Item, now: i64) -> bool {
@@ -311,6 +311,27 @@ mod tests {
         for miss in ["dbpassword", "team", "password owner"] {
             assert!(!q(miss).matches(&i, NOW), "{miss}");
         }
+    }
+
+    #[test]
+    fn matches_the_owner_and_each_notify_address() {
+        let mut i = item(ItemType::Key, "k");
+        i.tags = vec![
+            ("owner".into(), "Ops@example.com".into()),
+            (
+                "notify".into(),
+                "sam@example.com, backup@example.com".into(),
+            ),
+        ];
+        for hit in [
+            "ops@example.com",
+            "owner=ops@",
+            "BACKUP@example.com",
+            "notify=sam@",
+        ] {
+            assert!(q(hit).matches(&i, NOW), "{hit}");
+        }
+        assert!(!q("pat@example.com").matches(&i, NOW));
     }
 
     #[test]

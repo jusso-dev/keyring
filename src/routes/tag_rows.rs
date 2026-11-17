@@ -251,9 +251,15 @@ pub(crate) fn check(
             }
             continue;
         }
-        let problem = if description::is_reserved(name) {
+        // A tag the item already has, posted back as it was, is kept
+        // whatever its name: ` owner ` set in the portal is an ordinary tag
+        // and mustn't block a save. A new or changed row with a name that
+        // looks like a field's is refused.
+        let unchanged =
+            !owner::has_own_field(name) && current.get(name).is_some_and(|v| v == value);
+        let problem = if !unchanged && description::is_reserved(name) {
             Some((name_id, DESCRIPTION_IS_A_FIELD.to_owned()))
-        } else if owner::is_reserved(name) {
+        } else if !unchanged && owner::is_reserved(name) {
             Some((name_id, OWNER_IS_A_FIELD.to_owned()))
         } else if breaks(name) {
             Some((
@@ -548,7 +554,10 @@ pub(crate) fn filter_href(list: &str, name: &str, value: &str) -> Option<String>
 }
 
 /// Does an item with `tags` match a list's tag filter, `name` or
-/// `name=value`? Case-insensitive, as the secrets list matches.
+/// `name=value`? Case-insensitive, as the secrets list matches. `tags` are
+/// the item's tags as stored, `owner` and `notify` included, so
+/// `owner=ops@example.com` finds them as it finds any tag. A `notify`
+/// value matches the whole list or any one address in it.
 pub(crate) fn matches_filter(filter: &str, tags: &[(String, String)]) -> bool {
     let tag = filter.trim();
     if tag.is_empty() {
@@ -559,8 +568,37 @@ pub(crate) fn matches_filter(filter: &str, tags: &[(String, String)]) -> bool {
         None => (tag, None),
     };
     tags.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case(key) && value.is_none_or(|want| v.eq_ignore_ascii_case(want))
+        k.eq_ignore_ascii_case(key)
+            && value.is_none_or(|want| {
+                v.eq_ignore_ascii_case(want)
+                    || (k == owner::NOTIFY_TAG
+                        && v.split(',').any(|e| e.trim().eq_ignore_ascii_case(want)))
+            })
     })
+}
+
+/// What a list's tag filter and search box match: the item's tags with
+/// `owner` and `notify` but without the description, which the search box
+/// matches on its own.
+pub(crate) fn filter_tags(tags: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    description::without(tags).into_iter().collect()
+}
+
+/// The text a list's search box and live filter match: the name, each tag
+/// in `tags` as `name=value` and the description, lower case, line breaks
+/// as spaces. It goes in a `data-filter-text` attribute (escaped) on a row
+/// shown to people who can read the tags. Never logged.
+pub(crate) fn filter_text(name: &str, tags: &[(String, String)], description: &str) -> String {
+    let mut out = name.to_lowercase();
+    for (k, v) in tags {
+        out.push(' ');
+        out.push_str(&format!("{k}={v}").to_lowercase());
+    }
+    if !description.is_empty() {
+        out.push(' ');
+        out.push_str(&description.to_lowercase());
+    }
+    out.replace(['\r', '\n'], " ")
 }
 
 #[cfg(test)]
@@ -838,5 +876,62 @@ mod tests {
         assert!(matches_filter("ENV=Prod", &[("env".into(), "prod".into())]));
         assert!(matches_filter("env", &[("env".into(), "x".into())]));
         assert!(!matches_filter("env=x", &[("env".into(), "xy".into())]));
+    }
+
+    #[test]
+    fn the_filter_finds_owner_and_each_notify_address() {
+        let t = filter_tags(&tags(&[
+            ("owner", "ops@example.com"),
+            ("notify", "Sam@example.com, backup@example.com"),
+            ("description", "note"),
+            ("env", "prod"),
+        ]));
+        assert!(matches_filter("owner", &t));
+        assert!(matches_filter("owner=OPS@example.com", &t));
+        assert!(matches_filter("notify", &t));
+        assert!(matches_filter("notify=sam@example.com", &t));
+        assert!(matches_filter(" notify = BACKUP@example.com ", &t));
+        assert!(matches_filter(
+            "notify=sam@example.com, backup@example.com",
+            &t
+        ));
+        assert!(!matches_filter("notify=pat@example.com", &t));
+        assert!(!matches_filter("notify=example.com", &t));
+        // The description stays out of the tag filter, as before.
+        assert!(!matches_filter("description", &t));
+        // Only `notify` is split: another tag's commas are part of its value.
+        let other = filter_tags(&tags(&[("team", "a, b")]));
+        assert!(!matches_filter("team=a", &other));
+        let text = filter_text("DB", &t, "Line\nTwo");
+        assert_eq!(
+            text,
+            "db env=prod notify=sam@example.com, backup@example.com owner=ops@example.com line two"
+        );
+    }
+
+    #[test]
+    fn a_padded_field_name_already_stored_is_kept_but_never_added() {
+        let cur = tags(&[(" owner ", "x"), (" description ", "y"), ("env", "prod")]);
+        let p = TagPost::rows(&[(" owner ", "x"), (" description ", "y"), ("env", "test")]);
+        let (t, e) = checked(&p, &cur);
+        assert_eq!(e, FieldErrors::new());
+        assert_eq!(
+            t,
+            tags(&[(" owner ", "x"), (" description ", "y"), ("env", "test")])
+        );
+        // Changed, or new: refused with the pointer to the field.
+        let p = TagPost::rows(&[
+            (" owner ", "changed"),
+            (" description ", "y"),
+            (" notify", "z"),
+        ]);
+        let (_, e) = checked(&p, &cur);
+        assert_eq!(e.error_for("tag-name-1"), Some(OWNER_IS_A_FIELD));
+        assert!(e.error_for("tag-name-2").is_none());
+        assert_eq!(e.error_for("tag-name-3"), Some(OWNER_IS_A_FIELD));
+        // The exact names are never kept from a row, even unchanged.
+        let cur = tags(&[("owner", "a@example.com")]);
+        let (_, e) = checked(&TagPost::rows(&[("owner", "a@example.com")]), &cur);
+        assert_eq!(e.error_for("tag-name-1"), Some(OWNER_IS_A_FIELD));
     }
 }

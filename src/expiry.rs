@@ -152,19 +152,11 @@ impl Item {
             .unwrap_or_default()
     }
     /// True when the item has the tag `name`, or `name=value`, ignoring
-    /// case. An empty filter matches everything.
+    /// case, as the lists match ([`crate::routes::tag_rows::matches_filter`]):
+    /// `owner` and `notify` are found like any tag, and a `notify` value
+    /// matches any one address in it. An empty filter matches everything.
     pub(crate) fn has_tag(&self, filter: &str) -> bool {
-        let tag = filter.trim();
-        if tag.is_empty() {
-            return true;
-        }
-        let (k, v) = match tag.split_once('=') {
-            Some((k, v)) => (k.trim(), Some(v.trim())),
-            None => (tag, None),
-        };
-        self.tags
-            .iter()
-            .any(|(a, b)| a.eq_ignore_ascii_case(k) && v.is_none_or(|v| b.eq_ignore_ascii_case(v)))
+        crate::routes::tag_rows::matches_filter(filter, &self.tags)
     }
 
     /// The tags as `name=value; ...`, without the description, owner and
