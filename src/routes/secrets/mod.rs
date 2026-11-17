@@ -45,32 +45,32 @@ pub(super) struct SecretRow {
     pub expires_note: String,
     pub expiry: ExpiryState,
     pub not_yet_valid: bool,
-    /// Tags, without the description.
+    /// Tags, without the description, owner and notify.
     pub tags: Vec<(String, String)>,
     /// The note in the `description` tag, or empty.
     pub description: String,
+    /// The `owner` and `notify` tags.
+    pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
 impl SecretRow {
     pub(super) fn from_item(item: &SecretItem, now: i64) -> Self {
         let a = &item.attributes;
-        let tags: Vec<(String, String)> = crate::description::without(item.tags())
+        let tags: Vec<(String, String)> = crate::owner::without_fields(item.tags())
             .into_iter()
             .collect();
+        let owners = crate::owner::OfItem::of(item.tags());
         let description = crate::description::of(item.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = item.name().to_lowercase();
-        for (k, v) in &tags {
-            filter_text.push(' ');
-            filter_text.push_str(&format!("{k}={v}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(item.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(item.name(), &filter_tags, &description);
         Self {
             name: item.name().to_owned(),
             enabled: a.is_enabled(),
@@ -91,7 +91,9 @@ impl SecretRow {
             not_yet_valid: a.not_yet_valid(now),
             tags,
             description,
+            owners,
             managed: item.managed.unwrap_or(false),
+            filter_tags,
             filter_text,
         }
     }
@@ -151,6 +153,10 @@ pub(super) struct SecretFilter {
     /// "Not changed in over N days": a whole number of days, or empty.
     #[serde(default)]
     pub older: String,
+    /// "Owned by me": any value turns it on. Matched against the signed-in
+    /// person's UPN, never a posted address.
+    #[serde(default)]
+    pub mine: String,
     #[serde(default)]
     pub page: Option<usize>,
 }
@@ -161,6 +167,11 @@ impl SecretFilter {
             && self.tag.trim().is_empty()
             && self.show.is_empty()
             && self.older.trim().is_empty()
+            && !self.mine()
+    }
+
+    pub(super) fn mine(&self) -> bool {
+        crate::owner::mine_on(&self.mine)
     }
 
     /// The days in the "Not changed in over" filter. `Ok(None)` when it is
@@ -178,7 +189,10 @@ impl SecretFilter {
             .ok_or(())
     }
 
-    pub(super) fn matches(&self, row: &SecretRow, now: i64) -> bool {
+    pub(super) fn matches(&self, row: &SecretRow, now: i64, upn: Option<&str>) -> bool {
+        if self.mine() && !row.owners.names(upn) {
+            return false;
+        }
         if let Ok(Some(days)) = self.older_days()
             && !row.older_than(days, now)
         {
@@ -190,7 +204,7 @@ impl SecretFilter {
         if !q.is_empty() && !row.filter_text.contains(&q) {
             return false;
         }
-        if !crate::routes::tag_rows::matches_filter(&self.tag, &row.tags) {
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &row.filter_tags) {
             return false;
         }
         match self.show.as_str() {
@@ -206,11 +220,12 @@ impl SecretFilter {
         vault_path(
             vault,
             &format!(
-                "/secrets?q={}&tag={}&show={}&older={}&page={page}",
+                "/secrets?q={}&tag={}&show={}&older={}{}&page={page}",
                 enc(&self.q),
                 enc(&self.tag),
                 enc(&self.show),
-                enc(self.older.trim())
+                enc(self.older.trim()),
+                if self.mine() { "&mine=1" } else { "" }
             ),
         )
     }
@@ -306,12 +321,24 @@ pub(super) async fn list(
     let expiring_count = all.iter().filter(|r| r.is_expiring()).count();
     let disabled_count = all.iter().filter(|r| !r.enabled).count();
     let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
-        all.iter()
-            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+        // The owner is suggested in the bulk change's owner field.
+        all.iter().map(|r| {
+            r.tags
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .chain(std::iter::once((
+                    crate::owner::OWNER_TAG,
+                    r.owners.owner.as_str(),
+                )))
+        }),
     );
     let tag_options = tag_suggest.filter_options();
 
-    let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r, now)).collect();
+    let upn = session.0.user.username.clone();
+    let matching: Vec<SecretRow> = all
+        .into_iter()
+        .filter(|r| filter.matches(r, now, upn.as_deref()))
+        .collect();
     let (rows, pager) = paginate(matching, filter.page, "secrets", |p| {
         filter.page_url(&vault, p)
     });
@@ -445,7 +472,12 @@ mod tests {
                 .map(|(k, v)| ((*k).into(), (*v).into()))
                 .collect(),
             description: String::new(),
+            owners: crate::owner::OfItem::default(),
             managed: false,
+            filter_tags: tags
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
             filter_text: std::iter::once(name.to_lowercase())
                 .chain(tags.iter().map(|(k, v)| format!("{k}={v}").to_lowercase()))
                 .collect::<Vec<_>>()
@@ -459,6 +491,7 @@ mod tests {
             tag: tag.into(),
             show: show.into(),
             older: String::new(),
+            mine: String::new(),
             page: None,
         }
     }
@@ -485,22 +518,52 @@ mod tests {
     #[test]
     fn filters() {
         let r = row("db-password", true, ExpiryState::Soon, &[("env", "prod")]);
-        assert!(f("DB", "", "").matches(&r, 0));
-        assert!(!f("api", "", "").matches(&r, 0));
-        assert!(f("", "env=PROD", "").matches(&r, 0));
-        assert!(!f("", "env=test", "").matches(&r, 0));
-        assert!(f("", "", "expiring").matches(&r, 0));
-        assert!(!f("", "", "expired").matches(&r, 0));
-        assert!(!f("", "", "disabled").matches(&r, 0));
+        assert!(f("DB", "", "").matches(&r, 0, None));
+        assert!(!f("api", "", "").matches(&r, 0, None));
+        assert!(f("", "env=PROD", "").matches(&r, 0, None));
+        assert!(!f("", "env=test", "").matches(&r, 0, None));
+        assert!(f("", "", "expiring").matches(&r, 0, None));
+        assert!(!f("", "", "expired").matches(&r, 0, None));
+        assert!(!f("", "", "disabled").matches(&r, 0, None));
         // The search box matches tags too, as the live filter does.
-        assert!(f("prod", "", "").matches(&r, 0));
-        assert!(f("env=pr", "", "").matches(&r, 0));
-        assert!(!f("staging", "", "").matches(&r, 0));
+        assert!(f("prod", "", "").matches(&r, 0, None));
+        assert!(f("env=pr", "", "").matches(&r, 0, None));
+        assert!(!f("staging", "", "").matches(&r, 0, None));
         let d = row("old", false, ExpiryState::Expired, &[]);
-        assert!(f("", "", "disabled").matches(&d, 0));
-        assert!(f("", "", "expired").matches(&d, 0));
+        assert!(f("", "", "disabled").matches(&d, 0, None));
+        assert!(f("", "", "expired").matches(&d, 0, None));
         // "Expiring" means soon, not already expired, to match its count.
-        assert!(!f("", "", "expiring").matches(&d, 0));
+        assert!(!f("", "", "expiring").matches(&d, 0, None));
+    }
+
+    #[test]
+    fn owned_by_me_uses_the_session_upn() {
+        let mut r = row("db", true, ExpiryState::None, &[]);
+        r.owners = crate::owner::OfItem {
+            owner: "Team@example.com".into(),
+            notify: "sam@example.com, ALEX@example.com".into(),
+        };
+        let mine = SecretFilter {
+            mine: "1".into(),
+            ..f("", "", "")
+        };
+        assert!(mine.matches(&r, 0, Some("alex@example.com")));
+        assert!(mine.matches(&r, 0, Some("team@EXAMPLE.com")));
+        assert!(!mine.matches(&r, 0, Some("pat@example.com")));
+        assert!(!mine.matches(&r, 0, None), "no UPN, no match");
+        assert!(f("", "", "").matches(&r, 0, None));
+        // Combined with other filters, and kept on the next page without
+        // the address.
+        assert!(
+            !SecretFilter {
+                show: "disabled".into(),
+                ..mine.clone()
+            }
+            .matches(&r, 0, Some("alex@example.com"))
+        );
+        let url = mine.page_url("kv", 2);
+        assert!(url.contains("mine=1") && !url.contains('@'), "{url}");
+        assert!(!mine.is_empty());
     }
 
     #[test]
@@ -513,21 +576,21 @@ mod tests {
             older: days.into(),
             ..f("", "", "")
         };
-        assert!(older("99").matches(&r, now));
+        assert!(older("99").matches(&r, now, None));
         assert!(
-            !older("100").matches(&r, now),
+            !older("100").matches(&r, now, None),
             "exactly 100 days isn't over"
         );
-        assert!(older("").matches(&r, now));
+        assert!(older("").matches(&r, now, None));
         // A bad number filters nothing, and the page says so.
-        assert!(older("abc").matches(&r, now));
+        assert!(older("abc").matches(&r, now, None));
         assert_eq!(older("abc").older_days(), Err(()));
         assert_eq!(older("0").older_days(), Err(()));
         assert_eq!(older("36501").older_days(), Err(()));
         assert_eq!(older(" 30 ").older_days(), Ok(Some(30)));
         // A certificate's backing secret changes with the certificate.
         r.managed = true;
-        assert!(!older("99").matches(&r, now));
+        assert!(!older("99").matches(&r, now, None));
         assert_eq!(r.mark_stale(30, now).stale, "");
         let mut n = row("new", true, ExpiryState::None, &[]);
         n.created_at = Some(now - 400 * DAY);

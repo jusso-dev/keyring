@@ -319,7 +319,7 @@ struct HealthPage {
     shell: Shell,
     rows: Vec<Row>,
     issues: Vec<Issue>,
-    kinds: [Kind; 9],
+    kinds: [Kind; 10],
     warnings: usize,
     unknowns: usize,
     vault_names: Vec<String>,

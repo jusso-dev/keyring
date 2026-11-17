@@ -143,13 +143,25 @@ struct ReviewPage {
     has_dates: bool,
     /// The source's expiry has passed, so the copy won't have one.
     expiry_dropped: bool,
+    /// `KEYRING_REQUIRE_OWNER` is on and the copy would have no owner.
+    owner_missing: bool,
 }
 
 impl ReviewPage {
     fn can_copy(&self) -> bool {
-        !matches!(self.at_target, AtTarget::Deleted | AtTarget::Managed)
+        !matches!(self.at_target, AtTarget::Deleted | AtTarget::Managed) && !self.owner_missing
     }
 }
+
+/// With `KEYRING_REQUIRE_OWNER` on, would the copy be written without an
+/// owner? It brings the source's tags as they are, so that is a source
+/// with no `owner` tag, or Tags left unticked.
+fn owner_missing(item: &SecretItem, bring: Bring, require: bool) -> bool {
+    require && !(bring.tags && crate::owner::owner_of(item.tags()).is_some())
+}
+
+/// Said when a copy would have no owner while the policy is on.
+const OWNER_MISSING: &str = "Keyring is set to need an owner on every secret it writes, and this copy wouldn't have one. Give the source an owner with Edit details and bring its tags, then copy it. Nothing was copied.";
 
 fn form_path(vault: &str, name: &str) -> String {
     vault_path(vault, &format!("/secrets/{name}/copy"))
@@ -362,6 +374,7 @@ async fn review_inner(
         tag_count: item.tags().len(),
         has_dates: a.not_before.is_some() || a.expires.is_some(),
         expiry_dropped: a.expires.is_some_and(|e| e <= now_ts()),
+        owner_missing: owner_missing(&item, Bring::from_form(&f), state.config.require_owner),
         at_target,
         to_vault: target.vault,
         to_name: target.name,
@@ -533,8 +546,26 @@ async fn apply_inner(
         }
     };
 
-    // The source: not a certificate's backing secret, and enabled.
-    let (shell, _) = source_item(&state, &session, shell, &vault, &name).await?;
+    // The source: not a certificate's backing secret, and enabled. With
+    // KEYRING_REQUIRE_OWNER on, it must bring an owner: refused before the
+    // value is read.
+    let (shell, item) = source_item(&state, &session, shell, &vault, &name).await?;
+    if owner_missing(&item, Bring::from_form(&f), state.config.require_owner) {
+        crate::audit::refuse(Refusal::OwnerRequired);
+        return Err(no_store(
+            PageError::new(
+                shell,
+                Problem::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Not copied",
+                    OWNER_MISSING,
+                )
+                .returning_to(&back),
+            )
+            .into_response(),
+        )
+        .into());
+    }
 
     // The target name: stop before reading anything if it's a deleted
     // secret or a certificate's. If Keyring can't look, the write decides.
@@ -577,6 +608,23 @@ async fn apply_inner(
     // properties were read. The value is dropped unused.
     if bundle.item.managed.unwrap_or(false) {
         return Err(managed_problem(shell, &vault, &name));
+    }
+    if owner_missing(
+        &bundle.item,
+        Bring::from_form(&f),
+        state.config.require_owner,
+    ) {
+        crate::audit::refuse(Refusal::OwnerRequired);
+        return Err(PageError::new(
+            shell,
+            Problem::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Not copied",
+                OWNER_MISSING,
+            )
+            .returning_to(&back),
+        )
+        .into());
     }
     let body = body_for(&bundle.item, bundle.value, Bring::from_form(&f));
 
@@ -703,6 +751,30 @@ mod tests {
                 "{n}"
             );
         }
+    }
+
+    #[test]
+    fn require_owner_needs_the_sources_owner_brought() {
+        let mut item = SecretItem {
+            id: "https://kv.vault.azure.net/secrets/s/0123456789abcdef0123456789abcdef".into(),
+            attributes: Attributes::default(),
+            tags: None,
+            content_type: None,
+            managed: None,
+        };
+        let all = Bring::ALL;
+        let bare = Bring {
+            tags: false,
+            ..Bring::ALL
+        };
+        assert!(!owner_missing(&item, all, false), "off: never");
+        assert!(owner_missing(&item, all, true));
+        item.tags = Some([("owner".to_owned(), "a@example.com".to_owned())].into());
+        assert!(!owner_missing(&item, all, true));
+        assert!(owner_missing(&item, bare, true), "tags not brought");
+        // An odd owner set elsewhere is brought as it is.
+        item.tags = Some([("owner".to_owned(), "Payments Team".to_owned())].into());
+        assert!(!owner_missing(&item, all, true));
     }
 
     #[test]

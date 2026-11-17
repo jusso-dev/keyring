@@ -47,6 +47,8 @@
 
   {% call ui::description_field(form.description, "certificate") %}{% endcall %}
 
+  {% call ui::owner_fields(owners, tags.suggest.owners) %}{% endcall %}
+
   <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || tags_error() || azure_message.is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 
@@ -80,7 +82,7 @@
     <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% call ui::aria("renew_days", "renew_days-help") %}{% endcall %}>
     {% let field_name = "renew_days" %}{% include "_field_error.html" %}
 
-    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
+    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, owner and notify, each name used once.") %}{% endcall %}
   </details>
 
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}

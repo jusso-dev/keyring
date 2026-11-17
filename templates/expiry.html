@@ -91,7 +91,7 @@
   {% call ui::table_wrap("group-{}-caption"|format(g.group.slug())) %}
   <table class="ledger">
     <caption class="visually-hidden" id="group-{{ g.group.slug() }}-caption">{{ g.group.label() }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Owner</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
@@ -99,6 +99,7 @@
         <td>{{ r.kind.label() }}</td>
         <td class="item-name">{{ r.vault }}</td>
         <td class="nowrap">{{ ui::expires(r.expires, r.note) }}</td>
+        <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
         <td>{{ ui::or_none(r.tags) }}</td>
         <td>
           <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>

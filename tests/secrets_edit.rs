@@ -192,7 +192,7 @@ async fn editing_properties_does_not_make_a_new_version() {
                 ("version", &version),
                 ("updated", &updated),
                 ("content_type", "text/plain"),
-                ("tag-name-1", "owner"),
+                ("tag-name-1", "rota"),
                 ("tag-value-1", "ops"),
                 ("expires", "2099-06-01"),
                 ("enabled", "on"),
@@ -205,7 +205,7 @@ async fn editing_properties_does_not_make_a_new_version() {
     assert_eq!(v.version, ver);
     assert_eq!(v.value, "keep-me");
     assert_eq!(v.content_type.as_deref(), Some("text/plain"));
-    assert_eq!(v.tags.get("owner").map(String::as_str), Some("ops"));
+    assert_eq!(v.tags.get("rota").map(String::as_str), Some("ops"));
     let log = w.kv.state.log.lock().unwrap().clone();
     assert!(
         log.iter()

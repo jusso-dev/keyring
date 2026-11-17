@@ -19,6 +19,8 @@
   {% call ui::name_field(form.name, "key") %}{% endcall %}
   {% call ui::description_field(form.description, "key") %}{% endcall %}
 
+  {% call ui::owner_fields(owners, tags.suggest.owners) %}{% endcall %}
+
   <details class="advanced"{% if !errors.is_empty() || azure_message.is_some() %} open{% endif %}>
     <summary>Key type, operations, expiry and tags</summary>
     {% let field_name = "key_type" %}
@@ -47,7 +49,7 @@
     <p class="field-help" id="expires-help">A date in UTC. The key works until the end of that day. Leave blank for no expiry.</p>
     <input id="expires" name="expires" type="date" value="{{ form.expires }}"{% call ui::aria("expires", "expires-help") %}{% endcall %}>
     {% include "_field_error.html" %}
-    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
+    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, owner and notify, each name used once.") %}{% endcall %}
   </details>
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions"><button type="submit">Create key</button><a href="{{ shell.vault_prefix() }}/keys">Cancel</a></div>

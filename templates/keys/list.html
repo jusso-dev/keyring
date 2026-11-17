@@ -13,7 +13,7 @@
 {% else %}
 <form class="filters" method="get" action="{{ shell.vault_prefix() }}/keys" role="search" data-live-filter="key-table">
   <div>
-    <label for="q">Search by name or tag</label>
+    <label for="q">Search by name, tag or owner</label>
     <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
   </div>
   <div>
@@ -21,6 +21,11 @@
     <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
     <input id="tag" name="tag" type="text" value="{{ filter.tag }}" list="tag-filter-options" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
     {% call ui::filter_options(tag_options) %}{% endcall %}
+  </div>
+  <div class="checkbox filter-check">
+    <input id="mine" name="mine" type="checkbox" value="1"{% if filter.mine() %} checked{% endif %} aria-describedby="mine-help">
+    <label for="mine">Owned by me</label>
+    <p class="field-help" id="mine-help">Where you're the owner or on the notify list.</p>
   </div>
   <div class="filters-submit"><button type="submit">Filter</button>{% if !filter.is_empty() %} <a href="{{ shell.vault_prefix() }}/keys">Clear</a>{% endif %}</div>
 </form>
@@ -32,7 +37,7 @@
 {% call ui::table_wrap("key-table-caption") %}
 <table id="key-table">
   <caption class="visually-hidden" id="key-table-caption">Keys in {{ vault }}</caption>
-  <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Description</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+  <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Description</th><th scope="col">Owner</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
@@ -40,6 +45,7 @@
       <th scope="row"><a class="item-name" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
       <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
       <td class="note-cell">{{ ui::note_cell(row.description) }}</td>
+      <td class="owner-cell">{{ ui::owner_value(row.owners.owner_shown()) }}</td>
       <td class="nowrap">{{ ui::or_none(row.created) }}</td>
       <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td>{{ ui::tags(row.tags) }}</td>

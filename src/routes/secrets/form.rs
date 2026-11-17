@@ -12,6 +12,7 @@ use crate::azure::secrets::{
 };
 use crate::dates;
 use crate::description;
+use crate::owner;
 use crate::password_policy::PasswordPolicy;
 use crate::routes::forms::{FieldError, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
@@ -53,6 +54,12 @@ pub(crate) struct SecretForm {
     /// The note, kept in the `description` tag. Empty removes it.
     #[serde(default)]
     pub description: String,
+    /// The `owner` tag. Empty removes it; not posted keeps it.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// The `notify` tag. Empty removes it; not posted keeps it.
+    #[serde(default)]
+    pub notify: Option<String>,
     /// Checkbox: present means on.
     #[serde(default)]
     pub enabled: Option<String>,
@@ -189,6 +196,12 @@ pub(crate) fn one_tag(name: &str, value: &str) -> Result<(String, String), Strin
                 .into(),
         );
     }
+    if owner::is_reserved(k) {
+        return Err(
+            "The owner and notify tags have their own changes in the list: Set the owner, Remove the owner, Set notify, or Remove notify."
+                .into(),
+        );
+    }
     if k.contains(['\n', '\r']) || v.contains(['\n', '\r']) {
         return Err("A tag can't have a line break in it.".into());
     }
@@ -235,6 +248,7 @@ fn properties(
     now: i64,
     current: Option<&Attributes>,
     current_tags: &BTreeMap<String, String>,
+    rules: owner::Rules<'_>,
     errors: &mut FieldErrors,
 ) -> Properties {
     let content_type = form.content_type.trim();
@@ -270,7 +284,14 @@ fn properties(
         );
     }
     let tags = tag_rows::check(&form.tag_rows, current_tags, errors);
-    let tags = with_note(&tags, &form.description, errors);
+    let tags = with_fields(
+        &tags,
+        current_tags,
+        &form.description,
+        form.owners(),
+        rules,
+        errors,
+    );
     Properties {
         content_type: (!content_type.is_empty()).then(|| content_type.to_owned()),
         attributes: Attributes {
@@ -283,18 +304,33 @@ fn properties(
     }
 }
 
-/// The tags from the form with the posted description merged in. A
-/// problem with the note goes on the `description` field.
-pub(crate) fn with_note(
+impl SecretForm {
+    pub(crate) fn owners(&self) -> owner::Posted<'_> {
+        owner::Posted {
+            owner: self.owner.as_deref(),
+            notify: self.notify.as_deref(),
+        }
+    }
+}
+
+/// The tags from the rows with the posted owner, notify and description
+/// merged in ([`crate::owner::with_owners`], then the note). `current` is
+/// the item's tags as they are, empty for a new item. A problem goes on its
+/// field: `owner`, `notify` or `description`.
+pub(crate) fn with_fields(
     tags: &BTreeMap<String, String>,
-    raw: &str,
+    current: &BTreeMap<String, String>,
+    note: &str,
+    owners: owner::Posted<'_>,
+    rules: owner::Rules<'_>,
     errors: &mut FieldErrors,
 ) -> BTreeMap<String, String> {
-    match description::clean(raw).and_then(|n| description::merge(tags, n.as_deref())) {
+    let tags = owner::with_owners(tags, current, owners, rules, errors);
+    match description::clean(note).and_then(|n| description::merge(&tags, n.as_deref())) {
         Ok(t) => t,
         Err(m) => {
             errors.push("description", m);
-            tags.clone()
+            tags
         }
     }
 }
@@ -384,6 +420,7 @@ pub(crate) fn for_create(
     form: &SecretForm,
     now: i64,
     policy: &PasswordPolicy,
+    rules: owner::Rules<'_>,
 ) -> Result<(String, SetSecret), FieldErrors> {
     let mut errors = FieldErrors::new();
     let name = form.name.trim().to_owned();
@@ -398,7 +435,7 @@ pub(crate) fn for_create(
         Some(kind) => checked_typed(kind, form, policy, &mut errors),
         None => checked_value(form, policy, &mut errors),
     };
-    let mut props = properties(form, now, None, &BTreeMap::new(), &mut errors);
+    let mut props = properties(form, now, None, &BTreeMap::new(), rules, &mut errors);
     match kind {
         Some(kind) => props.content_type = Some(kind.content_type()),
         None => keyring_type_typed(props.content_type.as_deref(), None, &mut errors),
@@ -427,6 +464,7 @@ pub(crate) fn for_new_value(
     current: &SecretItem,
     now: i64,
     policy: &PasswordPolicy,
+    rules: owner::Rules<'_>,
 ) -> Result<SetSecret, FieldErrors> {
     let mut errors = FieldErrors::new();
     let current_ct = current.content_type.as_deref();
@@ -439,6 +477,7 @@ pub(crate) fn for_new_value(
         now,
         Some(&current.attributes),
         current.tags(),
+        rules,
         &mut errors,
     );
     if let ContentKind::Typed(_) = classify(current_ct) {
@@ -472,11 +511,12 @@ pub(crate) fn for_update(
     form: &SecretForm,
     item: &SecretItem,
     now: i64,
+    rules: owner::Rules<'_>,
 ) -> Result<UpdateSecret, FieldErrors> {
     let current = &item.attributes;
     let mut errors = FieldErrors::new();
     // An expiry that's already passed but wasn't touched isn't an error.
-    let props = properties(form, now, Some(current), item.tags(), &mut errors);
+    let props = properties(form, now, Some(current), item.tags(), rules, &mut errors);
     let typed = matches!(
         classify(item.content_type.as_deref()),
         ContentKind::Typed(_)
@@ -522,6 +562,7 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_790_000_000;
+    const R: owner::Rules<'static> = owner::Rules::OFF;
     const OFF: PasswordPolicy = PasswordPolicy {
         min: None,
         upper: false,
@@ -563,7 +604,7 @@ mod tests {
         f.expires = "2027-01-31".into();
         f.tag_rows = TagPost::rows(&[("env", "prod"), ("", ""), ("team", "data"), ("flag", "")]);
         f.content_type = " text/plain ".into();
-        let (name, body) = for_create(&f, NOW, &OFF).unwrap();
+        let (name, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(name, "db-password");
         assert_eq!(body.value.expose(), "hunter2");
         assert_eq!(body.content_type.as_deref(), Some("text/plain"));
@@ -579,7 +620,7 @@ mod tests {
     fn value_is_kept_exactly() {
         let mut f = form();
         f.value = Some("  spaced value \n".into());
-        let (_, body) = for_create(&f, NOW, &OFF).unwrap();
+        let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(body.value.expose(), "  spaced value \n");
     }
 
@@ -590,7 +631,7 @@ mod tests {
         f.value = Some(String::new());
         f.expires = "2020-01-01".into();
         f.tag_rows = TagPost::rows(&[("", "oops")]);
-        let errors = for_create(&f, NOW, &OFF).err().unwrap();
+        let errors = for_create(&f, NOW, &OFF, R).err().unwrap();
         let fields: Vec<_> = errors.iter().map(|e| e.field).collect();
         assert_eq!(fields, vec!["name", "value", "expires", "tag-name-1"]);
     }
@@ -599,10 +640,10 @@ mod tests {
     fn dates_are_checked() {
         let mut f = form();
         f.expires = "2027-02-30".into();
-        assert!(for_create(&f, NOW, &OFF).is_err());
+        assert!(for_create(&f, NOW, &OFF, R).is_err());
         f.expires = "2027-03-01".into();
         f.not_before = "2027-03-02".into();
-        let e = for_create(&f, NOW, &OFF).err().unwrap();
+        let e = for_create(&f, NOW, &OFF, R).err().unwrap();
         assert_eq!(e[0].field, "not_before");
     }
 
@@ -610,7 +651,7 @@ mod tests {
     fn unchecked_box_disables() {
         let mut f = form();
         f.enabled = None;
-        let (_, body) = for_create(&f, NOW, &OFF).unwrap();
+        let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(body.attributes.enabled, Some(false));
     }
 
@@ -626,14 +667,14 @@ mod tests {
         f.expires = "2027-02-06".into();
         f.tag_rows = TagPost::rows(&[("env", "prod")]);
         let current = item(current, &[]);
-        let body = for_update(&f, &current, NOW).unwrap();
+        let body = for_update(&f, &current, NOW, R).unwrap();
         let j = serde_json::to_value(&body).unwrap();
         assert!(
             j["attributes"].get("exp").is_none(),
             "unchanged expiry not sent"
         );
         f.expires = String::new();
-        let errors = for_update(&f, &current, NOW).unwrap_err();
+        let errors = for_update(&f, &current, NOW, R).unwrap_err();
         assert_eq!(
             errors.error_for("expires"),
             Some(REMOVE_EXPIRY),
@@ -641,7 +682,7 @@ mod tests {
         );
         // A new value without the date drops it.
         f.value = Some("new".into());
-        let body = for_new_value(&f, &current, NOW, &OFF).unwrap();
+        let body = for_new_value(&f, &current, NOW, &OFF, R).unwrap();
         assert_eq!(body.attributes.expires, None);
         // An expiry that passed earlier today, left alone, doesn't block other edits.
         let past = Attributes {
@@ -650,14 +691,14 @@ mod tests {
         };
         let mut f = form();
         f.expires = crate::dates::iso_date(NOW - 60);
-        assert!(for_update(&f, &item(past, &[]), NOW).is_ok());
+        assert!(for_update(&f, &item(past, &[]), NOW, R).is_ok());
     }
 
     #[test]
     fn update_never_has_a_value() {
         let mut f = form();
         f.value = Some("should be ignored".into());
-        let body = for_update(&f, &item(Attributes::default(), &[]), NOW).unwrap();
+        let body = for_update(&f, &item(Attributes::default(), &[]), NOW, R).unwrap();
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("value").is_none());
         assert_eq!(json["contentType"], "");
@@ -667,12 +708,12 @@ mod tests {
     fn line_breaks_become_lf() {
         let mut f = form();
         f.value = Some("\na\r\nb\r\n".into());
-        let (_, body) = for_create(&f, NOW, &OFF).unwrap();
+        let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(body.value.expose(), "\na\nb\n");
         // A value right at 25 KB once CRLF is LF isn't refused for its CRs.
         let line = "x".repeat(1023);
         f.value = Some(vec![line.as_str(); 25].join("\r\n") + "\r\n");
-        assert!(for_create(&f, NOW, &OFF).is_ok());
+        assert!(for_create(&f, NOW, &OFF, R).is_ok());
     }
 
     #[test]
@@ -680,10 +721,10 @@ mod tests {
         let current = item(Attributes::default(), &[("env", "prod")]);
         let mut f = form();
         f.tag_rows = TagPost::rows(&[("env", "prod")]);
-        let body = for_update(&f, &current, NOW).unwrap();
+        let body = for_update(&f, &current, NOW, R).unwrap();
         assert!(body.tags.is_none(), "unchanged tags not sent");
         f.tag_rows = TagPost::rows(&[("env", "test")]);
-        let body = for_update(&f, &current, NOW).unwrap();
+        let body = for_update(&f, &current, NOW, R).unwrap();
         assert_eq!(body.tags.unwrap()["env"], "test");
     }
 
@@ -696,15 +737,15 @@ mod tests {
         let mut f = form();
         // The form shows a row for a=b, and lists the other.
         f.tag_rows = TagPost::rows(&[("a=b", " c ")]);
-        let body = for_update(&f, &odd, NOW).unwrap();
+        let body = for_update(&f, &odd, NOW, R).unwrap();
         assert!(body.tags.is_none());
-        let body = for_new_value(&f, &odd, NOW, &OFF).unwrap();
+        let body = for_new_value(&f, &odd, NOW, &OFF, R).unwrap();
         let tags = body.tags.unwrap();
         assert_eq!(tags["a=b"], " c ");
         assert_eq!(tags["note"], "two\nlines");
         // Clearing the row removes that tag only.
         f.tag_rows = TagPost::rows(&[]);
-        let tags = for_update(&f, &odd, NOW).unwrap().tags.unwrap();
+        let tags = for_update(&f, &odd, NOW, R).unwrap().tags.unwrap();
         assert_eq!(tags.keys().collect::<Vec<_>>(), ["note"]);
     }
 
@@ -723,7 +764,7 @@ mod tests {
         let mut f = form();
         f.expires = crate::dates::iso_date(midnight);
         f.not_before = crate::dates::iso_date(midnight - 30 * day);
-        let body = for_new_value(&f, &current, NOW, &OFF).unwrap();
+        let body = for_new_value(&f, &current, NOW, &OFF, R).unwrap();
         assert_eq!(body.attributes.expires, Some(midnight + 10 * 3600));
         assert_eq!(
             body.attributes.not_before,
@@ -731,7 +772,7 @@ mod tests {
         );
         // A different day is taken as chosen: end of day for expiry.
         f.expires = crate::dates::iso_date(midnight + day);
-        let body = for_new_value(&f, &current, NOW, &OFF).unwrap();
+        let body = for_new_value(&f, &current, NOW, &OFF, R).unwrap();
         assert_eq!(body.attributes.expires, Some(midnight + 2 * day - 1));
     }
 
@@ -755,7 +796,7 @@ mod tests {
                 ("password", "p\"w"),
             ],
         );
-        let (_, body) = for_create(&f, NOW, &OFF).unwrap();
+        let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(
             body.content_type.as_deref(),
             Some("application/vnd.keyring.login+json;v=1")
@@ -767,7 +808,7 @@ mod tests {
         // A typed content type typed by hand is ignored for a typed form.
         let mut f2 = typed_form("api-key", &[("key", "k")]);
         f2.content_type = "text/plain".into();
-        let (_, body) = for_create(&f2, NOW, &OFF).unwrap();
+        let (_, body) = for_create(&f2, NOW, &OFF, R).unwrap();
         assert_eq!(
             body.content_type.as_deref(),
             Some("application/vnd.keyring.api-key+json;v=1")
@@ -777,10 +818,10 @@ mod tests {
     #[test]
     fn typed_create_reports_each_field() {
         let f = typed_form("database", &[("server", "s")]);
-        let e = for_create(&f, NOW, &OFF).unwrap_err();
+        let e = for_create(&f, NOW, &OFF, R).unwrap_err();
         let fields: Vec<_> = e.iter().map(|e| e.field).collect();
         assert_eq!(fields, ["username", "password"]);
-        let e = for_create(&typed_form("wifi", &[]), NOW, &OFF).unwrap_err();
+        let e = for_create(&typed_form("wifi", &[]), NOW, &OFF, R).unwrap_err();
         assert_eq!(e[0].field, "secret_type");
     }
 
@@ -788,10 +829,10 @@ mod tests {
     fn keyring_content_types_cant_be_typed_by_hand() {
         let mut f = form();
         f.content_type = "application/vnd.keyring.login+json;v=1".into();
-        let e = for_create(&f, NOW, &OFF).unwrap_err();
+        let e = for_create(&f, NOW, &OFF, R).unwrap_err();
         assert_eq!(e[0].field, "content_type");
         // On a plain secret's edit form too.
-        let e = for_update(&f, &item(Attributes::default(), &[]), NOW).unwrap_err();
+        let e = for_update(&f, &item(Attributes::default(), &[]), NOW, R).unwrap_err();
         assert_eq!(e[0].field, "content_type");
     }
 
@@ -804,17 +845,56 @@ mod tests {
         // whatever the form posted.
         let mut f = typed_form("", &[("key", "new-key")]);
         f.content_type = "text/plain".into();
-        let body = for_new_value(&f, &current, NOW, &OFF).unwrap();
+        let body = for_new_value(&f, &current, NOW, &OFF, R).unwrap();
         assert_eq!(body.content_type.as_deref(), Some(ct));
         assert!(body.value.expose().contains("new-key"));
         // A plain value box doesn't count for a typed secret.
         let mut f = form();
         f.value = Some("plain".into());
-        let e = for_new_value(&f, &current, NOW, &OFF).unwrap_err();
+        let e = for_new_value(&f, &current, NOW, &OFF, R).unwrap_err();
         assert_eq!(e[0].field, "key");
         // Edit details never sends the content type.
-        let body = for_update(&form(), &current, NOW).unwrap();
+        let body = for_update(&form(), &current, NOW, R).unwrap();
         assert!(body.content_type.is_none());
+    }
+
+    #[test]
+    fn owner_fields_follow_the_rules() {
+        let mut f = form();
+        f.owner = Some("Alex@Example.com".into());
+        f.notify = Some("sam@example.com, team@example.com".into());
+        let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
+        let tags = body.tags.unwrap();
+        assert_eq!(tags["owner"], "Alex@example.com");
+        assert_eq!(tags["notify"], "sam@example.com, team@example.com");
+        // The policy, on create and on each edit form.
+        let on = owner::Rules {
+            allowed: None,
+            require: true,
+        };
+        f.owner = Some(String::new());
+        let e = for_create(&f, NOW, &OFF, on).unwrap_err();
+        assert_eq!(e.error_for("owner"), Some(owner::OWNER_NEEDED));
+        let bare = item(Attributes::default(), &[]);
+        assert!(
+            for_update(&f, &bare, NOW, on)
+                .unwrap_err()
+                .error_for("owner")
+                .is_some()
+        );
+        f.value = Some("v".into());
+        assert!(
+            for_new_value(&f, &bare, NOW, &OFF, on)
+                .unwrap_err()
+                .error_for("owner")
+                .is_some()
+        );
+        // An untouched odd owner set elsewhere doesn't block an edit.
+        let odd = item(Attributes::default(), &[("owner", "Payments Team")]);
+        f.owner = Some("Payments Team".into());
+        f.notify = Some(String::new());
+        let body = for_update(&f, &odd, NOW, on).unwrap();
+        assert!(body.tags.is_none(), "nothing changed, nothing sent");
     }
 
     #[test]

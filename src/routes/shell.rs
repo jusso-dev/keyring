@@ -107,6 +107,8 @@ pub struct Shell {
     pub reason: ReasonAsk,
     /// `KEYRING_PASSWORD_POLICY`, for the help on password fields.
     pub password_policy: crate::password_policy::PasswordPolicy,
+    /// `KEYRING_REQUIRE_OWNER`, for the owner field.
+    pub require_owner: bool,
 }
 
 /// What the reason fields on a form need to know.
@@ -239,6 +241,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Shell {
         {
             shell.reason = ReasonAsk::from_config(config);
             shell.password_policy = config.password_policy;
+            shell.require_owner = config.require_owner;
         }
         Ok(shell)
     }

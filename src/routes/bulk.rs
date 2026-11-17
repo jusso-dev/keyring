@@ -106,6 +106,12 @@ pub(crate) enum Op {
     /// Set the note in the `description` tag. Cleaned and checked.
     SetNote(String),
     RemoveNote,
+    /// Set the `owner` tag: one checked address.
+    SetOwner(String),
+    RemoveOwner,
+    /// Set the `notify` tag: checked addresses, joined.
+    SetNotify(String),
+    RemoveNotify,
     /// End of the chosen day, UTC.
     Expiry(Timestamp),
     Enable,
@@ -120,6 +126,11 @@ impl std::fmt::Debug for Op {
             // The note may hold sensitive context: never printed.
             Self::SetNote(_) => f.write_str("SetNote(..)"),
             Self::RemoveNote => f.write_str("RemoveNote"),
+            // Addresses are personal data: never printed.
+            Self::SetOwner(_) => f.write_str("SetOwner(..)"),
+            Self::RemoveOwner => f.write_str("RemoveOwner"),
+            Self::SetNotify(_) => f.write_str("SetNotify(..)"),
+            Self::RemoveNotify => f.write_str("RemoveNotify"),
             Self::Expiry(e) => f.debug_tuple("Expiry").field(e).finish(),
             Self::Enable => f.write_str("Enable"),
             Self::Disable => f.write_str("Disable"),
@@ -135,6 +146,10 @@ impl Op {
             Self::RemoveTag(k) => format!("Remove the tag {k}"),
             Self::SetNote(_) => "Set the description".into(),
             Self::RemoveNote => "Remove the description".into(),
+            Self::SetOwner(_) => "Set the owner".into(),
+            Self::RemoveOwner => "Remove the owner".into(),
+            Self::SetNotify(_) => "Set the notify list".into(),
+            Self::RemoveNotify => "Remove the notify list".into(),
             Self::Expiry(e) => format!("Set the expiry date to {}", dates::format_date(*e)),
             Self::Enable => "Enable".into(),
             Self::Disable => "Disable".into(),
@@ -145,7 +160,7 @@ impl Op {
 /// What the forms post. The names come as repeated `item` fields, which
 /// `serde_urlencoded` can't read into a list, so the body is read by hand.
 /// `Debug` shows the change and how many items, never the form token, a
-/// tag value or the description.
+/// tag value, the description or an address.
 #[derive(Default)]
 struct Posted {
     csrf: String,
@@ -154,6 +169,8 @@ struct Posted {
     tag_name: String,
     tag_value: String,
     description: String,
+    owner: String,
+    notify: String,
     expires: String,
     confirm_count: String,
 }
@@ -179,6 +196,8 @@ impl Posted {
                 "tag_name" => p.tag_name = v,
                 "tag_value" => p.tag_value = v,
                 "description" => p.description = v,
+                "owner" => p.owner = v,
+                "notify" => p.notify = v,
                 "expires" => p.expires = v,
                 "confirm_count" => p.confirm_count = v,
                 _ => {}
@@ -189,7 +208,7 @@ impl Posted {
 
     /// The change asked for, checked. Expiry is refused for certificates,
     /// whose dates come from the certificate itself.
-    fn op(&self, kind: Kind, now: Timestamp) -> Result<Op, String> {
+    fn op(&self, kind: Kind, now: Timestamp, rules: crate::owner::Rules<'_>) -> Result<Op, String> {
         match self.op.as_str() {
             "tag_set" => one_tag(&self.tag_name, &self.tag_value).map(|(k, v)| Op::SetTag(k, v)),
             "tag_remove" => one_tag(&self.tag_name, "").map(|(k, _)| Op::RemoveTag(k)),
@@ -201,6 +220,26 @@ impl Posted {
                 ),
             },
             "description_remove" => Ok(Op::RemoveNote),
+            "owner_set" => match crate::owner::clean_owner(&self.owner, rules)? {
+                Some(a) => Ok(Op::SetOwner(a)),
+                None => Err(
+                    "Type the owner's address to set. To take it off, choose Remove the owner."
+                        .into(),
+                ),
+            },
+            "owner_remove" if rules.require => {
+                audit::refuse(Refusal::OwnerRequired);
+                Err(crate::owner::REMOVE_REFUSED.into())
+            }
+            "owner_remove" => Ok(Op::RemoveOwner),
+            "notify_set" => match crate::owner::clean_notify(&self.notify, rules)? {
+                Some(a) => Ok(Op::SetNotify(a)),
+                None => Err(
+                    "Type the addresses to set. To take the list off, choose Remove the notify list."
+                        .into(),
+                ),
+            },
+            "notify_remove" => Ok(Op::RemoveNotify),
             "expiry" if kind == Kind::Certificate => Err(
                 "A certificate's expiry date comes from the certificate. Renew it to change it."
                     .into(),
@@ -335,6 +374,40 @@ pub(crate) fn plan(kind: Kind, op: &Op, cur: &Current) -> Plan {
             tags.remove(crate::description::TAG);
             body.tags = Some(tags);
             "Removes its description.".into()
+        }
+        // The review never quotes an address: the page heading says the
+        // change, and each row only whether it adds or replaces.
+        Op::SetOwner(v) | Op::SetNotify(v) => {
+            let (tag, noun) = match op {
+                Op::SetOwner(_) => (crate::owner::OWNER_TAG, "owner"),
+                _ => (crate::owner::NOTIFY_TAG, "notify list"),
+            };
+            let old = cur.tags.get(tag);
+            if old == Some(v) {
+                return Plan::NoChange(format!("Already has this {noun}."));
+            }
+            match crate::owner::merge(&cur.tags, tag, Some(v)) {
+                Ok(tags) => body.tags = Some(tags),
+                Err(m) => return Plan::Blocked(Blocked::TooManyTags, m),
+            }
+            if old.is_some() {
+                format!("Replaces its {noun}.")
+            } else {
+                format!("Adds the {noun}.")
+            }
+        }
+        Op::RemoveOwner | Op::RemoveNotify => {
+            let (tag, noun) = match op {
+                Op::RemoveOwner => (crate::owner::OWNER_TAG, "owner"),
+                _ => (crate::owner::NOTIFY_TAG, "notify list"),
+            };
+            if !cur.tags.contains_key(tag) {
+                return Plan::NoChange(format!("Has no {noun}."));
+            }
+            let mut tags = cur.tags.clone();
+            tags.remove(tag);
+            body.tags = Some(tags);
+            format!("Removes its {noun}.")
         }
         Op::RemoveTag(k) => {
             let Some(old) = cur.tags.get(k) else {
@@ -624,6 +697,8 @@ struct ReviewPage {
     tag_name: String,
     tag_value: String,
     description: String,
+    owner: String,
+    notify: String,
     expires: String,
 }
 
@@ -651,7 +726,7 @@ pub(crate) async fn review<K: Which>(
     let p = Posted::parse(&body);
     let shell = check_csrf(&session, &vault, &p.csrf, shell)?;
     let now = now_ts();
-    let op = match p.op(kind, now) {
+    let op = match p.op(kind, now, crate::owner::Rules::of(&state.config)) {
         Ok(op) => op,
         Err(m) => return Err(bad_form(shell, kind, &vault, m)),
     };
@@ -716,6 +791,8 @@ pub(crate) async fn review<K: Which>(
             tag_name: p.tag_name,
             tag_value: p.tag_value,
             description: p.description,
+            owner: p.owner,
+            notify: p.notify,
             expires: p.expires,
         })
         .into_response(),
@@ -776,7 +853,7 @@ pub(crate) async fn apply<K: Which>(
     let p = Posted::parse(&body);
     let shell = check_csrf(&session, &vault, &p.csrf, shell)?;
     let now = now_ts();
-    let op = match p.op(kind, now) {
+    let op = match p.op(kind, now, crate::owner::Rules::of(&state.config)) {
         Ok(op) => op,
         Err(m) => return Err(bad_form(shell, kind, &vault, m)),
     };
@@ -1106,16 +1183,124 @@ mod tests {
         assert_eq!(json, r#"{"attributes":{"enabled":false}}"#);
     }
 
+    const R: crate::owner::Rules<'static> = crate::owner::Rules::OFF;
+
+    #[test]
+    fn owner_and_notify_changes() {
+        let p = |body: &str| Posted::parse(body.as_bytes());
+        let now = 1_800_000_000;
+        assert_eq!(
+            p("op=owner_set&owner=Alex%40Example.COM")
+                .op(Kind::Secret, now, R)
+                .unwrap(),
+            Op::SetOwner("Alex@example.com".into())
+        );
+        let e = p("op=owner_set&owner=Alex%20%3Ca%40example.com%3E")
+            .op(Kind::Secret, now, R)
+            .unwrap_err();
+        assert!(
+            e.contains("one plain email address") && !e.contains("Alex"),
+            "{e}"
+        );
+        assert!(p("op=owner_set&owner=").op(Kind::Secret, now, R).is_err());
+        assert_eq!(
+            p("op=notify_set&notify=a%40example.com%2C%20b%40example.com")
+                .op(Kind::Key, now, R)
+                .unwrap(),
+            Op::SetNotify("a@example.com, b@example.com".into())
+        );
+        let e = p("op=notify_set&notify=a%40example.com%2Cnope")
+            .op(Kind::Key, now, R)
+            .unwrap_err();
+        assert!(e.contains("second address"), "{e}");
+        let d = vec!["example.com".to_owned()];
+        let strict = crate::owner::Rules {
+            allowed: Some(&d),
+            require: true,
+        };
+        assert!(
+            p("op=owner_set&owner=a%40evil.com")
+                .op(Kind::Key, now, strict)
+                .is_err()
+        );
+        assert_eq!(
+            p("op=owner_remove").op(Kind::Key, now, strict).unwrap_err(),
+            crate::owner::REMOVE_REFUSED
+        );
+        assert_eq!(
+            p("op=owner_remove").op(Kind::Key, now, R).unwrap(),
+            Op::RemoveOwner
+        );
+        assert_eq!(
+            p("op=notify_remove").op(Kind::Key, now, strict).unwrap(),
+            Op::RemoveNotify
+        );
+        // Never printed.
+        let op = Op::SetOwner("alex@example.com".into());
+        assert!(!format!("{op:?}").contains("alex"));
+        assert!(!format!("{:?}", Op::SetNotify("sam@example.com".into())).contains("sam"));
+    }
+
+    #[test]
+    fn owner_plans_merge_and_never_quote_the_address() {
+        let cur = Current {
+            name: "db".into(),
+            tags: [("env".to_owned(), "prod".to_owned())].into(),
+            ..Current::default()
+        };
+        let set = Op::SetOwner("alex@example.com".into());
+        let Plan::Change(why, body) = plan(Kind::Secret, &set, &cur) else {
+            panic!()
+        };
+        assert_eq!(why, "Adds the owner.");
+        let tags = body.tags.unwrap();
+        assert_eq!(tags["env"], "prod");
+        assert_eq!(tags["owner"], "alex@example.com");
+        let with = Current {
+            tags: tags.clone(),
+            ..cur.clone()
+        };
+        assert!(matches!(plan(Kind::Secret, &set, &with), Plan::NoChange(_)));
+        let Plan::Change(why, _) =
+            plan(Kind::Secret, &Op::SetOwner("sam@example.com".into()), &with)
+        else {
+            panic!()
+        };
+        assert!(!why.contains('@'), "{why}");
+        let Plan::Change(_, body) = plan(Kind::Secret, &Op::RemoveOwner, &with) else {
+            panic!()
+        };
+        assert_eq!(body.tags.unwrap(), cur.tags);
+        assert!(matches!(
+            plan(Kind::Key, &Op::RemoveNotify, &cur),
+            Plan::NoChange(_)
+        ));
+        let full = Current {
+            tags: (0..15).map(|i| (format!("k{i}"), "v".into())).collect(),
+            ..cur
+        };
+        assert!(matches!(
+            plan(Kind::Key, &Op::SetNotify("a@example.com".into()), &full),
+            Plan::Blocked(Blocked::TooManyTags, _)
+        ));
+    }
+
     #[test]
     fn the_form_is_checked() {
         let p = |body: &str| Posted::parse(body.as_bytes());
         let now = 1_800_000_000;
-        let f = p("csrf=t&item=a&item=b&item=A&op=tag_set&tag_name=owner&tag_value=x");
+        let f = p("csrf=t&item=a&item=b&item=A&op=tag_set&tag_name=team&tag_value=x");
         assert_eq!(f.items(Kind::Secret).unwrap(), ["a", "b"], "repeat dropped");
         assert_eq!(
-            f.op(Kind::Secret, now).unwrap(),
-            Op::SetTag("owner".into(), "x".into())
+            f.op(Kind::Secret, now, R).unwrap(),
+            Op::SetTag("team".into(), "x".into())
         );
+        for reserved in ["owner", "notify"] {
+            let e = p(&format!("op=tag_set&tag_name={reserved}&tag_value=x"))
+                .op(Kind::Key, now, R)
+                .unwrap_err();
+            assert!(e.contains("Set the owner"), "{e}");
+        }
         assert!(p("item=a%2Fb&op=enable").items(Kind::Secret).is_err());
         assert!(p("item=-a&op=enable").items(Kind::Secret).is_err());
         assert!(p("op=enable").items(Kind::Secret).is_err());
@@ -1124,47 +1309,51 @@ mod tests {
         assert!(err.contains("up to 100"), "{err}");
         assert!(
             p("op=expiry&expires=2099-01-01")
-                .op(Kind::Certificate, now)
+                .op(Kind::Certificate, now, R)
                 .is_err()
         );
-        assert!(p("op=expiry&expires=").op(Kind::Key, now).is_err());
+        assert!(p("op=expiry&expires=").op(Kind::Key, now, R).is_err());
         assert!(
             p("op=expiry&expires=2000-01-01")
-                .op(Kind::Key, now)
+                .op(Kind::Key, now, R)
                 .is_err()
         );
-        assert!(p("op=expiry&expires=2099-01-01").op(Kind::Key, now).is_ok());
-        assert!(p("op=delete").op(Kind::Key, now).is_err());
-        assert!(p("op=tag_set&tag_name=").op(Kind::Key, now).is_err());
+        assert!(
+            p("op=expiry&expires=2099-01-01")
+                .op(Kind::Key, now, R)
+                .is_ok()
+        );
+        assert!(p("op=delete").op(Kind::Key, now, R).is_err());
+        assert!(p("op=tag_set&tag_name=").op(Kind::Key, now, R).is_err());
         assert_eq!(
             p("op=description_set&description=Used%20by%20billing%0D%0Aand%20payroll")
-                .op(Kind::Certificate, now)
+                .op(Kind::Certificate, now, R)
                 .unwrap(),
             Op::SetNote("Used by billing\nand payroll".into())
         );
         assert!(
             p("op=description_set&description=")
-                .op(Kind::Key, now)
+                .op(Kind::Key, now, R)
                 .is_err()
         );
         assert!(
             p("op=description_set&description=a%E2%80%AEb")
-                .op(Kind::Key, now)
+                .op(Kind::Key, now, R)
                 .is_err()
         );
         assert_eq!(
-            p("op=description_remove").op(Kind::Key, now).unwrap(),
+            p("op=description_remove").op(Kind::Key, now, R).unwrap(),
             Op::RemoveNote
         );
         assert!(
             p("op=tag_set&tag_name=description&tag_value=x")
-                .op(Kind::Key, now)
+                .op(Kind::Key, now, R)
                 .is_err()
         );
         let long = "x".repeat(257);
         assert!(
             p(&format!("op=tag_set&tag_name=a&tag_value={long}"))
-                .op(Kind::Key, now)
+                .op(Kind::Key, now, R)
                 .is_err()
         );
     }

@@ -76,6 +76,8 @@ pub(super) struct RowView {
     pub changed: String,
     pub note: String,
     pub stale: String,
+    /// The `owner` tag as shown. Notify is in the CSV only.
+    pub owner: crate::owner::Display,
     pub tags: String,
 }
 
@@ -148,6 +150,7 @@ pub(super) async fn page(
                         .map(|c| dates::relative_days(c, now))
                         .unwrap_or_default(),
                     stale: age::stale_badge(i.created, i.managed, after, now),
+                    owner: crate::owner::Display::of_owner(i.owner()),
                     tags: i.tags_text(),
                 })
                 .collect(),

@@ -419,7 +419,7 @@ async fn a_bulk_change_asks_for_the_reason_on_its_review_page() {
                 ("item", "db-password"),
                 ("item", "api-key"),
                 ("op", "tag_set"),
-                ("tag_name", "owner"),
+                ("tag_name", "rota"),
                 ("tag_value", "payments"),
             ],
         )
@@ -440,7 +440,7 @@ async fn a_bulk_change_asks_for_the_reason_on_its_review_page() {
         ("item", "db-password"),
         ("item", "api-key"),
         ("op", "tag_set"),
-        ("tag_name", "owner"),
+        ("tag_name", "rota"),
         ("tag_value", "payments"),
     ];
     // Without a reason nothing is changed.

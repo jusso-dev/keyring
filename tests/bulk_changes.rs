@@ -91,16 +91,16 @@ async fn add_a_tag_to_secrets_end_to_end() {
     let mut f = items(&["db-password", "api-key", "web-tls"]);
     f.extend([
         ("op", "tag_set"),
-        ("tag_name", "owner"),
+        ("tag_name", "rota"),
         ("tag_value", "ops"),
     ]);
     let (status, html) = post(&w, "/v/kv-test/secrets/-/bulk", &f).await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(
-        html.contains("Set the tag owner=ops on 2 secrets?"),
+        html.contains("Set the tag rota=ops on 2 secrets?"),
         "{html}"
     );
-    assert!(html.contains("Adds owner=ops."));
+    assert!(html.contains("Adds rota=ops."));
     assert!(html.contains("This secret belongs to the certificate web-tls"));
     assert_eq!(review_items(&html), ["db-password", "api-key"]);
     assert_eq!(patches(&w), 0, "the review changes nothing");
@@ -110,7 +110,7 @@ async fn add_a_tag_to_secrets_end_to_end() {
     let mut f: Vec<(&str, &str)> = picked.iter().map(|n| ("item", n.as_str())).collect();
     f.extend([
         ("op", "tag_set"),
-        ("tag_name", "owner"),
+        ("tag_name", "rota"),
         ("tag_value", "ops"),
     ]);
     let (status, html) = post(&w, "/v/kv-test/secrets/-/bulk/apply", &f).await;
@@ -118,13 +118,13 @@ async fn add_a_tag_to_secrets_end_to_end() {
     assert!(html.contains("Changed 2 secrets"), "{html}");
     assert!(!html.contains(VALUE));
     let tags = s.current("api-key").unwrap().tags;
-    assert_eq!(tags.get("owner").map(String::as_str), Some("ops"));
+    assert_eq!(tags.get("rota").map(String::as_str), Some("ops"));
     assert_eq!(tags.get("env").map(String::as_str), Some("prod"), "kept");
     assert_eq!(s.version_count("api-key"), 1, "no new version");
     assert_eq!(patches(&w), 2);
 
     // The list shows it straight away.
-    let (_, html) = w.page("/v/kv-test/secrets?tag=owner%3Dops").await;
+    let (_, html) = w.page("/v/kv-test/secrets?tag=rota%3Dops").await;
     assert!(
         html.contains(">db-password<") && html.contains(">api-key<"),
         "{html}"
@@ -250,14 +250,14 @@ async fn a_tag_past_the_limit_is_refused_per_item() {
         }
     }
     let mut f = items(&["full", "roomy"]);
-    f.extend([("op", "tag_set"), ("tag_name", "owner"), ("tag_value", "a")]);
+    f.extend([("op", "tag_set"), ("tag_name", "rota"), ("tag_value", "a")]);
     let (_, html) = post(&w, "/v/kv-test/secrets/-/bulk", &f).await;
     assert!(html.contains("Already has 15 tags"), "{html}");
     let (_, html) = post(&w, "/v/kv-test/secrets/-/bulk/apply", &f).await;
     assert!(html.contains("Changed 1 secret"), "{html}");
     assert!(html.contains("Refused by Keyring"));
     assert_eq!(s.current("full").unwrap().tags.len(), 15, "nothing dropped");
-    assert!(s.current("roomy").unwrap().tags.contains_key("owner"));
+    assert!(s.current("roomy").unwrap().tags.contains_key("rota"));
     // Removing a tag writes back the others.
     let mut f = items(&["full"]);
     f.extend([("op", "tag_remove"), ("tag_name", "t3")]);

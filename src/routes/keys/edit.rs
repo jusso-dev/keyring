@@ -20,7 +20,7 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::forms::{CsrfForm, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::with_note;
+use crate::routes::secrets::form::with_fields;
 use crate::routes::shell::Shell;
 use crate::routes::tag_rows::{self, Suggestions, TagField, TagPost};
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
@@ -58,6 +58,9 @@ pub(crate) struct CreateForm {
     pub tag_rows: TagPost,
     /// The note, kept in the `description` tag.
     pub description: String,
+    /// The `owner` and `notify` tags, when posted.
+    pub owner: Option<String>,
+    pub notify: Option<String>,
 }
 
 impl CreateForm {
@@ -71,6 +74,8 @@ impl CreateForm {
             expires: String::new(),
             tag_rows: TagPost::default(),
             description: String::new(),
+            owner: None,
+            notify: None,
         };
         for (k, v) in pairs {
             match k.as_str() {
@@ -81,6 +86,8 @@ impl CreateForm {
                 "ops" => f.ops.push(v),
                 "expires" => f.expires = v,
                 "description" => f.description = v,
+                "owner" => f.owner = Some(v),
+                "notify" => f.notify = Some(v),
                 k => {
                     f.tag_rows.take(k, v);
                 }
@@ -99,6 +106,15 @@ impl CreateForm {
             expires: String::new(),
             tag_rows: TagPost::default(),
             description: String::new(),
+            owner: None,
+            notify: None,
+        }
+    }
+
+    fn owners(&self) -> crate::owner::Posted<'_> {
+        crate::owner::Posted {
+            owner: self.owner.as_deref(),
+            notify: self.notify.as_deref(),
         }
     }
 }
@@ -113,7 +129,11 @@ pub(crate) fn default_ops(kty: &str) -> Vec<String> {
     }
 }
 
-pub(crate) fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), FieldErrors> {
+pub(crate) fn build(
+    f: &CreateForm,
+    now: i64,
+    rules: crate::owner::Rules<'_>,
+) -> Result<(String, CreateKey), FieldErrors> {
     let mut errors = FieldErrors::new();
     if let Some(m) = name_problem(Kind::Key, &f.name) {
         errors.push("name", m);
@@ -171,7 +191,8 @@ pub(crate) fn build(f: &CreateForm, now: i64) -> Result<(String, CreateKey), Fie
     };
     let tags: BTreeMap<String, String> =
         tag_rows::check(&f.tag_rows, &BTreeMap::new(), &mut errors);
-    let tags = with_note(&tags, &f.description, &mut errors);
+    let none = BTreeMap::new();
+    let tags = with_fields(&tags, &none, &f.description, f.owners(), rules, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -202,6 +223,7 @@ struct CreatePage {
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
     tags: TagField,
+    owners: crate::owner::Fields,
 }
 
 impl CreatePage {
@@ -236,6 +258,7 @@ fn create_page_with(
     azure_message: Option<String>,
 ) -> axum::response::Response {
     let tags = TagField::posted(&form.tag_rows, &BTreeMap::new()).with(suggest);
+    let owners = crate::owner::Fields::posted(form.owners(), &BTreeMap::new());
     let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
@@ -250,6 +273,7 @@ fn create_page_with(
             errors,
             azure_message,
             tags,
+            owners,
         }),
     )
         .into_response()
@@ -291,7 +315,7 @@ pub(crate) async fn create(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let f = CreateForm::from_pairs(pairs);
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let (name, body) = match build(&f, now_ts()) {
+    let (name, body) = match build(&f, now_ts(), crate::owner::Rules::of(&state.config)) {
         Ok(ok) => {
             crate::audit::note_item(&ok.0);
             ok
@@ -748,18 +772,20 @@ pub(crate) async fn save_rotation(
 mod tests {
     use super::*;
 
+    const R: crate::owner::Rules<'static> = crate::owner::Rules::OFF;
+
     fn pairs(v: &[(&str, &str)]) -> CreateForm {
         CreateForm::from_pairs(v.iter().map(|(a, b)| ((*a).into(), (*b).into())).collect())
     }
 
     #[test]
     fn defaults_in_one_step() {
-        let (name, body) = build(&pairs(&[("name", "app-key")]), 0).unwrap();
+        let (name, body) = build(&pairs(&[("name", "app-key")]), 0, R).unwrap();
         assert_eq!(name, "app-key");
         assert_eq!(body.kty, "RSA");
         assert_eq!(body.key_size, Some(3072));
         assert_eq!(body.key_ops.len(), 6);
-        let (_, body) = build(&pairs(&[("name", "sig"), ("key_type", "EC-P-256")]), 0).unwrap();
+        let (_, body) = build(&pairs(&[("name", "sig"), ("key_type", "EC-P-256")]), 0, R).unwrap();
         assert_eq!(body.crv.as_deref(), Some("P-256"));
         assert_eq!(body.key_ops, vec!["sign", "verify"]);
     }
@@ -774,6 +800,7 @@ mod tests {
                 ("ops", "unwrapKey"),
             ]),
             0,
+            R,
         )
         .unwrap();
         assert_eq!(body.kty, "RSA-HSM");
@@ -781,6 +808,7 @@ mod tests {
         let e = build(
             &pairs(&[("name", "k"), ("key_type", "EC-P-256"), ("ops", "encrypt")]),
             0,
+            R,
         )
         .err()
         .unwrap();
@@ -792,6 +820,7 @@ mod tests {
                 ("expires", "2000-01-01"),
             ]),
             1_790_000_000,
+            R,
         )
         .err()
         .unwrap();

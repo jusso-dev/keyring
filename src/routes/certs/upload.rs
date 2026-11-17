@@ -30,7 +30,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::FieldErrors;
-use crate::routes::secrets::form::with_note;
+use crate::routes::secrets::form::with_fields;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
 use crate::routes::tag_rows::{self, TagField, TagPost};
@@ -54,6 +54,7 @@ pub(crate) struct UploadView {
     pub name: String,
     pub tags: TagField,
     pub description: String,
+    pub owners: crate::owner::Fields,
     pub enabled: bool,
     pub exportable: bool,
 }
@@ -65,6 +66,7 @@ impl Default for UploadView {
             name: String::new(),
             tags: TagField::default(),
             description: String::new(),
+            owners: crate::owner::Fields::default(),
             enabled: true,
             exportable: true,
         }
@@ -142,9 +144,11 @@ struct PreviewPage {
     /// The name couldn't be looked up, so it may already be in use.
     existing_unknown: bool,
     upload_id: String,
-    /// The tags, without the description.
+    /// The tags, without the description, owner and notify.
     tags: Vec<(String, String)>,
     description: String,
+    owner: crate::owner::Display,
+    notify: crate::owner::Display,
     enabled: bool,
     exportable: bool,
 }
@@ -253,6 +257,8 @@ struct Posted {
     name: String,
     tag_rows: TagPost,
     description: String,
+    owner: Option<String>,
+    notify: Option<String>,
     enabled: bool,
     exportable: bool,
     password: Option<Secret>,
@@ -308,6 +314,8 @@ async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadErr
             "csrf" => p.csrf = field.text().await?,
             "name" => p.name = field.text().await?.trim().to_owned(),
             "description" => p.description = field.text().await?,
+            "owner" => p.owner = Some(field.text().await?),
+            "notify" => p.notify = Some(field.text().await?),
             "enabled" => p.enabled = true,
             "exportable" => p.exportable = true,
             other => {
@@ -448,10 +456,15 @@ pub(crate) async fn preview(
         return Ok(upload_page(None, shell, vault, UploadView::default(), errors, None).await);
     }
     let shell = check_csrf(&session, &vault, &p.csrf, shell)?;
+    let owners = crate::owner::Posted {
+        owner: p.owner.as_deref(),
+        notify: p.notify.as_deref(),
+    };
     let view = UploadView {
         name: p.name.clone(),
         tags: TagField::posted(&p.tag_rows, &BTreeMap::new()),
         description: p.description.clone(),
+        owners: crate::owner::Fields::posted(owners, &BTreeMap::new()),
         enabled: p.enabled,
         exportable: p.exportable,
     };
@@ -461,8 +474,9 @@ pub(crate) async fn preview(
             // Fields after the file never arrived, so the tick boxes go back
             // to how the form first opened.
             let view = UploadView {
-                name: p.name,
                 tags: TagField::posted(&p.tag_rows, &BTreeMap::new()),
+                owners: view.owners,
+                name: p.name,
                 description: p.description,
                 ..UploadView::default()
             };
@@ -483,7 +497,14 @@ pub(crate) async fn preview(
         errors.push("name", m);
     }
     let tags = tag_rows::check(&p.tag_rows, &BTreeMap::new(), &mut errors);
-    let tags = with_note(&tags, &p.description, &mut errors);
+    let tags = with_fields(
+        &tags,
+        &BTreeMap::new(),
+        &p.description,
+        owners,
+        crate::owner::Rules::of(&state.config),
+        &mut errors,
+    );
     let parsed = if p.too_big {
         errors.push("file", too_big_message());
         None
@@ -598,7 +619,11 @@ pub(crate) async fn preview(
             existing_unknown,
             upload_id,
             description: crate::description::of(&tags).unwrap_or_default().to_owned(),
-            tags: crate::description::without(&tags).into_iter().collect(),
+            owner: crate::owner::Display::of_owner(
+                crate::owner::owner_of(&tags).unwrap_or_default(),
+            ),
+            notify: crate::owner::Display::of(crate::owner::notify_of(&tags).unwrap_or_default()),
+            tags: crate::owner::without_fields(&tags).into_iter().collect(),
             enabled: p.enabled,
             exportable: p.exportable,
         })
@@ -648,6 +673,7 @@ pub(crate) async fn confirm(
         description: crate::description::of(&up.tags)
             .unwrap_or_default()
             .to_owned(),
+        owners: crate::owner::Fields::of(&up.tags),
         enabled: up.enabled,
         exportable: up.exportable,
     };

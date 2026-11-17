@@ -39,6 +39,7 @@
   <thead>
     <tr>
       <th scope="col">Vault</th>
+      <th scope="col">Named owners</th>
       {% for k in kinds %}<th scope="col">{{ k.label() }}</th>{% endfor %}
     </tr>
   </thead>
@@ -46,6 +47,7 @@
     {% for r in rows %}
     <tr>
       <th scope="row" class="item-name">{{ r.vault }}</th>
+      <td class="owner-cell">{% call ui::owner_value(r.owners) %}{% endcall %}</td>
       {% for f in r.findings %}
       <td>{% if f.deferred %}<span class="muted">Pick this vault</span>{% else %}<span class="badge {{ f.status.css() }}">{{ f.status.label() }}</span>{% endif %}</td>
       {% endfor %}
@@ -65,6 +67,7 @@
   </ul>
 </section>
 {% endif %}
+<p class="muted">Owners come from each vault's <span class="mono">keyring-owners</span> tag: addresses separated by commas. Keyring doesn't change vault tags. Set it in the vault's Tags blade in the Azure portal, or with <span class="mono">az tag update --resource-id &lt;vault ID&gt; --operation merge --tags keyring-owners=alex@example.com,ops@example.com</span>.</p>
 {% if per_item_checks %}<p class="muted">Certificate renewal and key rotation check up to {{ max_item_checks }} of each in the vault.</p>{% endif %}
 {% endif %}
 {% endblock %}

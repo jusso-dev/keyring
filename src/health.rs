@@ -47,10 +47,11 @@ pub(crate) enum Kind {
     SecretExpiry,
     CertRenewal,
     KeyRotation,
+    Owners,
 }
 
 impl Kind {
-    pub(crate) const ALL: [Kind; 9] = [
+    pub(crate) const ALL: [Kind; 10] = [
         Kind::AuditLogs,
         Kind::Rbac,
         Kind::SoftDelete,
@@ -60,6 +61,7 @@ impl Kind {
         Kind::SecretExpiry,
         Kind::CertRenewal,
         Kind::KeyRotation,
+        Kind::Owners,
     ];
 
     pub(crate) fn label(self) -> &'static str {
@@ -73,6 +75,7 @@ impl Kind {
             Self::SecretExpiry => "Secret expiry",
             Self::CertRenewal => "Certificate renewal",
             Self::KeyRotation => "Key rotation",
+            Self::Owners => "Owners",
         }
     }
 
@@ -108,6 +111,9 @@ impl Kind {
             }
             Self::KeyRotation => {
                 "https://learn.microsoft.com/azure/key-vault/keys/how-to-configure-key-rotation"
+            }
+            Self::Owners => {
+                "https://learn.microsoft.com/azure/azure-resource-manager/management/tag-resources"
             }
         }
     }
@@ -373,12 +379,40 @@ pub(crate) fn assess(v: &Vault, r: &Reads) -> Vec<Finding> {
         },
         "Needs a call per key, so it's checked when you pick this vault on its own",
     ));
+    out.push(owners(&v.tags));
     if let Some(why) = &r.not_read {
         for f in out.iter_mut().filter(|f| f.kind.needs_read()) {
             *f = Finding::unknown(f.kind, why.clone());
         }
     }
     out
+}
+
+/// The vault's `keyring-owners` ARM tag names at least one address.
+/// Keyring never sets it: it needs ARM write access Keyring doesn't ask for.
+fn owners(tags: &std::collections::BTreeMap<String, String>) -> Finding {
+    const WHERE: &str = "set the keyring-owners tag to their addresses, separated by commas, in the vault's Tags blade in the portal or with az tag update";
+    match crate::owner::vault_tag(tags) {
+        None => Finding::warn(
+            Kind::Owners,
+            format!(
+                "It has no keyring-owners tag, so nobody is named to look after it or to ask for access: {WHERE}"
+            ),
+        ),
+        Some(t) if t.trim().is_empty() => Finding::warn(
+            Kind::Owners,
+            format!(
+                "Its keyring-owners tag is empty, so nobody is named to look after it or to ask for access: {WHERE}"
+            ),
+        ),
+        Some(_) if crate::owner::vault_owners(tags).is_empty() => Finding::warn(
+            Kind::Owners,
+            format!(
+                "Its keyring-owners tag holds no plain email address, so Keyring can't tell anyone about it: {WHERE}"
+            ),
+        ),
+        Some(_) => Finding::pass(Kind::Owners),
+    }
 }
 
 /// Public network access off, or the firewall denying by default, passes.
@@ -443,6 +477,8 @@ pub(crate) struct Row {
     pub(crate) vault: String,
     pub(crate) subscription: String,
     pub(crate) resource_group: String,
+    /// The `keyring-owners` ARM tag, for the page.
+    pub(crate) owners: crate::owner::Display,
     pub(crate) findings: Vec<Finding>,
 }
 
@@ -452,6 +488,7 @@ impl Row {
             vault: v.name.clone(),
             subscription: v.subscription_name.clone(),
             resource_group: v.resource_group.clone(),
+            owners: crate::owner::vault_display(&v.tags),
             findings: assess(v, r),
         }
     }
@@ -505,7 +542,7 @@ mod tests {
             subscription_id: "s".into(),
             subscription_name: "Prod".into(),
             location: "australiaeast".into(),
-            tags: Default::default(),
+            tags: [("keyring-owners".to_owned(), "ops@example.com".to_owned())].into(),
             rbac: true,
             soft_delete: true,
             purge_protection: true,
@@ -711,10 +748,41 @@ mod tests {
     }
 
     #[test]
+    fn vault_owners_tag() {
+        let mut v = vault();
+        let r = reads();
+        v.tags.clear();
+        let f = get(&v, &r, Kind::Owners);
+        assert_eq!(f.status, Status::Warn);
+        assert!(f.detail.contains("no keyring-owners tag") && f.detail.contains("az tag update"));
+        v.tags.insert("keyring-owners".into(), "  ".into());
+        assert!(get(&v, &r, Kind::Owners).detail.contains("is empty"));
+        v.tags
+            .insert("keyring-owners".into(), "Platform team".into());
+        assert!(get(&v, &r, Kind::Owners).detail.contains("no plain email"));
+        v.tags.insert(
+            "keyring-owners".into(),
+            "Platform team, ops@example.com".into(),
+        );
+        assert_eq!(get(&v, &r, Kind::Owners).status, Status::Pass);
+        // ARM tag names ignore case.
+        v.tags.clear();
+        v.tags
+            .insert("Keyring-Owners".into(), "ops@example.com".into());
+        assert_eq!(get(&v, &r, Kind::Owners).status, Status::Pass);
+        // Read from Resource Graph, so a vault not read still has it.
+        assert_eq!(
+            get(&v, &Reads::none("slow"), Kind::Owners).status,
+            Status::Pass
+        );
+    }
+
+    #[test]
     fn warnings_are_one_sentence_without_em_dashes() {
         let mut v = vault();
         v.rbac = false;
         v.purge_protection = false;
+        v.tags.clear();
         v.health = HealthProps {
             soft_delete: Some(false),
             ..HealthProps::default()

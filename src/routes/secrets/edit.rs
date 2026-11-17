@@ -47,6 +47,8 @@ pub(crate) struct FormView {
     pub tags: TagField,
     /// The note in the `description` tag, as typed or as it is.
     pub description: String,
+    /// The `owner` and `notify` tags, as typed or as they are.
+    pub owners: crate::owner::Fields,
     pub enabled: bool,
     /// The version the edit form was opened on, and its `updated` time.
     pub version: String,
@@ -67,6 +69,7 @@ impl FormView {
             not_before: f.not_before.clone(),
             tags: TagField::posted(&f.tag_rows, current),
             description: f.description.clone(),
+            owners: crate::owner::Fields::posted(f.owners(), current),
             enabled: f.enabled.is_some(),
             version: f.version.clone(),
             updated: f.updated.clone(),
@@ -98,6 +101,7 @@ impl FormView {
             description: crate::description::of(item.tags())
                 .unwrap_or_default()
                 .to_owned(),
+            owners: crate::owner::Fields::of(item.tags()),
             enabled: a.is_enabled(),
             version: item.version().to_owned(),
             updated: updated_stamp(item),
@@ -354,7 +358,12 @@ pub(crate) async fn create(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
-    let (name, body) = match form::for_create(&f, now_ts(), &state.config.password_policy) {
+    let (name, body) = match form::for_create(
+        &f,
+        now_ts(),
+        &state.config.password_policy,
+        crate::owner::Rules::of(&state.config),
+    ) {
         Ok(ok) => {
             crate::audit::note_item(&ok.0);
             ok
@@ -509,7 +518,13 @@ pub(crate) async fn set_value(
         }
     };
     f.name = name.clone();
-    let body = match form::for_new_value(&f, &item, now_ts(), &state.config.password_policy) {
+    let body = match form::for_new_value(
+        &f,
+        &item,
+        now_ts(),
+        &state.config.password_policy,
+        crate::owner::Rules::of(&state.config),
+    ) {
         Ok(b) => b,
         Err(errors) => {
             let suggest = tag_rows::for_vault(&state, &session, &vault).await;
@@ -582,7 +597,7 @@ pub(crate) async fn update(
     }
     f.name = item.name().to_owned();
     f.value = None;
-    let body = match form::for_update(&f, &item, now_ts()) {
+    let body = match form::for_update(&f, &item, now_ts(), crate::owner::Rules::of(&state.config)) {
         Ok(b) => b,
         Err(errors) => {
             let suggest = tag_rows::for_vault(&state, &session, &vault).await;

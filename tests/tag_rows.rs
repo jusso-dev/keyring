@@ -320,23 +320,23 @@ async fn filter_boxes_suggest_tags_from_the_page() {
         },
     );
     w.kv.state.add_key_with("k", "RSA", |v| {
-        v.tags.insert("owner".into(), "ops".into());
+        v.tags.insert("rota".into(), "ops".into());
     });
     for (path, want) in [
         ("/v/kv-test/secrets", vec!["env", "env=prod"]),
         ("/v/kv-test/certificates", vec!["team", "team=web"]),
-        ("/v/kv-test/keys", vec!["owner", "owner=ops"]),
+        ("/v/kv-test/keys", vec!["rota", "rota=ops"]),
         (
             "/expiry",
-            vec!["env", "env=prod", "owner", "owner=ops", "team", "team=web"],
+            vec!["env", "env=prod", "rota", "rota=ops", "team", "team=web"],
         ),
         (
             "/expiry/age",
-            vec!["env", "env=prod", "owner", "owner=ops", "team", "team=web"],
+            vec!["env", "env=prod", "rota", "rota=ops", "team", "team=web"],
         ),
         (
             "/search?q=a",
-            vec!["env", "env=prod", "owner", "owner=ops", "team", "team=web"],
+            vec!["env", "env=prod", "rota", "rota=ops", "team", "team=web"],
         ),
         // The vault list suggests the vaults' own tags (from ARM).
         ("/vaults", vec!["env", "env=prod"]),

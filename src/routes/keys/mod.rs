@@ -107,11 +107,16 @@ pub(super) struct KeyRow {
     pub expires: String,
     pub expires_note: String,
     pub expiry: ExpiryState,
-    /// Tags, without the description.
+    /// Tags, without the description, owner and notify.
     pub tags: Vec<(String, String)>,
     /// The note in the `description` tag, or empty.
     pub description: String,
+    /// The `owner` and `notify` tags.
+    pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
@@ -125,18 +130,14 @@ impl KeyRow {
     pub(super) fn from_item(k: &KeyItem, now: i64) -> Self {
         let a = &k.attributes;
         let tags: Vec<(String, String)> =
-            crate::description::without(k.tags()).into_iter().collect();
+            crate::owner::without_fields(k.tags()).into_iter().collect();
+        let owners = crate::owner::OfItem::of(k.tags());
         let description = crate::description::of(k.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = k.name().to_lowercase();
-        for (a, b) in &tags {
-            filter_text.push_str(&format!(" {a}={b}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(k.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(k.name(), &filter_tags, &description);
         Self {
             name: k.name().to_owned(),
             version: k.version().to_owned(),
@@ -152,7 +153,9 @@ impl KeyRow {
             expiry: a.expiry_state(now),
             tags,
             description,
+            owners,
             managed: k.managed.unwrap_or(false),
+            filter_tags,
             filter_text,
         }
     }
@@ -172,25 +175,40 @@ pub(super) struct KeyFilter {
     /// `name` or `name=value`.
     #[serde(default)]
     pub tag: String,
+    /// "Owned by me": any value turns it on.
+    #[serde(default)]
+    pub mine: String,
     #[serde(default)]
     pub page: Option<usize>,
 }
 
 impl KeyFilter {
+    pub(super) fn mine(&self) -> bool {
+        crate::owner::mine_on(&self.mine)
+    }
+
+    pub(super) fn matches(&self, r: &KeyRow, upn: Option<&str>) -> bool {
+        let q = self.q.trim().to_lowercase();
+        (q.is_empty() || r.filter_text.contains(&q))
+            && crate::routes::tag_rows::matches_filter(&self.tag, &r.filter_tags)
+            && (!self.mine() || r.owners.names(upn))
+    }
+
     fn page_url(&self, vault: &str, page: usize) -> String {
         let enc = crate::auth::return_to::encode;
         vault_path(
             vault,
             &format!(
-                "/keys?q={}&tag={}&page={page}",
+                "/keys?q={}&tag={}{}&page={page}",
                 enc(&self.q),
-                enc(&self.tag)
+                enc(&self.tag),
+                if self.mine() { "&mine=1" } else { "" }
             ),
         )
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.q.trim().is_empty() && self.tag.trim().is_empty()
+        self.q.trim().is_empty() && self.tag.trim().is_empty() && !self.mine()
     }
 }
 
@@ -242,15 +260,22 @@ pub(super) async fn list(
         .collect();
     let total = all.len();
     let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
-        all.iter()
-            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+        // The owner is suggested in the bulk change's owner field.
+        all.iter().map(|r| {
+            r.tags
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .chain(std::iter::once((
+                    crate::owner::OWNER_TAG,
+                    r.owners.owner.as_str(),
+                )))
+        }),
     );
     let tag_options = tag_suggest.filter_options();
-    let q = filter.q.trim().to_lowercase();
+    let upn = session.0.user.username.clone();
     let matching: Vec<KeyRow> = all
         .into_iter()
-        .filter(|r| q.is_empty() || r.filter_text.contains(&q))
-        .filter(|r| crate::routes::tag_rows::matches_filter(&filter.tag, &r.tags))
+        .filter(|r| filter.matches(r, upn.as_deref()))
         .collect();
     let (rows, pager) = paginate(matching, filter.page, "keys", |p| {
         filter.page_url(&vault, p)

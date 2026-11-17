@@ -68,7 +68,7 @@
   {% call ui::table_wrap("band-{}-caption"|format(b.band.slug())) %}
   <table class="ledger">
     <caption class="visually-hidden" id="band-{{ b.band.slug() }}-caption">Value changed {{ b.band.label()|lower }} ago</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Value changed</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Value changed</th><th scope="col">Owner</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in b.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
@@ -76,6 +76,7 @@
         <td>{{ r.kind.label() }}</td>
         <td class="item-name">{{ r.vault }}</td>
         <td class="nowrap">{% call ui::changed(r.changed, r.note, r.stale) %}{% endcall %}</td>
+        <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
         <td>{{ ui::or_none(r.tags) }}</td>
         <td>
           <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>

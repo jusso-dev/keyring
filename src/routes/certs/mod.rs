@@ -69,10 +69,15 @@ pub(super) struct CertRow {
     pub created_at: Option<i64>,
     /// The "Not changed in over ..." badge, or empty. Set by `mark_stale`.
     pub stale: String,
-    /// Tags, without the description.
+    /// Tags, without the description, owner and notify.
     pub tags: Vec<(String, String)>,
     /// The note in the `description` tag, or empty.
     pub description: String,
+    /// The `owner` and `notify` tags.
+    pub owners: crate::owner::OfItem,
+    /// The tags the tag filter and search box match: every tag but the
+    /// description, `owner` and `notify` included.
+    pub filter_tags: Vec<(String, String)>,
     pub filter_text: String,
 }
 
@@ -85,20 +90,16 @@ impl CertRow {
 
     pub(super) fn from_item(item: &CertItem, now: i64) -> Self {
         let a = &item.attributes;
-        let tags: Vec<(String, String)> = crate::description::without(item.tags())
+        let tags: Vec<(String, String)> = crate::owner::without_fields(item.tags())
             .into_iter()
             .collect();
+        let owners = crate::owner::OfItem::of(item.tags());
         let description = crate::description::of(item.tags())
             .unwrap_or_default()
             .to_owned();
-        let mut filter_text = item.name().to_lowercase();
-        for (k, v) in &tags {
-            filter_text.push_str(&format!(" {k}={v}").to_lowercase());
-        }
-        if !description.is_empty() {
-            filter_text.push(' ');
-            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
-        }
+        let filter_tags = crate::routes::tag_rows::filter_tags(item.tags());
+        let filter_text =
+            crate::routes::tag_rows::filter_text(item.name(), &filter_tags, &description);
         Self {
             name: item.name().to_owned(),
             version: item.version().to_owned(),
@@ -115,6 +116,8 @@ impl CertRow {
             stale: String::new(),
             tags,
             description,
+            owners,
+            filter_tags,
             filter_text,
         }
     }
@@ -163,22 +166,35 @@ pub(super) struct CertFilter {
     /// `expired`, `30`, `90` or `disabled`.
     #[serde(default)]
     pub show: String,
+    /// "Owned by me": any value turns it on.
+    #[serde(default)]
+    pub mine: String,
     #[serde(default)]
     pub page: Option<usize>,
 }
 
 impl CertFilter {
     pub(super) fn is_empty(&self) -> bool {
-        self.q.trim().is_empty() && self.tag.trim().is_empty() && self.show.is_empty()
+        self.q.trim().is_empty()
+            && self.tag.trim().is_empty()
+            && self.show.is_empty()
+            && !self.mine()
     }
 
-    pub(super) fn matches(&self, r: &CertRow) -> bool {
+    pub(super) fn mine(&self) -> bool {
+        crate::owner::mine_on(&self.mine)
+    }
+
+    pub(super) fn matches(&self, r: &CertRow, upn: Option<&str>) -> bool {
+        if self.mine() && !r.owners.names(upn) {
+            return false;
+        }
         let q = self.q.trim().to_lowercase();
         if !q.is_empty() && !r.filter_text.contains(&q) && !r.thumbprint.to_lowercase().contains(&q)
         {
             return false;
         }
-        if !crate::routes::tag_rows::matches_filter(&self.tag, &r.tags) {
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &r.filter_tags) {
             return false;
         }
         match self.show.as_str() {
@@ -195,10 +211,11 @@ impl CertFilter {
         vault_path(
             vault,
             &format!(
-                "/certificates?q={}&tag={}&show={}&page={page}",
+                "/certificates?q={}&tag={}&show={}{}&page={page}",
                 enc(&self.q),
                 enc(&self.tag),
-                enc(&self.show)
+                enc(&self.show),
+                if self.mine() { "&mine=1" } else { "" }
             ),
         )
     }
@@ -265,11 +282,23 @@ pub(super) async fn list(
     let within30 = all.iter().filter(|r| r.within30()).count();
     let within90 = all.iter().filter(|r| r.within90()).count();
     let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
-        all.iter()
-            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+        // The owner is suggested in the bulk change's owner field.
+        all.iter().map(|r| {
+            r.tags
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .chain(std::iter::once((
+                    crate::owner::OWNER_TAG,
+                    r.owners.owner.as_str(),
+                )))
+        }),
     );
     let tag_options = tag_suggest.filter_options();
-    let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
+    let upn = session.0.user.username.clone();
+    let matching: Vec<CertRow> = all
+        .into_iter()
+        .filter(|r| filter.matches(r, upn.as_deref()))
+        .collect();
     let (rows, pager) = paginate(matching, filter.page, "certificates", |p| {
         filter.page_url(&vault, p)
     });

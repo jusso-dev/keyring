@@ -44,6 +44,8 @@ const IMPORT_PATH: &str = "/secrets/-/import";
 /// A row whose value misses `KEYRING_PASSWORD_POLICY`. Fixed words: no
 /// rule, no length, nothing about the value.
 pub(crate) const POLICY_PROBLEM: &str = "Its value doesn't meet Keyring's password policy.";
+/// The problem for a row with no owner while `KEYRING_REQUIRE_OWNER` is on.
+pub(crate) const OWNER_PROBLEM: &str = "It has no owner, and Keyring is set to need one. Add an owner column with an address for each row.";
 
 #[derive(Template)]
 #[template(path = "secrets/import.html")]
@@ -81,9 +83,10 @@ pub(crate) struct PreviewRow {
     pub why: String,
     pub content_type: String,
     pub expires: String,
-    /// Tags, without the description.
+    /// Tags, without the description, owner and notify.
     pub tags: Vec<(String, String)>,
     pub description: String,
+    pub owner: crate::owner::Display,
 }
 
 impl PreviewRow {
@@ -353,10 +356,12 @@ pub(crate) async fn preview(
         return Ok(import_page(shell, vault, FieldErrors::one("file", m)));
     }
     let bytes = p.file.as_deref().map(Vec::as_slice).unwrap_or_default();
-    let rows = match import_file::parse(bytes, Format::from_file_name(&p.file_name), now_ts()) {
-        Ok(rows) => rows,
-        Err(m) => return Ok(import_page(shell, vault, FieldErrors::one("file", m))),
-    };
+    let rules = crate::owner::Rules::of(&state.config);
+    let rows =
+        match import_file::parse(bytes, Format::from_file_name(&p.file_name), now_ts(), rules) {
+            Ok(rows) => rows,
+            Err(m) => return Ok(import_page(shell, vault, FieldErrors::one("file", m))),
+        };
     let have = match existing(&api(&state, &session, &vault)).await {
         Ok(e) => e,
         Err(err) => {
@@ -393,12 +398,20 @@ pub(crate) async fn preview(
         // content type is a row problem), so its value is a Password and
         // the policy applies. The problem names no rule and nothing about
         // the value: the preview lists every row's problem.
-        let refused = matches!(plan, Plan::New | Plan::NewVersion)
-            && policy.check("Value", &row.value).is_some();
-        let (plan, why) = if refused {
-            (Plan::Invalid, POLICY_PROBLEM.to_owned())
+        // A written row replaces the secret's tags, so with
+        // KEYRING_REQUIRE_OWNER on, a row without an owner would leave an
+        // ownerless secret, new or not.
+        let writes = matches!(plan, Plan::New | Plan::NewVersion);
+        let refused = if writes && policy.check("Value", &row.value).is_some() {
+            Some((crate::audit::Refusal::PasswordPolicy, POLICY_PROBLEM))
+        } else if writes && rules.require && crate::owner::owner_of(&row.tags).is_none() {
+            Some((crate::audit::Refusal::OwnerRequired, OWNER_PROBLEM))
         } else {
-            (plan, why)
+            None
+        };
+        let (plan, why) = match refused {
+            Some((_, m)) => (Plan::Invalid, m.to_owned()),
+            None => (plan, why),
         };
         shown.push(PreviewRow {
             original: row.original.clone(),
@@ -407,10 +420,15 @@ pub(crate) async fn preview(
             why: why.clone(),
             content_type: row.content_type.clone().unwrap_or_default(),
             expires: row.expires.map(dates::format_date).unwrap_or_default(),
-            tags: crate::description::without(&row.tags).into_iter().collect(),
+            tags: crate::owner::without_fields(&row.tags)
+                .into_iter()
+                .collect(),
             description: crate::description::of(&row.tags)
                 .unwrap_or_default()
                 .to_owned(),
+            owner: crate::owner::Display::of_owner(
+                crate::owner::owner_of(&row.tags).unwrap_or_default(),
+            ),
         });
         if matches!(plan, Plan::New | Plan::NewVersion) {
             pending.push(PendingSecret {
@@ -427,7 +445,7 @@ pub(crate) async fn preview(
                 original: row.original,
                 name: row.name,
                 reason: why,
-                policy: refused,
+                refusal: refused.map(|(r, _)| r),
             });
         }
     }
@@ -575,13 +593,13 @@ pub(crate) async fn confirm(
         .into());
     };
     let PendingImport { rows, skipped, .. } = import;
-    // A row the password policy refused gets its own `refused` event,
-    // with the fixed reason code and nothing about the value.
+    // A row a Keyring-side rule refused gets its own `refused` event,
+    // with the fixed reason code and nothing about the value or addresses.
     let events = ItemEvents::for_request(Action::SecretImport, state.audit_sink.clone());
-    for s in skipped.iter().filter(|s| s.policy) {
-        events
-            .refused(&s.name, crate::audit::Refusal::PasswordPolicy)
-            .await;
+    for s in &skipped {
+        if let Some(r) = s.refusal {
+            events.refused(&s.name, r).await;
+        }
     }
     let names: Vec<(String, String)> = rows
         .iter()

@@ -450,7 +450,34 @@ Read as "make a new version". The primary button is the accent, never danger.
 - Lists have a Description column after Status, at `--text-sm`, cut to 80
   characters on one line with an ellipsis; the whole note is the cell's
   visually hidden text. "None" in muted when empty, like other cells.
-- The tag rows and tag lists never show `description`.
+- The tag rows and tag lists never show `description`, `owner` or `notify`.
+
+### Owner and notify (the `owner` and `notify` tags)
+
+- Every form with a Description field has **Owner** and **Notify** text
+  inputs straight after it, each with help that says it is saved as a tag
+  anyone who can see the tags can read. Owner is "(optional)" unless
+  `KEYRING_REQUIRE_OWNER` is on, when its help says so instead. Notify says
+  how many addresses it takes. No script.
+- A value set elsewhere that isn't plain addresses gets a second help line
+  under the field, in ink-2: it was set outside Keyring and is kept unless
+  changed. It is read with the field.
+- Errors sit under their own field, and name an entry by its place, never
+  by quoting it.
+- On an item's page, Owner and Notify are rows in the facts list. A parsed
+  address is a plain link (`mailto:`); anything else is mono text with
+  "(not a plain address)" in muted small text. "None" in muted when empty.
+- Lists have an Owner column after Description, at `--text-sm`, wrapping
+  anywhere. The expiry and age pages have no Description column, but have
+  an Owner column before Tags, styled the same (`td.owner-cell`), so
+  addresses stay out of the Tags text and a link per address works. Notify
+  is in their CSVs only: the pages have no room for up to five addresses.
+- **Owned by me** is a plain checkbox in the filter row, its help line
+  under it, between the last filter and the Filter button.
+- The vault list has an Owners column after Location, and a muted line
+  above the table saying where the tag is set. Vault health has a "Named
+  owners" column after the vault name, and an **Owners** check like the
+  others.
 
 ### Tags (rows, suggestions, links)
 
@@ -472,7 +499,8 @@ Read as "make a new version". The primary button is the accent, never danger.
   in ink with an accent border and underline on hover and focus. A tag the
   filter can't find again stays a plain chip.
 - Filter boxes for tags (and the search box) suggest `name` and
-  `name=value` with a `<datalist>`.
+  `name=value` with a `<datalist>`. Never `description`, `owner` or
+  `notify`, though the filters find `owner` and `notify` when typed.
 
 ### Pinned and recently opened
 

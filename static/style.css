@@ -476,6 +476,10 @@ a.button-danger:hover {
 .filters input, .filters select { width: 16rem; max-width: 100%; }
 .filters > div { min-width: 0; max-width: 100%; }
 .filters-submit { display: flex; gap: var(--space-xs); align-items: center; padding-top: var(--space-2xs); }
+/* "Owned by me": a checkbox in the filter row, its help under it. */
+.filters .filter-check { flex-wrap: wrap; align-self: center; }
+.filters .filter-check input { width: 1.125rem; }
+.filter-check .field-help { flex-basis: 100%; margin: 0; }
 
 /* Tables. Framed by default: white, hairline rows, small uppercase heads,
    tabular figures and rows at least 3rem tall. */
@@ -611,6 +615,7 @@ table.ledger th.mono,
   overflow-wrap: anywhere;
 }
 td.note-cell { min-width: 12rem; max-width: 24rem; font-size: var(--text-sm); }
+td.owner-cell { min-width: 10rem; font-size: var(--text-sm); overflow-wrap: anywhere; }
 dd.note { white-space: pre-line; }
 
 .tag {
@@ -892,6 +897,7 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .content { padding: var(--space-md) var(--space-sm) var(--space-xl); }
   .filters { padding: var(--space-xs); }
   .filters > div, .filters input, .filters select { width: 100%; }
+  .filters .filter-check input { width: 1.125rem; }
 }
 
 /* A typed secret's fields on the reveal page: one per row, each with its own Copy. */

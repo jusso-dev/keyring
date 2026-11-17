@@ -84,11 +84,19 @@ struct Raw {
     tags: String,
     /// The optional `description` column: the note, merged into the tags.
     description: String,
+    /// The optional `owner` and `notify` columns.
+    owner: String,
+    notify: String,
 }
 
 /// Read a whole file. An `Err` is a message for the person about why the
 /// file as a whole can't be used.
-pub(crate) fn parse(bytes: &[u8], format: Format, now: i64) -> Result<Vec<Row>, String> {
+pub(crate) fn parse(
+    bytes: &[u8],
+    format: Format,
+    now: i64,
+    rules: crate::owner::Rules<'_>,
+) -> Result<Vec<Row>, String> {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "This file isn't UTF-8 text. Save it as UTF-8 and try again.".to_owned())?;
@@ -105,7 +113,7 @@ pub(crate) fn parse(bytes: &[u8], format: Format, now: i64) -> Result<Vec<Row>, 
             raws.len()
         ));
     }
-    let rows: Vec<Row> = raws.into_iter().map(|r| check(r, now)).collect();
+    let rows: Vec<Row> = raws.into_iter().map(|r| check(r, now, rules)).collect();
     clashes(&rows)?;
     Ok(rows)
 }
@@ -128,7 +136,7 @@ pub(crate) fn convert_name(name: &str) -> String {
     converted.trim_start_matches('-').to_owned()
 }
 
-fn check(raw: Raw, now: i64) -> Row {
+fn check(raw: Raw, now: i64, rules: crate::owner::Rules<'_>) -> Row {
     let original = raw.name.trim().to_owned();
     let name = convert_name(&original);
     let mut problem = name_problem(Kind::Secret, &name).map(|m| {
@@ -172,7 +180,19 @@ fn check(raw: Raw, now: i64) -> Row {
             }
         }
     }
+    // The owner columns follow the form's rules, but never the "required"
+    // one here: the preview applies it, so it can write its own event.
+    let owner_rules = crate::owner::Rules {
+        require: false,
+        ..rules
+    };
     let tags = parse_tags(&raw.tags)
+        .and_then(|t| {
+            let owner = crate::owner::clean_owner(&raw.owner, owner_rules)?;
+            let t = crate::owner::merge(&t, crate::owner::OWNER_TAG, owner.as_deref())?;
+            let notify = crate::owner::clean_notify(&raw.notify, owner_rules)?;
+            crate::owner::merge(&t, crate::owner::NOTIFY_TAG, notify.as_deref())
+        })
         .and_then(|t| {
             crate::description::clean(&raw.description)
                 .and_then(|n| crate::description::merge(&t, n.as_deref()))
@@ -208,6 +228,12 @@ fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
         }
         if crate::description::is_reserved(k) {
             return Err("Put the description in the description column, not in tags.".into());
+        }
+        if crate::owner::is_reserved(k) {
+            return Err(
+                "Put the owner and notify addresses in the owner and notify columns, not in tags."
+                    .into(),
+            );
         }
         if k.len() > 512 || v.len() > 256 {
             return Err("A tag is too long. Names can be 512 characters and values 256.".into());
@@ -343,6 +369,8 @@ fn parse_env(text: &str) -> Result<Vec<Raw>, String> {
             expires: String::new(),
             tags: String::new(),
             description: String::new(),
+            owner: String::new(),
+            notify: String::new(),
         });
     }
     Ok(out)
@@ -433,17 +461,20 @@ impl Quoted {
 // CSV
 // ---------------------------------------------------------------------
 
-const COLUMNS: [&str; 6] = [
+const COLUMNS: [&str; 8] = [
     "name",
     "value",
     "content_type",
     "expires",
     "tags",
     "description",
+    "owner",
+    "notify",
 ];
 
 /// RFC 4180 CSV with a header row. `name` and `value` are needed;
-/// `content_type`, `expires`, `tags` and `description` are optional. Fields may be quoted,
+/// `content_type`, `expires`, `tags`, `description`, `owner` and `notify`
+/// are optional. Fields may be quoted,
 /// with `""` for a quote, and quoted fields may hold commas and line
 /// breaks. Blank lines are skipped.
 fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
@@ -459,7 +490,7 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
         // header row has a value there.
         let Some(col) = COLUMNS.iter().find(|c| **c == h) else {
             return Err(format!(
-                "The first line needs column names: name, value, and optionally content_type, expires, tags and description. Keyring doesn't know the column name in column {} of the first line.",
+                "The first line needs column names: name, value, and optionally content_type, expires, tags, description, owner and notify. Keyring doesn't know the column name in column {} of the first line.",
                 i + 1
             ));
         };
@@ -495,6 +526,8 @@ fn parse_csv(text: &str) -> Result<Vec<Raw>, String> {
             expires: take("expires"),
             tags: take("tags"),
             description: take("description"),
+            owner: take("owner"),
+            notify: take("notify"),
         };
         drop(take);
         out.push(raw);
@@ -593,11 +626,11 @@ mod tests {
     const NOW: i64 = 1_790_000_000;
 
     fn env(text: &str) -> Vec<Row> {
-        parse(text.as_bytes(), Format::Env, NOW).unwrap()
+        parse(text.as_bytes(), Format::Env, NOW, crate::owner::Rules::OFF).unwrap()
     }
 
     fn csv(text: &str) -> Vec<Row> {
-        parse(text.as_bytes(), Format::Csv, NOW).unwrap()
+        parse(text.as_bytes(), Format::Csv, NOW, crate::owner::Rules::OFF).unwrap()
     }
 
     fn values(rows: &[Row]) -> Vec<(&str, &str)> {
@@ -649,15 +682,36 @@ mod tests {
 
     #[test]
     fn env_errors_name_the_line_never_the_value() {
-        let e = parse(b"A=1\nnot a pair\n", Format::Env, NOW).err().unwrap();
+        let e = parse(
+            b"A=1\nnot a pair\n",
+            Format::Env,
+            NOW,
+            crate::owner::Rules::OFF,
+        )
+        .err()
+        .unwrap();
         assert!(e.contains("Line 2"), "{e}");
-        let e = parse(b"A=\"never closed hunter2\n", Format::Env, NOW)
+        let e = parse(
+            b"A=\"never closed hunter2\n",
+            Format::Env,
+            NOW,
+            crate::owner::Rules::OFF,
+        )
+        .err()
+        .unwrap();
+        assert!(e.contains("line 1") && !e.contains("hunter2"), "{e}");
+        let e = parse(
+            b"A=\"x\" junk\n",
+            Format::Env,
+            NOW,
+            crate::owner::Rules::OFF,
+        )
+        .err()
+        .unwrap();
+        assert!(e.contains("after the closing quote"), "{e}");
+        let e = parse(b"=x\n", Format::Env, NOW, crate::owner::Rules::OFF)
             .err()
             .unwrap();
-        assert!(e.contains("line 1") && !e.contains("hunter2"), "{e}");
-        let e = parse(b"A=\"x\" junk\n", Format::Env, NOW).err().unwrap();
-        assert!(e.contains("after the closing quote"), "{e}");
-        let e = parse(b"=x\n", Format::Env, NOW).err().unwrap();
         assert!(e.contains("no name"), "{e}");
     }
 
@@ -680,11 +734,18 @@ mod tests {
 
     #[test]
     fn duplicate_and_clashing_names_are_refused() {
-        let e = parse(b"A=1\nA=2\n", Format::Env, NOW).err().unwrap();
-        assert!(e.contains("A is on line 1 and line 2"), "{e}");
-        let e = parse(b"DB_PASSWORD=1\ndb-password=2\n", Format::Env, NOW)
+        let e = parse(b"A=1\nA=2\n", Format::Env, NOW, crate::owner::Rules::OFF)
             .err()
             .unwrap();
+        assert!(e.contains("A is on line 1 and line 2"), "{e}");
+        let e = parse(
+            b"DB_PASSWORD=1\ndb-password=2\n",
+            Format::Env,
+            NOW,
+            crate::owner::Rules::OFF,
+        )
+        .err()
+        .unwrap();
         assert!(
             e.contains("DB_PASSWORD (line 1) and db-password (line 2) both become DB-PASSWORD"),
             "{e}"
@@ -787,7 +848,9 @@ mod tests {
             ("name,value\na,\"x\"y\n", "after a closing quote"),
             ("name,value\n", "no secrets"),
         ] {
-            let e = parse(text.as_bytes(), Format::Csv, NOW).err().unwrap();
+            let e = parse(text.as_bytes(), Format::Csv, NOW, crate::owner::Rules::OFF)
+                .err()
+                .unwrap();
             assert!(e.contains(expect), "{text:?}: {e}");
         }
     }
@@ -800,13 +863,20 @@ mod tests {
             "name,TopSecret42\na,b\n",
             "\"TopSecret42\",name,value\nx,a,b\n",
         ] {
-            let e = parse(text.as_bytes(), Format::Csv, NOW).err().unwrap();
+            let e = parse(text.as_bytes(), Format::Csv, NOW, crate::owner::Rules::OFF)
+                .err()
+                .unwrap();
             assert!(!e.to_ascii_lowercase().contains("topsecret42"), "{e}");
             assert!(e.contains("column"), "{e}");
         }
-        let e = parse(b"name,value\nPASSWORD=TopSecret42\n", Format::Csv, NOW)
-            .err()
-            .unwrap();
+        let e = parse(
+            b"name,value\nPASSWORD=TopSecret42\n",
+            Format::Csv,
+            NOW,
+            crate::owner::Rules::OFF,
+        )
+        .err()
+        .unwrap();
         assert!(!e.to_ascii_lowercase().contains("topsecret42"), "{e}");
         // Tag names aren't quoted either.
         let rows = csv("name,value,tags\na,v,TopSecret42=1;TopSecret42=2\n");
@@ -823,7 +893,9 @@ mod tests {
             text.push_str("x\n");
         }
         let t = std::time::Instant::now();
-        let e = parse(text.as_bytes(), Format::Env, NOW).err().unwrap();
+        let e = parse(text.as_bytes(), Format::Env, NOW, crate::owner::Rules::OFF)
+            .err()
+            .unwrap();
         assert!(e.contains("never closed"), "{e}");
         assert!(
             t.elapsed() < std::time::Duration::from_millis(500),
@@ -882,9 +954,13 @@ mod tests {
     #[test]
     fn limits_and_encoding() {
         let many: String = (0..=MAX_ROWS).map(|i| format!("S{i}=v\n")).collect();
-        let e = parse(many.as_bytes(), Format::Env, NOW).err().unwrap();
+        let e = parse(many.as_bytes(), Format::Env, NOW, crate::owner::Rules::OFF)
+            .err()
+            .unwrap();
         assert!(e.contains("up to 500"), "{e}");
-        let e = parse(b"A=\xff\n", Format::Env, NOW).err().unwrap();
+        let e = parse(b"A=\xff\n", Format::Env, NOW, crate::owner::Rules::OFF)
+            .err()
+            .unwrap();
         assert!(e.contains("UTF-8"));
         assert_eq!(Format::from_file_name("Secrets.CSV"), Format::Csv);
         assert_eq!(Format::from_file_name(".env"), Format::Env);

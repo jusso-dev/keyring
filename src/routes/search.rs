@@ -86,7 +86,8 @@ impl SearchQuery {
         self.text().chars().count() > MAX_QUERY_CHARS
     }
 
-    /// Case-insensitive substring of the name, a tag as `name=value`, the
+    /// Case-insensitive substring of the name, a tag as `name=value`
+    /// (`owner` and `notify` included, so an address finds them), the
     /// description, or the content type: the same match as each vault's
     /// own list filter.
     fn matches_text(&self, i: &Item) -> bool {
@@ -124,6 +125,7 @@ pub(super) struct Row {
     /// Tags, without the description.
     pub tags: Vec<(String, String)>,
     pub description: String,
+    pub owner: crate::owner::Display,
 }
 
 pub(super) struct VaultResults {
@@ -241,10 +243,11 @@ pub(super) async fn page(
             tags: i
                 .tags
                 .iter()
-                .filter(|(k, _)| k != crate::description::TAG)
+                .filter(|(k, _)| !crate::owner::has_own_field(k))
                 .cloned()
                 .collect(),
             description: i.description().to_owned(),
+            owner: crate::owner::Display::of_owner(i.owner()),
         };
         match out.groups.last_mut() {
             Some(g) if g.vault == i.vault => g.rows.push(row),
@@ -308,6 +311,27 @@ mod tests {
         for miss in ["dbpassword", "team", "password owner"] {
             assert!(!q(miss).matches(&i, NOW), "{miss}");
         }
+    }
+
+    #[test]
+    fn matches_the_owner_and_each_notify_address() {
+        let mut i = item(ItemType::Key, "k");
+        i.tags = vec![
+            ("owner".into(), "Ops@example.com".into()),
+            (
+                "notify".into(),
+                "sam@example.com, backup@example.com".into(),
+            ),
+        ];
+        for hit in [
+            "ops@example.com",
+            "owner=ops@",
+            "BACKUP@example.com",
+            "notify=sam@",
+        ] {
+            assert!(q(hit).matches(&i, NOW), "{hit}");
+        }
+        assert!(!q("pat@example.com").matches(&i, NOW));
     }
 
     #[test]

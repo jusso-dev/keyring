@@ -10,6 +10,7 @@ use support::body_text;
 /// A vault row with every health setting on.
 fn healthy(name: &str) -> serde_json::Value {
     let mut v = support::vault_row(name, "sub-a", true);
+    v["tags"] = json!({"env": "prod", "keyring-owners": "ops@example.com, Platform team"});
     v["enablePurgeProtection"] = json!(true);
     v["publicNetworkAccess"] = json!("Disabled");
     v["networkDefaultAction"] = json!("Deny");
@@ -42,7 +43,7 @@ fn row_statuses(html: &str, vault: &str) -> Vec<String> {
         .collect()
 }
 
-const CHECKS: usize = 9;
+const CHECKS: usize = 10;
 
 /// The page with apostrophes unescaped, so assertions read as the text.
 async fn page(w: &support::World, path: &str) -> (StatusCode, String) {
@@ -123,7 +124,7 @@ async fn every_check_warns_on_a_badly_set_vault() {
     let (status, html) = page(&w, "/vault-health?vault=kv-test").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(row_statuses(&html, "kv-test"), vec!["Warn"; CHECKS]);
-    assert!(html.contains("9 warnings and 0 checks"));
+    assert!(html.contains("10 warnings and 0 checks"));
     for (check, words, guide) in [
         (
             "Audit logs",
@@ -162,6 +163,11 @@ async fn every_check_warns_on_a_badly_set_vault() {
             "1 key has no rotation policy",
             "how-to-configure-key-rotation",
         ),
+        (
+            "Owners",
+            "It has no keyring-owners tag",
+            "management/tag-resources",
+        ),
     ] {
         let at = html
             .find(&format!("kv-test</span>, {check}:"))
@@ -169,7 +175,7 @@ async fn every_check_warns_on_a_badly_set_vault() {
         let line = &html[at..at + html[at..].find("</li>").unwrap()];
         assert!(line.contains(words), "{check}: {line}");
         assert!(
-            line.contains("https://learn.microsoft.com/azure/key-vault/") && line.contains(guide),
+            line.contains("https://learn.microsoft.com/azure/") && line.contains(guide),
             "{check}: {line}"
         );
     }
@@ -193,7 +199,7 @@ async fn checks_that_cant_be_read_are_unknown_with_the_reason() {
         got,
         [
             "Unknown", "Pass", "Unknown", "Pass", "Unknown", "Pass", "Unknown", "Unknown",
-            "Unknown"
+            "Unknown", "Pass"
         ]
     );
     for words in [
@@ -235,7 +241,8 @@ async fn all_vaults_leave_per_item_checks_for_the_one_vault_view() {
     for vault in ["kv-a", "kv-b"] {
         let got = row_statuses(&html, vault);
         assert_eq!(got[6], "Warn", "secrets are counted from the list");
-        assert_eq!(&got[7..], ["Deferred", "Deferred"]);
+        assert_eq!(&got[7..9], ["Deferred", "Deferred"]);
+        assert_eq!(got[9], "Pass", "owners come from Resource Graph");
     }
     assert!(
         html.contains("Certificate renewal and key rotation are checked when you pick one vault")
@@ -350,4 +357,44 @@ async fn nav_links_to_vault_health() {
     let (_, html) = page(&w, "/vault-health").await;
     assert!(html.contains("href=\"/vault-health\" aria-current=\"page\">Vault health</a>"));
     assert!(html.contains("You can't see any vaults yet"));
+}
+
+#[tokio::test]
+async fn vault_owners_are_shown_and_a_missing_tag_warns() {
+    let w = support::world().await;
+    let mut bare = healthy("kv-bare");
+    bare["tags"] = json!({"env": "prod"});
+    let mut empty = healthy("kv-empty");
+    empty["tags"] = json!({"keyring-owners": " "});
+    let mut odd = healthy("kv-odd");
+    odd["tags"] = json!({"Keyring-Owners": "<script>x</script>; ops@example.com"});
+    *w.arm.state.vaults.lock().unwrap() = vec![healthy("kv-ok"), bare, empty, odd];
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
+    let (status, html) = page(&w, "/vault-health").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(row_statuses(&html, "kv-ok")[9], "Pass");
+    assert_eq!(row_statuses(&html, "kv-bare")[9], "Warn");
+    assert_eq!(row_statuses(&html, "kv-empty")[9], "Warn");
+    assert_eq!(row_statuses(&html, "kv-odd")[9], "Pass");
+    assert!(html.contains("kv-bare</span>, Owners: It has no keyring-owners tag"));
+    assert!(html.contains("kv-empty</span>, Owners: Its keyring-owners tag is empty"));
+    // A parsed address is a mailto link; anything else is escaped text.
+    assert!(html.contains("<a href=\"mailto:ops@example.com\">ops@example.com</a>"));
+    assert!(html.contains("<span class=\"mono\">Platform team</span>"));
+    assert!(html.contains("&#60;script&#62;x&#60;/script&#62;"));
+    assert!(!html.contains("<script>x"));
+    assert!(!html.contains("mailto:&#60;"));
+    // Where to set it, since Keyring never writes vault tags.
+    assert!(html.contains("Tags blade") && html.contains("az tag update"));
+    // No more calls than before: the tag comes with the Resource Graph rows.
+    let queries = w.arm.state.requests.lock().unwrap().len();
+    assert_eq!(queries, 2, "the vault and subscription queries only");
+
+    // The vault list shows them too.
+    let (status, html) = w.page("/vaults").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("<th scope=\"col\">Owners</th>"));
+    assert!(html.contains("<a href=\"mailto:ops@example.com\">ops@example.com</a>"));
+    assert!(html.contains("&#60;script&#62;x&#60;/script&#62;"));
+    assert!(html.contains("az tag update"));
 }

@@ -14,6 +14,7 @@
 {% else %}
 <p class="muted">You can see {{ total }} vault{% if total != 1 %}s{% endif %}. Seeing a vault here doesn't always mean you can open its secrets.</p>
 <p class="muted">With audit logs off, nothing records who read or changed what, and Keyring's audit view has nothing to show. <a href="/vault-health">Vault health</a> checks this and more for every vault.</p>
+<p class="muted">Owners come from each vault's <span class="mono">keyring-owners</span> tag, which you set in the Azure portal or with <span class="mono">az tag update</span>. Keyring doesn't change vault tags.</p>
 
 <form class="filters" method="get" action="/vaults" role="search" data-live-filter="vault-table">
   <div>
@@ -55,6 +56,7 @@
       <th scope="col">Subscription</th>
       <th scope="col">Resource group</th>
       <th scope="col">Location</th>
+      <th scope="col">Owners</th>
       <th scope="col">Access model</th>
       <th scope="col">Soft delete</th>
       <th scope="col">Purge protection</th>
@@ -69,6 +71,7 @@
       <td>{{ ui::or_none(v.subscription_name) }}</td>
       <td>{{ ui::or_none(v.resource_group) }}</td>
       <td>{{ ui::or_none(v.location) }}</td>
+      <td class="owner-cell">{{ ui::owner_value(crate::owner::vault_display(v.tags)) }}</td>
       <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
       <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>
       <td>{% if v.purge_protection %}On{% else %}Off{% endif %}</td>

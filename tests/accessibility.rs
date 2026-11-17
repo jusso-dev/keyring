@@ -199,6 +199,12 @@ async fn pages_have_labels_headings_and_landmarks() {
     s.add_key_with("app-key", "RSA", |_| {});
     s.put("old-one", "x");
     s.soft_delete("old-one");
+    // An owner and notify list set outside Keyring, so the notes show.
+    s.put_with("odd-owner", "x", |v| {
+        v.tags.insert("owner".into(), "Payments team".into());
+        v.tags
+            .insert("notify".into(), "a@example.com;b@example.com".into());
+    });
     let v1 = s.secrets.lock().unwrap()["db-password"].versions[0]
         .version
         .clone();
@@ -210,6 +216,11 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/v/kv-test/secrets/db-password".into(),
         "/v/kv-test/secrets/db-password/value".into(),
         "/v/kv-test/secrets/db-password/edit".into(),
+        "/v/kv-test/secrets/odd-owner/edit".into(),
+        "/v/kv-test/secrets/odd-owner".into(),
+        "/v/kv-test/secrets?mine=1".into(),
+        "/v/kv-test/keys?mine=1".into(),
+        "/v/kv-test/certificates?mine=1".into(),
         "/v/kv-test/secrets/db-password/versions".into(),
         format!("/v/kv-test/secrets/db-password/rollback?version={v1}"),
         "/v/kv-test/secrets/db-password/delete".into(),
