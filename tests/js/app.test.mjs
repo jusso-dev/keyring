@@ -645,3 +645,23 @@ test("an error summary takes focus before a flash message", () => {
   ]);
   assert.equal(p.doc.activeElement, p.main.querySelector("[data-error-summary]"));
 });
+
+// The description counter (templates/_ui.html, description_field).
+test("the counter says how many characters are left, and isn't a live region", () => {
+  const p = page((h) => [
+    h("textarea", { id: "description", maxlength: "256", value: "abc" }),
+    h("p", { id: "description-count", "data-count-for": "description", text: "Up to 256 characters." }),
+  ]);
+  const box = p.main.querySelector("textarea");
+  const line = p.main.querySelector("[data-count-for]");
+  assert.equal(line.textContent, "253 of 256 characters left.");
+  assert.equal(line.getAttribute("role"), null);
+  box.value = "😀" + "a".repeat(10);
+  box.dispatch("input");
+  assert.equal(line.textContent, "244 of 256 characters left.", "counted as the server counts");
+});
+
+test("the counter leaves a line alone when its field is missing", () => {
+  const p = page((h) => [h("p", { "data-count-for": "nothing", text: "Up to 256 characters." })]);
+  assert.equal(p.main.querySelector("[data-count-for]").textContent, "Up to 256 characters.");
+});

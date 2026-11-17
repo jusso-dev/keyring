@@ -136,7 +136,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Secrets**: list, search, reveal and copy (Keyring tries to clear the clipboard afterwards), create (a plain value, or a Login, Database, API key or SSH private key with one field each, stored as JSON in the one secret and copied field by field), edit, view versions and roll back, copy to another vault without showing the value, enable or disable, set expiry and tags, soft-delete and recover, and import many at once from a `.env` or CSV file after a preview of names (never values). Tags, expiry and enabled can be changed on up to 100 ticked secrets at once, after a page that shows each change. Purge is off unless an admin turns it on. There is no export.
 - **Certificates**: list, upload `.pfx` or `.pem`, download `.cer` or `.pfx`, create with a policy, change what happens near expiry, enable or disable (one or many at once, with tags), see what's expiring. A new certificate is self-signed or signed by an issuer already set up on the vault (see [Certificate issuers](#certificate-issuers)).
 - **Keys**: list, create, rotate, enable or disable, set a rotation policy and view, and change tags, expiry or enabled on many at once. Raw key material is never exported.
-- **Search** for a secret, certificate or key across every vault you can see, by name, tag or content type, from the box in the top bar. Values are never read.
+- **Search** for a secret, certificate or key across every vault you can see, by name, tag, description or content type, from the box in the top bar. Values are never read.
 - **Expiry dashboard** across vaults, with CSV export and optional alerts.
 - **Rotation status** from tags: a secret's page shows what its `rotation`, `rotation-last` and `rotation-status` tags say about its last rotation, and the expiry dashboard lists secrets whose rotation failed. Keyring reads the tags only; see [docs/rotation.md](docs/rotation.md).
 - **Age view** across vaults (`/expiry/age`): every secret, certificate and key by how long since its value last changed (under 90 days, 90 to 180, 180 to 365, over a year), with CSV export. The secrets list has a "Value changed" column and a "Not changed in over N days" filter, and items past `KEYRING_STALE_AFTER_DAYS` get a "Not changed in over a year" badge on their list and page.
@@ -146,7 +146,17 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
 - **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, or the vault's events haven't arrived yet, it says why and you can still go ahead. An empty list is never shown as proof that a change is safe, and the panel always says which workspaces and period it looked at.
+- **Descriptions**: a note on any secret, certificate or key, kept in its `description` tag (see [Well-known tags](#well-known-tags)). Set it when you create or edit an item, or with **Edit details** on a certificate or key, or on many at once; it shows under the item's name, in a list column, in search and in the CSV exports.
 - Deletes need you to type the item's name first.
+
+## Well-known tags
+
+Keyring stores nothing, so the few things it keeps about an item live in the item's own Key Vault tags. They show in the portal and the CLI like any tag, and each counts towards Key Vault's 15 tags per item.
+
+| Tag | On | Meaning |
+| --- | --- | --- |
+| `description` | secret, certificate, key | A note on what the item is for: up to 256 characters, line breaks allowed. Set with the Description field. Anyone who can see the item's tags can read it, so don't put secrets or personal details in it |
+| `rotation`, `rotation-last`, `rotation-status` | secret | What the last rotation did, written by your rotation job and read by Keyring ([docs/rotation.md](docs/rotation.md)) |
 
 ## How access works
 

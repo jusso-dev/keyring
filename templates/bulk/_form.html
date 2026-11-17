@@ -10,6 +10,8 @@
     <select id="bulk-op" name="op" aria-describedby="bulk-op-help">
       <option value="tag_set">Add or change a tag</option>
       <option value="tag_remove">Remove a tag</option>
+      <option value="description_set">Set the description</option>
+      <option value="description_remove">Remove the description</option>
       {% if bulk_expiry %}<option value="expiry">Set expiry date</option>{% endif %}
       <option value="enable">Enable</option>
       <option value="disable">Disable</option>
@@ -22,6 +24,10 @@
   <div>
     <label for="bulk-tag-value">Tag value (optional)</label>
     <input id="bulk-tag-value" name="tag_value" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
+  </div>
+  <div>
+    <label for="bulk-description">Description (for Set the description)</label>
+    <input id="bulk-description" name="description" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
   </div>
   {% if bulk_expiry %}
   <div>

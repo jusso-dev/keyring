@@ -30,7 +30,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::FieldErrors;
-use crate::routes::secrets::form::parse_tags;
+use crate::routes::secrets::form::{parse_tags, with_note};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::{azure_problem, check_csrf, vault_path};
@@ -52,6 +52,7 @@ pub(crate) const PEM: &str = "application/x-pem-file";
 pub(crate) struct UploadView {
     pub name: String,
     pub tags: String,
+    pub description: String,
     pub enabled: bool,
     pub exportable: bool,
 }
@@ -62,6 +63,7 @@ impl Default for UploadView {
         Self {
             name: String::new(),
             tags: String::new(),
+            description: String::new(),
             enabled: true,
             exportable: true,
         }
@@ -139,7 +141,9 @@ struct PreviewPage {
     /// The name couldn't be looked up, so it may already be in use.
     existing_unknown: bool,
     upload_id: String,
+    /// The tags, without the description.
     tags: Vec<(String, String)>,
+    description: String,
     enabled: bool,
     exportable: bool,
 }
@@ -238,6 +242,7 @@ struct Posted {
     csrf: String,
     name: String,
     tags: String,
+    description: String,
     enabled: bool,
     exportable: bool,
     password: Option<Secret>,
@@ -293,6 +298,7 @@ async fn read_multipart(mut mp: Multipart, p: &mut Posted) -> Result<(), ReadErr
             "csrf" => p.csrf = field.text().await?,
             "name" => p.name = field.text().await?.trim().to_owned(),
             "tags" => p.tags = field.text().await?,
+            "description" => p.description = field.text().await?,
             "enabled" => p.enabled = true,
             "exportable" => p.exportable = true,
             _ => {}
@@ -438,6 +444,7 @@ pub(crate) async fn preview(
     let view = UploadView {
         name: p.name.clone(),
         tags: p.tags.clone(),
+        description: p.description.clone(),
         enabled: p.enabled,
         exportable: p.exportable,
     };
@@ -449,6 +456,7 @@ pub(crate) async fn preview(
             let view = UploadView {
                 name: p.name,
                 tags: p.tags,
+                description: p.description,
                 ..UploadView::default()
             };
             let errors = FieldErrors::one("file", too_big_message());
@@ -467,6 +475,7 @@ pub(crate) async fn preview(
         errors.push("tags", m);
         BTreeMap::new()
     });
+    let tags = with_note(&tags, &p.description, &mut errors);
     let parsed = if p.too_big {
         errors.push("file", too_big_message());
         None
@@ -580,7 +589,8 @@ pub(crate) async fn preview(
             existing,
             existing_unknown,
             upload_id,
-            tags: tags.into_iter().collect(),
+            description: crate::description::of(&tags).unwrap_or_default().to_owned(),
+            tags: crate::description::without(&tags).into_iter().collect(),
             enabled: p.enabled,
             exportable: p.exportable,
         })
@@ -626,12 +636,10 @@ pub(crate) async fn confirm(
     let is_pfx = up.content_type == PFX;
     let view = UploadView {
         name: up.name.clone(),
-        tags: up
-            .tags
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
+        tags: crate::routes::secrets::form::format_tags(&up.tags),
+        description: crate::description::of(&up.tags)
+            .unwrap_or_default()
+            .to_owned(),
         enabled: up.enabled,
         exportable: up.exportable,
     };

@@ -34,6 +34,8 @@
 
   {% call ui::name_field(form.name, "certificate") %}{% endcall %}
 
+  {% call ui::description_field(form.description, "certificate") %}{% endcall %}
+
   {% let field_name = "tags" %}
   <label for="tags">Tags <span class="muted">(optional)</span></label>
   <p class="field-help" id="tags-help">One per line, as name=value. Up to 15, each name used once.</p>

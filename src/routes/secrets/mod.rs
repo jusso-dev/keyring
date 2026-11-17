@@ -45,7 +45,10 @@ pub(super) struct SecretRow {
     pub expires_note: String,
     pub expiry: ExpiryState,
     pub not_yet_valid: bool,
+    /// Tags, without the description.
     pub tags: Vec<(String, String)>,
+    /// The note in the `description` tag, or empty.
+    pub description: String,
     pub managed: bool,
     pub filter_text: String,
 }
@@ -53,15 +56,20 @@ pub(super) struct SecretRow {
 impl SecretRow {
     pub(super) fn from_item(item: &SecretItem, now: i64) -> Self {
         let a = &item.attributes;
-        let tags: Vec<(String, String)> = item
-            .tags()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
+        let tags: Vec<(String, String)> = crate::description::without(item.tags())
+            .into_iter()
             .collect();
+        let description = crate::description::of(item.tags())
+            .unwrap_or_default()
+            .to_owned();
         let mut filter_text = item.name().to_lowercase();
         for (k, v) in &tags {
             filter_text.push(' ');
             filter_text.push_str(&format!("{k}={v}").to_lowercase());
+        }
+        if !description.is_empty() {
+            filter_text.push(' ');
+            filter_text.push_str(&description.to_lowercase().replace('\n', " "));
         }
         Self {
             name: item.name().to_owned(),
@@ -82,6 +90,7 @@ impl SecretRow {
             expiry: a.expiry_state(now),
             not_yet_valid: a.not_yet_valid(now),
             tags,
+            description,
             managed: item.managed.unwrap_or(false),
             filter_text,
         }
@@ -434,6 +443,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| ((*k).into(), (*v).into()))
                 .collect(),
+            description: String::new(),
             managed: false,
             filter_text: std::iter::once(name.to_lowercase())
                 .chain(tags.iter().map(|(k, v)| format!("{k}={v}").to_lowercase()))

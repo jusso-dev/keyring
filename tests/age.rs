@@ -185,7 +185,7 @@ async fn filters_and_csv_without_values() {
     let lines: Vec<_> = csv.lines().collect();
     assert_eq!(
         lines[0],
-        "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Tags"
+        "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Tags"
     );
     // Oldest first, and only the band asked for.
     assert_eq!(lines.len(), 4, "{csv}");
