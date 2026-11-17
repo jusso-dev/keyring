@@ -24,7 +24,9 @@ pub struct RateLimit {
     per_window: u32,
     window: Duration,
     max_entries: usize,
-    seen: Mutex<HashMap<(NotifyType, Address), (Instant, u32)>>,
+    /// Keyed by [`Address::mailbox_key`], so a change of case or a `+tag`
+    /// doesn't get a mailbox a second limit or a second place in the map.
+    seen: Mutex<HashMap<(NotifyType, String), (Instant, u32)>>,
 }
 
 impl std::fmt::Debug for RateLimit {
@@ -61,7 +63,7 @@ impl RateLimit {
             .seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let key = (kind, to.clone());
+        let key = (kind, to.mailbox_key());
         if !seen.contains_key(&key) && seen.len() >= self.max_entries {
             let window = self.window;
             seen.retain(|_, (start, _)| now.duration_since(*start) < window);
@@ -110,6 +112,24 @@ mod tests {
         assert!(r.allow_at(NotifyType::Expiry, &a("sam@example.com"), t0));
         let later = t0 + Duration::from_secs(3600);
         assert!(r.allow_at(NotifyType::Expiry, &alex, later));
+    }
+
+    #[test]
+    fn case_and_plus_tags_share_one_limit_and_one_entry() {
+        let r = RateLimit::new(2, Duration::from_secs(3600), 100);
+        let t0 = Instant::now();
+        assert!(r.allow_at(NotifyType::Expiry, &a("alex@example.com"), t0));
+        assert!(r.allow_at(NotifyType::Expiry, &a("Alex@Example.com"), t0));
+        for same in [
+            "ALEX@example.com",
+            "alex+1@example.com",
+            "Alex+x+y@example.com",
+        ] {
+            assert!(!r.allow_at(NotifyType::Expiry, &a(same), t0), "{same}");
+        }
+        assert_eq!(r.tracked(), 1);
+        // A different mailbox is still its own.
+        assert!(r.allow_at(NotifyType::Expiry, &a("alexa@example.com"), t0));
     }
 
     #[test]

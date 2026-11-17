@@ -342,7 +342,9 @@ impl Notifier {
         };
         let mut to: Vec<Address> = Vec::new();
         for a in n.to {
-            if to.contains(&a) {
+            // One mailbox once, however its address is written.
+            let key = a.mailbox_key();
+            if to.iter().any(|t| t.mailbox_key() == key) {
                 continue;
             }
             if !self.allowed(&a) || to.len() >= MAX_RECIPIENTS {

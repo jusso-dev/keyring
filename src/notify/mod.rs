@@ -18,8 +18,9 @@
 //!   and HTML. Never a secret value, token, private key, Azure error message
 //!   or reason text. Free text placed in a body has control and invisible
 //!   characters taken out, and the HTML part is escaped.
-//! - **Personal data.** Recipient addresses are never logged, and only go
-//!   on audit events with `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`.
+//! - **Personal data.** Recipient addresses appear nowhere unless
+//!   `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`, which puts them on audit events
+//!   (and so in the audit log line).
 
 pub mod rate;
 pub mod sender;
@@ -176,6 +177,17 @@ impl Address {
     /// The domain, lower case.
     pub fn domain(&self) -> &str {
         self.0.rsplit_once('@').map(|(_, d)| d).unwrap_or_default()
+    }
+
+    /// The mailbox this address reaches, for counting and for telling
+    /// duplicates: the local part lower-cased with any `+tag` taken off,
+    /// then the domain. `Alex@x.com`, `alex@x.com` and `alex+1@x.com` are
+    /// one mailbox, so they share one rate limit and one place in an
+    /// email. Mail is still sent to the address as given.
+    pub fn mailbox_key(&self) -> String {
+        let (local, domain) = self.0.rsplit_once('@').unwrap_or((&self.0, ""));
+        let local = local.split_once('+').map_or(local, |(l, _)| l);
+        format!("{}@{domain}", local.to_ascii_lowercase())
     }
 }
 
@@ -532,6 +544,20 @@ mod tests {
         }
         let long = format!("{}@example.com", "a".repeat(65));
         assert!(Address::parse(&long).is_err());
+    }
+
+    #[test]
+    fn a_mailbox_is_one_whatever_its_case_or_plus_tag() {
+        let key = |s: &str| Address::parse(s).unwrap().mailbox_key();
+        assert_eq!(key("Alex@Example.COM"), "alex@example.com");
+        assert_eq!(key("alex+billing@example.com"), "alex@example.com");
+        assert_eq!(key("Alex+a+b@example.com"), "alex@example.com");
+        assert_ne!(key("alexa@example.com"), key("alex@example.com"));
+        // The address itself is sent as given.
+        assert_eq!(
+            Address::parse("Alex+x@Example.com").unwrap().as_str(),
+            "Alex+x@example.com"
+        );
     }
 
     #[test]

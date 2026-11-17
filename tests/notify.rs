@@ -157,6 +157,8 @@ async fn an_email_is_sent_polled_and_audited() {
         "alex@example.com",
         "sam@example.com",
         "alex@example.com",
+        // The same mailbox written another way is listed once too.
+        "Alex+other@example.com",
     ]));
     assert_eq!(got, Enqueued::Queued { recipients: 2 });
     until("delivered", || r.n.health().delivered == 1).await;

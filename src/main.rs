@@ -18,7 +18,7 @@ async fn main() -> ExitCode {
     for name in config.test_overrides() {
         tracing::warn!(
             variable = name,
-            "a test-only override is set; user tokens go to the host it names, not to Microsoft. Unset it outside the test suite"
+            "a test-only override is set; tokens (people's, or Keyring's managed identity's) go to the host it names, not to Microsoft. Unset it outside the test suite"
         );
     }
 

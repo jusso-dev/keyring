@@ -145,7 +145,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Pinned and recently opened**: pin a vault, secret, certificate or key with the **Pin** button under its heading. The home page and the vault list show what you've pinned and the last 10 items you opened. Kept in your browser only (names and paths, never values), cleared when you sign out, with a Clear button. Pages work the same without it.
 - **Generator** for passwords, GUIDs and API keys.
 - **Audit view** built from Key Vault diagnostic logs, per vault and per item, and fixed reports across every vault you can see (secret values read, private keys downloaded, deletes and purges, refused requests, one person's activity) with CSV export.
-- **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, it says why and you can still go ahead.
+- **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, or the vault's events haven't arrived yet, it says why and you can still go ahead. An empty list is never shown as proof that a change is safe, and the panel always says which workspaces and period it looked at.
 - Deletes need you to type the item's name first.
 
 ## How access works
