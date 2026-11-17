@@ -22,8 +22,11 @@
 //! - **Topic.** Each event's `topic`, which Event Grid stamps itself and
 //!   a publisher can't write, must be a Key Vault resource ID whose vault
 //!   is the event's `VaultName` ([`checked_topic`]). An event from a custom
-//!   topic, or any other source, refuses the delivery. Nothing from `topic`
-//!   is logged or put in an email.
+//!   topic, or any other source, refuses the delivery. With
+//!   `KEYRING_EVENTGRID_SUBSCRIPTIONS` set, the vault's subscription must
+//!   also be in that list, or the delivery is refused with
+//!   `subscription_not_allowed`. Nothing from `topic` is logged or put in
+//!   an email.
 //! - **Rate limits.** Two fixed one-minute windows, each one counter, so
 //!   neither can grow. The token is checked first. A delivery whose token
 //!   passed takes from [`HookTuning::per_minute`]; one whose token failed
@@ -203,6 +206,9 @@ pub enum BadDelivery {
     /// An event whose `topic` isn't the Key Vault named in its data: from
     /// a custom topic, another source, or missing.
     BadTopic,
+    /// An event from a Key Vault in a subscription that isn't in
+    /// `KEYRING_EVENTGRID_SUBSCRIPTIONS`.
+    SubscriptionNotAllowed,
 }
 
 impl BadDelivery {
@@ -213,6 +219,7 @@ impl BadDelivery {
             Self::BadValidation => "bad_validation",
             Self::BadEvent => "bad_event",
             Self::BadTopic => "bad_topic",
+            Self::SubscriptionNotAllowed => "subscription_not_allowed",
         }
     }
 }
@@ -267,25 +274,37 @@ fn is_resource_group(s: &str) -> bool {
 /// resource IDs aren't case-sensitive), every segment checked: no extra or
 /// empty segments.
 pub fn checked_topic(topic: &str, vault: &str) -> bool {
+    topic_subscription(topic, vault).is_some()
+}
+
+/// The subscription ID in `topic` when [`checked_topic`] accepts it.
+fn topic_subscription<'a>(topic: &'a str, vault: &str) -> Option<&'a str> {
     let parts: Vec<&str> = topic.split('/').collect();
     let ["", subs, sub, rgs, rg, providers, namespace, vaults, name] = parts.as_slice() else {
-        return false;
+        return None;
     };
-    subs.eq_ignore_ascii_case("subscriptions")
+    (subs.eq_ignore_ascii_case("subscriptions")
         && is_guid(sub)
         && rgs.eq_ignore_ascii_case("resourceGroups")
         && is_resource_group(rg)
         && providers.eq_ignore_ascii_case("providers")
         && namespace.eq_ignore_ascii_case("Microsoft.KeyVault")
         && vaults.eq_ignore_ascii_case("vaults")
-        && name.eq_ignore_ascii_case(vault)
+        && name.eq_ignore_ascii_case(vault))
+    .then_some(*sub)
 }
 
-fn checked_event(v: &Value) -> Result<ExpiryEvent, BadDelivery> {
+/// Check one event. With `allowed` set, the topic's subscription ID must
+/// be in it, compared without regard to case. A topic that isn't a Key
+/// Vault ID is `BadTopic` whatever the list says.
+fn checked_event(v: &Value, allowed: Option<&[String]>) -> Result<ExpiryEvent, BadDelivery> {
     let e = checked_fields(v).ok_or(BadDelivery::BadEvent)?;
     let topic = v.get("topic").and_then(Value::as_str);
-    if !topic.is_some_and(|t| checked_topic(t, e.item.vault())) {
+    let Some(sub) = topic.and_then(|t| topic_subscription(t, e.item.vault())) else {
         return Err(BadDelivery::BadTopic);
+    };
+    if allowed.is_some_and(|list| !list.iter().any(|s| s.eq_ignore_ascii_case(sub))) {
+        return Err(BadDelivery::SubscriptionNotAllowed);
     }
     Ok(e)
 }
@@ -314,7 +333,9 @@ fn checked_fields(v: &Value) -> Option<ExpiryEvent> {
 
 /// Parse a delivery in the Event Grid schema: a JSON array of 1 to
 /// [`MAX_EVENTS`] events. All or nothing: one bad event refuses the lot.
-pub fn parse_delivery(body: &[u8]) -> Result<Delivery, BadDelivery> {
+/// `allowed` is `KEYRING_EVENTGRID_SUBSCRIPTIONS`, lower case; `None`
+/// allows any subscription.
+pub fn parse_delivery(body: &[u8], allowed: Option<&[String]>) -> Result<Delivery, BadDelivery> {
     let events: Vec<Value> = serde_json::from_slice(body).map_err(|_| BadDelivery::NotEvents)?;
     if events.is_empty() {
         return Err(BadDelivery::NotEvents);
@@ -337,7 +358,7 @@ pub fn parse_delivery(body: &[u8]) -> Result<Delivery, BadDelivery> {
     }
     events
         .iter()
-        .map(checked_event)
+        .map(|e| checked_event(e, allowed))
         .collect::<Result<Vec<_>, _>>()
         .map(Delivery::Events)
 }
@@ -462,6 +483,8 @@ struct UnauthWindow {
 /// limits, the dedupe map and when the signing keys were last refetched.
 pub struct ExpiryHook {
     pub expect: Expect,
+    /// `KEYRING_EVENTGRID_SUBSCRIPTIONS`, lower case. `None` allows any.
+    pub subscriptions: Option<Vec<String>>,
     pub tuning: HookTuning,
     pub base_url: String,
     window: Mutex<(Instant, u32)>,
@@ -483,9 +506,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl ExpiryHook {
-    pub fn new(expect: Expect, tuning: HookTuning, base_url: String) -> Self {
+    pub fn new(
+        expect: Expect,
+        subscriptions: Option<Vec<String>>,
+        tuning: HookTuning,
+        base_url: String,
+    ) -> Self {
         Self {
             expect,
+            subscriptions,
             tuning,
             base_url,
             window: Mutex::new((Instant::now(), 0)),
@@ -631,10 +660,15 @@ mod tests {
         v.to_string().into_bytes()
     }
 
+    /// With no subscription list, as when the setting is unset.
+    fn parse(b: &[u8]) -> Result<Delivery, BadDelivery> {
+        parse_delivery(b, None)
+    }
+
     #[test]
     fn the_six_events_parse() {
         for t in ExpiryEventType::ALL {
-            let d = parse_delivery(&body(json!([ev(
+            let d = parse(&body(json!([ev(
                 t.as_str(),
                 t.object_type(),
                 "db-password"
@@ -681,26 +715,23 @@ mod tests {
         bad.push(edit(&|e| e["data"] = json!("x")));
         for b in bad {
             assert_eq!(
-                parse_delivery(&body(json!([good.clone(), b.clone()]))),
+                parse(&body(json!([good.clone(), b.clone()]))),
                 Err(BadDelivery::BadEvent),
                 "{b}"
             );
         }
-        assert_eq!(parse_delivery(b"[]"), Err(BadDelivery::NotEvents));
-        assert_eq!(parse_delivery(b"{}"), Err(BadDelivery::NotEvents));
-        assert_eq!(parse_delivery(b"not json"), Err(BadDelivery::NotEvents));
+        assert_eq!(parse(b"[]"), Err(BadDelivery::NotEvents));
+        assert_eq!(parse(b"{}"), Err(BadDelivery::NotEvents));
+        assert_eq!(parse(b"not json"), Err(BadDelivery::NotEvents));
         let many: Vec<Value> = (0..=MAX_EVENTS).map(|_| good.clone()).collect();
-        assert_eq!(
-            parse_delivery(&body(Value::Array(many))),
-            Err(BadDelivery::TooMany)
-        );
+        assert_eq!(parse(&body(Value::Array(many))), Err(BadDelivery::TooMany));
     }
 
     #[test]
     fn the_handshake_code_is_checked() {
         let v = |code: Value| json!({"eventType": VALIDATION_EVENT, "data": {"validationCode": code, "validationUrl": "https://evil.example/"}});
         assert_eq!(
-            parse_delivery(&body(json!([v(json!(
+            parse(&body(json!([v(json!(
                 "512d38b6-c7b8-40c8-89fe-f46f9e9622b6"
             ))]))),
             Ok(Delivery::Validation(
@@ -715,7 +746,7 @@ mod tests {
             json!(5),
         ] {
             assert_eq!(
-                parse_delivery(&body(json!([v(bad.clone())]))),
+                parse(&body(json!([v(bad.clone())]))),
                 Err(BadDelivery::BadValidation),
                 "{bad}"
             );
@@ -726,7 +757,7 @@ mod tests {
             "db-password",
         );
         assert_eq!(
-            parse_delivery(&body(json!([v(json!("abc")), good]))),
+            parse(&body(json!([v(json!("abc")), good]))),
             Err(BadDelivery::BadValidation)
         );
     }
@@ -739,6 +770,7 @@ mod tests {
                 issuer_v2: String::new(),
                 audience: String::new(),
             },
+            None,
             HookTuning {
                 per_minute: 2,
                 unauth_per_minute: 3,
@@ -865,7 +897,7 @@ mod tests {
             "Secret",
             "db-password",
         );
-        assert!(parse_delivery(&body(json!([good.clone()]))).is_ok());
+        assert!(parse(&body(json!([good.clone()]))).is_ok());
         let mut bad = Vec::new();
         let edit = |f: &dyn Fn(&mut Value)| {
             let mut e = good.clone();
@@ -882,11 +914,52 @@ mod tests {
         bad.push(edit(&|e| e["topic"] = json!(5)));
         for b in bad {
             assert_eq!(
-                parse_delivery(&body(json!([good.clone(), b.clone()]))),
+                parse(&body(json!([good.clone(), b.clone()]))),
                 Err(BadDelivery::BadTopic),
                 "{b}"
             );
         }
+    }
+
+    #[test]
+    fn the_subscription_must_be_listed_when_a_list_is_set() {
+        let good = ev(
+            "Microsoft.KeyVault.SecretNearExpiry",
+            "Secret",
+            "db-password",
+        );
+        let listed = vec!["0a1b2c3d-4e5f-6789-abcd-ef0123456789".to_owned()];
+        let other = vec!["11111111-2222-3333-4444-555555555555".to_owned()];
+        let one = body(json!([good.clone()]));
+        assert!(parse_delivery(&one, Some(&listed)).is_ok());
+        assert!(parse_delivery(&one, None).is_ok());
+        assert_eq!(
+            parse_delivery(&one, Some(&other)),
+            Err(BadDelivery::SubscriptionNotAllowed)
+        );
+        // An upper-case GUID in the topic still matches.
+        let mut upper = good.clone();
+        upper["topic"] = json!(upper["topic"].as_str().unwrap().to_ascii_uppercase());
+        assert!(parse_delivery(&body(json!([upper])), Some(&listed)).is_ok());
+        // One event from an unlisted subscription refuses the lot.
+        let mut stray = good.clone();
+        stray["topic"] = json!(good["topic"].as_str().unwrap().replace(
+            "0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+            "11111111-2222-3333-4444-555555555555"
+        ));
+        assert_eq!(
+            parse_delivery(&body(json!([good.clone(), stray])), Some(&listed)),
+            Err(BadDelivery::SubscriptionNotAllowed)
+        );
+        // A topic that isn't a Key Vault ID is bad_topic, listed or not.
+        let mut custom = good.clone();
+        custom["topic"] = json!(
+            "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg/providers/Microsoft.EventGrid/topics/kv-test"
+        );
+        assert_eq!(
+            parse_delivery(&body(json!([custom])), Some(&listed)),
+            Err(BadDelivery::BadTopic)
+        );
     }
 
     #[test]

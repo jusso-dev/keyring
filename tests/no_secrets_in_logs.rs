@@ -888,6 +888,11 @@ async fn values_never_reach_the_logs() {
             // For the webhook's email. No allow-list, so its
             // `keyring-notify` header is ignored.
             ("KEYRING_NOTIFY_ADMINS", "hookadmin@example.com".to_owned()),
+            // Only the support events' subscription may send.
+            (
+                "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+                "00000000-0000-0000-0000-000000000000".to_owned(),
+            ),
             ("KEYRING_REQUIRE_REASON", "reveal".to_owned()),
             ("KEYRING_TEST_NOTIFY_ACS_URL", acs.url()),
         ],
@@ -1127,6 +1132,25 @@ async fn values_never_reach_the_logs() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // A Key Vault in a subscription that isn't listed: refused, and
+        // its subscription ID, resource group and vault reach no line and
+        // no email.
+        let mut unlisted = ev.clone();
+        unlisted["data"]["VaultName"] = serde_json::json!("kv-subleak");
+        unlisted["topic"] = serde_json::json!(
+            "/subscriptions/5ab1eaed-0bad-4bad-8bad-5ec0ffee5ab1/resourceGroups/SUBRGLEAK/providers/Microsoft.KeyVault/vaults/kv-subleak"
+        );
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([unlisted]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         // A flood of bad tokens: two above already counted, three more
         // under the unauthenticated counter of 5, then 95 answered 429
         // with no audit event and no line of their own.
@@ -1180,6 +1204,9 @@ async fn values_never_reach_the_logs() {
             "BADTOKENLEAK",
             "TOPICLEAK",
             "FLOODLEAK",
+            "5ab1eaed",
+            "SUBRGLEAK",
+            "subleak",
             webhook_token.as_str(),
             eg::EVENT_GRID_APP,
         ] {
@@ -1506,6 +1533,9 @@ async fn values_never_reach_the_logs() {
         "BADTOKENLEAK",
         "TOPICLEAK",
         "FLOODLEAK",
+        "5ab1eaed",
+        "SUBRGLEAK",
+        "subleak",
         "FORGEDLINE",
         "FORGEDLINE subject",
         "hookadmin@",
@@ -1522,9 +1552,9 @@ async fn values_never_reach_the_logs() {
         .filter(|l| l.contains("action=notify.webhook"))
         .collect();
     // Good, handshake, bad token, other app, bad event, two bad topics,
-    // three of the flood under the counter and one in the next window:
-    // the 95 over the counter wrote nothing.
-    assert_eq!(hook_events.len(), 11, "bounded: {hook_events:#?}");
+    // an unlisted subscription, three of the flood under the counter and
+    // one in the next window: the 95 over the counter wrote nothing.
+    assert_eq!(hook_events.len(), 12, "bounded: {hook_events:#?}");
     assert_eq!(
         hook_events
             .iter()
@@ -1543,10 +1573,16 @@ async fn values_never_reach_the_logs() {
         logs.lines()
             .filter(|l| l.contains("eventgrid: delivery"))
             .count(),
-        11,
+        12,
         "one line per audited request, none for the dropped"
     );
-    for code in ["token_caller", "token_malformed", "bad_event", "bad_topic"] {
+    for code in [
+        "token_caller",
+        "token_malformed",
+        "bad_event",
+        "bad_topic",
+        "subscription_not_allowed",
+    ] {
         assert!(
             hook_events
                 .iter()
