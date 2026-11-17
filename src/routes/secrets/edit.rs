@@ -2,7 +2,7 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
@@ -23,6 +23,7 @@ use crate::routes::shell::Shell;
 use crate::routes::used_by::{self, UsedBy};
 use crate::routes::vault_ctx::check_csrf;
 use crate::routes::vault_ctx::vault_path;
+use crate::secret_types::{ContentKind, Field, SecretType, classify};
 
 /// Which form is being shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +48,9 @@ pub(crate) struct FormView {
     /// The version the edit form was opened on, and its `updated` time.
     pub version: String,
     pub updated: String,
+    /// A typed secret: one input per field in place of the value box.
+    /// Field values are never put back into the form.
+    pub secret_type: Option<SecretType>,
 }
 
 impl FormView {
@@ -61,7 +65,21 @@ impl FormView {
             locked_tags: None,
             version: f.version.clone(),
             updated: f.updated.clone(),
+            secret_type: f.chosen_type().ok().flatten(),
         }
+    }
+
+    /// The type the secret already has, for "Set a new value" and "Edit
+    /// details", whatever the form posted.
+    fn typed_as(mut self, item: &SecretItem) -> Self {
+        self.secret_type = match classify(item.content_type.as_deref()) {
+            ContentKind::Typed(t) => Some(t),
+            _ => None,
+        };
+        if self.secret_type.is_some() {
+            self.content_type = item.content_type.clone().unwrap_or_default();
+        }
+        self
     }
 
     fn from_item(item: &SecretItem) -> Self {
@@ -76,8 +94,10 @@ impl FormView {
             locked_tags: None,
             version: item.version().to_owned(),
             updated: updated_stamp(item),
+            secret_type: None,
         }
         .locking_tags_of(item)
+        .typed_as(item)
     }
 
     /// Lock the tags when the item's can't round-trip through the form.
@@ -128,6 +148,46 @@ impl FormPage {
 
     fn has_value_field(&self) -> bool {
         self.mode != Mode::Properties
+    }
+
+    /// The typed secret's fields, when the form shows them.
+    fn typed_fields(&self) -> &'static [Field] {
+        match self.form.secret_type {
+            Some(t) if self.has_value_field() => t.fields(),
+            _ => &[],
+        }
+    }
+
+    fn type_label(&self) -> &'static str {
+        self.form.secret_type.map_or("Password", SecretType::label)
+    }
+
+    /// The create form's type picker: each type, its link, and whether it
+    /// is the one shown.
+    fn type_choices(&self) -> Vec<(&'static str, String, bool)> {
+        let base = vault_path(&self.vault, "/secrets/-/new");
+        std::iter::once(("Password", base.clone(), self.form.secret_type.is_none()))
+            .chain(SecretType::ALL.into_iter().map(|t| {
+                (
+                    t.label(),
+                    format!("{base}?type={}", t.slug()),
+                    self.form.secret_type == Some(t),
+                )
+            }))
+            .collect()
+    }
+
+    /// What a typed secret's content type is, or will be.
+    fn typed_content_type(&self) -> String {
+        match self.form.secret_type {
+            Some(_) if !self.form.content_type.is_empty() => self.form.content_type.clone(),
+            Some(t) => t.content_type(),
+            None => String::new(),
+        }
+    }
+
+    fn secret_type_slug(&self) -> &'static str {
+        self.form.secret_type.map_or("", SecretType::slug)
     }
 
     fn action(&self) -> String {
@@ -207,14 +267,23 @@ fn saved(state: &AppState, to: &str, message: String) -> Response {
     res
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct NewQuery {
+    #[serde(default, rename = "type")]
+    kind: String,
+}
+
 pub(crate) async fn new_form(
     session: CurrentSession,
     shell: Shell,
     Path(vault): Path<String>,
+    Query(q): Query<NewQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
+    // An unknown type shows the plain form.
     let view = FormView {
         enabled: true,
+        secret_type: SecretType::from_slug(&q.kind),
         ..FormView::default()
     };
     Ok(form_page(
@@ -411,7 +480,9 @@ pub(crate) async fn set_value(
                 shell,
                 vault,
                 Mode::NewValue,
-                FormView::from_form(&f).locking_tags_of(&item),
+                FormView::from_form(&f)
+                    .locking_tags_of(&item)
+                    .typed_as(&item),
                 errors,
                 None,
             ));
@@ -474,7 +545,9 @@ pub(crate) async fn update(
                 shell,
                 vault,
                 Mode::Properties,
-                FormView::from_form(&f).locking_tags_of(&item),
+                FormView::from_form(&f)
+                    .locking_tags_of(&item)
+                    .typed_as(&item),
                 errors,
                 None,
             ));

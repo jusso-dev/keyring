@@ -42,7 +42,7 @@ impl VersionRow {
             enabled: a.is_enabled(),
             expires: a.expires.map(dates::format_date).unwrap_or_default(),
             is_current,
-            content_type: item.content_type.clone().unwrap_or_default(),
+            content_type: super::type_shown(item.content_type.as_deref().unwrap_or_default()),
         }
     }
 }

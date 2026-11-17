@@ -82,8 +82,10 @@
   // A revealed secret: copy to clipboard, then after a delay clear the
   // clipboard (only if it still holds our value) and hide the value.
   function reveal(panel) {
-    var field = panel.querySelector("[data-secret-value]");
-    var copy = panel.querySelector("[data-copy]");
+    // Several values (a typed secret's fields) each have their own Copy.
+    var fields = Array.prototype.slice.call(panel.querySelectorAll("[data-secret-value]"));
+    var field = fields[0];
+    var copies = Array.prototype.slice.call(panel.querySelectorAll("[data-copy]"));
     var extend = panel.querySelector("[data-extend]");
     var use = panel.querySelector("[data-use-value]");
     var status = panel.querySelector("[data-copy-status]");
@@ -147,10 +149,12 @@
         clearInterval(timer);
         // Don't strand keyboard focus on a button that's about to vanish.
         var hadFocus = panel.contains(document.activeElement);
-        field.value = "";
-        field.textContent = "";
-        field.defaultValue = "";
-        [field, copy, extend, use, countdown].forEach(function (el) {
+        fields.forEach(function (f) {
+          f.value = "";
+          f.textContent = "";
+          f.defaultValue = "";
+        });
+        fields.concat(copies, [extend, use, countdown]).forEach(function (el) {
           if (el) {
             el.hidden = true;
           }
@@ -193,9 +197,14 @@
       });
     }
 
-    if (copy && navigator.clipboard && navigator.clipboard.writeText) {
+    copies.forEach(function (copy) {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        return;
+      }
+      var own = document.getElementById(copy.getAttribute("data-copy") || "") || field;
       copy.hidden = false;
       copy.addEventListener("click", function () {
+        value = own.value;
         navigator.clipboard.writeText(value).then(function () {
           copied = true;
           restart();
@@ -204,7 +213,7 @@
           say(status, "Couldn't copy. Select the value and copy it yourself.");
         });
       });
-    }
+    });
 
     // From the generator, opened by a secret form: hand the value back.
     var sameOrigin = false;
@@ -218,7 +227,8 @@
       use.addEventListener("click", function () {
         var target = null;
         try {
-          target = !window.opener.closed && window.opener.document.getElementById("value");
+          target = !window.opener.closed &&
+            window.opener.document.getElementById(use.getAttribute("data-use-value") || "value");
         } catch (e) {
           target = null;
         }

@@ -44,9 +44,17 @@ use crate::routes::vault_ctx::is_valid_object_name;
 /// Keyring's own forms post.
 const MAX_CARRIED_FIELDS: usize = 64;
 
-/// Fields the reason page never carries: its own, and a secret value,
-/// which is never written back into a page.
+/// Fields the reason page never carries: its own.
 const NOT_CARRIED: [&str; 3] = ["csrf", "reason", "ticket"];
+
+/// Actions whose form holds secret material, under `value` or a typed
+/// secret's field names (password, private_key, passphrase, key and the
+/// rest). Their fields are never written back into a page: the person is
+/// sent back to the form instead. Decided by action, not field name, so a
+/// new field can't slip through.
+fn holds_secret_material(action: Action) -> bool {
+    matches!(action, Action::SecretCreate | Action::SecretSet)
+}
 
 #[derive(Template)]
 #[template(path = "reason.html")]
@@ -59,7 +67,7 @@ struct ReasonPage {
     cancel: String,
     /// The original form's other fields, posted again as they were.
     fields: Vec<(String, String)>,
-    /// False when the form held a secret value: the person goes back to
+    /// False when the form held secret material: the person goes back to
     /// the form instead.
     carry: bool,
     errors: FieldErrors,
@@ -239,7 +247,9 @@ fn ask(
         .filter(|(k, _)| !NOT_CARRIED.contains(&k.as_str()))
         .cloned()
         .collect();
-    let carry = carried.len() <= MAX_CARRIED_FIELDS && !carried.iter().any(|(k, _)| k == "value");
+    let carry = carried.len() <= MAX_CARRIED_FIELDS
+        && !holds_secret_material(action)
+        && !carried.iter().any(|(k, _)| k == "value");
     let (heading, intro, button) = words(action);
     let status = if errors.is_empty() {
         StatusCode::FORBIDDEN

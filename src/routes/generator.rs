@@ -86,6 +86,18 @@ impl GenPage {
     fn error_for(&self, field: &str) -> Option<&str> {
         self.errors.error_for(field)
     }
+    /// The id of the field on the secret form that "Use this value" fills,
+    /// or empty when the generator wasn't opened from one. Only Keyring's
+    /// own field names are taken.
+    fn use_target(&self) -> &'static str {
+        match self.form.for_secret.as_str() {
+            "1" => "value",
+            "password" => "password",
+            "key" => "key",
+            "passphrase" => "passphrase",
+            _ => "",
+        }
+    }
 }
 
 fn field_err(field: &'static str, message: impl Into<String>) -> FieldErrors {
