@@ -22,6 +22,84 @@ use crate::routes::secrets::{SecretRow, api, azure_problem, checked_name, curren
 use crate::routes::shell::Shell;
 use crate::routes::vault_ctx::vault_path;
 use crate::secret::Secret;
+use crate::secret_types::{ContentKind, SecretType, TypedValue, classify};
+
+/// One field on the reveal page. Every one is part of the value.
+pub(crate) struct ShownField {
+    /// Element id, `field-<name>`.
+    pub id: String,
+    pub label: &'static str,
+    pub multiline: bool,
+    pub value: Secret,
+}
+
+impl ShownField {
+    /// The value for a textarea, with the line break the HTML parser drops.
+    fn text(&self) -> String {
+        format!("\n{}", self.value.expose())
+    }
+}
+
+/// How the reveal page shows a value.
+enum Shown {
+    Plain,
+    Typed {
+        kind: SecretType,
+        fields: Vec<ShownField>,
+        /// Database only: connection strings built from the fields.
+        connections: Vec<ShownField>,
+    },
+    /// A Keyring content type whose value isn't in the type's shape, or a
+    /// type or version this build doesn't know.
+    Malformed,
+}
+
+fn shown(content_type: Option<&str>, value: &Secret) -> Shown {
+    let kind = match classify(content_type) {
+        ContentKind::Plain => return Shown::Plain,
+        ContentKind::Unknown => return Shown::Malformed,
+        ContentKind::Typed(k) => k,
+    };
+    let Ok(typed) = TypedValue::decode(kind, value) else {
+        return Shown::Malformed;
+    };
+    let fields = typed
+        .fields()
+        .map(|(f, v)| ShownField {
+            id: format!("field-{}", f.name),
+            label: f.label,
+            multiline: f.multiline,
+            value: v.clone(),
+        })
+        .collect();
+    let connections = [
+        (
+            "conn-sqlserver",
+            "SQL Server connection string",
+            typed.sql_server(),
+        ),
+        (
+            "conn-postgres",
+            "PostgreSQL connection string",
+            typed.postgres(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(id, label, v)| {
+        v.map(|value| ShownField {
+            id: id.into(),
+            label,
+            multiline: false,
+            value,
+        })
+    })
+    .collect();
+    Shown::Typed {
+        kind,
+        fields,
+        connections,
+    }
+}
 
 /// Seconds before the page hides a revealed value and the clipboard is
 /// cleared. Only enforced by the browser script.
@@ -47,6 +125,7 @@ struct RevealedPage {
     created: String,
     /// Rendered into the page once, HTML-escaped by Askama.
     value: Secret,
+    shown: Shown,
     clear_after: u32,
 }
 
@@ -56,6 +135,31 @@ impl RevealedPage {
     /// that begins with a line break would lose it on screen and on Copy.
     fn value(&self) -> String {
         format!("\n{}", self.value.expose())
+    }
+
+    fn type_label(&self) -> &'static str {
+        match &self.shown {
+            Shown::Typed { kind, .. } => kind.label(),
+            _ => "",
+        }
+    }
+
+    fn fields(&self) -> &[ShownField] {
+        match &self.shown {
+            Shown::Typed { fields, .. } => fields,
+            _ => &[],
+        }
+    }
+
+    fn connections(&self) -> &[ShownField] {
+        match &self.shown {
+            Shown::Typed { connections, .. } => connections,
+            _ => &[],
+        }
+    }
+
+    fn is_malformed(&self) -> bool {
+        matches!(self.shown, Shown::Malformed)
     }
 }
 
@@ -145,6 +249,7 @@ pub(crate) async fn reveal(
             .map(dates::format_datetime)
             .unwrap_or_default(),
         row: SecretRow::from_item(&bundle.item, now),
+        shown: shown(bundle.item.content_type.as_deref(), &bundle.value),
         value: bundle.value,
         clear_after: CLEAR_AFTER_SECS,
         shell,
