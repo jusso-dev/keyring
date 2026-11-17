@@ -13,6 +13,7 @@ pub(crate) mod generator;
 pub(crate) mod health;
 pub mod http;
 pub(crate) mod pkcs12;
+pub mod reason;
 pub(crate) mod rotation;
 pub mod routes;
 pub mod secret;

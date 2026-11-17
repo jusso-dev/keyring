@@ -242,11 +242,14 @@ pub enum Refusal {
     /// A step-up sign-in came back without the authentication context, or
     /// without a fresh enough sign-in. Refused, not retried.
     StepUpNotMet,
+    /// `KEYRING_REQUIRE_REASON` asks for a reason (and maybe a ticket), and
+    /// none was given or it didn't meet the rules. The person was asked.
+    ReasonRequired,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 13] = [
+    pub const ALL: [Refusal; 14] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -260,6 +263,7 @@ impl Refusal {
         Self::AuditUnavailable,
         Self::StepUpRequired,
         Self::StepUpNotMet,
+        Self::ReasonRequired,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -277,6 +281,7 @@ impl Refusal {
             Self::AuditUnavailable => "audit_unavailable",
             Self::StepUpRequired => "step_up_required",
             Self::StepUpNotMet => "step_up_not_met",
+            Self::ReasonRequired => "reason_required",
         }
     }
 }
@@ -306,9 +311,11 @@ pub struct AuditEvent {
     /// The `x-ms-client-request-id` Keyring sent on its last Key Vault call
     /// for this request.
     pub kv_request_id: Option<String>,
-    /// Why the person did it. Always absent until #205.
+    /// Why the person did it, when `KEYRING_REQUIRE_REASON` asked. Cleaned
+    /// by [`crate::reason`]: no control characters, 5 to 200 characters.
     pub reason: Option<String>,
-    /// A change or incident ticket. Always absent until #205.
+    /// A change or incident ticket, when `KEYRING_REASON_TICKET_PATTERN`
+    /// asked and it matched.
     pub ticket: Option<String>,
 }
 
@@ -378,9 +385,10 @@ fn opt(v: &Option<String>) -> Option<tracing::field::DisplayValue<&str>> {
 /// is already on the event, from the verified session.
 pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
     // Fields from Keyring or checked on the way in are written as they are.
-    // The user agent, UPN and the free text of #205 are written as plain
-    // strings, which the text format quotes and escapes, so a crafted
-    // value can't forge a line.
+    // The user agent, UPN, reason and ticket are written as plain strings,
+    // which the text format quotes and escapes and JSON escapes, so a
+    // crafted value can't forge a line. The reason and ticket also had
+    // every control character taken out before they got here.
     tracing::info!(
         target: TARGET,
         kind = tracing::field::display("audit"),
@@ -401,10 +409,12 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
         item_name = opt(&ev.item_name),
         item_version = opt(&ev.item_version),
         kv_request_id = opt(&ev.kv_request_id),
-        reason = ev.reason.as_deref(),
-        ticket = ev.ticket.as_deref(),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
+        // Last, so in the text format nothing typed can come before a
+        // real field.
+        ticket = ev.ticket.as_deref(),
+        reason = ev.reason.as_deref(),
         "audit"
     );
     if let Some(sink) = sink {
@@ -434,6 +444,8 @@ struct Draft {
     item_name: Option<String>,
     item_version: Option<String>,
     kv_request_id: Option<String>,
+    reason: Option<String>,
+    ticket: Option<String>,
 }
 
 tokio::task_local! {
@@ -518,6 +530,15 @@ pub fn note_kv_request(id: &str) {
     note(|d| d.kv_request_id = Some(id.to_owned()));
 }
 
+/// The reason and ticket the person gave, already cleaned and checked by
+/// [`crate::reason`].
+pub fn note_reason(given: &crate::reason::Given) {
+    note(|d| {
+        d.reason = Some(given.reason.clone());
+        d.ticket.clone_from(&given.ticket);
+    });
+}
+
 /// A failed Azure call. Only the status and code are kept.
 pub fn note_azure_error(err: &AzureError) {
     let (outcome, code) = match err {
@@ -555,6 +576,10 @@ pub struct ItemEvents {
     client_ip: Option<String>,
     user_agent: Option<String>,
     vault: Option<String>,
+    /// The reason and ticket given for the request, repeated on each
+    /// item's event.
+    reason: Option<String>,
+    ticket: Option<String>,
     /// The audit sink, so each item's event is sent as the request's is.
     sink: Option<Arc<sink::AuditSink>>,
 }
@@ -573,6 +598,8 @@ impl ItemEvents {
             client_ip: None,
             user_agent: None,
             vault: None,
+            reason: None,
+            ticket: None,
         };
         note(|d| {
             me.actor_oid.clone_from(&d.actor_oid);
@@ -582,6 +609,8 @@ impl ItemEvents {
             me.client_ip.clone_from(&d.client_ip);
             me.user_agent.clone_from(&d.user_agent);
             me.vault.clone_from(&d.vault);
+            me.reason.clone_from(&d.reason);
+            me.ticket.clone_from(&d.ticket);
         });
         me
     }
@@ -605,6 +634,8 @@ impl ItemEvents {
             client_ip: self.client_ip.clone(),
             user_agent: self.user_agent.clone(),
             vault: self.vault.clone(),
+            reason: self.reason.clone(),
+            ticket: self.ticket.clone(),
             item_name: Some(item.to_owned()),
             ..Draft::default()
         }));
@@ -718,6 +749,8 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.item_name = d.item_name;
     ev.item_version = d.item_version;
     ev.kv_request_id = d.kv_request_id;
+    ev.reason = d.reason;
+    ev.ticket = d.ticket;
     Some(ev)
 }
 

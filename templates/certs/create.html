@@ -84,6 +84,7 @@
     {% let field_name = "tags" %}{% include "_field_error.html" %}
   </details>
 
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions">
     <button type="submit">Create certificate</button>
     <a href="{{ shell.vault_prefix() }}/certificates">Cancel</a>

@@ -25,6 +25,21 @@ pub(crate) const REASON: &str = "step_up";
 pub(crate) const EXPLANATION: &str =
     "Your organisation asks you to confirm it's you before showing values.";
 
+/// The actions this guard runs before. The reason gate checks the same
+/// list, so it steps aside while step-up is still to be met.
+pub(crate) fn guards(action: crate::audit::Action) -> bool {
+    use crate::audit::Action;
+    matches!(
+        action,
+        Action::SecretReveal
+            | Action::CertificateDownloadPrivateKey
+            | Action::SecretRollback
+            | Action::SecretPurge
+            | Action::CertificatePurge
+            | Action::KeyPurge
+    )
+}
+
 /// Let the action go ahead if the session meets `KEYRING_STEP_UP_*`, or
 /// stop it. `confirm_path` is the local page to come back to after signing
 /// in: the confirmation step for this action. `cancel_path` is where

@@ -142,6 +142,8 @@ App Service (`infra/app-service/main.bicep`):
 | `trustedProxyHops` | Sets `KEYRING_TRUSTED_PROXY_HOPS` (see Logs, "Client address") | `1` |
 | `stepUpAuthContext` | Sets `KEYRING_STEP_UP_AUTH_CONTEXT` (see Step-up) | None (off) |
 | `stepUpMaxAge` | Sets `KEYRING_STEP_UP_MAX_AGE` in minutes (see Step-up) | `0` (off) |
+| `requireReason` | Sets `KEYRING_REQUIRE_REASON`: `off`, `reveal` or `all` (see Reasons) | None (`off`) |
+| `reasonTicketPattern` | Sets `KEYRING_REASON_TICKET_PATTERN` (see Reasons) | None (no ticket) |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription, and the audit page's Keyring activity view, which reads it (see Logs, "Audit sink" and "Keyring activity") | None (off) |
@@ -163,7 +165,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays` and `auditRequired` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays` and `auditRequired` too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
@@ -222,7 +224,7 @@ Secret values, tokens, passwords, headers, query strings and Azure's error messa
 
 `logFormat` (`KEYRING_LOG_FORMAT`) is `text` (the default) or `json`.
 
-- `text`: `key=value` lines, as before. An audit event reads `audit kind=audit schema_version=1 time=... action=secret.reveal outcome=success ...`. Free text (user agent, UPN) is quoted and escaped, so it can't start a new line.
+- `text`: `key=value` lines, as before. An audit event reads `audit kind=audit schema_version=1 time=... action=secret.reveal outcome=success ...`. Free text (user agent, UPN, reason, ticket) is quoted and escaped, so it can't start a new line.
 - `json`: one JSON object per line, for every line. Each has `time`, `level`, `kind` and `message`. Audit events have `"kind":"audit"`; everything else has `"kind":"log"`. Use `json` if you query the logs: Container Apps and App Service console tables can then parse each line.
 
 ### Audit event fields
@@ -237,7 +239,7 @@ Schema version 1. Field names don't change without a new `schema_version` and a 
 | `event_id` | A random UUID for this event |
 | `action` | What was done (list below) |
 | `outcome` | `success`; `denied` (Azure said 401 or 403); `refused` (Keyring's own check said no); `failed` (anything else) |
-| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `tag_limit` (a bulk tag change would take an item past 15 tags), `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, `step_up_required` (a sensitive action stopped to ask the person to confirm it's them, see [Step-up](#step-up-before-sensitive-actions)), `step_up_not_met` (that sign-in came back without what was asked for), `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
+| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `tag_limit` (a bulk tag change would take an item past 15 tags), `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, `step_up_required` (a sensitive action stopped to ask the person to confirm it's them, see [Step-up](#step-up-before-sensitive-actions)), `step_up_not_met` (that sign-in came back without what was asked for), `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded), `reason_required` (a reason or ticket was asked for and not given, or didn't meet the rules, see [Reasons](#a-reason-before-a-value-is-shown)). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
 | `actor_oid`, `actor_tid` | The person's Entra object ID and tenant ID, from the verified ID token. The same IDs as in Entra's sign-in logs and Key Vault's diagnostic log |
 | `actor_upn` | The person's sign-in name, if the ID token has one |
 | `session_ref` | A keyed hash of the session ID, so one session's events join up. The cookie value is never logged. The key comes from `SESSION_SECRET`, so it changes when that is rotated |
@@ -245,7 +247,7 @@ Schema version 1. Field names don't change without a new `schema_version` and a 
 | `user_agent` | The browser's user agent, cut to 256 characters |
 | `vault`, `item_kind`, `item_name`, `item_version` | What was acted on. `item_version` is the version read on a reveal, or restored from on a rollback |
 | `kv_request_id` | The `x-ms-client-request-id` Keyring sent on its last Key Vault call for this request. Joins the event to Key Vault's diagnostic log |
-| `reason`, `ticket` | Kept for a later change (#205). Always absent for now |
+| `reason`, `ticket` | Why the person did it, and the ticket they named, when `KEYRING_REQUIRE_REASON` asked (see [Reasons](#a-reason-before-a-value-is-shown)). The reason has line breaks, tabs, escape and other control characters replaced by a space and is 5 to 200 characters. The ticket matched `KEYRING_REASON_TICKET_PATTERN` and is at most 64 characters. Both are escaped like any other free text in either format. Absent when no reason was asked for |
 | `keyring_version` | Keyring's version |
 | `instance` | A random ID for this run of Keyring |
 
@@ -358,6 +360,22 @@ ContainerAppConsoleLogs_CL
 | order by TimeGenerated desc
 ```
 
+Reveals and private key downloads with their reasons and tickets (`KEYRING_REQUIRE_REASON`), with `json`:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(7d)
+| extend e = parse_json(Log_s)
+| where tostring(e.kind) == "audit"
+    and tostring(e.action) in ("secret.reveal", "certificate.download_private_key")
+| project TimeGenerated, actor_upn = tostring(e.actor_upn), vault = tostring(e.vault),
+    item = tostring(e.item_name), outcome = tostring(e.outcome), reason_code = tostring(e.reason_code),
+    reason = tostring(e.reason), ticket = tostring(e.ticket)
+| order by TimeGenerated desc
+```
+
+A refused one has `outcome` `refused` and `reason_code` `reason_required`, and no reason.
+
 Everything Keyring refused or Azure denied in the last day, with `json`:
 
 ```kusto
@@ -418,6 +436,21 @@ Then set `stepUpAuthContext` and redeploy. Test with an account in the policy an
 If Entra can't let the person through (an unregistered method, a device that isn't compliant), the sign-in page says the organisation's sign-in rules weren't met, with the AADSTS code. If Entra lets the sign-in through but `acrs` doesn't have the context (for example the context isn't published to apps), Keyring refuses it with "Couldn't confirm it's you" and a link back to the confirmation step. It doesn't send the person round again. Both write an audit event: `step_up_required` when an action is stopped to ask, and `step_up_not_met` on a `session.sign_in_failed` event when the sign-in came back without it.
 
 Not yet confirmed on a real tenant: whether Entra puts `acrs` in the ID token (which is what Keyring reads), the AADSTS code it returns when the policy can't be met, and that `max_age` gives a fresh `auth_time`. See the step-up rows in [real-vault-checklist.md](real-vault-checklist.md).
+
+## A reason before a value is shown
+
+Keyring can ask for a reason, and optionally a ticket reference, before it shows a value or changes anything. The reason and ticket go on the action's audit event, so the log says why as well as who.
+
+- `requireReason` (`KEYRING_REQUIRE_REASON`): `off` (the default), `reveal` (before a secret value is shown or a certificate is downloaded with its private key), or `all` (those, and every create, change, enable or disable, rotation, rollback, delete, recover and purge).
+- `reasonTicketPattern` (`KEYRING_REASON_TICKET_PATTERN`): a regular expression the ticket must match, such as `(INC|CHG)[0-9]{7}`. It is always matched against the whole ticket (Keyring wraps it in `^(?:...)$`), and the ticket is at most 64 characters. Keyring only checks the shape. It doesn't call any ticket system. Leave it unset to ask for a reason only. Setting it while `requireReason` is `off` stops Keyring at start.
+
+A bad value (`on`, `reveals`, a pattern that doesn't compile, or one over 200 characters or with large counted repeats) stops Keyring at start rather than turning the check off.
+
+The reason is 5 to 200 characters, counted in characters, not bytes. Line breaks, tabs, the escape character and other control or invisible formatting characters become a single space before the reason is checked and logged, so a reason can't start a new log line, colour a terminal or forge a field in either log format. The form tells people not to type secrets, passwords or personal details into it. Treat the logged reason as free text a person typed: anyone who can read Keyring's logs can read it.
+
+The reveal button and the confirmation pages show the reason field. Any other form that reaches an action needing a reason without one (for example the Show value buttons on the versions page) gets a page asking for it, which posts the same form again. Secret values are never carried to that page: a form with a value goes back to the form. The check runs after the form token and step-up checks and before any Key Vault call. A step-up sign-in brings the person back to the confirmation step, where they give the reason again: it is never put in an address. A missing or bad reason writes an audit event with `reason_required`.
+
+**This isn't a hard control.** Key Vault doesn't know about it. Anyone with access can still read the same value with the Azure CLI or the portal, and no reason. It's for the Keyring path and for audit.
 
 ## First run against a real tenant
 

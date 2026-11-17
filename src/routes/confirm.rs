@@ -79,6 +79,9 @@ pub(crate) struct ConfirmView {
     pub second_warning: Option<String>,
     /// Set when the typed name didn't match.
     pub error: Option<String>,
+    /// True for a private key download, which asks for a reason under
+    /// `KEYRING_REQUIRE_REASON=reveal` as well as `all`.
+    pub reveals: bool,
 }
 
 #[cfg(test)]

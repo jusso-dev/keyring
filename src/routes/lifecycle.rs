@@ -286,6 +286,7 @@ pub(crate) fn delete_view_for(
         cancel_url: kind.item_url(vault, name),
         second_warning: None,
         error: None,
+        reveals: false,
     }
 }
 
@@ -305,6 +306,7 @@ pub(crate) fn purge_view(kind: Kind, vault: &str, name: &str) -> ConfirmView {
             Kind::Certificate => "Only do this if you're sure nothing needs this certificate any more, or a policy requires it to be destroyed.".into(),
         }),
         error: None,
+        reveals: false,
     }
 }
 
