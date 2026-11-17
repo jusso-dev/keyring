@@ -183,7 +183,7 @@ async fn item_history_and_csv_match() {
     assert_eq!(lines.len(), 3, "header plus the two visible rows");
     assert_eq!(
         lines[1],
-        "2026-11-09T10:00:00Z,alex@example.com,Viewed secret value,SecretGet,db-password,OK,203.0.113.5"
+        "2026-11-09T10:00:00Z,alex@example.com,Viewed secret value,SecretGet,db-password,Allowed,OK,203.0.113.5"
     );
     assert!(
         lines[2].contains(",'=cmd|"),
@@ -368,4 +368,199 @@ async fn each_vaults_audit_page_reads_its_own_settings() {
     assert_eq!(status, StatusCode::OK);
     let paths = w.arm.state.diagnostics_paths.lock().unwrap().clone();
     assert!(paths[2].contains("/vaults/kv-a/"), "{paths:?}");
+}
+
+/// Key Vault's log rows for a certificate create, as each table holds them
+/// (shape from a real tenant, identifiers replaced): ResultType Success,
+/// ResultSignature Accepted, HTTP 202.
+const AZKV_ACCEPTED: &str = include_str!("fixtures/audit/azkv-certificate-create-accepted.json");
+const DIAG_ACCEPTED: &str =
+    include_str!("fixtures/audit/azurediagnostics-certificate-create-accepted.json");
+
+/// A copy of a fixture with another status, signature and result type.
+fn variant(
+    fixture: &str,
+    status: Option<u16>,
+    signature: &str,
+    result_type: &str,
+) -> serde_json::Value {
+    let mut r: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    let column = if r["Type"] == "AZKVAuditLogs" {
+        "HttpStatusCode"
+    } else {
+        "httpStatusCode_d"
+    };
+    match status {
+        Some(s) => r[column] = serde_json::json!(s),
+        None => {
+            r.as_object_mut().unwrap().remove(column);
+        }
+    }
+    r["ResultSignature"] = serde_json::json!(signature);
+    r["ResultType"] = serde_json::json!(result_type);
+    r
+}
+
+#[tokio::test]
+async fn a_queued_certificate_create_is_accepted_not_refused() {
+    for dedicated in [true, false] {
+        let w = support::world().await;
+        *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+        *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(dedicated));
+        *w.arm.state.audit_raw.lock().unwrap() = vec![
+            serde_json::from_str(AZKV_ACCEPTED).unwrap(),
+            serde_json::from_str(DIAG_ACCEPTED).unwrap(),
+        ];
+        let (status, html) = w.page("/v/kv-test/audit").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Created certificate"), "{dedicated}: {html}");
+        assert!(html.contains("web-tls"));
+        assert!(
+            html.contains("<span class=\"result-ok\">Accepted</span> <span class=\"muted small\">(202 Accepted)</span>"),
+            "{dedicated}: {html}"
+        );
+        assert!(!html.contains("Refused"), "{dedicated}");
+        assert_eq!(
+            html.matches("<span class=\"result-ok\">Accepted</span>")
+                .count(),
+            1,
+            "one row: only the vault's own table is read"
+        );
+
+        let csv = body_text(w.get("/v/kv-test/audit.csv").await).await;
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(
+            lines[0],
+            "Time (UTC),Who,Action,Operation,Item,Outcome,Result,Client IP"
+        );
+        assert_eq!(
+            lines[1],
+            "2026-11-17T03:12:45.1234567Z,alex@example.com,Created certificate,CertificateCreate,web-tls,Accepted,202 Accepted,203.0.113.5",
+            "{dedicated}"
+        );
+        // The fixtures carry no tenant identifiers.
+        assert!(!csv.contains("00000000-0000"));
+    }
+}
+
+#[tokio::test]
+async fn every_outcome_reads_the_same_on_the_page_and_in_the_csv() {
+    let cases: &[(Option<u16>, &str, &str, &str, &str)] = &[
+        (
+            Some(200),
+            "OK",
+            "Success",
+            "Allowed",
+            "<span class=\"result-ok\">Allowed</span>",
+        ),
+        (
+            Some(201),
+            "Created",
+            "Success",
+            "Allowed",
+            "<span class=\"result-ok\">Allowed</span>",
+        ),
+        (
+            Some(202),
+            "Accepted",
+            "Success",
+            "Accepted",
+            "<span class=\"result-ok\">Accepted</span>",
+        ),
+        (
+            Some(204),
+            "NoContent",
+            "Success",
+            "Allowed",
+            "<span class=\"result-ok\">Allowed</span>",
+        ),
+        (
+            Some(401),
+            "Unauthorized",
+            "Failure",
+            "Refused",
+            "<span class=\"badge badge-error\">Refused (401 Unauthorized)</span>",
+        ),
+        (
+            Some(403),
+            "Forbidden",
+            "Failure",
+            "Refused",
+            "<span class=\"badge badge-error\">Refused (403 Forbidden)</span>",
+        ),
+        (
+            Some(429),
+            "TooManyRequests",
+            "Failure",
+            "Failed",
+            "<span class=\"badge badge-muted\">Failed (429 TooManyRequests)</span>",
+        ),
+        (
+            Some(500),
+            "InternalServerError",
+            "Failure",
+            "Failed",
+            "<span class=\"badge badge-muted\">Failed (500 InternalServerError)</span>",
+        ),
+        // Conflicting: the numeric status wins.
+        (
+            Some(403),
+            "OK",
+            "Success",
+            "Refused",
+            "<span class=\"badge badge-error\">Refused (403 OK)</span>",
+        ),
+        // No status: the text decides, and unknown text stays unknown.
+        (
+            None,
+            "Accepted",
+            "Success",
+            "Accepted",
+            "<span class=\"result-ok\">Accepted</span>",
+        ),
+        (
+            None,
+            "",
+            "Success",
+            "Allowed",
+            "<span class=\"result-ok\">Allowed</span>",
+        ),
+        (
+            None,
+            "SomethingNew",
+            "",
+            "Unknown",
+            "<span class=\"muted\">Unknown</span> <span class=\"muted small\">(SomethingNew)</span>",
+        ),
+        (
+            None,
+            "",
+            "",
+            "Unknown",
+            "<span class=\"muted\">Unknown</span>",
+        ),
+    ];
+    for dedicated in [true, false] {
+        let fixture = if dedicated {
+            AZKV_ACCEPTED
+        } else {
+            DIAG_ACCEPTED
+        };
+        for (status, sig, rt, word, cell) in cases {
+            let w = support::world().await;
+            *w.arm.state.vaults.lock().unwrap() =
+                vec![support::vault_row("kv-test", "sub-a", true)];
+            *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(dedicated));
+            *w.arm.state.audit_raw.lock().unwrap() = vec![variant(fixture, *status, sig, rt)];
+            let (_, html) = w.page("/v/kv-test/audit").await;
+            let what = format!("{dedicated} {status:?} {sig} {rt}");
+            assert!(html.contains(cell), "{what}: {html}");
+            if *word != "Refused" {
+                assert!(!html.contains("Refused ("), "{what}");
+            }
+            let csv = body_text(w.get("/v/kv-test/audit.csv").await).await;
+            let row = csv.lines().nth(1).unwrap();
+            assert!(row.contains(&format!(",web-tls,{word},")), "{what}: {row}");
+        }
+    }
 }

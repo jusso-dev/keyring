@@ -586,7 +586,7 @@ fn to_csv(loaded: &Loaded, range: Range) -> String {
     };
     let cols = match &loaded.answer {
         Answer::Events(events) => {
-            out.push_str("Vault,Time (UTC),Who,Action,Operation,Item,Result,Client IP\r\n");
+            out.push_str("Vault,Time (UTC),Who,Action,Operation,Item,Outcome,Result,Client IP\r\n");
             for r in rows(events, &loaded.names, range) {
                 let e = &r.event;
                 let row = [
@@ -596,13 +596,14 @@ fn to_csv(loaded: &Loaded, range: Range) -> String {
                     csv_field(&e.what),
                     csv_field(&e.operation),
                     csv_field(&e.item),
+                    e.outcome.label().to_owned(),
                     csv_field(&e.result),
                     csv_field(&e.client_ip),
                 ];
                 out.push_str(&row.join(","));
                 out.push_str("\r\n");
             }
-            8
+            9
         }
         Answer::Refusals(list) => {
             out.push_str("Vault,Who,Refused,Last refused (UTC),Operations\r\n");

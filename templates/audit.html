@@ -81,7 +81,7 @@
       <td>{{ r.who }}</td>
       <th scope="row">{{ r.what }}{% if r.operation != r.what %}<br><span class="muted small mono">{{ r.operation }}</span>{% endif %}</th>
       <td class="item-name">{{ ui::or_none(r.item) }}</td>
-      <td>{% if r.unknown %}<span class="muted">Unknown</span>{% elif r.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ r.result }})</span>{% endif %}</td>
+      <td>{% call ui::audit_result(r) %}{% endcall %}</td>
       <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}

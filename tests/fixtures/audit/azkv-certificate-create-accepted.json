@@ -1,0 +1,28 @@
+{
+  "TenantId": "00000000-0000-0000-0000-000000000000",
+  "TimeGenerated": "2026-11-17T03:12:45.1234567Z",
+  "OperationName": "CertificateCreate",
+  "OperationVersion": "7.5",
+  "Category": "AuditEvent",
+  "ResultType": "Success",
+  "ResultSignature": "Accepted",
+  "ResultDescription": "",
+  "DurationMs": 312,
+  "CallerIpAddress": "203.0.113.5",
+  "CorrelationId": "11111111-1111-4111-8111-111111111111",
+  "Identity": {
+    "claim": {
+      "http://schemas.microsoft.com/identity/claims/objectidentifier": "aaaaaaaa-0000-0000-0000-000000000001",
+      "appid": "bbbbbbbb-0000-0000-0000-000000000002",
+      "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": "alex@example.com",
+      "ipaddr": "203.0.113.5"
+    }
+  },
+  "HttpStatusCode": 202,
+  "RequestUri": "https://kv-test.vault.azure.net/certificates/web-tls/create?api-version=7.5",
+  "ClientInfo": "keyring",
+  "Id": "https://kv-test.vault.azure.net/certificates/web-tls/pending",
+  "SourceSystem": "Azure",
+  "Type": "AZKVAuditLogs",
+  "_ResourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/rg-test/providers/microsoft.keyvault/vaults/kv-test"
+}

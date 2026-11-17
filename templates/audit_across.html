@@ -109,7 +109,7 @@
       <td>{{ x.event.who }}</td>
       <th scope="row">{{ x.event.what }}{% if x.event.operation != x.event.what %}<br><span class="muted small mono">{{ x.event.operation }}</span>{% endif %}</th>
       <td class="item-name">{{ ui::or_none(x.event.item) }}</td>
-      <td>{% if x.event.unknown %}<span class="muted">Unknown</span>{% elif x.event.ok %}<span class="result-ok">Allowed</span>{% else %}<span class="badge badge-error">Refused ({{ x.event.result }})</span>{% endif %}</td>
+      <td>{% call ui::audit_result(x.event) %}{% endcall %}</td>
       <td class="mono small">{{ ui::or_none(x.event.client_ip) }}</td>
       <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.event.item }} in {{ x.vault }}</span></a>{% endif %}</td>
     </tr>

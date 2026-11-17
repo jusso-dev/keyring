@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::azure::AzureError;
-use crate::azure::audit::{self, AuditQuery, Event, OPERATIONS, Range};
+use crate::azure::audit::{self, AuditQuery, Event, OPERATIONS, Outcome, Range};
 use crate::azure::vaults;
 use crate::expiry::csv_field;
 use crate::routes::assets::render;
@@ -55,9 +55,10 @@ pub(super) struct EventRow {
     pub what: String,
     pub operation: String,
     pub item: String,
-    pub ok: bool,
-    /// The log row has no result, so it can't be called allowed or refused.
-    pub unknown: bool,
+    /// How it ended, by the one rule in [`Outcome::of`].
+    pub outcome: Outcome,
+    /// What Azure wrote: the status code and `ResultSignature`, such as
+    /// `202 Accepted`.
     pub result: String,
     pub client_ip: String,
 }
@@ -82,11 +83,36 @@ impl EventRow {
             what: audit::describe(&e.operation),
             operation: e.operation.clone(),
             item: e.item.clone(),
-            ok: e.result.eq_ignore_ascii_case("OK") || e.result.starts_with('2'),
-            unknown: e.result.trim().is_empty(),
-            result: e.result.clone(),
+            outcome: e.outcome(),
+            result: result_detail(e),
             client_ip: e.client_ip.clone(),
         }
+    }
+}
+
+/// The status code and signature as Azure wrote them, without repeating
+/// one that is the same number.
+fn result_detail(e: &Event) -> String {
+    let sig = e.result.trim();
+    match e.status {
+        Some(code) if sig.is_empty() || sig == code.to_string() => code.to_string(),
+        Some(code) => format!("{code} {sig}"),
+        None => sig.to_owned(),
+    }
+}
+
+impl EventRow {
+    pub(super) fn is_allowed(&self) -> bool {
+        self.outcome == Outcome::Allowed
+    }
+    pub(super) fn is_accepted(&self) -> bool {
+        self.outcome == Outcome::Accepted
+    }
+    pub(super) fn is_refused(&self) -> bool {
+        self.outcome == Outcome::Refused
+    }
+    pub(super) fn is_failed(&self) -> bool {
+        self.outcome == Outcome::Failed
     }
 }
 
@@ -369,7 +395,7 @@ pub(super) async fn page(
 
 /// CSV of the same rows the page shows for these filters.
 pub(super) fn to_csv(events: &[Event]) -> String {
-    let mut out = String::from("Time (UTC),Who,Action,Operation,Item,Result,Client IP\r\n");
+    let mut out = String::from("Time (UTC),Who,Action,Operation,Item,Outcome,Result,Client IP\r\n");
     for e in events {
         let r = EventRow::from(e);
         let row = [
@@ -378,6 +404,7 @@ pub(super) fn to_csv(events: &[Event]) -> String {
             csv_field(&r.what),
             csv_field(&r.operation),
             csv_field(&r.item),
+            r.outcome.label().to_owned(),
             csv_field(&r.result),
             csv_field(&r.client_ip),
         ];
@@ -428,7 +455,7 @@ pub(super) async fn csv(
     if let Some(note) = loaded.partial_notice() {
         let row = ["NOT READ".to_owned(), csv_field(&note)];
         body.push_str(&row.join(","));
-        body.push_str(",,,,,\r\n");
+        body.push_str(",,,,,,\r\n");
     }
     let mut res: Response = (StatusCode::OK, body).into_response();
     let h = res.headers_mut();
