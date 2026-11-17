@@ -46,9 +46,16 @@ pub(super) fn same_origin(headers: &axum::http::HeaderMap, expected: &str) -> bo
     }
 }
 
+/// The one path the check skips: Event Grid's webhook, which no browser
+/// calls and which checks an Entra token instead. Exactly this path, no
+/// prefix, no trailing slash.
+pub(super) fn exempt(path: &str) -> bool {
+    path == crate::notify::expiry::HOOK_PATH
+}
+
 pub(super) async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-    if safe || same_origin(req.headers(), &state.config.base_url) {
+    if safe || exempt(req.uri().path()) || same_origin(req.headers(), &state.config.base_url) {
         return next.run(req).await;
     }
     tracing::warn!(method = %req.method(), path = %req.uri().path(), "cross-site request refused");
@@ -127,6 +134,24 @@ mod tests {
             &h(Some("http://localhost:3000"), None),
             "http://localhost:3000"
         ));
+    }
+
+    #[test]
+    fn only_the_webhook_path_is_exempt() {
+        assert!(exempt("/hooks/eventgrid"));
+        for p in [
+            "/hooks/eventgrid/",
+            "/hooks/eventgrid/x",
+            "/hooks/eventgridx",
+            "/hooks/EventGrid",
+            "/hooks",
+            "/hooks/",
+            "//hooks/eventgrid",
+            "/v/kv/hooks/eventgrid",
+            "/auth/sign-out",
+        ] {
+            assert!(!exempt(p), "{p}");
+        }
     }
 
     #[test]

@@ -65,6 +65,7 @@ var streamColumns = [
   { name: 'NotifyType', type: 'string' }
   { name: 'NotifyRecipientCount', type: 'int' }
   { name: 'NotifyRecipients', type: 'string' }
+  { name: 'NotifyEventCount', type: 'int' }
   { name: 'WriterIdentityClientId', type: 'string' }
   { name: 'KeyringInstance', type: 'string' }
   { name: 'KeyringVersion', type: 'string' }

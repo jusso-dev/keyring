@@ -15,7 +15,7 @@ use openidconnect::core::{
 use openidconnect::{
     AdditionalClaims, AuthType, AuthorizationCode, ClaimsVerificationError, ClientId, ClientSecret,
     CsrfToken, EmptyExtraTokenFields, EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields,
-    IssuerUrl, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier,
+    IssuerUrl, JsonWebKey, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier,
     ProviderMetadataWithLogout, RedirectUrl, Scope, SignatureVerificationError,
     StandardErrorResponse, StandardTokenResponse, TokenResponse,
 };
@@ -445,6 +445,32 @@ impl Oidc {
                 .map(|t| Secret::new(t.secret().clone())),
         };
         Ok((user, tokens, facts))
+    }
+
+    /// The tenant's published signing key with this `kid`, from the same
+    /// cached key set sign-in uses. With `refetch`, a key that isn't in
+    /// the cache marks it out of date and fetches the keys once more, as
+    /// sign-in does on a key rollover. `None` when there is no such key or
+    /// the keys can't be fetched.
+    pub async fn signing_key(&self, kid: &str, refetch: bool) -> Option<CoreJsonWebKey> {
+        let find = |doc: &ProviderMetadataWithLogout| {
+            doc.jwks()
+                .keys()
+                .iter()
+                .find(|k| k.key_id().is_some_and(|id| id.as_str() == kid))
+                .cloned()
+        };
+        let doc = self.metadata().await.ok()?;
+        if let Some(k) = find(&doc) {
+            return Some(k);
+        }
+        if !refetch {
+            return None;
+        }
+        tracing::info!("webhook token signed with an unknown key; refetching signing keys");
+        self.forget_metadata().await;
+        let fresh = self.metadata().await.ok()?;
+        find(&fresh)
     }
 
     /// Entra's sign-out URL, which sends the browser back to us afterwards.

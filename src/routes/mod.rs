@@ -23,6 +23,7 @@ mod headers;
 mod health;
 pub(crate) mod hints;
 mod home;
+mod hooks;
 mod keys;
 pub(crate) mod lifecycle;
 mod moved;
@@ -406,7 +407,17 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/auth/sign-out",
             audited(Action::SessionSignOut, auth::sign_out),
         )
-        .route("/auth/signed-out", get(auth::signed_out));
+        .route("/auth/signed-out", get(auth::signed_out))
+        // Event Grid's expiry events. No session: Entra token checks, its
+        // own body limit and rate limit, and 404 unless `expiry` is on.
+        // `tests/audit_events.rs` reads this path; keep it a literal equal
+        // to `notify::expiry::HOOK_PATH` (a test checks).
+        .route(
+            "/hooks/eventgrid",
+            any(hooks::eventgrid).layer(axum::extract::DefaultBodyLimit::max(
+                crate::notify::expiry::MAX_BODY_BYTES,
+            )),
+        );
 
     protected
         .merge(public)
@@ -459,6 +470,14 @@ async fn not_found(shell: Shell, req: axum::extract::Request) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_hook_route_is_the_hook_path() {
+        assert!(include_str!("mod.rs").contains(&format!(
+            "\"{}\",\n            any(hooks::eventgrid)",
+            crate::notify::expiry::HOOK_PATH
+        )));
+    }
+
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;

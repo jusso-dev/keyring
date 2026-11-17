@@ -456,3 +456,75 @@ async fn cross_site_refusal_is_a_styled_page() {
     assert!(html.contains("didn't come from Keyring"));
     assert!(html.contains("href=\"/\">Back to home</a>"));
 }
+
+/// The Origin check has exactly one exemption, the Event Grid webhook,
+/// which checks an Entra token instead. With the webhook on, every other
+/// mutating route still refuses a post with no Origin, and a path that
+/// only looks like the webhook's isn't exempt.
+#[tokio::test]
+async fn only_the_webhook_skips_the_origin_check() {
+    let mi = support::start_identity().await;
+    let w = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", mi.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "expiry".to_owned()),
+            (
+                "KEYRING_TEST_NOTIFY_ACS_URL",
+                "http://127.0.0.1:9".to_owned(),
+            ),
+        ],
+        |_| {},
+    )
+    .await;
+    assert!(w.state.expiry_hook.is_some(), "the webhook is on");
+    let csrf = w.csrf.clone();
+    for path in MUTATING {
+        let status = post_raw(&w, path, &csrf, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path} with no Origin");
+    }
+    let post = |path: &'static str| {
+        Request::post(path)
+            .header("content-type", "application/json")
+            .body(Body::from("[]"))
+            .unwrap()
+    };
+    // The webhook: past the Origin check, refused by its token check.
+    let res = w
+        .app
+        .clone()
+        .oneshot(post("/hooks/eventgrid"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    // Near misses get the Origin check like any other path.
+    for path in [
+        "/hooks/eventgrid/",
+        "/hooks/eventgrid/x",
+        "/hooks/eventgridx",
+        "/hooks/EventGrid",
+        "/hooks",
+        "/v/kv-test/hooks/eventgrid",
+    ] {
+        let res = w.app.clone().oneshot(post(path)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    // The one exemption, in the source: one call, to one exact path.
+    let src = include_str!("../src/routes/origin.rs");
+    let code = &src[..src.find("#[cfg(test)]").unwrap()];
+    assert_eq!(code.matches("exempt(").count(), 2, "the fn and its one use");
+    assert!(src.contains("path == crate::notify::expiry::HOOK_PATH"));
+    assert_eq!(keyring::notify::expiry::HOOK_PATH, "/hooks/eventgrid");
+}
