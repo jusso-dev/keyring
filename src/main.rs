@@ -57,8 +57,27 @@ async fn main() -> ExitCode {
             tracing::info!(types = %types.join(","), admins = n.admins().len(), "email on: notices go through Azure Communication Services");
         }
     }
+    match (&state.health, state.config.client_secret_expires) {
+        (Some(h), _) => {
+            if state
+                .notifier
+                .as_ref()
+                .is_some_and(|n| n.admins().is_empty())
+            {
+                tracing::warn!(
+                    "health notices are on, but KEYRING_NOTIFY_ADMINS is empty, so none is sent"
+                );
+            }
+            h.start();
+        }
+        (None, Some(_)) => tracing::warn!(
+            "KEYRING_CLIENT_SECRET_EXPIRES is set, but nothing will email about it: turn on email with health in KEYRING_NOTIFY_TYPES"
+        ),
+        (None, None) => {}
+    }
     let audit_sink = state.audit_sink.clone();
     let notifier = state.notifier.clone();
+    let health = state.health.clone();
 
     let listener = match tokio::net::TcpListener::bind(listen).await {
         Ok(listener) => listener,
@@ -71,9 +90,13 @@ async fn main() -> ExitCode {
 
     let app = keyring::app(state);
     let served = keyring::serve::serve(listener, app, shutdown_signal()).await;
-    // After the last request: send queued email first, so its audit
+    // After the last request: stop the health timer, then send queued
+    // email, so its audit
     // events reach the sink, then the sink's own queue, each for up to ten
     // seconds.
+    if let Some(h) = health {
+        h.shutdown().await;
+    }
     if let Some(n) = notifier {
         n.shutdown().await;
     }
