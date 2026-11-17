@@ -31,6 +31,24 @@
 </table>
 {% endcall %}
 {% endif %}
+{% if !upcoming.is_empty() %}
+<h2>Starting later</h2>
+{% call ui::table_wrap("upcoming-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="upcoming-caption">Key Vault roles assigned to you that start later</caption>
+  <thead><tr><th scope="col">Role</th><th scope="col">Comes from</th><th scope="col">When</th></tr></thead>
+  <tbody>
+    {% for r in upcoming %}
+    <tr>
+      <th scope="row">{{ r.role_name }}</th>
+      <td>{{ r.origin }}</td>
+      <td>{{ r.ends }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
 <h2>Eligible</h2>
 {% if eligible.is_empty() %}
 <div class="empty-state"><p>You have no eligible PIM assignment of a Key Vault role that reaches this vault{% if !notes.is_empty() %}, as far as Keyring could read{% endif %}.</p></div>
@@ -52,5 +70,23 @@
 </table>
 {% endcall %}
 {% endif %}
-{% if waiting > 0 %}<p class="muted">Requests waiting for approval are decided in PIM. <a href="{{ portal }}">Open PIM in the Azure portal</a>.</p>{% endif %}
+{% if !waiting.is_empty() %}
+<h2>Waiting for approval</h2>
+{% call ui::table_wrap("waiting-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="waiting-caption">Your requests waiting for approval</caption>
+  <thead><tr><th scope="col">Role</th><th scope="col">Comes from</th><th scope="col">State</th></tr></thead>
+  <tbody>
+    {% for r in waiting %}
+    <tr>
+      <th scope="row">{{ r.role_name }}</th>
+      <td>{{ r.origin }}</td>
+      <td><span class="badge badge-muted">{{ r.state }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+<p class="muted">Requests waiting for approval are decided in PIM. <a href="{{ portal }}">Open PIM in the Azure portal</a>.</p>
+{% endif %}
 {% endblock %}

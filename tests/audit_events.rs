@@ -268,8 +268,14 @@ async fn post(
 const SAME_SITE: (&str, &str) = ("origin", "http://localhost:3000");
 const OID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
 
-/// The field names of schema version 1, pinned. Changing this list needs a
-/// new `SCHEMA_VERSION` and a CHANGELOG line.
+/// The schema version the lists below describe. If `SCHEMA_VERSION`
+/// changes, the pinned list must be looked at again and this updated.
+const PINNED_VERSION: u64 = 1;
+
+/// The field names schema version 1 shipped with, pinned. Each must still
+/// be written under the same name. Renaming or removing one, or changing
+/// its meaning or type, needs a new `SCHEMA_VERSION` (see "Audit event
+/// fields" in docs/deploy.md). Never edit this list for an addition.
 const SCHEMA_V1_FIELDS: &[&str] = &[
     "action",
     "actor_oid",
@@ -289,9 +295,6 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
     "outcome",
     "reason",
     "reason_code",
-    "role",
-    "role_duration",
-    "role_scope",
     "schema_version",
     "session_ref",
     "ticket",
@@ -299,6 +302,119 @@ const SCHEMA_V1_FIELDS: &[&str] = &[
     "user_agent",
     "vault",
 ];
+
+/// Fields added to version 1 since it shipped. Each is optional (an
+/// `Option` on `AuditEvent`, left out of the event when `None`), so an
+/// older reader that ignores it is unaffected and the version stays.
+/// Adding a field means adding it here, on purpose, never silently. A
+/// sink column for one goes through `column_ifexists` in the Sentinel
+/// parser, since older tables don't have it.
+const SCHEMA_V1_ADDED: &[&str] = &["role", "role_duration", "role_scope"];
+
+/// Every field a version 1 event can have, sorted.
+fn schema_v1_all() -> Vec<&'static str> {
+    let mut all: Vec<&str> = SCHEMA_V1_FIELDS
+        .iter()
+        .chain(SCHEMA_V1_ADDED)
+        .copied()
+        .collect();
+    all.sort_unstable();
+    all
+}
+
+/// What is wrong with `keys`, an event with every field set, against the
+/// lists: a pinned field missing (renamed or removed), or a field in
+/// neither list (added without saying so). Empty when all is well.
+fn schema_problems(keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in SCHEMA_V1_FIELDS {
+        if !keys.contains(f) {
+            out.push(format!(
+                "pinned field `{f}` is missing: renaming or removing a field needs a new schema version"
+            ));
+        }
+    }
+    for k in keys {
+        if !SCHEMA_V1_FIELDS.contains(k) && !SCHEMA_V1_ADDED.contains(k) {
+            out.push(format!(
+                "field `{k}` is in neither list: add it to SCHEMA_V1_ADDED if it is optional, or bump the schema version"
+            ));
+        }
+    }
+    for f in SCHEMA_V1_ADDED {
+        if !keys.contains(f) {
+            out.push(format!(
+                "added field `{f}` is missing: set it in the golden event, or it was renamed or removed"
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn schema_lists_are_sound() {
+    use keyring::audit::SCHEMA_VERSION;
+    assert_eq!(
+        SCHEMA_VERSION, PINNED_VERSION,
+        "the schema version changed: look at SCHEMA_V1_FIELDS and SCHEMA_V1_ADDED again, then PINNED_VERSION"
+    );
+    let all = schema_v1_all();
+    let mut unique = all.clone();
+    unique.dedup();
+    assert_eq!(all.len(), unique.len(), "a field is in both lists");
+    // The checks themselves: a rename, a removal and an unlisted field
+    // are caught, and an added optional field is not.
+    let ok: Vec<&str> = all.clone();
+    assert!(schema_problems(&ok).is_empty());
+    let renamed: Vec<&str> = ok
+        .iter()
+        .map(|f| if *f == "actor_upn" { "actor_name" } else { f })
+        .collect();
+    let problems = schema_problems(&renamed);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("`actor_upn` is missing"))
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("`actor_name` is in neither"))
+    );
+    let removed: Vec<&str> = ok.iter().copied().filter(|f| *f != "vault").collect();
+    assert_eq!(schema_problems(&removed).len(), 1);
+    let mut unlisted = ok.clone();
+    unlisted.push("new_field");
+    assert_eq!(schema_problems(&unlisted).len(), 1);
+
+    // Every added field's column is read with `column_ifexists`, never
+    // directly, in the Sentinel parser.
+    let parser = include_str!("../infra/sentinel/parsers/vimAuditEventKeyring.kql");
+    for f in SCHEMA_V1_ADDED {
+        let col = keyring::audit::sink::COLUMNS
+            .iter()
+            .find(|c| c.field == *f)
+            .map(|c| c.name)
+            .unwrap_or_else(|| panic!("no sink column for `{f}`"));
+        // Every mention of the column is a quoted name, as in
+        // `column_ifexists("Role", "")` or a `bag_pack` key, never a bare
+        // column reference that fails on an older table.
+        let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        let bare = parser
+            .match_indices(col)
+            .filter(|(i, _)| {
+                let before = parser[..*i].chars().next_back();
+                let after = parser[i + col.len()..].chars().next();
+                !word(before) && !word(after) && before != Some('"') && before != Some('\'')
+            })
+            .count();
+        assert_eq!(bare, 0, "{col} is read without column_ifexists");
+        assert!(
+            parser.contains(&format!("column_ifexists(\"{col}\"")),
+            "{col} is read with column_ifexists"
+        );
+    }
+}
 
 /// The audit sink's columns, `COLUMNS` in `src/audit/sink.rs`, are the one
 /// list: the Bicep stream and table must match it, and every schema field
@@ -343,15 +459,14 @@ fn sink_columns_match_the_bicep_and_the_schema() {
         .map(|c| c.field)
         .filter(|f| *f != WRITER)
         .collect();
-    let mut want: Vec<&str> = SCHEMA_V1_FIELDS
-        .iter()
-        .copied()
+    let mut want: Vec<&str> = schema_v1_all()
+        .into_iter()
         .filter(|f| !matches!(*f, "kind" | "level" | "message"))
         .collect();
     let mut got = fields.clone();
     want.sort_unstable();
     got.sort_unstable();
-    assert_eq!(got, want, "COLUMNS and SCHEMA_V1_FIELDS");
+    assert_eq!(got, want, "COLUMNS and the schema version 1 fields");
     // The writer and actor columns the issue names.
     for name in [
         "WriterIdentityClientId",
@@ -383,7 +498,7 @@ async fn audited_routes_write_exactly_one_event() {
     // --- Golden: the JSON field names of schema version 1 ---------------
     {
         use keyring::audit::{Action, AuditEvent, Outcome, SCHEMA_VERSION, record};
-        assert_eq!(SCHEMA_VERSION, 1, "update SCHEMA_V1_FIELDS and CHANGELOG");
+        assert_eq!(SCHEMA_VERSION, PINNED_VERSION, "see schema_lists_are_sound");
         let mut ev = AuditEvent::new(Action::SecretReveal, Outcome::Denied);
         ev.reason_code = Some("ForbiddenByRbac".into());
         ev.actor_oid = Some(OID.into());
@@ -411,7 +526,9 @@ async fn audited_routes_write_exactly_one_event() {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, SCHEMA_V1_FIELDS, "schema version 1 field names");
+        let problems = schema_problems(&keys);
+        assert!(problems.is_empty(), "{problems:#?}");
+        assert_eq!(keys, schema_v1_all(), "schema version 1 field names");
         assert_eq!(got["kind"], "audit");
         assert_eq!(got["schema_version"], 1);
         assert_eq!(got["action"], "secret.reveal");
@@ -433,6 +550,12 @@ async fn audited_routes_write_exactly_one_event() {
             .keys()
             .map(String::as_str)
             .collect();
+        for f in SCHEMA_V1_ADDED {
+            assert!(
+                !keys.contains(f),
+                "added field `{f}` is left out when not set"
+            );
+        }
         assert_eq!(
             keys,
             [

@@ -229,7 +229,9 @@ Secret values, tokens, passwords, headers, query strings and Azure's error messa
 
 ### Audit event fields
 
-Schema version 1. Field names don't change without a new `schema_version` and a CHANGELOG line. Fields with no value are left out.
+Schema version 1. Fields with no value are left out.
+
+What changes the version: adding an optional field, one that is left out of the event when it isn't set, is backward compatible and keeps the version, so a query filtering on `schema_version == 1` still sees every row. Renaming or removing a field, or changing a field's meaning or type, is a new version, with a CHANGELOG line. `tests/audit_events.rs` enforces this: the field names version 1 shipped with are pinned and must all still be written under the same names, fields added since are listed separately, and a field in neither list fails the test, so an addition is always a deliberate change. A column added to `KeyringAudit_CL` after the table first shipped is read with `column_ifexists` in the Sentinel parser. Fields added to version 1 so far: `role`, `role_scope` and `role_duration`.
 
 | Field | What it holds |
 | --- | --- |

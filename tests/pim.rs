@@ -1061,3 +1061,144 @@ async fn more_roles_than_the_lookup_limit_says_the_list_may_be_incomplete() {
     let (_, html) = w.page("/v/kv-test/my-access").await;
     assert!(!html.contains("This list may be incomplete"), "{html}");
 }
+
+/// The part of My access between two headings.
+fn section<'a>(html: &'a str, from: &str, to: &str) -> &'a str {
+    let start = html.find(from).unwrap_or(html.len());
+    let rest = &html[start..];
+    let body = rest.len().min(from.len());
+    &rest[..rest[body..].find(to).map_or(rest.len(), |i| i + body)]
+}
+
+#[tokio::test]
+async fn an_assignment_that_starts_later_is_not_on_now() {
+    let w = world().await;
+    let starts = chrono::Utc::now() + chrono::Duration::days(1);
+    let ends = starts + chrono::Duration::hours(2);
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.pim.active = vec![(
+            VAULT.into(),
+            SECRETS_USER.into(),
+            "Activated".into(),
+            Some(ends.to_rfc3339()),
+        )];
+        m.pim.active_starts = vec![Some(starts.to_rfc3339())];
+    }
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    let on_now = section(&html, "<h2>On now</h2>", "<h2>");
+    assert!(
+        on_now.contains("No Key Vault role that reaches this vault is on for you"),
+        "{on_now}"
+    );
+    assert!(!html.contains(">Deactivate</button>"), "{html}");
+    let later = section(&html, "<h2>Starting later</h2>", "<h2>Eligible</h2>");
+    assert!(later.contains("Key Vault Secrets User"), "{html}");
+    assert!(
+        later.contains(&format!(
+            "Starts {}",
+            keyring::dates::format_datetime(starts.timestamp())
+        )),
+        "{later}"
+    );
+    // A post naming it sends nothing: it isn't on yet.
+    let res = w
+        .post(
+            "/v/kv-test/my-access/deactivate",
+            &[("role", SECRETS_USER), ("scope", VAULT)],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert!(puts(&w).is_empty());
+
+    // Once it has started, it is on now.
+    w.arm.state.authz.lock().unwrap().pim.active_starts = vec![Some(
+        (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339(),
+    )];
+    let (_, html) = w.page("/v/kv-test/my-access").await;
+    assert!(!html.contains("<h2>Starting later</h2>"), "{html}");
+    assert_eq!(html.matches(">Deactivate</button>").count(), 1, "{html}");
+}
+
+#[tokio::test]
+async fn an_unreadable_start_time_is_not_on_now() {
+    let w = world().await;
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.pim.active = vec![(VAULT.into(), SECRETS_USER.into(), "Activated".into(), None)];
+        m.pim.active_starts = vec![Some("next Tuesday".into())];
+        m.pim.eligible = vec![(RG.into(), SECRETS_USER.into(), SCHEDULE.into())];
+        m.pim.eligible_start = Some("soon".into());
+    }
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!html.contains(">Deactivate</button>"), "{html}");
+    assert!(!html.contains(&format!("{FORM}?role=")), "{html}");
+    assert!(html.contains("2 of your roles aren&#39;t shown"), "{html}");
+    assert!(html.contains("couldn&#39;t read"), "{html}");
+}
+
+#[tokio::test]
+async fn an_eligibility_that_starts_later_offers_no_activate() {
+    let w = eligible(pim_rules("PT8H", true, false, false)).await;
+    let starts = chrono::Utc::now() + chrono::Duration::days(2);
+    w.arm.state.authz.lock().unwrap().pim.eligible_start = Some(starts.to_rfc3339());
+    let (_, html) = w.page("/v/kv-test/my-access").await;
+    assert!(!html.contains(&format!("{FORM}?role=")), "{html}");
+    assert!(
+        html.contains(&format!(
+            "Eligible from {}",
+            keyring::dates::format_datetime(starts.timestamp())
+        )),
+        "{html}"
+    );
+    // Nor on the 403 page, and a post for it sends nothing.
+    let refused = refused_page(&w).await;
+    assert!(
+        !refused.contains("Activate Key Vault Secrets User"),
+        "{refused}"
+    );
+    let _ = w.post(FORM, &form_fields(&[])).await;
+    assert!(puts(&w).is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_request_read_says_so() {
+    let w = eligible(pim_rules("PT8H", true, false, true)).await;
+    w.arm.state.authz.lock().unwrap().pim.pending_status = Some(403);
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains(
+            "Requests waiting for approval aren&#39;t listed: you can&#39;t read them here."
+        ),
+        "{html}"
+    );
+    assert!(!html.contains("private Azure detail"));
+}
+
+#[tokio::test]
+async fn a_waiting_request_is_shown_when_eligibility_cannot_be_read() {
+    let w = world().await;
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.pim.eligible_status = Some(403);
+        m.pim.pending = vec![
+            (RG.into(), SECRETS_USER.into(), "PendingApproval".into()),
+            // Not a Key Vault role: not on this page.
+            (
+                RG.into(),
+                support::OWNER_ROLE.into(),
+                "PendingApproval".into(),
+            ),
+        ];
+    }
+    let (status, html) = w.page("/v/kv-test/my-access").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Eligible roles aren&#39;t listed"), "{html}");
+    let waiting = section(&html, "<h2>Waiting for approval</h2>", "</table>");
+    assert!(waiting.contains("Key Vault Secrets User"), "{html}");
+    assert_eq!(waiting.matches("<tr>").count(), 2, "header and one row");
+    assert!(html.contains("portal.azure.com"));
+}

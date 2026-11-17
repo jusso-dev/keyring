@@ -670,8 +670,15 @@ pub(crate) struct PimMock {
     pub pending: Vec<(String, String, String)>,
     /// Policy rules by role GUID: `effectiveRules`.
     pub policies: std::collections::HashMap<String, serde_json::Value>,
+    /// `startDateTime` of each active one, by position. Left out when
+    /// there is no entry.
+    pub active_starts: Vec<Option<String>>,
+    /// `startDateTime` of every eligibility. Left out when `None`.
+    pub eligible_start: Option<String>,
     /// Answer this status to the eligibility list.
     pub eligible_status: Option<u16>,
+    /// Answer this status to the request list (`asRequestor()`).
+    pub pending_status: Option<u16>,
     /// Return this as every eligibility's `roleDefinitionId`, in place of
     /// a well-formed one.
     pub eligible_role_id: Option<String>,
@@ -778,21 +785,36 @@ async fn pim_answer(
         if let Some(status) = m.pim.eligible_status {
             return Some(err(status, "InvalidResourceType"));
         }
-        let value: Vec<_> = m.pim.eligible.iter().map(|(scope, g, sched)| json!({"properties": {
+        let value: Vec<_> = m.pim.eligible.iter().map(|(scope, g, sched)| {
+            let mut v = json!({"properties": {
             "scope": scope, "roleDefinitionId": m.pim.eligible_role_id.clone().unwrap_or_else(|| role_id(g)), "principalId": USER_OID, "principalType": "User",
             "status": "Provisioned", "roleEligibilityScheduleId": sched, "memberType": "Direct",
-            "endDateTime": "2027-09-10T00:31:41.477Z"}})).collect();
+            "endDateTime": "2027-09-10T00:31:41.477Z"}});
+            if let Some(start) = &m.pim.eligible_start {
+                v["properties"]["startDateTime"] = json!(start);
+            }
+            v
+        }).collect();
         return Some(json_response(StatusCode::OK, json!({"value": value})));
     }
     if path.ends_with(ACTIVE) {
         assert!(query.contains("asTarget()"), "{query}");
-        let value: Vec<_> = m.pim.active.iter().map(|(scope, g, kind, end)| json!({"properties": {
+        let value: Vec<_> = m.pim.active.iter().enumerate().map(|(i, (scope, g, kind, end))| {
+            let mut v = json!({"properties": {
             "scope": scope, "roleDefinitionId": role_id(g), "principalId": USER_OID, "assignmentType": kind,
-            "status": "Provisioned", "endDateTime": end}})).collect();
+            "status": "Provisioned", "endDateTime": end}});
+            if let Some(Some(start)) = m.pim.active_starts.get(i) {
+                v["properties"]["startDateTime"] = json!(start);
+            }
+            v
+        }).collect();
         return Some(json_response(StatusCode::OK, json!({"value": value})));
     }
     if path.ends_with(REQUESTS) {
         assert!(query.contains("asRequestor()"), "{query}");
+        if let Some(status) = m.pim.pending_status {
+            return Some(err(status, "AuthorizationFailed"));
+        }
         let value: Vec<_> = m.pim.pending.iter().map(|(scope, g, status)| json!({"properties": {
             "scope": scope, "roleDefinitionId": role_id(g), "requestType": "SelfActivate", "status": status}})).collect();
         return Some(json_response(StatusCode::OK, json!({"value": value})));
