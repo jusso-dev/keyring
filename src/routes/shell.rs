@@ -105,6 +105,8 @@ pub struct Shell {
     pub flash: Option<Flash>,
     /// `KEYRING_REQUIRE_REASON`, for the reason fields on forms.
     pub reason: ReasonAsk,
+    /// `KEYRING_PASSWORD_POLICY`, for the help on password fields.
+    pub password_policy: crate::password_policy::PasswordPolicy,
 }
 
 /// What the reason fields on a form need to know.
@@ -236,6 +238,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Shell {
             .get::<std::sync::Arc<crate::config::Config>>()
         {
             shell.reason = ReasonAsk::from_config(config);
+            shell.password_policy = config.password_policy;
         }
         Ok(shell)
     }

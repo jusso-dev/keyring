@@ -249,6 +249,10 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   secret"), the current one bold with `aria-current`. Password and key
   fields are masked inputs; every field follows the usual label, help and
   error pattern.
+- With `KEYRING_PASSWORD_POLICY` set, the Password value box and a Login's
+  password field get a second field help line, after the usual help, that
+  says what the policy asks for and that the Azure CLI and portal don't
+  apply it. A policy error is an ordinary field error on that field.
 - Values are hidden in print.
 
 ### Expiry dashboard

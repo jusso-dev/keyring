@@ -144,6 +144,7 @@ App Service (`infra/app-service/main.bicep`):
 | `stepUpMaxAge` | Sets `KEYRING_STEP_UP_MAX_AGE` in minutes (see Step-up) | `0` (off) |
 | `requireReason` | Sets `KEYRING_REQUIRE_REASON`: `off`, `reveal` or `all` (see Reasons) | None (`off`) |
 | `reasonTicketPattern` | Sets `KEYRING_REASON_TICKET_PATTERN` (see Reasons) | None (no ticket) |
+| `passwordPolicy` | Sets `KEYRING_PASSWORD_POLICY` (see Password policy) | None (no policy) |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription, and the audit page's Keyring activity view, which reads it (see Logs, "Audit sink" and "Keyring activity") | None (off) |
@@ -170,7 +171,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays`, `auditRequired` and the `notify*` parameters too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `passwordPolicy`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays`, `auditRequired` and the `notify*` parameters too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 
@@ -246,7 +247,7 @@ What changes the version: adding an optional field, one that is left out of the 
 | `event_id` | A random UUID for this event |
 | `action` | What was done (list below) |
 | `outcome` | `success`; `denied` (Azure said 401 or 403); `refused` (Keyring's own check said no); `failed` (anything else) |
-| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `tag_limit` (a bulk tag change would take an item past 15 tags), `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, on `notify.*` events `status_unknown`, `delivery_failed`, `delivery_canceled`, `rejected`, `gave_up`, `gave_up_maybe_sent`, `queue_full` and `shutdown` (see [Email](#email)), `step_up_required` (a sensitive action stopped to ask the person to confirm it's them, see [Step-up](#step-up-before-sensitive-actions)), `step_up_not_met` (that sign-in came back without what was asked for), `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded), `reason_required` (a reason or ticket was asked for and not given, or didn't meet the rules, see [Reasons](#a-reason-before-a-value-is-shown)). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
+| `reason_code` | Azure's error code, such as `ForbiddenByRbac`, or Keyring's reason: `csrf`, `cross_site`, `typed_name_mismatch`, `purge_disabled`, `managed_item`, `tag_limit` (a bulk tag change would take an item past 15 tags), `no_session`, `invalid_request`, `stale_sign_in`, `id_token_rejected`, on `notify.*` events `status_unknown`, `delivery_failed`, `delivery_canceled`, `rejected`, `gave_up`, `gave_up_maybe_sent`, `queue_full` and `shutdown` (see [Email](#email)), `step_up_required` (a sensitive action stopped to ask the person to confirm it's them, see [Step-up](#step-up-before-sensitive-actions)), `step_up_not_met` (that sign-in came back without what was asked for), `audit_unavailable` (`KEYRING_AUDIT_REQUIRED` is on and the audit sink is degraded), `reason_required` (a reason or ticket was asked for and not given, or didn't meet the rules, see [Reasons](#a-reason-before-a-value-is-shown)), `password_policy` (a typed password didn't meet `KEYRING_PASSWORD_POLICY`; which rule isn't recorded, see [Password policy](#password-policy)). Also `timeout`, `server_error`, `cancelled` (the browser closed the connection before Keyring answered; check Key Vault's log by `kv_request_id` for whether the call went through), `network`, `unreadable`, `sign_in_again`, `consent_needed`, `entra_unreachable`, or Entra's OAuth error code on a failed sign-in. Never Azure's message |
 | `actor_oid`, `actor_tid` | The person's Entra object ID and tenant ID, from the verified ID token. The same IDs as in Entra's sign-in logs and Key Vault's diagnostic log |
 | `actor_upn` | The person's sign-in name, if the ID token has one |
 | `session_ref` | A keyed hash of the session ID, so one session's events join up. The cookie value is never logged. The key comes from `SESSION_SECRET`, so it changes when that is rotated |
@@ -502,6 +503,32 @@ The reason is 5 to 200 characters, counted in characters, not bytes. Line breaks
 The reveal button and the confirmation pages show the reason field. Any other form that reaches an action needing a reason without one (for example the Show value buttons on the versions page) gets a page asking for it, which posts the same form again. Secret values are never carried to that page: a create or "set a new value" form, plain or typed, and any form with a value, goes back to the form. The check runs after the form token and step-up checks and before any Key Vault call. A step-up sign-in brings the person back to the confirmation step, where they give the reason again: it is never put in an address. A missing or bad reason writes an audit event with `reason_required`.
 
 **This isn't a hard control.** Key Vault doesn't know about it. Anyone with access can still read the same value with the Azure CLI or the portal, and no reason. It's for the Keyring path and for audit.
+
+## Password policy
+
+`passwordPolicy` (`KEYRING_PASSWORD_POLICY`) sets rules for a password a person types or pastes into Keyring. It is one line of comma-separated parts, such as `min=14,upper,lower,digit,symbol,max-repeat=3,common`. Names are matched in any case and spaces around a part are ignored.
+
+| Part | What it asks for | Default when left out |
+|---|---|---|
+| `min=N` | At least N characters, 1 to 256. Counted in characters (Unicode scalar values), not bytes, so `ü` or `日` is one | No minimum |
+| `upper` | An upper case letter, in any alphabet | Not needed |
+| `lower` | A lower case letter, in any alphabet | Not needed |
+| `digit` | A digit, 0 to 9 | Not needed |
+| `symbol` | A character that isn't a letter, number, space or control character, such as `!`, `#` or `%` | Not needed |
+| `max-repeat=N` | No character more than N times in a row, 1 to 64 | No limit |
+| `common` | Not on Keyring's built-in list of about 1,000 common passwords, compared in lower case | Not checked |
+
+Unset means no policy: the forms behave as they did before. An unknown part, a part given twice, a number out of range, a value on a part that doesn't take one, or an empty part stops Keyring at start rather than turning the check off. 256 is the generator's longest password, so a policy can always be met by a generated value.
+
+**Where it applies.** Every route that saves a typed value into a Password secret (the plain type, with no Keyring content type) or the `password` field of a Login secret: Create a secret, and Set a new value. On Set a new value the type comes from the secret's content type in Key Vault, never from the form, so a post can't dodge the check by naming another type. Edit details never sends a typed secret's content type, and refuses a Keyring content type typed onto a plain secret, so no route turns a secret into a Login without its password being checked.
+
+**Where it doesn't.** Database, API key and SSH private key secrets, including their password, key and passphrase fields: those are machine credentials or keys, often set by another system. Import from a file and copy to another vault: they bring values Keyring never shows and the person didn't type into Keyring. Rollback: it restores an old value as it was. Values from Keyring's generator are checked like any typed value. Its defaults (24 characters, lower, upper, digits and symbols) meet the example policy above nearly every time; a run of four of one character in a row is possible but rare, and if a generated value misses a rule the form says which and Generate makes another.
+
+**What people see.** The form says what the policy asks for under the field before anyone types, and that the Azure CLI and portal don't apply it. The browser only gets a `minlength` hint; the check runs on the server, in memory, when the form is sent. A value that misses a rule gets an error on that field naming each rule it missed, in the rule's own words: never the value, its length or how close it came. A value on the common list gets the same message whatever the entry. The value box is empty again after any error, as on every field error, and the form asks the person to type it again.
+
+**What is logged.** Nothing about the value. A refused create or set writes its audit event with `outcome` `refused` and `reason_code` `password_policy`, and no field says which rule failed. The list lookup is a hash set lookup on the whole lower-cased value, and every rule is checked on every submit, so the time taken doesn't depend on which rule failed or which entry matched.
+
+**This isn't a hard control.** Key Vault doesn't know about it. Anyone with access can set any value with the Azure CLI, the portal or an SDK. It's for the Keyring path, like step-up and reasons.
 
 ## First run against a real tenant
 
