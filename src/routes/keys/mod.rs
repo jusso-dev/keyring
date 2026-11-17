@@ -169,6 +169,9 @@ impl KeyRow {
 pub(super) struct KeyFilter {
     #[serde(default)]
     pub q: String,
+    /// `name` or `name=value`.
+    #[serde(default)]
+    pub tag: String,
     #[serde(default)]
     pub page: Option<usize>,
 }
@@ -176,7 +179,18 @@ pub(super) struct KeyFilter {
 impl KeyFilter {
     fn page_url(&self, vault: &str, page: usize) -> String {
         let enc = crate::auth::return_to::encode;
-        vault_path(vault, &format!("/keys?q={}&page={page}", enc(&self.q)))
+        vault_path(
+            vault,
+            &format!(
+                "/keys?q={}&tag={}&page={page}",
+                enc(&self.q),
+                enc(&self.tag)
+            ),
+        )
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.q.trim().is_empty() && self.tag.trim().is_empty()
     }
 }
 
@@ -190,6 +204,10 @@ struct ListPage {
     total: usize,
     filter: KeyFilter,
     pager: Pager,
+    /// Suggestions for the tag filter, from this vault's keys.
+    tag_options: Vec<String>,
+    /// The same, for the bulk change's tag name and value.
+    tag_suggest: crate::routes::tag_rows::Suggestions,
 }
 
 pub(super) async fn list(
@@ -223,10 +241,16 @@ pub(super) async fn list(
         .map(|k| KeyRow::from_item(k, now).mark_stale(after, now))
         .collect();
     let total = all.len();
+    let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
+        all.iter()
+            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+    );
+    let tag_options = tag_suggest.filter_options();
     let q = filter.q.trim().to_lowercase();
     let matching: Vec<KeyRow> = all
         .into_iter()
         .filter(|r| q.is_empty() || r.filter_text.contains(&q))
+        .filter(|r| crate::routes::tag_rows::matches_filter(&filter.tag, &r.tags))
         .collect();
     let (rows, pager) = paginate(matching, filter.page, "keys", |p| {
         filter.page_url(&vault, p)
@@ -239,6 +263,8 @@ pub(super) async fn list(
         rows,
         total,
         filter,
+        tag_options,
+        tag_suggest,
     })
     .into_response())
 }

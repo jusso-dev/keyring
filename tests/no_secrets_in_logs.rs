@@ -433,6 +433,34 @@ async fn values_never_reach_the_logs() {
         );
     }
 
+    // Tag rows (#253): a tag value refused beside its row, one saved, and
+    // the suggestions read back on a form. Tags aren't secret, but a row's
+    // text is never logged either.
+    {
+        let rows = |name: &'static str, value: &'static str| {
+            vec![
+                ("name", "tagged"),
+                ("value", "v"),
+                ("tag-rows", "1"),
+                ("tag-name-1", name),
+                ("tag-value-1", value),
+            ]
+        };
+        let res = w
+            .post("/v/kv-test/secrets/-/new", &rows("", "TAGLEAK refused"))
+            .await;
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let res = w
+            .post(
+                "/v/kv-test/secrets/-/new",
+                &rows("TAGLEAK-name", "TAGLEAK value"),
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let (_, html) = w.page("/v/kv-test/keys/-/new").await;
+        assert!(html.contains("TAGLEAK value"), "suggested");
+    }
+
     // A certificate upload with a password, through to import.
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
     let res = w
@@ -1079,6 +1107,7 @@ async fn values_never_reach_the_logs() {
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
     assert!(!logs.contains("NOTELEAK"), "a description leaked:\n{logs}");
+    assert!(!logs.contains("TAGLEAK"), "a tag row leaked:\n{logs}");
     for (action, item) in [
         ("secret.create", "noted"),
         ("secret.update", "noted"),

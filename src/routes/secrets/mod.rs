@@ -190,18 +190,8 @@ impl SecretFilter {
         if !q.is_empty() && !row.filter_text.contains(&q) {
             return false;
         }
-        let tag = self.tag.trim();
-        if !tag.is_empty() {
-            let (key, value) = match tag.split_once('=') {
-                Some((k, v)) => (k.trim(), Some(v.trim())),
-                None => (tag, None),
-            };
-            let hit = row.tags.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(key) && value.is_none_or(|want| v.eq_ignore_ascii_case(want))
-            });
-            if !hit {
-                return false;
-            }
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &row.tags) {
+            return false;
         }
         match self.show.as_str() {
             "expiring" => row.expiry == ExpiryState::Soon,
@@ -253,6 +243,10 @@ struct ListPage {
     filter: SecretFilter,
     show_options: Vec<ShowOption>,
     pager: Pager,
+    /// Suggestions for the tag filter, from this vault's secrets.
+    tag_options: Vec<String>,
+    /// The same, for the bulk change's tag name and value.
+    tag_suggest: crate::routes::tag_rows::Suggestions,
 }
 
 /// The chosen vault, or the page to show when there isn't one.
@@ -311,6 +305,11 @@ pub(super) async fn list(
     let expired_count = all.iter().filter(|r| r.is_expired()).count();
     let expiring_count = all.iter().filter(|r| r.is_expiring()).count();
     let disabled_count = all.iter().filter(|r| !r.enabled).count();
+    let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
+        all.iter()
+            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+    );
+    let tag_options = tag_suggest.filter_options();
 
     let matching: Vec<SecretRow> = all.into_iter().filter(|r| filter.matches(r, now)).collect();
     let (rows, pager) = paginate(matching, filter.page, "secrets", |p| {
@@ -347,6 +346,8 @@ pub(super) async fn list(
         older_error: filter.older_days().is_err(),
         filter,
         show_options,
+        tag_options,
+        tag_suggest,
     })
     .into_response())
 }

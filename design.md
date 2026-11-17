@@ -444,13 +444,35 @@ Read as "make a new version". The primary button is the accent, never danger.
   characters left. It isn't a live region: it is read with the field.
 - Certificates and keys get a secondary **Edit details** link button on
   their page, disabled with the role named like the others. Its form is the
-  description and the tags box, nothing else.
+  description and the tag rows, nothing else.
 - Detail pages show the description under the heading in ink-2, line
   breaks kept (`.item-note`). No label, no box.
 - Lists have a Description column after Status, at `--text-sm`, cut to 80
   characters on one line with an ellipsis; the whole note is the cell's
   visually hidden text. "None" in muted when empty, like other cells.
-- The tags box and tag lists never show `description`.
+- The tag rows and tag lists never show `description`.
+
+### Tags (rows, suggestions, links)
+
+- On every form that sets tags, a `fieldset.tag-rows` with the legend
+  **Tags (optional)**, a help line, then one row per tag: a name input and a
+  value input side by side (`.tag-row`, wrapping on a small screen), each
+  with a visible label "Tag n name" and "Tag n value", in the mono face.
+  Three empty rows follow the item's tags. A row's error sits under its own
+  input and the summary links to it.
+- Tags a row can't show (a line break in them) are listed under the help
+  line in mono, with a line saying they are kept as they are.
+- Suggestions are native `<datalist>` dropdowns: no custom menu, no script
+  needed.
+- With the script, each row ends in a small secondary **Remove** button
+  (its tag number visually hidden), and a small secondary **Add a tag**
+  button follows the rows. Removing moves focus to Add; adding focuses the
+  new name.
+- On an item's page, tags are a wrapping list of `.tag` chips, each a link
+  in ink with an accent border and underline on hover and focus. A tag the
+  filter can't find again stays a plain chip.
+- Filter boxes for tags (and the search box) suggest `name` and
+  `name=value` with a `<datalist>`.
 
 ### Pinned and recently opened
 

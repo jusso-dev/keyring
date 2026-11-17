@@ -157,6 +157,9 @@ pub(super) fn api<'a>(
 pub(super) struct CertFilter {
     #[serde(default)]
     pub q: String,
+    /// `name` or `name=value`.
+    #[serde(default)]
+    pub tag: String,
     /// `expired`, `30`, `90` or `disabled`.
     #[serde(default)]
     pub show: String,
@@ -166,13 +169,16 @@ pub(super) struct CertFilter {
 
 impl CertFilter {
     pub(super) fn is_empty(&self) -> bool {
-        self.q.trim().is_empty() && self.show.is_empty()
+        self.q.trim().is_empty() && self.tag.trim().is_empty() && self.show.is_empty()
     }
 
     pub(super) fn matches(&self, r: &CertRow) -> bool {
         let q = self.q.trim().to_lowercase();
         if !q.is_empty() && !r.filter_text.contains(&q) && !r.thumbprint.to_lowercase().contains(&q)
         {
+            return false;
+        }
+        if !crate::routes::tag_rows::matches_filter(&self.tag, &r.tags) {
             return false;
         }
         match self.show.as_str() {
@@ -189,8 +195,9 @@ impl CertFilter {
         vault_path(
             vault,
             &format!(
-                "/certificates?q={}&show={}&page={page}",
+                "/certificates?q={}&tag={}&show={}&page={page}",
                 enc(&self.q),
+                enc(&self.tag),
                 enc(&self.show)
             ),
         )
@@ -217,6 +224,10 @@ struct ListPage {
     filter: CertFilter,
     show_options: Vec<ShowOption>,
     pager: Pager,
+    /// Suggestions for the tag filter, from this vault's certificates.
+    tag_options: Vec<String>,
+    /// The same, for the bulk change's tag name and value.
+    tag_suggest: crate::routes::tag_rows::Suggestions,
 }
 
 pub(super) async fn list(
@@ -253,6 +264,11 @@ pub(super) async fn list(
     let expired = all.iter().filter(|r| r.is_expired()).count();
     let within30 = all.iter().filter(|r| r.within30()).count();
     let within90 = all.iter().filter(|r| r.within90()).count();
+    let tag_suggest = crate::routes::tag_rows::Suggestions::from_sets(
+        all.iter()
+            .map(|r| r.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+    );
+    let tag_options = tag_suggest.filter_options();
     let matching: Vec<CertRow> = all.into_iter().filter(|r| filter.matches(r)).collect();
     let (rows, pager) = paginate(matching, filter.page, "certificates", |p| {
         filter.page_url(&vault, p)
@@ -283,6 +299,8 @@ pub(super) async fn list(
         within90,
         filter,
         show_options,
+        tag_options,
+        tag_suggest,
     })
     .into_response())
 }

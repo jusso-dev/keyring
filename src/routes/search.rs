@@ -149,6 +149,9 @@ struct SearchPage {
     unknown_vault: bool,
     max_vaults: usize,
     max_query: usize,
+    /// Suggestions for the search box: `name` and `name=value` from the
+    /// items read. Empty before a search.
+    tag_options: Vec<String>,
 }
 
 impl SearchPage {
@@ -194,6 +197,7 @@ pub(super) async fn page(
         unknown_vault: false,
         max_vaults: MAX_VAULTS,
         max_query: MAX_QUERY_CHARS,
+        tag_options: Vec::new(),
         query,
     };
     if !searched {
@@ -211,6 +215,8 @@ pub(super) async fn page(
     };
     let read = every_vault::read(&state, &session, chosen.wanted).await;
     let now = now_ts();
+    out.tag_options =
+        crate::routes::tag_rows::filter_options_of(read.read.iter().flat_map(|(_, v)| v.iter()));
     let mut hits: Vec<&Item> = read
         .read
         .iter()

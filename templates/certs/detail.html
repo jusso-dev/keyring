@@ -57,7 +57,7 @@
     <dt>Thumbprint</dt><dd class="mono">{{ ui::or_none(row.thumbprint) }}</dd>
     <dt>Serial number</dt><dd class="mono">{{ c.serial }}</dd>
     <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
-    <dt>Tags</dt><dd>{{ ui::tags(row.tags) }}</dd>
+    <dt>Tags</dt><dd>{{ ui::tag_links(row.tags, "{}/certificates"|format(shell.vault_prefix())) }}</dd>
   </dl>
   {% else %}
   <p class="muted">There's no issued certificate in this version yet.</p>

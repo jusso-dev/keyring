@@ -47,7 +47,7 @@
 
   {% call ui::description_field(form.description, "certificate") %}{% endcall %}
 
-  <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || error_for("tags").is_some() || azure_message.is_some() %} open{% endif %}>
+  <details class="advanced"{% if error_for("key").is_some() || error_for("renew_days").is_some() || tags_error() || azure_message.is_some() %} open{% endif %}>
     <summary>Key, format and renewal options</summary>
 
     <label for="key">Key type</label>
@@ -80,10 +80,7 @@
     <input id="renew_days" name="renew_days" type="number" min="1" value="{{ form.renew_days }}"{% call ui::aria("renew_days", "renew_days-help") %}{% endcall %}>
     {% let field_name = "renew_days" %}{% include "_field_error.html" %}
 
-    <label for="tags">Tags <span class="muted">(optional)</span></label>
-    <p class="field-help" id="tags-help">One per line, as name=value. Up to 15, each name used once.</p>
-    <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
-    {% let field_name = "tags" %}{% include "_field_error.html" %}
+    {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
   </details>
 
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}

@@ -36,11 +36,7 @@
 
   {% call ui::description_field(form.description, "certificate") %}{% endcall %}
 
-  {% let field_name = "tags" %}
-  <label for="tags">Tags <span class="muted">(optional)</span></label>
-  <p class="field-help" id="tags-help">One per line, as name=value. Up to 15, each name used once.</p>
-  <textarea id="tags" name="tags" rows="3" class="mono"{% call ui::ident() %}{% endcall %}{% call ui::aria("tags", "tags-help") %}{% endcall %}>{{ form.tags }}</textarea>
-  {% include "_field_error.html" %}
+  {% call ui::tag_field(form.tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
 
   <div class="checkbox">
     <input id="enabled" name="enabled" type="checkbox"{% if form.enabled %} checked{% endif %}>

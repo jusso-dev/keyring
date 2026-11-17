@@ -625,6 +625,20 @@ dd.note { white-space: pre-line; }
   font-family: var(--font-mono);
 }
 
+/* Tags on an item's page: each a link to the list filtered by it. */
+.tag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-2xs); }
+a.tag { color: var(--color-ink); text-decoration: none; }
+a.tag:hover, a.tag:focus-visible { border-color: var(--color-accent); text-decoration: underline; }
+
+/* Tag rows on a form: a name and a value side by side, wrapping on a
+   small screen. The Remove button sits at the end of the row. */
+.tag-rows .tag-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 var(--space-md); }
+.tag-rows .tag-row > div { flex: 1 1 12rem; min-width: 0; }
+.tag-rows .tag-row input { font-family: var(--font-mono); }
+.tag-rows .tag-remove { margin-bottom: var(--space-2xs); }
+.tag-rows .tag-add { margin-top: var(--space-xs); }
+.tag-locked { margin: 0 0 var(--space-xs); }
+
 .row-muted th, .row-muted td { color: var(--color-ink-2); }
 .row-muted th a { color: var(--color-ink-2); }
 

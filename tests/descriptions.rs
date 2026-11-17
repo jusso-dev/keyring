@@ -23,7 +23,8 @@ async fn secret_round_trip_with_line_breaks() {
             &[
                 ("name", "db-password"),
                 ("value", "x"),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", &posted),
                 ("enabled", "on"),
             ],
@@ -52,7 +53,12 @@ async fn secret_round_trip_with_line_breaks() {
             ">Used by the billing job.\nAsk the payments team before rotating.</textarea>"
         )
     );
-    assert!(html.contains(">env=prod</textarea>"));
+    assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\"env\""));
+    assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""));
+    assert!(
+        !html.contains("value=\"description\""),
+        "the note has no row"
+    );
     assert!(html.contains("data-count-for=\"description\""));
     let version = hidden_value(&html, "version").unwrap();
     let updated = hidden_value(&html, "updated").unwrap();
@@ -64,7 +70,8 @@ async fn secret_round_trip_with_line_breaks() {
             &[
                 ("version", &version),
                 ("updated", &updated),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", "Billing only"),
                 ("enabled", "on"),
             ],
@@ -81,7 +88,8 @@ async fn secret_round_trip_with_line_breaks() {
             "/v/kv-test/secrets/db-password/value",
             &[
                 ("value", "y"),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", "Billing only"),
                 ("enabled", "on"),
             ],
@@ -103,7 +111,8 @@ async fn secret_round_trip_with_line_breaks() {
             &[
                 ("version", &version),
                 ("updated", &updated),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", ""),
                 ("enabled", "on"),
             ],
@@ -118,26 +127,33 @@ async fn secret_round_trip_with_line_breaks() {
 #[tokio::test]
 async fn limits_are_checked_before_azure() {
     let w = support::world().await;
-    let create = |desc: String, tags: &'static str| {
-        vec![
-            ("name", "n".to_owned()),
-            ("value", "x".to_owned()),
-            ("tags", tags.to_owned()),
-            ("description", desc),
-        ]
+    let create = |desc: String, tags: &[(&str, &str)]| {
+        let mut f = vec![
+            ("name".to_owned(), "n".to_owned()),
+            ("value".to_owned(), "x".to_owned()),
+            ("description".to_owned(), desc),
+        ];
+        for (i, (k, v)) in tags.iter().enumerate() {
+            f.push((format!("tag-name-{}", i + 1), (*k).to_owned()));
+            f.push((format!("tag-value-{}", i + 1), (*v).to_owned()));
+        }
+        f
     };
-    let post = |fields: Vec<(&'static str, String)>| {
+    let post = |fields: Vec<(String, String)>| {
         let w = &w;
         async move {
-            let f: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let f: Vec<(&str, &str)> = fields
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
             w.post("/v/kv-test/secrets/-/new", &f).await
         }
     };
     // 256 accepted, 257 refused.
-    let res = post(create("a".repeat(256), "")).await;
+    let res = post(create("a".repeat(256), &[])).await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let before = w.kv.state.log.lock().unwrap().len();
-    let res = post(create("a".repeat(257), "")).await;
+    let res = post(create("a".repeat(257), &[])).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("up to 256 characters. This one has 257."));
@@ -146,20 +162,20 @@ async fn limits_are_checked_before_azure() {
         "linked from the summary"
     );
     // An emoji counts as two, as Key Vault and the browser count it.
-    let res = post(create("😀".repeat(129), "")).await;
+    let res = post(create("😀".repeat(129), &[])).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     // Invisible characters are refused.
-    let res = post(create("pay\u{200B}ments".into(), "")).await;
+    let res = post(create("pay\u{200B}ments".into(), &[])).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("hidden character"));
     // `description` typed as a tag is refused, pointing at the field.
-    let res = post(create(String::new(), "description=sneaky")).await;
+    let res = post(create(String::new(), &[("description", "sneaky")])).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("Description field"));
     // 15 tags and a description: 16, refused.
-    let fifteen: String = (0..15).map(|i| format!("k{i}=v\n")).collect();
-    let fifteen: &'static str = Box::leak(fifteen.into_boxed_str());
-    let res = post(create("note".into(), fifteen)).await;
+    let names: Vec<String> = (0..15).map(|i| format!("k{i}")).collect();
+    let fifteen: Vec<(&str, &str)> = names.iter().map(|k| (k.as_str(), "v")).collect();
+    let res = post(create("note".into(), &fifteen)).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("15 tags"));
     // None of the refused ones reached Key Vault.
@@ -176,10 +192,15 @@ async fn editing_tags_never_drops_a_tag_the_form_cant_show() {
     let w = support::world().await;
     w.kv.state.put_with("odd", "x", |v| {
         v.tags.insert("a=b".into(), " c ".into());
+        v.tags.insert("two".into(), "lines\nhere".into());
         v.tags.insert("description".into(), "old".into());
     });
     let (_, html) = w.page("/v/kv-test/secrets/odd/edit").await;
     assert!(html.contains(">old</textarea>"));
+    // a=b fits a row now; the tag with a line break is listed and kept.
+    assert!(html.contains("value=\"a=b\""));
+    assert!(html.contains("value=\" c \""));
+    assert!(html.contains("<li class=\"mono\">two: lines\nhere</li>"));
     assert!(
         !html.contains("description: old"),
         "not listed as a locked tag"
@@ -192,6 +213,9 @@ async fn editing_tags_never_drops_a_tag_the_form_cant_show() {
             &[
                 ("version", &version),
                 ("updated", &updated),
+                ("tag-rows", "1"),
+                ("tag-name-1", "a=b"),
+                ("tag-value-1", " c "),
                 ("description", "new"),
                 ("enabled", "on"),
             ],
@@ -200,6 +224,7 @@ async fn editing_tags_never_drops_a_tag_the_form_cant_show() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let v = w.kv.state.current("odd").unwrap();
     assert_eq!(v.tags["a=b"], " c ");
+    assert_eq!(v.tags["two"], "lines\nhere");
     assert_eq!(v.tags["description"], "new");
 }
 
@@ -215,7 +240,8 @@ async fn certificate_create_upload_and_edit_details() {
                 ("common_name", "app.example.com"),
                 ("validity_months", "12"),
                 ("issuer", "Self"),
-                ("tags", "team=web"),
+                ("tag-name-1", "team"),
+                ("tag-value-1", "web"),
                 ("description", "Front door"),
             ],
         )
@@ -268,7 +294,8 @@ async fn certificate_create_upload_and_edit_details() {
     assert!(html.contains("/certificates/edge/details\">Edit details</a>"));
     let (status, html) = w.page("/v/kv-test/certificates/edge/details").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("env=prod\nowner=ops@example.com</textarea>"));
+    assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\"env\""));
+    assert!(html.contains("name=\"tag-value-2\" type=\"text\" value=\"ops@example.com\""));
     let version = hidden_value(&html, "version").unwrap();
     let updated = hidden_value(&html, "updated").unwrap();
     let before = w.kv.state.certs.lock().unwrap()["edge"].clone();
@@ -278,7 +305,10 @@ async fn certificate_create_upload_and_edit_details() {
             &[
                 ("version", &version),
                 ("updated", &updated),
-                ("tags", "env=prod\nowner=ops@example.com"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
+                ("tag-name-2", "owner"),
+                ("tag-value-2", "ops@example.com"),
                 ("description", "Edge proxy"),
             ],
         )
@@ -315,7 +345,10 @@ async fn certificate_create_upload_and_edit_details() {
     let same = [
         ("version", version.as_str()),
         ("updated", updated.as_str()),
-        ("tags", "env=prod\nowner=ops@example.com"),
+        ("tag-name-1", "env"),
+        ("tag-value-1", "prod"),
+        ("tag-name-2", "owner"),
+        ("tag-value-2", "ops@example.com"),
         ("description", "Edge proxy"),
     ];
     let res = w.post("/v/kv-test/certificates/edge/details", &same).await;
@@ -349,18 +382,17 @@ async fn certificate_create_upload_and_edit_details() {
     let (_, html) = w.page("/v/kv-test/certificates/full/details").await;
     let version = hidden_value(&html, "version").unwrap();
     let updated = hidden_value(&html, "updated").unwrap();
-    let tags: String = (0..15).map(|i| format!("k{i}=v\n")).collect();
-    let res = w
-        .post(
-            "/v/kv-test/certificates/full/details",
-            &[
-                ("version", &version),
-                ("updated", &updated),
-                ("tags", &tags),
-                ("description", "one more"),
-            ],
-        )
-        .await;
+    let mut full: Vec<(String, String)> = vec![
+        ("version".into(), version),
+        ("updated".into(), updated),
+        ("description".into(), "one more".into()),
+    ];
+    for i in 0..15 {
+        full.push((format!("tag-name-{}", i + 1), format!("k{i}")));
+        full.push((format!("tag-value-{}", i + 1), "v".into()));
+    }
+    let f: Vec<(&str, &str)> = full.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let res = w.post("/v/kv-test/certificates/full/details", &f).await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body_text(res).await.contains("already has 15 tags"));
     assert_eq!(
@@ -377,7 +409,8 @@ async fn key_create_and_edit_details() {
             "/v/kv-test/keys/-/new",
             &[
                 ("name", "signing"),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", "Signs invoices"),
             ],
         )
@@ -389,7 +422,7 @@ async fn key_create_and_edit_details() {
     assert!(html.contains("<td class=\"note-cell\">Signs invoices</td>"));
     let (_, html) = w.page("/v/kv-test/keys/signing/details").await;
     assert!(html.contains(">Signs invoices</textarea>"));
-    assert!(html.contains(">env=prod</textarea>"));
+    assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""));
     let version = hidden_value(&html, "version").unwrap();
     let updated = hidden_value(&html, "updated").unwrap();
     let res = w
@@ -398,7 +431,8 @@ async fn key_create_and_edit_details() {
             &[
                 ("version", &version),
                 ("updated", &updated),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("description", ""),
             ],
         )

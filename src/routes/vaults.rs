@@ -50,6 +50,8 @@ struct VaultList {
     prev_url: Option<String>,
     next_url: Option<String>,
     selected: Option<String>,
+    /// Suggestions for the tag filter, from every vault's tags.
+    tag_options: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -105,6 +107,11 @@ pub(super) async fn list(
     subscriptions.sort_by_key(|s| s.name.to_lowercase());
 
     let total = all.len();
+    let tag_options = crate::routes::tag_rows::Suggestions::from_sets(
+        all.iter()
+            .map(|v| v.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()))),
+    )
+    .filter_options();
     let matching: Vec<Vault> = all
         .into_iter()
         .filter(|v| query.filter.matches(v))
@@ -144,6 +151,7 @@ pub(super) async fn list(
         subscriptions,
         page,
         pages,
+        tag_options,
     };
     render(&page_view).into_response()
 }

@@ -111,7 +111,7 @@ fn script_is_small_dependency_free_and_same_origin() {
     assert!(js.contains("navigator.clipboard.writeText(\"\")"));
 }
 
-/// static/pins.js, the only other script, keeps to the same rules. It may
+/// static/pins.js, a second script, keeps to the same rules. It may
 /// use localStorage (that is its job) but nothing else that reaches out or
 /// writes markup.
 #[test]
@@ -143,15 +143,45 @@ fn pins_script_is_small_dependency_free_and_same_origin() {
     assert!(js.contains("try {\n    start();"));
 }
 
-/// No other script ships: every file under static/ that ends in .js is one
-/// of the two, and both are served.
+/// static/tags.js (#253), the tag rows script, keeps to the same rules and
+/// its own size limit. It builds rows with createElement and textContent.
 #[test]
-fn only_two_scripts_ship() {
+fn tags_script_is_small_dependency_free_and_same_origin() {
+    let js = include_str!("../static/tags.js");
+    assert!(js.lines().count() < 150, "keep tags.js small");
+    for banned in [
+        "import ",
+        "require(",
+        "eval(",
+        "new Function",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "http://",
+        "https://",
+        "localStorage",
+        "sessionStorage",
+        "fetch(",
+        "cookie",
+        "location",
+        ".href",
+    ] {
+        assert!(!js.contains(banned), "tags.js must not use {banned}");
+    }
+    assert!(js.contains("document.createElement("));
+    assert!(js.contains("textContent"));
+}
+
+/// No other script ships: every file under static/ that ends in .js is one
+/// of the three, and each is served.
+#[test]
+fn only_three_scripts_ship() {
     let mut js: Vec<String> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|n| n.ends_with(".js"))
         .collect();
     js.sort();
-    assert_eq!(js, ["app.js", "pins.js"]);
+    assert_eq!(js, ["app.js", "pins.js", "tags.js"]);
 }

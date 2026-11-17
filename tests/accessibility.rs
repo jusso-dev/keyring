@@ -233,6 +233,8 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/v/kv-test/keys/app-key/delete".into(),
         "/v/kv-test/keys/app-key/disable".into(),
         "/v/kv-test/keys/-/deleted".into(),
+        "/v/kv-test/certificates/web-tls/details".into(),
+        "/v/kv-test/keys/app-key/details".into(),
         "/expiry".into(),
         "/expiry/age".into(),
         "/vault-health".into(),
@@ -315,7 +317,9 @@ async fn error_summaries_take_focus_and_link_to_fields() {
             vec![
                 ("name", "bad name"),
                 ("value", ""),
-                ("tags", "=x"),
+                ("tag-rows", "1"),
+                ("tag-name-1", ""),
+                ("tag-value-1", "x"),
                 ("expires", "2020-01-01"),
             ],
         ),
@@ -342,7 +346,11 @@ async fn error_summaries_take_focus_and_link_to_fields() {
                 ("common_name", "a.example.com"),
                 ("validity_months", "12"),
                 ("renew_days", "9999"),
-                ("tags", "=x"),
+                ("tag-rows", "1"),
+                ("tag-name-2", "env"),
+                ("tag-value-2", "a"),
+                ("tag-name-3", "env"),
+                ("tag-value-3", "b"),
             ],
         ),
     ];
@@ -363,6 +371,64 @@ async fn error_summaries_take_focus_and_link_to_fields() {
         }
         assert!(html.contains("aria-invalid=\"true\""), "{path}");
         describedby_targets_exist(&html, path);
+    }
+}
+
+/// Tag rows (#253): each name and value input has its own label, and a
+/// row's error is linked to that row's input and from the summary.
+#[tokio::test]
+async fn tag_rows_are_labelled_and_errors_point_at_their_row() {
+    let w = support::world().await;
+    w.kv.state.add_key_with("app-key", "RSA", |v| {
+        v.tags.insert("env".into(), "prod".into());
+    });
+    let (_, html) = w.page("/v/kv-test/keys/app-key/details").await;
+    page_basics(&html, "details");
+    controls_have_labels(&html, "details");
+    assert!(html.contains("<fieldset class=\"tag-rows\" id=\"tags\""));
+    assert!(html.contains("<legend>Tags <span class=\"muted\">(optional)</span></legend>"));
+    for (path, fields, bad) in [
+        (
+            "/v/kv-test/secrets/-/new",
+            vec![
+                ("name", "n"),
+                ("value", "x"),
+                ("tag-rows", "1"),
+                ("tag-name-2", "a"),
+                ("tag-value-2", &*"v".repeat(257)),
+            ],
+            "tag-value-2",
+        ),
+        (
+            "/v/kv-test/keys/-/new",
+            vec![
+                ("name", "k"),
+                ("tag-rows", "1"),
+                ("tag-name-1", "description"),
+                ("tag-value-1", "x"),
+            ],
+            "tag-name-1",
+        ),
+    ] {
+        let html = support::body_text(w.post(path, &fields).await).await;
+        page_basics(&html, path);
+        controls_have_labels(&html, path);
+        assert!(
+            html.contains(&format!("<a href=\"#{bad}\">")),
+            "{path}: summary link"
+        );
+        assert!(
+            html.contains(&format!("<p class=\"field-error\" id=\"{bad}-error\">")),
+            "{path}"
+        );
+        let input = tags(&html, &format!("<input id=\"{bad}\""));
+        assert_eq!(input.len(), 1, "{path}");
+        assert_eq!(
+            attr(input[0], "aria-describedby"),
+            Some(&*format!("{bad}-error")),
+            "{path}"
+        );
+        assert!(input[0].contains("aria-invalid=\"true\""), "{path}");
     }
 }
 

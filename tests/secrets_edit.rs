@@ -31,7 +31,10 @@ async fn create_adds_a_secret_with_its_properties() {
                 ("value", "  hunter2 "),
                 ("content_type", "text/plain"),
                 ("expires", "2099-01-31"),
-                ("tags", "env=prod\nteam=data"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
+                ("tag-name-2", "team"),
+                ("tag-value-2", "data"),
                 ("enabled", "on"),
             ],
         )
@@ -58,7 +61,8 @@ async fn create_explains_bad_names_and_keeps_other_fields() {
             &[
                 ("name", "db_password"),
                 ("value", "x"),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("enabled", "on"),
             ],
         )
@@ -66,7 +70,10 @@ async fn create_explains_bad_names_and_keeps_other_fields() {
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("Names can only use letters, numbers and hyphens. Remove &#34;_&#34;."));
-    assert!(html.contains("env=prod"), "tags kept");
+    assert!(
+        html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""),
+        "tags kept"
+    );
     assert!(
         !html.contains(">x</textarea>"),
         "the value isn't echoed back"
@@ -148,12 +155,20 @@ async fn new_value_makes_a_new_version() {
     });
     let (_, html) = w.page("/v/kv-test/secrets/db-password/value").await;
     assert!(html.contains("Saving makes a new version"));
-    assert!(html.contains("env=prod"), "properties carried over");
+    assert!(
+        html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""),
+        "properties carried over"
+    );
     assert!(!html.contains(">v1<"), "old value not shown");
     let res = w
         .post(
             "/v/kv-test/secrets/db-password/value",
-            &[("value", "v2"), ("tags", "env=prod"), ("enabled", "on")],
+            &[
+                ("value", "v2"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
+                ("enabled", "on"),
+            ],
         )
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
@@ -177,7 +192,8 @@ async fn editing_properties_does_not_make_a_new_version() {
                 ("version", &version),
                 ("updated", &updated),
                 ("content_type", "text/plain"),
-                ("tags", "owner=ops"),
+                ("tag-name-1", "owner"),
+                ("tag-value-1", "ops"),
                 ("expires", "2099-06-01"),
                 ("enabled", "on"),
             ],
@@ -311,7 +327,8 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
                 ("version", &version),
                 ("updated", &updated),
                 ("expires", &shown),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("enabled", "on"),
             ],
         )
@@ -329,7 +346,8 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
                 ("version", &version),
                 ("updated", &updated),
                 ("expires", ""),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("enabled", "on"),
             ],
         )
@@ -351,7 +369,8 @@ async fn editing_tags_keeps_the_exact_expiry_and_removing_it_is_explained() {
             &[
                 ("value", "y"),
                 ("expires", ""),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("enabled", "on"),
             ],
         )
@@ -575,12 +594,17 @@ async fn tags_the_form_cant_show_are_listed_and_kept() {
     let w = support::world().await;
     w.kv.state.put_with("db-password", "x", |v| {
         v.tags.insert("a=b".into(), " padded ".into());
+        v.tags.insert("note".into(), "two\nlines".into());
         v.tags.insert("env".into(), "prod".into());
     });
     let (_, html) = w.page("/v/kv-test/secrets/db-password/edit").await;
-    assert!(html.contains("can't show them without changing them"));
-    assert!(!html.contains("id=\"tags\""), "no tag textarea");
+    assert!(html.contains("because they have a line break in them"));
+    assert!(html.contains("<li class=\"mono\">note: two\nlines</li>"));
+    // Spaces and an = fit a row exactly.
+    assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\"a=b\""));
+    assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\" padded \""));
     let (version, updated) = edit_stamp(&w, "db-password").await;
+    // Post back what the form shows, and remove env.
     let res = w
         .post(
             "/v/kv-test/secrets/db-password/edit",
@@ -588,6 +612,11 @@ async fn tags_the_form_cant_show_are_listed_and_kept() {
                 ("version", &version),
                 ("updated", &updated),
                 ("content_type", "text/plain"),
+                ("tag-rows", "1"),
+                ("tag-name-1", "a=b"),
+                ("tag-value-1", " padded "),
+                ("tag-name-2", ""),
+                ("tag-value-2", ""),
                 ("enabled", "on"),
             ],
         )
@@ -596,7 +625,8 @@ async fn tags_the_form_cant_show_are_listed_and_kept() {
     let v = w.kv.state.current("db-password").unwrap();
     assert_eq!(v.content_type.as_deref(), Some("text/plain"));
     assert_eq!(v.tags.get("a=b").map(String::as_str), Some(" padded "));
-    assert_eq!(v.tags.get("env").map(String::as_str), Some("prod"));
+    assert_eq!(v.tags.get("note").map(String::as_str), Some("two\nlines"));
+    assert_eq!(v.tags.get("env"), None, "a cleared row removes its tag");
 
     // A new value keeps them too.
     let res = w
@@ -619,13 +649,20 @@ async fn repeated_tag_names_are_reported() {
             &[
                 ("name", "dup"),
                 ("value", "x"),
-                ("tags", "env=prod\nenv=test"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
+                ("tag-name-2", "env"),
+                ("tag-value-2", "test"),
                 ("enabled", "on"),
             ],
         )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(body_text(res).await.contains("repeats the tag name env"));
+    let html = body_text(res).await;
+    assert!(html.contains("The tag name env is used more than once"));
+    // Beside the second row, and linked from the summary.
+    assert!(html.contains("<p class=\"field-error\" id=\"tag-name-2-error\">"));
+    assert!(html.contains("href=\"#tag-name-2\""));
 }
 
 #[tokio::test]

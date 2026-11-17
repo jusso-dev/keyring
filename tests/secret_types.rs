@@ -391,7 +391,8 @@ async fn edit_details_keeps_the_type() {
             &[
                 ("version", &version),
                 ("updated", &updated),
-                ("tags", "env=prod"),
+                ("tag-name-1", "env"),
+                ("tag-value-1", "prod"),
                 ("enabled", "on"),
                 ("content_type", "text/plain"),
             ],

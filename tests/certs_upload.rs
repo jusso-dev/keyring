@@ -45,7 +45,8 @@ async fn pfx_with_password_previews_then_imports() {
         "web.pfx",
         &[
             Part::Text("password", "test-password"),
-            Part::Text("tags", "env=prod"),
+            Part::Text("tag-name-1", "env"),
+            Part::Text("tag-value-1", "prod"),
         ],
     )
     .await;
@@ -194,14 +195,16 @@ async fn bad_name_keeps_other_fields_not_the_password() {
                 Part::File("file", "web.pfx", PLAIN),
                 Part::Text("name", "web tls"),
                 Part::Text("password", "test-password"),
-                Part::Text("tags", "team=web"),
+                Part::Text("tag-name-1", "team"),
+                Part::Text("tag-value-1", "web"),
             ],
         )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
     assert!(html.contains("spaces"));
-    assert!(html.contains("team=web"));
+    assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\"team\""));
+    assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\"web\""));
     assert!(!html.contains("test-password"));
 }
 
@@ -276,12 +279,24 @@ async fn oversized_file_says_so_and_keeps_the_form() {
     // Just over the file limit but under the body limit: the rest of the
     // fields after the file are still read.
     let big = vec![0u8; 260 * 1024];
-    let (status, html) = preview(&w, &big, "big.pfx", &[Part::Text("tags", "team=web")]).await;
+    let (status, html) = preview(
+        &w,
+        &big,
+        "big.pfx",
+        &[
+            Part::Text("tag-name-1", "team"),
+            Part::Text("tag-value-1", "web"),
+        ],
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{html}");
     assert!(html.contains("id=\"file-error\""), "{html}");
     assert!(html.contains("That file is over 256 KB"));
     assert!(html.contains("value=\"web-tls\""));
-    assert!(html.contains("team=web"), "fields after the file are kept");
+    assert!(
+        html.contains("name=\"tag-value-1\" type=\"text\" value=\"web\""),
+        "fields after the file are kept"
+    );
     assert!(html.contains("id=\"enabled\" name=\"enabled\" type=\"checkbox\" checked"));
 
     // Over the whole request limit: the body is cut off, but the size

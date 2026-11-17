@@ -9,7 +9,8 @@
   <div>
     <label for="q">Search for</label>
     <p class="field-help" id="q-help">Part of a name, a tag such as env=prod, or a content type. Up to {{ max_query }} characters.</p>
-    <input id="q" name="q" type="search" value="{{ query.q }}" maxlength="{{ max_query }}" aria-describedby="q-help"{% call ui::ident() %}{% endcall %}>
+    <input id="q" name="q" type="search" value="{{ query.q }}" maxlength="{{ max_query }}" list="tag-filter-options" aria-describedby="q-help"{% call ui::ident() %}{% endcall %}>
+    {% call ui::filter_options(tag_options) %}{% endcall %}
   </div>
   <div>
     <label for="vault">Vault</label>

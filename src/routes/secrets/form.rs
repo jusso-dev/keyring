@@ -15,6 +15,7 @@ use crate::description;
 use crate::password_policy::PasswordPolicy;
 use crate::routes::forms::{FieldError, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
+use crate::routes::tag_rows::{self, TagPost};
 use crate::secret::Secret;
 use crate::secret_types::{ContentKind, SecretType, TypedValue, classify};
 
@@ -46,9 +47,9 @@ pub(crate) struct SecretForm {
     /// `YYYY-MM-DD` or empty.
     #[serde(default)]
     pub not_before: String,
-    /// One `key=value` per line. Never holds the `description` tag.
-    #[serde(default)]
-    pub tags: String,
+    /// The tag rows. Never holds the `description` tag.
+    #[serde(flatten)]
+    pub tag_rows: TagPost,
     /// The note, kept in the `description` tag. Empty removes it.
     #[serde(default)]
     pub description: String,
@@ -158,68 +159,9 @@ impl std::fmt::Debug for SecretForm {
     }
 }
 
-/// Can these tags go through the `name=value` textarea and come back the
-/// same? Not if a name has an `=`, either side has a line break, or either
-/// side starts or ends with a space, because parsing trims and splits. The
-/// description has its own field, so it isn't looked at.
-pub(crate) fn tags_editable(tags: &BTreeMap<String, String>) -> bool {
-    let clean = |s: &str| s == s.trim() && !s.contains(['\n', '\r']);
-    tags.iter()
-        .filter(|(k, _)| k.as_str() != description::TAG)
-        .all(|(k, v)| !k.is_empty() && !k.contains('=') && clean(k) && clean(v))
-}
-
 /// Said when `description` is typed as an ordinary tag name.
 pub(crate) const DESCRIPTION_IS_A_FIELD: &str =
     "The description tag is set with the Description field. Put the note there, not in Tags.";
-
-/// Parse tag lines. Blank lines are skipped. A name given twice is an
-/// error, so nothing is dropped without a word.
-pub(crate) fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut tags = BTreeMap::new();
-    for (i, line) in raw.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let (k, v) = line.split_once('=').unwrap_or((line, ""));
-        let (k, v) = (k.trim(), v.trim());
-        if k.is_empty() {
-            return Err(format!("Line {} has no tag name before the =.", i + 1));
-        }
-        if description::is_reserved(k) {
-            return Err(format!("Line {}: {DESCRIPTION_IS_A_FIELD}", i + 1));
-        }
-        if k.len() > MAX_TAG_NAME || v.len() > MAX_TAG_VALUE {
-            return Err(format!(
-                "Line {} is too long. Tag names can be {MAX_TAG_NAME} characters and values {MAX_TAG_VALUE}.",
-                i + 1
-            ));
-        }
-        if tags.insert(k.to_owned(), v.to_owned()).is_some() {
-            return Err(format!(
-                "Line {} repeats the tag name {k}. Each name can only be used once.",
-                i + 1
-            ));
-        }
-    }
-    if tags.len() > MAX_TAGS {
-        return Err(format!(
-            "Key Vault allows up to {MAX_TAGS} tags. This has {}.",
-            tags.len()
-        ));
-    }
-    Ok(tags)
-}
-
-/// Tags back into the textarea format, without the description.
-pub(crate) fn format_tags(tags: &BTreeMap<String, String>) -> String {
-    tags.iter()
-        .filter(|(k, _)| k.as_str() != description::TAG)
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 fn parse_date(field: &'static str, raw: &str, label: &str) -> Result<Option<i64>, FieldError> {
     let raw = raw.trim();
@@ -235,7 +177,7 @@ fn parse_date(field: &'static str, raw: &str, label: &str) -> Result<Option<i64>
 }
 
 /// One tag from the bulk change form, checked against the same limits as
-/// the tags box. Returns the trimmed name and value.
+/// the tag rows. Returns the trimmed name and value.
 pub(crate) fn one_tag(name: &str, value: &str) -> Result<(String, String), String> {
     let (k, v) = (name.trim(), value.trim());
     if k.is_empty() {
@@ -292,6 +234,7 @@ fn properties(
     form: &SecretForm,
     now: i64,
     current: Option<&Attributes>,
+    current_tags: &BTreeMap<String, String>,
     errors: &mut FieldErrors,
 ) -> Properties {
     let content_type = form.content_type.trim();
@@ -326,10 +269,7 @@ fn properties(
             "The start date needs to be before the expiry date.",
         );
     }
-    let tags = parse_tags(&form.tags).unwrap_or_else(|m| {
-        errors.push("tags", m);
-        BTreeMap::new()
-    });
+    let tags = tag_rows::check(&form.tag_rows, current_tags, errors);
     let tags = with_note(&tags, &form.description, errors);
     Properties {
         content_type: (!content_type.is_empty()).then(|| content_type.to_owned()),
@@ -458,7 +398,7 @@ pub(crate) fn for_create(
         Some(kind) => checked_typed(kind, form, policy, &mut errors),
         None => checked_value(form, policy, &mut errors),
     };
-    let mut props = properties(form, now, None, &mut errors);
+    let mut props = properties(form, now, None, &BTreeMap::new(), &mut errors);
     match kind {
         Some(kind) => props.content_type = Some(kind.content_type()),
         None => keyring_type_typed(props.content_type.as_deref(), None, &mut errors),
@@ -479,8 +419,8 @@ pub(crate) fn for_create(
 
 /// Check a "new value" form against the current version. Setting a value
 /// always makes a new version. Dates on the same day as the current ones
-/// keep their exact times, and tags the form can't show are carried over
-/// as they are. The type comes from the secret, never the post, so the
+/// keep their exact times, and tags a row can't show are carried over as
+/// they are. The type comes from the secret, never the post, so the
 /// password policy follows what the secret is.
 pub(crate) fn for_new_value(
     form: &SecretForm,
@@ -494,17 +434,19 @@ pub(crate) fn for_new_value(
         ContentKind::Typed(kind) => checked_typed(kind, form, policy, &mut errors),
         _ => checked_value(form, policy, &mut errors),
     };
-    let mut props = properties(form, now, Some(&current.attributes), &mut errors);
+    let mut props = properties(
+        form,
+        now,
+        Some(&current.attributes),
+        current.tags(),
+        &mut errors,
+    );
     if let ContentKind::Typed(_) = classify(current_ct) {
         // A typed secret stays typed, with its content type as it is.
         errors.retain(|e| e.field != "content_type");
         props.content_type = current.content_type.clone();
     } else {
         keyring_type_typed(props.content_type.as_deref(), current_ct, &mut errors);
-    }
-    if !tags_editable(current.tags()) {
-        errors.retain(|e| e.field != "tags" && e.field != "description");
-        props.tags = with_note(current.tags(), &form.description, &mut errors);
     }
     match value {
         Some(value) if errors.is_empty() => Ok(SetSecret {
@@ -524,8 +466,8 @@ pub(crate) const REMOVE_START: &str = "Key Vault can't remove the start date fro
 /// has no value, so this can never create a new version. Dates that didn't
 /// change are left out. A removed date is refused: Key Vault keeps a
 /// version's dates even when sent `null`, so only a new value can drop
-/// one. Tags are only sent when they changed, and never when the form
-/// can't show them.
+/// one. Tags are only sent when they changed. Tags a row can't show are
+/// kept as they are.
 pub(crate) fn for_update(
     form: &SecretForm,
     item: &SecretItem,
@@ -533,9 +475,8 @@ pub(crate) fn for_update(
 ) -> Result<UpdateSecret, FieldErrors> {
     let current = &item.attributes;
     let mut errors = FieldErrors::new();
-    let editable = tags_editable(item.tags());
     // An expiry that's already passed but wasn't touched isn't an error.
-    let props = properties(form, now, Some(current), &mut errors);
+    let props = properties(form, now, Some(current), item.tags(), &mut errors);
     let typed = matches!(
         classify(item.content_type.as_deref()),
         ContentKind::Typed(_)
@@ -548,13 +489,6 @@ pub(crate) fn for_update(
             item.content_type.as_deref(),
             &mut errors,
         );
-    }
-    let mut props = props;
-    if !editable {
-        // The tags the form can't show are kept as they are, with only the
-        // description changed.
-        errors.retain(|e| e.field != "tags" && e.field != "description");
-        props.tags = with_note(item.tags(), &form.description, &mut errors);
     }
     let expires = DateChange::between(current.expires, props.attributes.expires);
     if expires == Some(DateChange::Keep) {
@@ -627,7 +561,7 @@ mod tests {
     fn create_builds_a_set_body() {
         let mut f = form();
         f.expires = "2027-01-31".into();
-        f.tags = "env=prod\n\nteam = data \nflag".into();
+        f.tag_rows = TagPost::rows(&[("env", "prod"), ("", ""), ("team", "data"), ("flag", "")]);
         f.content_type = " text/plain ".into();
         let (name, body) = for_create(&f, NOW, &OFF).unwrap();
         assert_eq!(name, "db-password");
@@ -655,10 +589,10 @@ mod tests {
         f.name = "bad name".into();
         f.value = Some(String::new());
         f.expires = "2020-01-01".into();
-        f.tags = "=oops".into();
+        f.tag_rows = TagPost::rows(&[("", "oops")]);
         let errors = for_create(&f, NOW, &OFF).err().unwrap();
         let fields: Vec<_> = errors.iter().map(|e| e.field).collect();
-        assert_eq!(fields, vec!["name", "value", "expires", "tags"]);
+        assert_eq!(fields, vec!["name", "value", "expires", "tag-name-1"]);
     }
 
     #[test]
@@ -690,7 +624,7 @@ mod tests {
         };
         let mut f = form();
         f.expires = "2027-02-06".into();
-        f.tags = "env=prod".into();
+        f.tag_rows = TagPost::rows(&[("env", "prod")]);
         let current = item(current, &[]);
         let body = for_update(&f, &current, NOW).unwrap();
         let j = serde_json::to_value(&body).unwrap();
@@ -730,14 +664,6 @@ mod tests {
     }
 
     #[test]
-    fn tag_limits() {
-        let many: String = (0..16).map(|i| format!("k{i}=v\n")).collect();
-        assert!(parse_tags(&many).unwrap_err().contains("15"));
-        let t = parse_tags("a=1\nb=2").unwrap();
-        assert_eq!(format_tags(&t), "a=1\nb=2");
-    }
-
-    #[test]
     fn line_breaks_become_lf() {
         let mut f = form();
         f.value = Some("\na\r\nb\r\n".into());
@@ -750,52 +676,36 @@ mod tests {
     }
 
     #[test]
-    fn repeated_tag_names_are_an_error() {
-        let e = parse_tags("env=prod\nteam=a\nenv=test").unwrap_err();
-        assert!(e.contains("Line 3 repeats the tag name env"), "{e}");
-    }
-
-    #[test]
-    fn which_tags_the_form_can_show() {
-        let t = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
-            pairs
-                .iter()
-                .map(|(k, v)| ((*k).into(), (*v).into()))
-                .collect()
-        };
-        assert!(tags_editable(&t(&[("env", "prod"), ("flag", "")])));
-        assert!(tags_editable(&t(&[("url", "a=b")])), "= in a value is fine");
-        assert!(!tags_editable(&t(&[("a=b", "c")])));
-        assert!(!tags_editable(&t(&[("note", "two\nlines")])));
-        assert!(!tags_editable(&t(&[(" padded", "x")])));
-        assert!(!tags_editable(&t(&[("k", "x ")])));
-        // Each editable set comes back the same from the textarea.
-        let ok = t(&[("env", "prod"), ("url", "a=b"), ("flag", "")]);
-        assert_eq!(parse_tags(&format_tags(&ok)).unwrap(), ok);
-    }
-
-    #[test]
     fn update_sends_tags_only_when_changed() {
         let current = item(Attributes::default(), &[("env", "prod")]);
         let mut f = form();
-        f.tags = "env=prod".into();
+        f.tag_rows = TagPost::rows(&[("env", "prod")]);
         let body = for_update(&f, &current, NOW).unwrap();
         assert!(body.tags.is_none(), "unchanged tags not sent");
-        f.tags = "env=test".into();
+        f.tag_rows = TagPost::rows(&[("env", "test")]);
         let body = for_update(&f, &current, NOW).unwrap();
         assert_eq!(body.tags.unwrap()["env"], "test");
     }
 
     #[test]
     fn tags_the_form_cant_show_are_never_rewritten() {
-        let odd = item(Attributes::default(), &[("a=b", " c ")]);
+        let odd = item(
+            Attributes::default(),
+            &[("note", "two\nlines"), ("a=b", " c ")],
+        );
         let mut f = form();
-        // The form shows no textarea for these, so it posts nothing.
-        f.tags = String::new();
+        // The form shows a row for a=b, and lists the other.
+        f.tag_rows = TagPost::rows(&[("a=b", " c ")]);
         let body = for_update(&f, &odd, NOW).unwrap();
         assert!(body.tags.is_none());
         let body = for_new_value(&f, &odd, NOW, &OFF).unwrap();
-        assert_eq!(body.tags.unwrap()["a=b"], " c ");
+        let tags = body.tags.unwrap();
+        assert_eq!(tags["a=b"], " c ");
+        assert_eq!(tags["note"], "two\nlines");
+        // Clearing the row removes that tag only.
+        f.tag_rows = TagPost::rows(&[]);
+        let tags = for_update(&f, &odd, NOW).unwrap().tags.unwrap();
+        assert_eq!(tags.keys().collect::<Vec<_>>(), ["note"]);
     }
 
     #[test]

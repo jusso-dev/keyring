@@ -92,6 +92,8 @@ struct AgePage {
     filter: AgeFilter,
     csv_url: String,
     max_vaults: usize,
+    /// Suggestions for the tag filter, from the items read.
+    tag_options: Vec<String>,
 }
 
 /// The vaults' items that match, oldest value first.
@@ -123,6 +125,7 @@ pub(super) async fn page(
     };
     let now = now_ts();
     let after = state.config.stale_after_days;
+    let tag_options = crate::routes::tag_rows::filter_options_of(&loaded.items);
     let items = filtered(&mut loaded, &filter, now);
     let counts = age::counts(&items, now);
     let bands = Band::ALL
@@ -161,6 +164,7 @@ pub(super) async fn page(
         unknown_vault: loaded.unknown_vault,
         filter,
         max_vaults: MAX_VAULTS,
+        tag_options,
     })
     .into_response())
 }
