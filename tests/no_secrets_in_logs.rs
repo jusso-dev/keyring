@@ -10,6 +10,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
+use serde_json::json;
 
 /// Collects everything `tracing` writes, at every level.
 #[derive(Clone, Default)]
@@ -740,6 +741,46 @@ async fn values_never_reach_the_logs() {
         !html.contains("Sup3r-S3cret"),
         "the form never shows the value"
     );
+    // The access review: callers' sign-in names and the item's owner and
+    // notify addresses go on the page and in the CSV, never in a log
+    // line; one workspace fails so the failure is logged, without the
+    // query or Azure's message.
+    w.kv.state.put_with("reviewed", "x", |v| {
+        v.tags
+            .insert("owner".into(), "reviewownerleak@example.com".into());
+        v.tags
+            .insert("notify".into(), "reviewnotifyleak@example.com".into());
+    });
+    *w.arm.state.diagnostics.lock().unwrap() = Some(json!({"value": [
+        support::settings_to("logs", true)["value"][0].clone(),
+        support::settings_to("logs-b", false)["value"][0].clone(),
+    ]}));
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = vec![("/workspaces/logs-b".into(), 500)];
+    *w.arm.state.workspace_events.lock().unwrap() = vec![(
+        "/workspaces/logs".into(),
+        vec![support::RawEvent::new(
+            "kv-test",
+            "2026-11-10T10:00:00Z",
+            "reviewcallerleak@example.com",
+            "SecretGet",
+            "reviewed",
+            200,
+        )],
+    )];
+    // Added behind the session's list cache, which the search above filled.
+    let sid = w.cookie.split('=').nth(1).unwrap().to_owned();
+    w.state.sessions.get(&sid).unwrap().forget_list("kv-test");
+    for path in ["/v/kv-test/access/review", "/v/kv-test/access/review.csv"] {
+        let res = w.get(path).await;
+        assert_eq!(res.status(), StatusCode::OK, "{path}");
+        let body = support::body_text(res).await;
+        assert!(body.contains("reviewcallerleak@example.com"), "{path}");
+        assert!(body.contains("reviewownerleak@example.com"), "{path}");
+        assert!(!body.contains("Sup3r-S3cret"), "{path}");
+    }
+    *w.arm.state.audit_fail_workspace.lock().unwrap() = Vec::new();
+    *w.arm.state.workspace_events.lock().unwrap() = Vec::new();
+
     // The audit sink: a world that sends events to Log Analytics with the
     // managed identity, through a refusal, a retry and a success. Neither
     // the identity's token, its header nor a row's body reaches the log.
@@ -1481,6 +1522,17 @@ async fn values_never_reach_the_logs() {
         "value leaked into logs:\n{logs}"
     );
     assert!(!logs.contains("QUERYLEAK"), "query string leaked:\n{logs}");
+    for leak in ["reviewcallerleak", "reviewownerleak", "reviewnotifyleak"] {
+        assert!(!logs.contains(leak), "an address leaked ({leak}):\n{logs}");
+    }
+    assert!(
+        logs.contains("access review workspace query failed"),
+        "the failed review read is logged: {logs}"
+    );
+    for kql in ["let vaultName", "summarize Uses", "row_number"] {
+        assert!(!logs.contains(kql), "review KQL leaked into logs:\n{logs}");
+    }
+
     assert!(
         logs.contains("used-by workspace query failed"),
         "the failed panel read is logged: {logs}"

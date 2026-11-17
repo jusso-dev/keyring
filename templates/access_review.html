@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Access review of {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<h1>Access review <span class="muted">of {{ vault }}</span></h1>
+<nav aria-label="Access views"><p class="view-switch"><a href="{{ access_url }}">Who has access</a> <a href="{{ shell.vault_prefix() }}/access/review" aria-current="page">Access review</a></p></nav>
+<p>Every secret, certificate and key in this vault, with its owner, when its value last changed, who used it in the last 90 days, who has access to it and what its rotation tags say. For a periodic review: download the CSV to keep a copy. Only names, properties, role assignments and the audit log are read, never values.</p>
+<p class="actions"><a href="{{ csv_url }}">Download CSV</a></p>
+<p class="muted">Secrets and keys that belong to a certificate are listed as the certificate. Cells Keyring couldn't fill say "Not known", which isn't the same as none.</p>
+
+{% if let Some(why) = report.lists_not_read %}
+<p class="notice notice-warn">Some of this vault's secrets, certificates or keys couldn't be listed: {{ why }}. Those aren't in the report.</p>
+{% endif %}
+
+<section aria-labelledby="review-used-heading">
+<h2 id="review-used-heading">Used by in the last 90 days</h2>
+{% if let Some(why) = report.usage.unavailable %}
+<div class="notice notice-warn">
+  <p>{{ why }} Every "Used by" cell below says "Not known".</p>
+  {% if !report.usage.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ report.usage.hint }}</p>{% endif %}
+</div>
+{% else %}
+<p class="muted">People, apps and managed identities that read a secret's value, read a certificate's private key or used a key, from Key Vault's audit log, most recent first, up to 20 for each item. "None found" means none in the logs Keyring read for this period, not that nothing uses it.</p>
+{% endif %}
+{% for n in report.usage.notes %}<p class="notice notice-warn">{{ n }} Items with no callers found are marked "Not known".</p>{% endfor %}
+<p class="muted small">{% if let Some(c) = report.usage.coverage() %}{{ c }} {% endif %}{{ report.usage.limits() }}</p>
+</section>
+
+<section aria-labelledby="review-access-heading">
+<h2 id="review-access-heading">Who has access to the whole vault</h2>
+<p class="muted">Everything here reaches every item below. Assignments made on a single item are on its row.</p>
+{% let prefix = "review-" %}
+{% include "_access.html" %}
+</section>
+
+<section aria-labelledby="review-items-heading">
+<h2 id="review-items-heading">Items <span class="muted">({{ report.rows.len() }})</span></h2>
+{% if report.rows.is_empty() %}
+<div class="empty-state"><p>{% if report.lists_not_read.is_some() %}Keyring couldn't list this vault's secrets, certificates or keys, so there is nothing to show.{% else %}This vault has no secrets, certificates or keys you can list.{% endif %}</p></div>
+{% else %}
+{% call ui::table_wrap("review-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="review-caption">Access review of the secrets, certificates and keys in {{ vault }}</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Expires</th><th scope="col">Owner</th><th scope="col">Description</th><th scope="col">Value changed</th><th scope="col">Used by (90 days)</th><th scope="col">Access on this item</th><th scope="col">Rotation</th></tr></thead>
+  <tbody>
+    {% for r in report.rows %}
+    <tr{% if !r.enabled %} class="row-muted"{% endif %}>
+      <th scope="row" class="item-name"><a href="{{ r.open_url }}">{{ r.name }}</a>{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+      <td>{{ r.kind.label() }}</td>
+      <td class="nowrap">{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
+      <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
+      <td>{% call ui::note_cell(r.description) %}{% endcall %}</td>
+      <td class="nowrap">{% call ui::changed(r.changed, r.changed_note, r.stale) %}{% endcall %}</td>
+      <td class="small">{% match r.used %}
+        {% when crate::routes::access_review::UseCell::NotKnown %}<span class="muted">Not known</span>
+        {% when crate::routes::access_review::UseCell::NoneFound %}<span class="muted">None found</span>
+        {% when crate::routes::access_review::UseCell::Callers with { callers, more, gaps } %}{% for c in callers %}{% if !loop.first %}<br>{% endif %}{{ c.who }} <span class="muted">({{ c.kind }}, {{ c.reads }}, last {{ c.last }})</span>{% endfor %}{% if *more %}<br><span class="muted">More not listed. <a href="{{ r.open_url }}">Open the item</a> to see its callers.</span>{% endif %}{% if *gaps %}<br><span class="muted">There may be others: some of the log is missing.</span>{% endif %}
+      {% endmatch %}</td>
+      <td class="small">{% match r.access %}
+        {% when crate::routes::access_review::AccessCell::NotKnown %}<span class="muted">Not known</span>
+        {% when crate::routes::access_review::AccessCell::AsVault %}<span class="muted">As the vault</span>
+        {% when crate::routes::access_review::AccessCell::Own with (list) %}<span class="muted">As the vault, and:</span>{% for e in list %}<br><span class="mono">{% if e.portal_url.is_empty() %}{{ e.principal_id }}{% else %}<a href="{{ e.portal_url }}" rel="noopener noreferrer">{{ e.principal_id }}<span class="visually-hidden"> in the Azure portal</span></a>{% endif %}</span> {{ e.principal_type }}, {{ e.role }}{% if e.eligible %} <span class="badge badge-muted">Eligible</span>{% endif %}{% if e.has_condition %} <span class="muted">(with a condition)</span>{% endif %}{% endfor %}
+      {% endmatch %}</td>
+      <td class="small">{% if let Some(rot) = r.rotation %}<span class="{{ rot.status.css() }}">{{ rot.status.label() }}</span><br><span class="muted">By <span class="item-name">{{ rot.by }}</span>, last {{ rot.last }}</span>{% else %}<span class="muted">Not tagged</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+<p class="muted small">Rotation is what the item's <span class="mono">rotation</span> tags say, not something Keyring checked. See <a href="https://github.com/jusso-dev/keyring/blob/main/docs/rotation.md" rel="noopener noreferrer">rotation</a>.</p>
+{% endif %}
+</section>
+{% endblock %}
