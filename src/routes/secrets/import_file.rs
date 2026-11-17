@@ -15,6 +15,7 @@ use crate::routes::forms::name_problem;
 use crate::routes::lifecycle::Kind;
 use crate::routes::secrets::form::{MAX_CONTENT_TYPE, MAX_TAGS, MAX_VALUE_BYTES};
 use crate::secret::Secret;
+use crate::secret_types::{ContentKind, classify};
 
 /// Largest file accepted.
 pub(crate) const MAX_FILE_BYTES: usize = 1024 * 1024;
@@ -22,6 +23,9 @@ pub(crate) const MAX_FILE_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_BODY_BYTES: usize = MAX_FILE_BYTES + 16 * 1024;
 /// Most secrets in one file.
 pub(crate) const MAX_ROWS: usize = 500;
+
+/// The problem for a row with one of Keyring's own content types.
+pub(crate) const KEYRING_TYPE: &str = "Its content type is one of Keyring's own secret types (application/vnd.keyring.). Typed secrets are made on the Create form, not imported.";
 
 /// The two file formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +148,15 @@ fn check(raw: Raw, now: i64) -> Row {
     let content_type = raw.content_type.trim().to_owned();
     if problem.is_none() && content_type.len() > MAX_CONTENT_TYPE {
         problem = Some("Its content type is over 255 characters.".into());
+    }
+    // Import writes plain secrets only. A Keyring content type would mark
+    // a value whose fields nothing here checks as a Login or other typed
+    // secret, the same rule the create form applies.
+    if problem.is_none()
+        && classify((!content_type.is_empty()).then_some(content_type.as_str()))
+            != ContentKind::Plain
+    {
+        problem = Some(KEYRING_TYPE.into());
     }
     let mut expires = None;
     let raw_exp = raw.expires.trim();
@@ -829,6 +842,23 @@ mod tests {
         // Exactly at the limit is fine.
         let at = format!("A=\"{}\"\n", "x".repeat(MAX_VALUE_BYTES));
         assert!(env(&at)[0].problem.is_none());
+    }
+
+    #[test]
+    fn keyring_content_types_are_refused() {
+        let rows = csv(concat!(
+            "name,value,content_type\n",
+            "a,{},application/vnd.keyring.login+json;v=1\n",
+            "b,x,APPLICATION/VND.KEYRING.DATABASE+JSON; v=1\n",
+            "c,x,application/vnd.keyring.future+json;v=9\n",
+            "d,x,application/vnd.keyring.login+json\n",
+            "e,x,text/plain\n",
+            "f,x,application/x-pem-file\n",
+        ));
+        for r in &rows[..4] {
+            assert_eq!(r.problem.as_deref(), Some(KEYRING_TYPE), "{}", r.name);
+        }
+        assert!(rows[4].problem.is_none() && rows[5].problem.is_none());
     }
 
     #[test]

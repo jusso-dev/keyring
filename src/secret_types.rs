@@ -170,6 +170,16 @@ impl SecretType {
             Self::SshKey => &SSH_KEY,
         }
     }
+
+    /// The field `KEYRING_PASSWORD_POLICY` checks: Login's password. The
+    /// other types' secrets are machine credentials, keys or passphrases,
+    /// so the policy leaves them alone.
+    pub(crate) fn policy_field(self) -> Option<&'static str> {
+        match self {
+            Self::Login => Some("password"),
+            Self::Database | Self::ApiKey | Self::SshKey => None,
+        }
+    }
 }
 
 /// What a content type says about the value.
@@ -313,6 +323,17 @@ impl TypedValue {
             )]);
         }
         Ok(typed)
+    }
+
+    /// The type's policy field against `KEYRING_PASSWORD_POLICY`: the
+    /// field's name and what it fails, or `None`.
+    pub(crate) fn policy_problem(
+        &self,
+        policy: &crate::password_policy::PasswordPolicy,
+    ) -> Option<(&'static str, String)> {
+        let name = self.kind.policy_field()?;
+        let (field, value) = self.fields().find(|(f, _)| f.name == name)?;
+        policy.check(field.label, value).map(|m| (field.name, m))
     }
 
     /// Compact JSON, every field present, in the type's order. Built by

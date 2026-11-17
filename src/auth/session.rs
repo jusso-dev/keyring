@@ -89,6 +89,9 @@ pub struct SkippedSecret {
     pub original: String,
     pub name: String,
     pub reason: String,
+    /// Its value didn't meet `KEYRING_PASSWORD_POLICY`, so the import
+    /// writes a `password_policy` refusal event for it.
+    pub policy: bool,
 }
 
 /// Where a [`PendingImport`] waits. `generation` goes up each time the

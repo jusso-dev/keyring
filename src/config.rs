@@ -59,6 +59,9 @@ pub struct Config {
     /// reason, and maybe a ticket, before a value is shown or anything is
     /// changed. Off by default.
     pub reason: crate::reason::ReasonPolicy,
+    /// `KEYRING_PASSWORD_POLICY`: rules for a password typed into a
+    /// Password or Login secret. Off by default.
+    pub password_policy: crate::password_policy::PasswordPolicy,
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
@@ -434,6 +437,15 @@ impl Config {
 
         let step_up = step_up_policy(&get)?;
         let reason = reason_policy(&get)?;
+        let password_policy = match get("KEYRING_PASSWORD_POLICY") {
+            None => crate::password_policy::PasswordPolicy::default(),
+            Some(v) => crate::password_policy::PasswordPolicy::parse(&v).map_err(|reason| {
+                ConfigError::Invalid {
+                    name: "KEYRING_PASSWORD_POLICY",
+                    reason,
+                }
+            })?,
+        };
 
         let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
             None => DEFAULT_STALE_AFTER_DAYS,
@@ -451,6 +463,7 @@ impl Config {
             stale_after_days,
             step_up,
             reason,
+            password_policy,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -1322,6 +1335,46 @@ pub(crate) mod tests {
                     load(&env),
                     Err(ConfigError::Invalid {
                         name: "KEYRING_STALE_AFTER_DAYS",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn password_policy_is_checked_at_start() {
+        let mut env = sample_env();
+        assert!(
+            !load(&env).unwrap().password_policy.is_on(),
+            "off unless set"
+        );
+        env.insert("KEYRING_PASSWORD_POLICY", "  ".into());
+        assert!(
+            !load(&env).unwrap().password_policy.is_on(),
+            "blank is unset"
+        );
+        env.insert(
+            "KEYRING_PASSWORD_POLICY",
+            "min=14,upper,lower,digit,symbol,max-repeat=3,common".into(),
+        );
+        let p = load(&env).unwrap().password_policy;
+        assert_eq!((p.min, p.max_repeat, p.common), (Some(14), Some(3), true));
+        for bad in [
+            "min=0",
+            "min=257",
+            "length=8",
+            "upper=yes",
+            "min=8,min=9",
+            ",",
+        ] {
+            env.insert("KEYRING_PASSWORD_POLICY", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_PASSWORD_POLICY",
                         ..
                     })
                 ),

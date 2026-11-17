@@ -105,6 +105,10 @@ param requireReason string = ''
 @maxLength(200)
 param reasonTicketPattern string = ''
 
+@description('Password policy for values typed into a Password or Login secret, such as min=14,upper,lower,digit,symbol,max-repeat=3,common. Leave empty for no policy. A Keyring control only: the CLI and portal aren\'t limited by it (see docs/deploy.md, "Password policy").')
+@maxLength(200)
+param passwordPolicy string = ''
+
 @description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
 @minValue(0)
 @maxValue(8)
@@ -321,6 +325,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         stepUpMaxAge == 0 ? [] : [{ name: 'KEYRING_STEP_UP_MAX_AGE', value: string(stepUpMaxAge) }],
         empty(requireReason) ? [] : [{ name: 'KEYRING_REQUIRE_REASON', value: requireReason }],
         empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
+        empty(passwordPolicy) ? [] : [{ name: 'KEYRING_PASSWORD_POLICY', value: passwordPolicy }],
         auditSettings,
         notifySettings
       )
