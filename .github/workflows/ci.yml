@@ -166,6 +166,21 @@ jobs:
             az bicep build-params --file "$p" --stdout > /dev/null || status=1
             rm "$p"
           done
+          # Each host template again with email on, on an Azure-managed
+          # and a custom domain, so the notify module is built as used.
+          for t in app-service container-apps; do
+            for d in AzureManaged mail.example.com; do
+              p="$t/notify-ci.bicepparam"
+              { sed -e '/^param notify/d' "$t/main.example.bicepparam"
+                echo "param notifyDomain = '$d'"
+                echo "param notifyTypes = 'expiry,health'"
+                echo "param notifyAdmins = 'ops@example.com'"
+                echo "param notifyAllowedDomains = 'example.com'"
+              } > "$p"
+              az bicep build-params --file "$p" --stdout > /dev/null || status=1
+              rm "$p"
+            done
+          done
           # Sentinel with every rule on and Keyring's address given, so the
           # two rules left out without one are built too, on both tables.
           for table in AzureDiagnostics AZKVAuditLogs; do

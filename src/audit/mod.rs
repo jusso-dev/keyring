@@ -110,11 +110,16 @@ pub enum Action {
     /// A request refused before Keyring knew what it was for, such as a
     /// cross-site form post.
     RequestRefused,
+    /// An email notification accepted by Azure Communication Services.
+    /// Not tied to a request: written by the sender when the email ends.
+    NotifySent,
+    /// An email notification that wasn't sent, or that ACS said failed.
+    NotifyFailed,
 }
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 40] = [
+    pub const ALL: [Action; 42] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -155,6 +160,8 @@ impl Action {
         Self::SessionSignOut,
         Self::SessionExpired,
         Self::RequestRefused,
+        Self::NotifySent,
+        Self::NotifyFailed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -199,6 +206,8 @@ impl Action {
             Self::SessionSignOut => "session.sign_out",
             Self::SessionExpired => "session.expired",
             Self::RequestRefused => "request.refused",
+            Self::NotifySent => "notify.sent",
+            Self::NotifyFailed => "notify.failed",
         }
     }
 
@@ -355,6 +364,13 @@ pub struct AuditEvent {
     pub role_scope: Option<String>,
     /// How long it was asked for, ISO 8601 (`PT8H`), on `role.activate`.
     pub role_duration: Option<String>,
+    /// The notification type (`notify.*` only), such as `expiry`.
+    pub notify_type: Option<&'static str>,
+    /// How many recipients the email had (`notify.*` only).
+    pub notify_recipient_count: Option<u64>,
+    /// The recipients' addresses, separated by commas (`notify.*` only).
+    /// Personal data: set only with `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`.
+    pub notify_recipients: Option<String>,
 }
 
 impl AuditEvent {
@@ -382,6 +398,9 @@ impl AuditEvent {
             role: None,
             role_scope: None,
             role_duration: None,
+            notify_type: None,
+            notify_recipient_count: None,
+            notify_recipients: None,
         }
     }
 
@@ -453,6 +472,9 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
         role = opt(&ev.role),
         role_scope = opt(&ev.role_scope),
         role_duration = opt(&ev.role_duration),
+        notify_type = ev.notify_type.map(tracing::field::display),
+        notify_recipient_count = ev.notify_recipient_count,
+        notify_recipients = opt(&ev.notify_recipients),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         // Last, so in the text format nothing typed can come before a

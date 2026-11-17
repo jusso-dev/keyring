@@ -32,6 +32,8 @@ pub struct Config {
     /// Analytics workspace holding `KeyringAudit_CL`. When set, the audit
     /// page gains a Keyring activity view, read as the signed-in person.
     pub audit_workspace_id: Option<String>,
+    /// Email notifications through Azure Communication Services, if on.
+    pub notify: Option<NotifySettings>,
     /// Set from `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` alone.
     legacy_identity_setting: bool,
     /// Public base URL with no trailing slash, for example `https://keyring.example.com`.
@@ -64,6 +66,9 @@ pub struct Config {
     /// Replaces the audit sink's ingestion endpoint. Only set by tests, to
     /// point at a mock.
     pub audit_ingestion_test_url: Option<String>,
+    /// Replaces the ACS endpoint for email. Only set by tests, to point at
+    /// a mock.
+    pub notify_acs_test_url: Option<String>,
     /// Replaces `https://<vault>.vault.azure.net` with `<base>/<vault>`.
     /// Only set by tests, to point at a mock Key Vault.
     pub keyvault_test_base: Option<String>,
@@ -106,6 +111,31 @@ pub struct AuditSinkSettings {
     /// tests.
     pub tuning: crate::audit::sink::Tuning,
 }
+
+/// Email notifications through Azure Communication Services.
+#[derive(Debug, Clone)]
+pub struct NotifySettings {
+    /// `KEYRING_NOTIFY_ACS_ENDPOINT`: `https://<resource>.communication.azure.com`.
+    pub endpoint: String,
+    /// `KEYRING_NOTIFY_SENDER`: the `DoNotReply@<domain>` address.
+    pub sender: crate::notify::Address,
+    /// `KEYRING_NOTIFY_ADMINS`: for health and fallback notices.
+    pub admins: Vec<crate::notify::Address>,
+    /// `KEYRING_NOTIFY_ALLOWED_DOMAINS`: every recipient must be in one.
+    pub allowed_domains: Option<Vec<String>>,
+    /// `KEYRING_NOTIFY_TYPES`: the types turned on. Empty by default.
+    pub types: Vec<crate::notify::NotifyType>,
+    /// `KEYRING_NOTIFY_AUDIT_RECIPIENTS`: put addresses on audit events.
+    pub audit_recipients: bool,
+    /// `KEYRING_NOTIFY_RATE_PER_HOUR`: emails an hour to one recipient for
+    /// one type.
+    pub per_hour: u32,
+    /// Queue and retry timings. Always the defaults outside tests.
+    pub tuning: crate::notify::sender::Tuning,
+}
+
+/// Largest `KEYRING_NOTIFY_RATE_PER_HOUR`.
+pub const MAX_NOTIFY_PER_HOUR: u32 = 1000;
 
 /// The stream the templates create.
 pub const DEFAULT_AUDIT_STREAM: &str = "Custom-KeyringAudit_CL";
@@ -262,6 +292,8 @@ impl Config {
             });
         }
 
+        let notify = notify_settings(&get, managed_identity.is_some())?;
+
         let audit_workspace_id = get("KEYRING_AUDIT_WORKSPACE_ID")
             .map(|v| checked_workspace_id(&v))
             .transpose()?;
@@ -318,6 +350,9 @@ impl Config {
         )?;
         let audit_ingestion_test_url = get("KEYRING_TEST_AUDIT_INGESTION_URL")
             .map(|v| checked_origin("KEYRING_TEST_AUDIT_INGESTION_URL", &v))
+            .transpose()?;
+        let notify_acs_test_url = get("KEYRING_TEST_NOTIFY_ACS_URL")
+            .map(|v| checked_origin("KEYRING_TEST_NOTIFY_ACS_URL", &v))
             .transpose()?;
         let keyvault_test_base = get("KEYRING_TEST_KEYVAULT_URL")
             .map(|v| checked_origin("KEYRING_TEST_KEYVAULT_URL", &v))
@@ -390,6 +425,8 @@ impl Config {
             management_url,
             keyvault_test_base,
             audit_ingestion_test_url,
+            notify_acs_test_url,
+            notify,
             tenant_id,
             client_id,
             authority_host,
@@ -428,6 +465,9 @@ impl Config {
         if self.audit_ingestion_test_url.is_some() {
             out.push("KEYRING_TEST_AUDIT_INGESTION_URL");
         }
+        if self.notify_acs_test_url.is_some() {
+            out.push("KEYRING_TEST_NOTIFY_ACS_URL");
+        }
         out
     }
 
@@ -450,6 +490,20 @@ impl Config {
                 .audit_ingestion_test_url
                 .as_deref()
                 .is_none_or(|b| b.starts_with("https://"))
+            && self
+                .notify_acs_test_url
+                .as_deref()
+                .is_none_or(|b| b.starts_with("https://"))
+    }
+
+    /// The URL email is posted to, if email is on.
+    pub fn notify_send_url(&self) -> Option<String> {
+        let n = self.notify.as_ref()?;
+        let base = self.notify_acs_test_url.as_deref().unwrap_or(&n.endpoint);
+        Some(format!(
+            "{base}/emails:send?api-version={}",
+            crate::notify::sender::API_VERSION
+        ))
     }
 
     /// The URL the audit sink posts to, if the sink is set.
@@ -593,6 +647,138 @@ fn audit_sink(
         stream,
         tuning: crate::audit::sink::Tuning::default(),
     }))
+}
+
+/// The email settings. Off unless `KEYRING_NOTIFY_ACS_ENDPOINT` is set;
+/// then the sender is needed too, and the managed identity, which is the
+/// only thing email is ever sent with. Every other setting is refused
+/// without the endpoint, so a half-made setup can't look as if it works.
+fn notify_settings(
+    get: &impl Fn(&str) -> Option<String>,
+    has_identity: bool,
+) -> Result<Option<NotifySettings>, ConfigError> {
+    const OTHERS: [&str; 6] = [
+        "KEYRING_NOTIFY_SENDER",
+        "KEYRING_NOTIFY_ADMINS",
+        "KEYRING_NOTIFY_ALLOWED_DOMAINS",
+        "KEYRING_NOTIFY_TYPES",
+        "KEYRING_NOTIFY_AUDIT_RECIPIENTS",
+        "KEYRING_NOTIFY_RATE_PER_HOUR",
+    ];
+    let Some(endpoint) = get("KEYRING_NOTIFY_ACS_ENDPOINT") else {
+        if let Some(name) = OTHERS.into_iter().find(|n| get(n).is_some()) {
+            return Err(ConfigError::Invalid {
+                name,
+                reason: "needs KEYRING_NOTIFY_ACS_ENDPOINT too".into(),
+            });
+        }
+        return Ok(None);
+    };
+    let invalid = |name: &'static str, reason: String| ConfigError::Invalid { name, reason };
+    if !has_identity {
+        return Err(invalid(
+            "KEYRING_NOTIFY_ACS_ENDPOINT",
+            "needs KEYRING_MANAGED_IDENTITY_CLIENT_ID. Email is sent only as Keyring's managed identity, never with an access key, connection string or client secret".into(),
+        ));
+    }
+    let endpoint =
+        checked_acs_endpoint(&endpoint).map_err(|r| invalid("KEYRING_NOTIFY_ACS_ENDPOINT", r))?;
+    let sender = get("KEYRING_NOTIFY_SENDER").ok_or_else(|| {
+        invalid(
+            "KEYRING_NOTIFY_SENDER",
+            "is needed with KEYRING_NOTIFY_ACS_ENDPOINT: the DoNotReply@<domain> address of the linked domain".into(),
+        )
+    })?;
+    let sender = crate::notify::Address::parse(&sender)
+        .map_err(|r| invalid("KEYRING_NOTIFY_SENDER", r.into()))?;
+    let admins = get("KEYRING_NOTIFY_ADMINS")
+        .map(|v| crate::notify::parse_addresses(&v, crate::notify::MAX_ADMINS))
+        .transpose()
+        .map_err(|r| invalid("KEYRING_NOTIFY_ADMINS", r))?
+        .unwrap_or_default();
+    let allowed_domains = get("KEYRING_NOTIFY_ALLOWED_DOMAINS")
+        .map(|v| crate::notify::parse_domains(&v))
+        .transpose()
+        .map_err(|r| invalid("KEYRING_NOTIFY_ALLOWED_DOMAINS", r))?;
+    if let Some(list) = &allowed_domains
+        && let Some(i) = admins
+            .iter()
+            .position(|a| !list.iter().any(|d| d == a.domain()))
+    {
+        return Err(invalid(
+            "KEYRING_NOTIFY_ADMINS",
+            format!("entry {} isn't in KEYRING_NOTIFY_ALLOWED_DOMAINS", i + 1),
+        ));
+    }
+    let types = get("KEYRING_NOTIFY_TYPES")
+        .map(|v| crate::notify::parse_types(&v))
+        .transpose()
+        .map_err(|r| invalid("KEYRING_NOTIFY_TYPES", r))?
+        .unwrap_or_default();
+    let audit_recipients = match get("KEYRING_NOTIFY_AUDIT_RECIPIENTS").as_deref() {
+        None => false,
+        Some(v) => parse_bool(v).ok_or_else(|| {
+            invalid(
+                "KEYRING_NOTIFY_AUDIT_RECIPIENTS",
+                "use true or false".into(),
+            )
+        })?,
+    };
+    let per_hour = match get("KEYRING_NOTIFY_RATE_PER_HOUR") {
+        None => crate::notify::rate::DEFAULT_PER_HOUR,
+        Some(v) => v
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=MAX_NOTIFY_PER_HOUR).contains(n))
+            .ok_or_else(|| {
+                invalid(
+                    "KEYRING_NOTIFY_RATE_PER_HOUR",
+                    format!("use a whole number from 1 to {MAX_NOTIFY_PER_HOUR}"),
+                )
+            })?,
+    };
+    Ok(Some(NotifySettings {
+        endpoint,
+        sender,
+        admins,
+        allowed_domains,
+        types,
+        audit_recipients,
+        per_hour,
+        tuning: crate::notify::sender::Tuning::default(),
+    }))
+}
+
+/// Check the ACS endpoint is `https://<name>.communication.azure.com` (one
+/// label before the suffix, which is how ACS names its endpoints, with an
+/// optional region label such as `<name>.australia`), with no port, user
+/// name, path, query or fragment, and return it in normal form.
+pub fn checked_acs_endpoint(raw: &str) -> Result<String, String> {
+    let rule = "must be the Communication Services resource's endpoint, https://<resource>.<geography>.communication.azure.com, with nothing after the host";
+    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let label = host.strip_suffix(".communication.azure.com").unwrap_or("");
+    let ok_host = !label.is_empty()
+        && matches!(url.host(), Some(openidconnect::url::Host::Domain(_)))
+        && label.split('.').count() <= 2
+        && label.split('.').all(|l| {
+            (1..=63).contains(&l.len())
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    if url.scheme() != "https"
+        || !ok_host
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(rule.to_owned());
+    }
+    Ok(format!("https://{host}"))
 }
 
 /// Check `KEYRING_AUDIT_WORKSPACE_ID` is a Log Analytics workspace's ARM
@@ -1352,6 +1538,144 @@ pub(crate) mod tests {
                 .audit_sink
                 .is_some()
         );
+    }
+
+    fn with_notify(mut env: HashMap<&'static str, String>) -> HashMap<&'static str, String> {
+        env.insert(
+            "KEYRING_NOTIFY_ACS_ENDPOINT",
+            "https://keyring-mail.australia.communication.azure.com".into(),
+        );
+        env.insert(
+            "KEYRING_NOTIFY_SENDER",
+            "DoNotReply@mail.example.com".into(),
+        );
+        env
+    }
+
+    #[test]
+    fn email_is_off_unless_the_endpoint_is_set() {
+        let config = load(&new_identity_env()).unwrap();
+        assert!(config.notify.is_none());
+        assert!(config.notify_send_url().is_none());
+        for name in [
+            "KEYRING_NOTIFY_SENDER",
+            "KEYRING_NOTIFY_ADMINS",
+            "KEYRING_NOTIFY_ALLOWED_DOMAINS",
+            "KEYRING_NOTIFY_TYPES",
+            "KEYRING_NOTIFY_AUDIT_RECIPIENTS",
+            "KEYRING_NOTIFY_RATE_PER_HOUR",
+        ] {
+            let mut env = new_identity_env();
+            env.insert(name, "x".into());
+            assert_eq!(invalid(&env), name);
+        }
+    }
+
+    #[test]
+    fn email_loads_with_its_defaults() {
+        let config = load(&with_notify(new_identity_env())).unwrap();
+        let n = config.notify.as_ref().unwrap();
+        assert_eq!(
+            n.endpoint,
+            "https://keyring-mail.australia.communication.azure.com"
+        );
+        assert_eq!(n.sender.as_str(), "DoNotReply@mail.example.com");
+        assert!(n.types.is_empty(), "no type is on by default");
+        assert!(n.admins.is_empty());
+        assert!(n.allowed_domains.is_none());
+        assert!(!n.audit_recipients);
+        assert_eq!(n.per_hour, 20);
+        assert_eq!(
+            config.notify_send_url().unwrap(),
+            "https://keyring-mail.australia.communication.azure.com/emails:send?api-version=2025-09-01"
+        );
+    }
+
+    #[test]
+    fn email_needs_the_managed_identity() {
+        // A client secret alone is refused: email is only sent as the identity.
+        let env = with_notify(sample_env());
+        match load(&env) {
+            Err(ConfigError::Invalid { name, reason }) => {
+                assert_eq!(name, "KEYRING_NOTIFY_ACS_ENDPOINT");
+                assert!(reason.contains("KEYRING_MANAGED_IDENTITY_CLIENT_ID"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn email_settings_are_checked() {
+        let mut env = with_notify(new_identity_env());
+        env.remove("KEYRING_NOTIFY_SENDER");
+        assert_eq!(invalid(&env), "KEYRING_NOTIFY_SENDER");
+        for bad in [
+            "http://keyring-mail.communication.azure.com",
+            "https://keyring-mail.communication.azure.com:8443",
+            "https://keyring-mail.communication.azure.com/emails",
+            "https://keyring-mail.communication.azure.com?x=1",
+            "https://user@keyring-mail.communication.azure.com",
+            "https://communication.azure.com",
+            "https://keyring-mail.communication.azure.com.evil.com",
+            "https://evil.com/keyring-mail.communication.azure.com",
+            "https://keyring-mail.email.azure.com",
+            "https://a.b.c.communication.azure.com",
+            "https://-x.communication.azure.com",
+            "keyring-mail.communication.azure.com",
+        ] {
+            let mut env = with_notify(new_identity_env());
+            env.insert("KEYRING_NOTIFY_ACS_ENDPOINT", bad.into());
+            assert_eq!(invalid(&env), "KEYRING_NOTIFY_ACS_ENDPOINT", "{bad}");
+        }
+        // `:443` spelled out is the same endpoint (the URL parser drops the
+        // default port), so it is accepted and written without it.
+        let mut env = with_notify(new_identity_env());
+        env.insert(
+            "KEYRING_NOTIFY_ACS_ENDPOINT",
+            "https://Keyring-Mail.communication.azure.com:443/".into(),
+        );
+        assert_eq!(
+            load(&env).unwrap().notify.unwrap().endpoint,
+            "https://keyring-mail.communication.azure.com"
+        );
+        for (name, bad) in [
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "Keyring <DoNotReply@mail.example.com>",
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com\r\nBcc: x@y.com",
+            ),
+            ("KEYRING_NOTIFY_SENDER", "a@x.com,b@x.com"),
+            ("KEYRING_NOTIFY_ADMINS", "ops@example.com, not an address"),
+            ("KEYRING_NOTIFY_ADMINS", "ops@example.com,,x@example.com"),
+            ("KEYRING_NOTIFY_ALLOWED_DOMAINS", "example.com, *.evil.com"),
+            ("KEYRING_NOTIFY_TYPES", "expiry, everything"),
+            ("KEYRING_NOTIFY_AUDIT_RECIPIENTS", "maybe"),
+            ("KEYRING_NOTIFY_RATE_PER_HOUR", "0"),
+            ("KEYRING_NOTIFY_RATE_PER_HOUR", "1001"),
+            ("KEYRING_NOTIFY_RATE_PER_HOUR", "ten"),
+        ] {
+            let mut env = with_notify(new_identity_env());
+            env.insert(name, bad.into());
+            assert_eq!(invalid(&env), name, "{bad}");
+        }
+        // Admins must be inside the allow-list when there is one.
+        let mut env = with_notify(new_identity_env());
+        env.insert("KEYRING_NOTIFY_ALLOWED_DOMAINS", "example.com".into());
+        env.insert(
+            "KEYRING_NOTIFY_ADMINS",
+            "ops@example.com,ops@other.com".into(),
+        );
+        assert_eq!(invalid(&env), "KEYRING_NOTIFY_ADMINS");
+        env.insert("KEYRING_NOTIFY_ADMINS", "ops@Example.com".into());
+        env.insert("KEYRING_NOTIFY_TYPES", "expiry,health".into());
+        env.insert("KEYRING_NOTIFY_RATE_PER_HOUR", "5".into());
+        let n = load(&env).unwrap().notify.unwrap();
+        assert_eq!(n.admins.len(), 1);
+        assert_eq!(n.types.len(), 2);
+        assert_eq!(n.per_hour, 5);
     }
 
     #[test]

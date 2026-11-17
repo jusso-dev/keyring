@@ -143,6 +143,9 @@ pub const COLUMNS: &[Column] = &[
     col("Role", "string", "role"),
     col("RoleScope", "string", "role_scope"),
     col("RoleDuration", "string", "role_duration"),
+    col("NotifyType", "string", "notify_type"),
+    col("NotifyRecipientCount", "int", "notify_recipient_count"),
+    col("NotifyRecipients", "string", "notify_recipients"),
     col("WriterIdentityClientId", "string", WRITER),
     col("KeyringInstance", "string", "instance"),
     col("KeyringVersion", "string", "keyring_version"),
@@ -174,6 +177,9 @@ fn value(ev: &AuditEvent, field: &str, writer: &str) -> Option<Value> {
         "role" => s(&ev.role),
         "role_scope" => s(&ev.role_scope),
         "role_duration" => s(&ev.role_duration),
+        "notify_type" => ev.notify_type.map(Value::from),
+        "notify_recipient_count" => ev.notify_recipient_count.map(Value::from),
+        "notify_recipients" => s(&ev.notify_recipients),
         "instance" => Some(instance().into()),
         "keyring_version" => Some(KEYRING_VERSION.into()),
         WRITER => Some(writer.into()),
@@ -607,9 +613,12 @@ mod tests {
             &mut ev.role,
             &mut ev.role_scope,
             &mut ev.role_duration,
+            &mut ev.notify_recipients,
         ] {
             *f = Some("x".into());
         }
+        ev.notify_type = Some("expiry");
+        ev.notify_recipient_count = Some(1);
         ev
     }
 

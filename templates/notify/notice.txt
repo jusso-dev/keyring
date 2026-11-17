@@ -1,0 +1,19 @@
+{{ n.heading }}
+{% for l in n.lines %}
+{{ l }}
+{%- endfor %}
+{% if let Some(i) = item %}
+Item: {{ i.kind().as_str() }} {{ i.name() }}
+Vault: {{ i.vault() }}
+{%- endif %}
+{%- if let Some(a) = n.actor %}
+By: {{ a }}
+{%- endif %}
+{%- if let Some(w) = n.when %}
+When: {{ w }}
+{%- endif %}
+{% if let Some(l) = link %}
+Open it in Keyring: {{ l }}
+{% endif %}
+--
+Sent by Keyring ({{ kind }} notices). Keyring never puts a secret value in an email.

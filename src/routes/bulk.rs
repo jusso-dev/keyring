@@ -97,8 +97,9 @@ fn read_need(kind: Kind) -> Need {
     }
 }
 
-/// One change, the same for every item.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One change, the same for every item. `Debug` is written by hand so a
+/// description never prints.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Op {
     SetTag(String, String),
     RemoveTag(String),
@@ -109,6 +110,21 @@ pub(crate) enum Op {
     Expiry(Timestamp),
     Enable,
     Disable,
+}
+
+impl std::fmt::Debug for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SetTag(k, v) => f.debug_tuple("SetTag").field(k).field(v).finish(),
+            Self::RemoveTag(k) => f.debug_tuple("RemoveTag").field(k).finish(),
+            // The note may hold sensitive context: never printed.
+            Self::SetNote(_) => f.write_str("SetNote(..)"),
+            Self::RemoveNote => f.write_str("RemoveNote"),
+            Self::Expiry(e) => f.debug_tuple("Expiry").field(e).finish(),
+            Self::Enable => f.write_str("Enable"),
+            Self::Disable => f.write_str("Disable"),
+        }
+    }
 }
 
 impl Op {
@@ -128,7 +144,9 @@ impl Op {
 
 /// What the forms post. The names come as repeated `item` fields, which
 /// `serde_urlencoded` can't read into a list, so the body is read by hand.
-#[derive(Debug, Default)]
+/// `Debug` shows the change and how many items, never the form token, a
+/// tag value or the description.
+#[derive(Default)]
 struct Posted {
     csrf: String,
     items: Vec<String>,
@@ -138,6 +156,15 @@ struct Posted {
     description: String,
     expires: String,
     confirm_count: String,
+}
+
+impl std::fmt::Debug for Posted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Posted")
+            .field("op", &self.op)
+            .field("items", &self.items.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Posted {
@@ -938,6 +965,23 @@ mod tests {
             Plan::Change(_, b) => b,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn debug_hides_the_description() {
+        let op = Op::SetNote("TOPSECRETNOTE".into());
+        assert_eq!(format!("{op:?}"), "SetNote(..)");
+        let p =
+            Posted::parse(b"op=description_set&description=TOPSECRETNOTE&item=a&item=b&csrf=TOKEN");
+        let shown = format!("{p:?}");
+        assert!(
+            !shown.contains("TOPSECRETNOTE") && !shown.contains("TOKEN"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("description_set") && shown.contains("items: 2"),
+            "{shown}"
+        );
     }
 
     #[test]

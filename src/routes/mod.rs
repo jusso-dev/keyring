@@ -395,6 +395,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let public = Router::new()
         .route("/healthz", get(health::healthz))
         .route("/healthz/audit", get(health::audit))
+        .route("/healthz/notify", get(health::notify))
         .route("/static/{file}", get(assets::serve))
         .route("/favicon.ico", get(assets::favicon))
         .route("/auth/sign-in", get(auth::sign_in))
