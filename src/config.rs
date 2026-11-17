@@ -34,6 +34,9 @@ pub struct Config {
     pub audit_workspace_id: Option<String>,
     /// Email notifications through Azure Communication Services, if on.
     pub notify: Option<NotifySettings>,
+    /// `KEYRING_CLIENT_SECRET_EXPIRES`: when `ENTRA_CLIENT_SECRET` expires,
+    /// as Unix seconds at midnight UTC. Only with a client secret.
+    pub client_secret_expires: Option<i64>,
     /// Set from `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` alone.
     legacy_identity_setting: bool,
     /// Public base URL with no trailing slash, for example `https://keyring.example.com`.
@@ -133,8 +136,13 @@ pub struct NotifySettings {
     /// `KEYRING_NOTIFY_RATE_PER_HOUR`: emails an hour to one recipient for
     /// one type.
     pub per_hour: u32,
+    /// `KEYRING_NOTIFY_BURST_THRESHOLD`: more refused or denied events
+    /// than this from one person or IP in 15 minutes is a burst.
+    pub burst_threshold: u32,
     /// Queue and retry timings. Always the defaults outside tests.
     pub tuning: crate::notify::sender::Tuning,
+    /// Health check timings. Always the defaults outside tests.
+    pub health_tuning: crate::notify::health::Tuning,
 }
 
 /// Largest `KEYRING_NOTIFY_RATE_PER_HOUR`.
@@ -297,6 +305,24 @@ impl Config {
 
         let notify = notify_settings(&get, managed_identity.is_some())?;
 
+        let client_secret_expires = match get("KEYRING_CLIENT_SECRET_EXPIRES") {
+            None => None,
+            Some(_) if !matches!(credential, ClientCredential::Secret(_)) => {
+                return Err(ConfigError::Invalid {
+                    name: "KEYRING_CLIENT_SECRET_EXPIRES",
+                    reason: "is only for ENTRA_CLIENT_SECRET, which isn't set: Keyring signs in with its managed identity, which has no secret to expire. Remove the setting".into(),
+                });
+            }
+            Some(v) => Some(crate::dates::parse_iso_date(&v).ok_or_else(|| {
+                ConfigError::Invalid {
+                    name: "KEYRING_CLIENT_SECRET_EXPIRES",
+                    reason:
+                        "expected the client secret's expiry date as YYYY-MM-DD, such as 2027-05-17"
+                            .into(),
+                }
+            })?),
+        };
+
         let audit_workspace_id = get("KEYRING_AUDIT_WORKSPACE_ID")
             .map(|v| checked_workspace_id(&v))
             .transpose()?;
@@ -440,6 +466,7 @@ impl Config {
             audit_ingestion_test_url,
             notify_acs_test_url,
             notify,
+            client_secret_expires,
             tenant_id,
             client_id,
             authority_host,
@@ -670,7 +697,8 @@ fn notify_settings(
     get: &impl Fn(&str) -> Option<String>,
     has_identity: bool,
 ) -> Result<Option<NotifySettings>, ConfigError> {
-    const OTHERS: [&str; 6] = [
+    const OTHERS: [&str; 7] = [
+        "KEYRING_NOTIFY_BURST_THRESHOLD",
         "KEYRING_NOTIFY_SENDER",
         "KEYRING_NOTIFY_ADMINS",
         "KEYRING_NOTIFY_ALLOWED_DOMAINS",
@@ -750,6 +778,22 @@ fn notify_settings(
                 )
             })?,
     };
+    let burst_threshold = match get("KEYRING_NOTIFY_BURST_THRESHOLD") {
+        None => crate::notify::health::DEFAULT_BURST_THRESHOLD,
+        Some(v) => v
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=crate::notify::health::MAX_BURST_THRESHOLD).contains(n))
+            .ok_or_else(|| {
+                invalid(
+                    "KEYRING_NOTIFY_BURST_THRESHOLD",
+                    format!(
+                        "use a whole number from 1 to {}",
+                        crate::notify::health::MAX_BURST_THRESHOLD
+                    ),
+                )
+            })?,
+    };
     Ok(Some(NotifySettings {
         endpoint,
         sender,
@@ -758,7 +802,9 @@ fn notify_settings(
         types,
         audit_recipients,
         per_hour,
+        burst_threshold,
         tuning: crate::notify::sender::Tuning::default(),
+        health_tuning: crate::notify::health::Tuning::default(),
     }))
 }
 
@@ -1603,6 +1649,73 @@ pub(crate) mod tests {
             "DoNotReply@mail.example.com".into(),
         );
         env
+    }
+
+    #[test]
+    fn the_burst_threshold_defaults_to_20_and_is_checked() {
+        let n = load(&with_notify(new_identity_env()))
+            .unwrap()
+            .notify
+            .unwrap();
+        assert_eq!(n.burst_threshold, 20);
+        let mut env = with_notify(new_identity_env());
+        env.insert("KEYRING_NOTIFY_BURST_THRESHOLD", "5".into());
+        assert_eq!(load(&env).unwrap().notify.unwrap().burst_threshold, 5);
+        for bad in ["0", "1001", "-1", "ten", "2.5"] {
+            env.insert("KEYRING_NOTIFY_BURST_THRESHOLD", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_NOTIFY_BURST_THRESHOLD",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+        // Without email, it is refused rather than ignored.
+        let mut env = new_identity_env();
+        env.insert("KEYRING_NOTIFY_BURST_THRESHOLD", "5".into());
+        assert!(load(&env).is_err());
+    }
+
+    #[test]
+    fn the_client_secret_expiry_is_a_date_and_needs_a_client_secret() {
+        let mut env = sample_env();
+        assert_eq!(load(&env).unwrap().client_secret_expires, None);
+        env.insert("KEYRING_CLIENT_SECRET_EXPIRES", "2027-05-17".into());
+        assert_eq!(
+            load(&env).unwrap().client_secret_expires,
+            crate::dates::parse_iso_date("2027-05-17")
+        );
+        for bad in [
+            "17-05-2027",
+            "2027-02-30",
+            "2027-05",
+            "soon",
+            "2027-05-17T00:00Z",
+        ] {
+            env.insert("KEYRING_CLIENT_SECRET_EXPIRES", bad.into());
+            let err = load(&env).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::Invalid {
+                        name: "KEYRING_CLIENT_SECRET_EXPIRES",
+                        ..
+                    }
+                ),
+                "{bad}"
+            );
+            assert!(err.to_string().contains("YYYY-MM-DD"), "{err}");
+        }
+        // With the managed identity as the credential there is no secret:
+        // refused, so a stale setting can't look as if it means something.
+        let mut env = new_identity_env();
+        env.insert("KEYRING_CLIENT_SECRET_EXPIRES", "2027-05-17".into());
+        let err = load(&env).unwrap_err();
+        assert!(err.to_string().contains("managed identity"), "{err}");
     }
 
     #[test]

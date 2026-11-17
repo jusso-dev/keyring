@@ -446,10 +446,27 @@ fn opt(v: &Option<String>) -> Option<tracing::field::DisplayValue<&str>> {
     v.as_deref().map(tracing::field::display)
 }
 
+/// Something that watches audit events as they are recorded, in memory,
+/// such as the health watcher's refusal count. Called after the event is
+/// written, with the event only. It must return at once: no network, no
+/// await, no lock held for longer than a few map operations. A panic in
+/// it is caught, so it can never fail [`record_to`].
+pub trait Observe: Send + Sync + std::fmt::Debug {
+    fn observe(&self, ev: &AuditEvent);
+}
+
 /// Write one audit event to standard output and, with the audit sink set,
-/// queue it for Log Analytics. The only way an event is written. The actor
-/// is already on the event, from the verified session.
+/// queue it for Log Analytics. The actor is already on the event, from the
+/// verified session. Not observed: for events Keyring writes about itself
+/// (session expiry, email), which must never count as something a person
+/// did. Requests use [`record_to`].
 pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
+    record_to(ev, sink, None);
+}
+
+/// [`record`], then hand the event to `observer`, if any. The only way an
+/// event is written.
+pub fn record_to(ev: AuditEvent, sink: Option<&sink::AuditSink>, observer: Option<&dyn Observe>) {
     // Fields from Keyring or checked on the way in are written as they are.
     // The user agent, UPN, reason and ticket are written as plain strings,
     // which the text format quotes and escapes and JSON escapes, so a
@@ -492,6 +509,10 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
     if let Some(sink) = sink {
         sink.enqueue(&ev);
     }
+    if let Some(o) = observer {
+        // Never let an observer fail the request that wrote the event.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| o.observe(&ev)));
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -521,6 +542,8 @@ struct Draft {
     role: Option<String>,
     role_scope: Option<String>,
     role_duration: Option<String>,
+    /// Watches the request's events, when the health watcher is on.
+    observer: Option<Arc<dyn Observe>>,
 }
 
 tokio::task_local! {
@@ -686,6 +709,8 @@ pub struct ItemEvents {
     ticket: Option<String>,
     /// The audit sink, so each item's event is sent as the request's is.
     sink: Option<Arc<sink::AuditSink>>,
+    /// The request's observer, so each item's event is watched too.
+    observer: Option<Arc<dyn Observe>>,
 }
 
 impl ItemEvents {
@@ -704,6 +729,7 @@ impl ItemEvents {
             vault: None,
             reason: None,
             ticket: None,
+            observer: None,
         };
         note(|d| {
             me.actor_oid.clone_from(&d.actor_oid);
@@ -715,6 +741,7 @@ impl ItemEvents {
             me.vault.clone_from(&d.vault);
             me.reason.clone_from(&d.reason);
             me.ticket.clone_from(&d.ticket);
+            me.observer.clone_from(&d.observer);
         });
         me
     }
@@ -749,6 +776,7 @@ impl ItemEvents {
             reason: self.reason.clone(),
             ticket: self.ticket.clone(),
             item_name: Some(item.to_owned()),
+            observer: self.observer.clone(),
             ..Draft::default()
         }));
         let mut pending = Pending {
@@ -759,6 +787,7 @@ impl ItemEvents {
         let res = CTX.scope(draft.clone(), work).await;
         pending.done = true;
         let mut d = std::mem::take(&mut *lock(&draft));
+        let observer = d.observer.take();
         let status = if res.is_ok() {
             axum::http::StatusCode::OK
         } else {
@@ -768,7 +797,7 @@ impl ItemEvents {
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         };
         if let Some(ev) = finish(d, status) {
-            record(ev, self.sink.as_deref());
+            record_to(ev, self.sink.as_deref(), observer.as_deref());
         }
         res
     }
@@ -786,6 +815,7 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
         client_ip: client_ip(req.headers(), peer, state.config.trusted_proxy_hops)
             .map(|ip| ip.to_string()),
         user_agent: user_agent(req.headers()),
+        observer: state.audit_observer(),
         ..Draft::default()
     };
     let draft = Arc::new(Mutex::new(draft));
@@ -796,9 +826,10 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     };
     let res = CTX.scope(draft.clone(), next.run(req)).await;
     pending.done = true;
-    let d = std::mem::take(&mut *lock(&draft));
+    let mut d = std::mem::take(&mut *lock(&draft));
+    let observer = d.observer.take();
     if let Some(ev) = finish(d, res.status()) {
-        record(ev, state.audit_sink.as_deref());
+        record_to(ev, state.audit_sink.as_deref(), observer.as_deref());
     }
     res
 }
@@ -817,9 +848,10 @@ impl Drop for Pending {
         if self.done {
             return;
         }
-        let d = std::mem::take(&mut *lock(&self.draft));
+        let mut d = std::mem::take(&mut *lock(&self.draft));
+        let observer = d.observer.take();
         if let Some(ev) = finish_cancelled(d) {
-            record(ev, self.sink.as_deref());
+            record_to(ev, self.sink.as_deref(), observer.as_deref());
         }
     }
 }
