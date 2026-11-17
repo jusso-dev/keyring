@@ -140,6 +140,7 @@ impl AppState {
             .map(|n| {
                 Arc::new(ExpiryHook::new(
                     config.eventgrid_expect(),
+                    n.eventgrid_subscriptions.clone(),
                     n.hook_tuning,
                     config.base_url.clone(),
                 ))
