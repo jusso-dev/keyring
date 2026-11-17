@@ -254,11 +254,13 @@ What changes the version: adding an optional field, one that is left out of the 
 | `keyring_version` | Keyring's version |
 | `instance` | A random ID for this run of Keyring |
 
-Actions: `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `secret.import`, `secret.bulk_update`, `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `certificate.bulk_update`, `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.delete`, `key.recover`, `key.purge`, `key.bulk_update`, `role.activate` and `role.deactivate` (a PIM role turned on or off from Keyring, see the README's role table), `session.sign_in`, `session.sign_in_failed`, `session.sign_out`, `session.expired`, and `request.refused` for a form post refused before Keyring knew what it was for (a cross-site post, or one with no session).
+Actions: `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `secret.import`, `secret.bulk_update`, `secret.copy.read`, `secret.copy.write`, `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `certificate.bulk_update`, `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.delete`, `key.recover`, `key.purge`, `key.bulk_update`, `role.activate` and `role.deactivate` (a PIM role turned on or off from Keyring, see the README's role table), `session.sign_in`, `session.sign_in_failed`, `session.sign_out`, `session.expired`, and `request.refused` for a form post refused before Keyring knew what it was for (a cross-site post, or one with no session).
 
 `secret.import` is written once for the import request, and once more for each secret it writes, with that secret's `item_name` and its own outcome.
 
 `secret.bulk_update`, `certificate.bulk_update` and `key.bulk_update` work the same way: one event for the request (`success`, or `failed` or `denied` with `partly_changed` or `none_changed`), and one for each item Keyring reached Key Vault for, with its `item_name` and its own outcome. An item already as asked is `success` with `no_change`; a certificate's backing secret or key is `refused` with `managed_item`; an item already at 15 tags is `refused` with `tag_limit`. The review page before it writes none.
+
+A copy to another vault writes two events. `secret.copy.read` is the request's own, on the source vault and name, with the version read: `success` once the value was read, even if the write then failed. `secret.copy.write` is on the target vault and name, with the new version, or `denied` or `failed` with Key Vault's code. A refusal before the read (form token, step-up, reason, `audit_unavailable`, a target vault you can't see, a deleted target name) is a `secret.copy.read` event only, and nothing reached Key Vault. The reason and ticket go on both.
 
 `session.sign_in_failed` has no `actor_*` fields: Keyring only believes who someone is once the ID token has passed every check. Entra's own sign-in log has the rest. `session.expired` is written when Keyring finds or sweeps an expired session, up to a minute after it ran out.
 
@@ -408,7 +410,7 @@ Key Vault's own diagnostic logs (what the audit view reads) are separate and rec
 
 ## Step-up before sensitive actions
 
-Keyring can ask for a stronger or more recent sign-in before it reveals a secret value, downloads a certificate with its private key, rolls a secret back or purges anything. The person sees "Your organisation asks you to confirm it's you before showing values.", signs in with Microsoft again, and comes back to the same confirmation step. Nothing runs until they confirm again.
+Keyring can ask for a stronger or more recent sign-in before it reveals a secret value, downloads a certificate with its private key, rolls a secret back, copies a secret to another vault or purges anything. The person sees "Your organisation asks you to confirm it's you before showing values.", signs in with Microsoft again, and comes back to the same confirmation step. Nothing runs until they confirm again.
 
 Two optional settings, which can be used alone or together. With neither, nothing changes.
 
@@ -444,7 +446,7 @@ Not yet confirmed on a real tenant: whether Entra puts `acrs` in the ID token (w
 
 Keyring can ask for a reason, and optionally a ticket reference, before it shows a value or changes anything. The reason and ticket go on the action's audit event, so the log says why as well as who.
 
-- `requireReason` (`KEYRING_REQUIRE_REASON`): `off` (the default), `reveal` (before a secret value is shown or a certificate is downloaded with its private key), or `all` (those, and every create, change, enable or disable, rotation, rollback, delete, recover and purge).
+- `requireReason` (`KEYRING_REQUIRE_REASON`): `off` (the default), `reveal` (before a secret value is shown, copied to another vault, or a certificate is downloaded with its private key), or `all` (those, and every create, change, enable or disable, rotation, rollback, delete, recover and purge).
 - `reasonTicketPattern` (`KEYRING_REASON_TICKET_PATTERN`): a regular expression the ticket must match, such as `(INC|CHG)[0-9]{7}`. It is always matched against the whole ticket (Keyring wraps it in `^(?:...)$`), and the ticket is at most 64 characters. Keyring only checks the shape. It doesn't call any ticket system. Leave it unset to ask for a reason only. Setting it while `requireReason` is `off` stops Keyring at start.
 
 A bad value (`on`, `reveals`, a pattern that doesn't compile, or one over 200 characters or with large counted repeats) stops Keyring at start rather than turning the check off.

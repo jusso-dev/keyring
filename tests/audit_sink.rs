@@ -578,6 +578,23 @@ async fn audit_required_refuses_a_reveal_while_degraded() {
         .await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
 
+    // A copy to another vault reads a value too: refused, nothing read.
+    let calls = w.kv.state.log.lock().unwrap().len();
+    let res = w
+        .post(
+            "/v/kv-test/secrets/db-password/copy",
+            &[("to_vault", "kv-test"), ("to_name", "db-copy")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!support::body_text(res).await.contains("Sup3r-value"));
+    assert_eq!(
+        w.kv.state.log.lock().unwrap().len(),
+        calls,
+        "no Key Vault call"
+    );
+    assert!(w.kv.state.current("db-copy").is_none());
+
     // Recovered: allowed again.
     *ingest.state.always.lock().unwrap() = None;
     until("recovered", || !sink.degraded()).await;
@@ -595,7 +612,8 @@ async fn audit_required_refuses_a_reveal_while_degraded() {
         .into_iter()
         .filter(|r| r["ReasonCode"] == "audit_unavailable")
         .collect();
-    assert_eq!(refused.len(), 2, "both refusals recorded once it recovered");
+    assert_eq!(refused.len(), 3, "every refusal recorded once it recovered");
+    assert!(refused.iter().any(|r| r["Action"] == "secret.copy.read"));
     assert_eq!(refused[0]["Outcome"], "refused");
     assert!(ingest.state.violations().is_empty());
 }
