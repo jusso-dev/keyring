@@ -8,9 +8,11 @@
 //! 3. The bearer token, checked by [`crate::auth::eventgrid`] with no body
 //!    read. A token that fails takes one from the unauthenticated counter
 //!    ([`HookTuning::unauth_per_minute`]): under it, 401 with no body and
-//!    an audit event; over it, 429 with no audit event and no line of its
-//!    own (one `warn` line a window gives how many were dropped). Either
-//!    way the authenticated budget is untouched.
+//!    an audit event; over it, 429 with no audit event (a `warn` line,
+//!    written by the first bad token of a later window, gives how many
+//!    were dropped; the request log still has its one line per request,
+//!    as on every route). Either way the authenticated budget is
+//!    untouched.
 //! 4. 429 past the authenticated budget ([`HookTuning::per_minute`]),
 //!    taken only by deliveries whose token passed.
 //! 5. 415 unless `Content-Type` is `application/json`.
@@ -125,7 +127,7 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
     };
     if let Err(why) = checked {
         // Its own counter, so a flood of bad tokens can't use up Event
-        // Grid's budget. Over it: no audit event, no line.
+        // Grid's budget. Over it: no audit event.
         if hook.take_unauth() == Unauth::Dropped {
             return status(StatusCode::TOO_MANY_REQUESTS);
         }

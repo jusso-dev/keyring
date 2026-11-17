@@ -722,6 +722,12 @@ async fn values_never_reach_the_logs() {
         ev["subject"] = serde_json::json!("BODYLEAK subject https://evil.example/");
         ev["data"]["Id"] = serde_json::json!("https://evil.example/BODYLEAK");
         ev["data"]["Extra"] = serde_json::json!("BODYLEAK extra");
+        // A topic that passes the check and still carries a canary (in the
+        // resource group), so the delivery that is sent shows nothing
+        // from `topic` reaches a line or an email either.
+        ev["topic"] = serde_json::json!(
+            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/TOPICLEAK-rg/providers/Microsoft.KeyVault/vaults/kv-test"
+        );
         let body = serde_json::json!([ev]).to_string();
         let res = we
             .app

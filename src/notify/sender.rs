@@ -308,8 +308,9 @@ impl Notifier {
     /// Recipients outside `KEYRING_NOTIFY_ALLOWED_DOMAINS` or over their
     /// rate limit are left out; the rest get one email together, and that
     /// counts as queued. With nobody left, [`Enqueued::RateLimited`] when
-    /// the rate limit alone left everyone out, otherwise
-    /// [`Enqueued::NoRecipients`].
+    /// the rate limit left out at least one recipient who could otherwise
+    /// be sent to, otherwise [`Enqueued::NoRecipients`] (nobody given, or
+    /// nobody allowed).
     pub fn enqueue<B: EmailBody>(&self, n: Notification<B>) -> Enqueued {
         if !self.is_on(n.kind) {
             return Enqueued::Off;
@@ -351,7 +352,9 @@ impl Notifier {
             }
         };
         let mut to: Vec<Address> = Vec::new();
-        let mut refused = false;
+        // Was anyone left out only by the rate limit? Then a later try can
+        // reach them, whoever else can never be sent to.
+        let mut limited = false;
         for a in n.to {
             // One mailbox once, however its address is written.
             let key = a.mailbox_key();
@@ -360,11 +363,11 @@ impl Notifier {
             }
             if !self.allowed(&a) || to.len() >= MAX_RECIPIENTS {
                 self.counts.not_allowed.fetch_add(1, Ordering::Relaxed);
-                refused = true;
                 continue;
             }
             if !self.rate.allow(n.kind, &a) {
                 self.counts.rate_limited.fetch_add(1, Ordering::Relaxed);
+                limited = true;
                 continue;
             }
             to.push(a);
@@ -374,11 +377,12 @@ impl Notifier {
                 kind = n.kind.as_str(),
                 "notify: no recipient left after the allow-list and rate limit"
             );
-            // Only the rate limit stood in the way: a later try can send.
-            return if refused {
-                Enqueued::NoRecipients
-            } else {
+            // Someone was over their limit: a later try can reach them.
+            // Nobody given, or nobody allowed: a retry changes nothing.
+            return if limited {
                 Enqueued::RateLimited
+            } else {
+                Enqueued::NoRecipients
             };
         }
         let body = json!({

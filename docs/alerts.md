@@ -164,7 +164,7 @@ Every delivery, before anything in its body is read:
 | `aud` is exactly `KEYRING_EVENTGRID_AUDIENCE`, or `api://<ENTRA_CLIENT_ID>` when that's unset. Set the template's `entraAudience` to the same | 401 |
 | `exp` and `nbf`, with a minute's leeway | 401 |
 | `appid` (v1) or `azp` (v2) is Event Grid's application, and `roles` has `AzureEventGridSecureWebhookSubscriber`. No `scp` (a person's token) | 401 |
-| A request whose token failed takes one from its own counter, 60 a minute. Under it: 401 and an audit event. Over it: 429, with no audit event and no log line of its own; one `warn` line when the next minute starts says how many were dropped. Bad tokens never touch Event Grid's budget below | 401, or 429 over the counter |
+| A request whose token failed takes one from its own counter, 60 a minute. Under it: 401 and an audit event. Over it: 429 with no audit event; a `warn` line, written by the first bad token of a later minute, says how many were dropped. As on every route, each request still gets one line in the request log (method, path and status only). Bad tokens never touch Event Grid's budget below | 401, or 429 over the counter |
 | At most 120 deliveries a minute whose token passed | 429 |
 | `Content-Type: application/json`, POST only, at most 1 MB (refused before it is read) | 415, 405, 413 |
 
@@ -179,7 +179,7 @@ The subscription's validation handshake is answered only with a valid token, and
 - `keyringRecipients` in the template becomes the subscription's `keyring-notify` delivery header. Keyring uses it **only when `KEYRING_NOTIFY_ALLOWED_DOMAINS` is set**, takes at most 10 addresses, parses each strictly and drops any outside the allowed domains. A malformed header refuses the delivery with 400.
 - Otherwise, or with no header, the email goes to `KEYRING_NOTIFY_ADMINS`.
 
-Without an allow-list, whoever can change an Event Grid subscription could send Keyring's expiry notices anywhere, so the header is ignored. Each address is still held to `KEYRING_NOTIFY_RATE_PER_HOUR` (default 20 an hour per address). When every recipient of an event is over it, the delivery is answered 503 and the event isn't remembered, so Event Grid sends it again later (its 24 hours of retries cover the one-hour window). When some recipients are over it and others aren't, the email goes to those under it and counts as sent: it isn't retried, or they would get it twice, so the others miss that one.
+Without an allow-list, whoever can change an Event Grid subscription could send Keyring's expiry notices anywhere, so the header is ignored. Each address is still held to `KEYRING_NOTIFY_RATE_PER_HOUR` (default 20 an hour per address). When nobody can be sent an event and at least one allowed recipient is over it, the delivery is answered 503 and the event isn't remembered, so Event Grid sends it again later (its 24 hours of retries cover the one-hour window for one event; if far more items expire together than the limit allows in a day, the rest are dead-lettered, so raise the setting). With no admins and no usable header there is nobody to send to: the delivery is answered 200 and nothing is sent, and Keyring warns about that at start. When some recipients are over it and others aren't, the email goes to those under it and counts as sent: it isn't retried, or they would get it twice, so the others miss that one.
 
 An item's `owner` and `notify` tags can't be used here: reading them needs vault access, which Keyring's identity doesn't have and won't be given. A daily digest, read as a signed-in person, is a possible later option for per-item recipients.
 
@@ -191,7 +191,7 @@ Keyring remembers each item, version and event type it has sent for 24 hours, in
 | --- | --- | --- |
 | 200 | Every event queued, already sent, or with no allowed recipient | Done |
 | 400 | Anything malformed, or an event whose `topic` isn't its Key Vault | Dead-letters it, if a container is set |
-| 401 | A token check failed | Retries, then dead-letters |
+| 401 | A token check failed | Not retried for a webhook: dead-letters it if a container is set, otherwise drops it. So a wrong audience or a missing role loses events until it is fixed |
 | 404 | Email off, or `expiry` not in `KEYRING_NOTIFY_TYPES` | Retries, then dead-letters |
 | 429 | Over the 120 a minute for good tokens, or over the 60 a minute for bad ones | Retries later |
 | 503 | Keyring's email queue (1,000) or the repeat map is full, or every recipient is over `KEYRING_NOTIFY_RATE_PER_HOUR` | Retries later. Events already queued are remembered, so the retry sends only the rest |

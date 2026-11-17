@@ -29,9 +29,10 @@
 //!   passed takes from [`HookTuning::per_minute`]; one whose token failed
 //!   takes from [`HookTuning::unauth_per_minute`] instead, so a flood of
 //!   bad tokens can't use up Event Grid's budget. Over the unauthenticated
-//!   counter, a request is answered 429 with no audit event and no log
-//!   line of its own; how many were dropped is logged once, in one `warn`
-//!   line, when the next window starts.
+//!   counter, a request is answered 429 with no audit event; how many
+//!   were dropped is logged in one `warn` line by the first bad token of
+//!   a later window. The request log still has one line per request, as
+//!   on every route.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -443,7 +444,7 @@ fn key(e: &ExpiryEvent) -> DedupeKey {
 pub enum Unauth {
     /// Under the limit: answer 401 and audit it.
     Counted,
-    /// Over the limit: answer 429, write no audit event and no line.
+    /// Over the limit: answer 429 and write no audit event.
     Dropped,
 }
 
