@@ -12,6 +12,7 @@ use crate::dates;
 use crate::routes::forms::{FieldError, FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
 use crate::secret::Secret;
+use crate::secret_types::{ContentKind, SecretType, TypedValue, classify};
 
 /// Most tags Key Vault allows on one secret.
 pub(crate) const MAX_TAGS: usize = 15;
@@ -53,6 +54,92 @@ pub(crate) struct SecretForm {
     /// Edit form only: that version's `updated` time, in Unix seconds.
     #[serde(default)]
     pub updated: String,
+    /// Create form only: `login`, `database`, `api-key`, `ssh-key`, or
+    /// empty for a plain value. "Set a new value" takes the type from the
+    /// secret instead.
+    #[serde(default)]
+    pub secret_type: String,
+    /// The fields of a typed secret. Every one is part of the value, so
+    /// each is read straight into a `Secret`.
+    #[serde(flatten)]
+    pub fields: TypedFields,
+}
+
+/// Every field name a built-in type uses. Values are never echoed back
+/// into a page or printed.
+#[derive(Deserialize, Default)]
+pub(crate) struct TypedFields {
+    #[serde(default)]
+    url: Option<Secret>,
+    #[serde(default)]
+    username: Option<Secret>,
+    #[serde(default)]
+    password: Option<Secret>,
+    #[serde(default)]
+    notes: Option<Secret>,
+    #[serde(default)]
+    server: Option<Secret>,
+    #[serde(default)]
+    database: Option<Secret>,
+    #[serde(default)]
+    key: Option<Secret>,
+    #[serde(default)]
+    endpoint: Option<Secret>,
+    #[serde(default)]
+    host: Option<Secret>,
+    #[serde(default)]
+    private_key: Option<Secret>,
+    #[serde(default)]
+    passphrase: Option<Secret>,
+}
+
+impl TypedFields {
+    fn get(&self, name: &str) -> Option<Secret> {
+        match name {
+            "url" => self.url.clone(),
+            "username" => self.username.clone(),
+            "password" => self.password.clone(),
+            "notes" => self.notes.clone(),
+            "server" => self.server.clone(),
+            "database" => self.database.clone(),
+            "key" => self.key.clone(),
+            "endpoint" => self.endpoint.clone(),
+            "host" => self.host.clone(),
+            "private_key" => self.private_key.clone(),
+            "passphrase" => self.passphrase.clone(),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set(&mut self, name: &str, value: &str) {
+        let v = Some(Secret::new(value));
+        match name {
+            "url" => self.url = v,
+            "username" => self.username = v,
+            "password" => self.password = v,
+            "notes" => self.notes = v,
+            "server" => self.server = v,
+            "database" => self.database = v,
+            "key" => self.key = v,
+            "endpoint" => self.endpoint = v,
+            "host" => self.host = v,
+            "private_key" => self.private_key = v,
+            "passphrase" => self.passphrase = v,
+            _ => panic!("no field {name}"),
+        }
+    }
+}
+
+impl SecretForm {
+    /// The type chosen on the create form. `Err` for a type that doesn't
+    /// exist.
+    pub(crate) fn chosen_type(&self) -> Result<Option<SecretType>, ()> {
+        match self.secret_type.trim() {
+            "" | "password" => Ok(None),
+            s => SecretType::from_slug(s).map(Some).ok_or(()),
+        }
+    }
 }
 
 impl std::fmt::Debug for SecretForm {
@@ -254,6 +341,30 @@ fn checked_value(form: &SecretForm, errors: &mut FieldErrors) -> Option<Secret> 
     }
 }
 
+/// The value of a typed secret, checked field by field.
+fn checked_typed(kind: SecretType, form: &SecretForm, errors: &mut FieldErrors) -> Option<Secret> {
+    match TypedValue::check(kind, |n| form.fields.get(n)) {
+        Ok(v) => Some(v.encode()),
+        Err(problems) => {
+            for (field, message) in problems {
+                errors.push(field, message);
+            }
+            None
+        }
+    }
+}
+
+/// A Keyring content type typed by hand would mark a value Keyring didn't
+/// build. Refused, unless it is the one the secret already has.
+fn keyring_type_typed(posted: Option<&str>, current: Option<&str>, errors: &mut FieldErrors) {
+    if classify(posted) != ContentKind::Plain && posted != current {
+        errors.push(
+            "content_type",
+            "Content types starting with application/vnd.keyring. are Keyring's own secret types. To make one, choose its type when you create the secret.",
+        );
+    }
+}
+
 /// CRLF to LF. A lone CR is left alone.
 pub(crate) fn normalise_newlines(v: &str) -> String {
     v.replace("\r\n", "\n")
@@ -266,8 +377,19 @@ pub(crate) fn for_create(form: &SecretForm, now: i64) -> Result<(String, SetSecr
     if let Some(m) = name_problem(Kind::Secret, &name) {
         errors.push("name", m);
     }
-    let value = checked_value(form, &mut errors);
-    let props = properties(form, now, None, &mut errors);
+    let kind = form.chosen_type().unwrap_or_else(|()| {
+        errors.push("secret_type", "Choose a type of secret from the list.");
+        None
+    });
+    let value = match kind {
+        Some(kind) => checked_typed(kind, form, &mut errors),
+        None => checked_value(form, &mut errors),
+    };
+    let mut props = properties(form, now, None, &mut errors);
+    match kind {
+        Some(kind) => props.content_type = Some(kind.content_type()),
+        None => keyring_type_typed(props.content_type.as_deref(), None, &mut errors),
+    }
     match value {
         Some(value) if errors.is_empty() => Ok((
             name,
@@ -292,8 +414,19 @@ pub(crate) fn for_new_value(
     now: i64,
 ) -> Result<SetSecret, FieldErrors> {
     let mut errors = FieldErrors::new();
-    let value = checked_value(form, &mut errors);
+    let current_ct = current.content_type.as_deref();
+    let value = match classify(current_ct) {
+        ContentKind::Typed(kind) => checked_typed(kind, form, &mut errors),
+        _ => checked_value(form, &mut errors),
+    };
     let mut props = properties(form, now, Some(&current.attributes), &mut errors);
+    if let ContentKind::Typed(_) = classify(current_ct) {
+        // A typed secret stays typed, with its content type as it is.
+        errors.retain(|e| e.field != "content_type");
+        props.content_type = current.content_type.clone();
+    } else {
+        keyring_type_typed(props.content_type.as_deref(), current_ct, &mut errors);
+    }
     if !tags_editable(current.tags()) {
         errors.retain(|e| e.field != "tags");
         props.tags = current.tags().clone();
@@ -328,6 +461,19 @@ pub(crate) fn for_update(
     let editable = tags_editable(item.tags());
     // An expiry that's already passed but wasn't touched isn't an error.
     let props = properties(form, now, Some(current), &mut errors);
+    let typed = matches!(
+        classify(item.content_type.as_deref()),
+        ContentKind::Typed(_)
+    );
+    if typed {
+        errors.retain(|e| e.field != "content_type");
+    } else {
+        keyring_type_typed(
+            props.content_type.as_deref(),
+            item.content_type.as_deref(),
+            &mut errors,
+        );
+    }
     if !editable {
         errors.retain(|e| e.field != "tags");
     }
@@ -344,8 +490,9 @@ pub(crate) fn for_update(
     }
     match (expires, not_before) {
         (Some(expires), Some(not_before)) if errors.is_empty() => Ok(UpdateSecret {
-            // Send an empty string to clear a content type that was removed.
-            content_type: Some(props.content_type.unwrap_or_default()),
+            // Send an empty string to clear a content type that was
+            // removed. A typed secret's is never sent, so it stays typed.
+            content_type: (!typed).then(|| props.content_type.unwrap_or_default()),
             attributes: UpdateAttributes {
                 enabled: props.attributes.enabled,
                 not_before,
@@ -588,6 +735,88 @@ mod tests {
         f.expires = crate::dates::iso_date(midnight + day);
         let body = for_new_value(&f, &current, NOW).unwrap();
         assert_eq!(body.attributes.expires, Some(midnight + 2 * day - 1));
+    }
+
+    fn typed_form(kind: &str, fields: &[(&str, &str)]) -> SecretForm {
+        let mut f = form();
+        f.value = None;
+        f.secret_type = kind.into();
+        for (k, v) in fields {
+            f.fields.set(k, v);
+        }
+        f
+    }
+
+    #[test]
+    fn typed_create_sets_json_and_content_type() {
+        let f = typed_form(
+            "login",
+            &[
+                ("url", "https://a.test"),
+                ("username", "u"),
+                ("password", "p\"w"),
+            ],
+        );
+        let (_, body) = for_create(&f, NOW).unwrap();
+        assert_eq!(
+            body.content_type.as_deref(),
+            Some("application/vnd.keyring.login+json;v=1")
+        );
+        assert_eq!(
+            body.value.expose(),
+            r#"{"url":"https://a.test","username":"u","password":"p\"w","notes":""}"#
+        );
+        // A typed content type typed by hand is ignored for a typed form.
+        let mut f2 = typed_form("api-key", &[("key", "k")]);
+        f2.content_type = "text/plain".into();
+        let (_, body) = for_create(&f2, NOW).unwrap();
+        assert_eq!(
+            body.content_type.as_deref(),
+            Some("application/vnd.keyring.api-key+json;v=1")
+        );
+    }
+
+    #[test]
+    fn typed_create_reports_each_field() {
+        let f = typed_form("database", &[("server", "s")]);
+        let e = for_create(&f, NOW).unwrap_err();
+        let fields: Vec<_> = e.iter().map(|e| e.field).collect();
+        assert_eq!(fields, ["username", "password"]);
+        let e = for_create(&typed_form("wifi", &[]), NOW).unwrap_err();
+        assert_eq!(e[0].field, "secret_type");
+    }
+
+    #[test]
+    fn keyring_content_types_cant_be_typed_by_hand() {
+        let mut f = form();
+        f.content_type = "application/vnd.keyring.login+json;v=1".into();
+        let e = for_create(&f, NOW).unwrap_err();
+        assert_eq!(e[0].field, "content_type");
+        // On a plain secret's edit form too.
+        let e = for_update(&f, &item(Attributes::default(), &[]), NOW).unwrap_err();
+        assert_eq!(e[0].field, "content_type");
+    }
+
+    #[test]
+    fn typed_secrets_stay_typed() {
+        let ct = "application/vnd.keyring.api-key+json;v=1";
+        let mut current = item(Attributes::default(), &[]);
+        current.content_type = Some(ct.into());
+        // A new value takes the fields, and keeps the content type
+        // whatever the form posted.
+        let mut f = typed_form("", &[("key", "new-key")]);
+        f.content_type = "text/plain".into();
+        let body = for_new_value(&f, &current, NOW).unwrap();
+        assert_eq!(body.content_type.as_deref(), Some(ct));
+        assert!(body.value.expose().contains("new-key"));
+        // A plain value box doesn't count for a typed secret.
+        let mut f = form();
+        f.value = Some("plain".into());
+        let e = for_new_value(&f, &current, NOW).unwrap_err();
+        assert_eq!(e[0].field, "key");
+        // Edit details never sends the content type.
+        let body = for_update(&form(), &current, NOW).unwrap();
+        assert!(body.content_type.is_none());
     }
 
     #[test]

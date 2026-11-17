@@ -243,6 +243,16 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   panel. Every way off the page waits for the clipboard clear after a copy
   (static/app.js), so Hide stays the panel's one exit. Generator values aren't
   read from a vault, so the generator has no such note.
+- A typed secret (Login, Database, API key, SSH private key) shows one
+  labelled well per field, each with its own secondary "Copy <field>"
+  button under it; Show for longer and Hide stay in the one row below.
+  A line above says every field is part of the value. Database connection
+  strings sit in a closed `<details>` after the fields. A typed value
+  that doesn't match its type shows as the plain well with a warn notice.
+- The create form picks the type from a row of plain links ("Type of
+  secret"), the current one bold with `aria-current`. Password and key
+  fields are masked inputs; every field follows the usual label, help and
+  error pattern.
 - Values are hidden in print.
 
 ### Expiry dashboard
@@ -369,8 +379,9 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   pattern in mono.
 - A form that reaches an action without it gets one narrow panel asking
   "Why ...?", with the usual error summary, the same button words as the
-  form it came from, and Cancel. It never shows a secret value: a form that
-  held one sends the person back to it instead.
+  form it came from, and Cancel. It never shows a secret value: a create or
+  "set a new value" form, plain or typed, sends the person back to it
+  instead.
 - No new colours, badges or script. It works as a form post without
   JavaScript.
 

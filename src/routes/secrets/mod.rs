@@ -86,6 +86,13 @@ impl SecretRow {
         }
     }
 
+    /// The content type as the pages show it: a Keyring type's name, from
+    /// the content type alone (no value is read), or the content type as
+    /// it is.
+    pub(super) fn type_shown(&self) -> String {
+        type_shown(&self.content_type)
+    }
+
     pub(super) fn is_expired(&self) -> bool {
         self.expiry == ExpiryState::Expired
     }
@@ -104,6 +111,15 @@ impl SecretRow {
     /// certificate's backing secret, which changes with the certificate.
     fn older_than(&self, days: u32, now: i64) -> bool {
         !self.managed && age::is_stale(self.created_at, days, now)
+    }
+}
+
+/// See [`SecretRow::type_shown`].
+pub(super) fn type_shown(content_type: &str) -> String {
+    use crate::secret_types::{ContentKind, classify};
+    match classify((!content_type.is_empty()).then_some(content_type)) {
+        ContentKind::Typed(t) => t.label().to_owned(),
+        _ => content_type.to_owned(),
     }
 }
 
@@ -433,6 +449,25 @@ mod tests {
             older: String::new(),
             page: None,
         }
+    }
+
+    #[test]
+    fn types_show_by_name() {
+        assert_eq!(
+            type_shown("application/vnd.keyring.login+json;v=1"),
+            "Login"
+        );
+        assert_eq!(
+            type_shown("application/vnd.keyring.ssh-key+json;v=1"),
+            "SSH private key"
+        );
+        assert_eq!(type_shown("text/plain"), "text/plain");
+        // Unknown version: shown as it is.
+        assert_eq!(
+            type_shown("application/vnd.keyring.login+json;v=9"),
+            "application/vnd.keyring.login+json;v=9"
+        );
+        assert_eq!(type_shown(""), "");
     }
 
     #[test]
