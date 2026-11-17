@@ -898,3 +898,10 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .filters { padding: var(--space-xs); }
   .filters > div, .filters input, .filters select { width: 100%; }
 }
+
+/* A typed secret's fields on the reveal page: one per row, each with its own Copy. */
+.reveal-field { margin-bottom: var(--space-sm); }
+.reveal-field label { display: block; margin-top: 0; }
+.reveal-field .secret-value { margin-bottom: var(--space-2xs); }
+.connection-strings { margin: var(--space-sm) 0; }
+.type-choices { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); list-style: none; padding: 0; margin: 0 0 var(--space-xs); }

@@ -17,6 +17,7 @@ pub mod reason;
 pub(crate) mod rotation;
 pub mod routes;
 pub mod secret;
+pub(crate) mod secret_types;
 pub mod serve;
 pub mod telemetry;
 pub mod x509;

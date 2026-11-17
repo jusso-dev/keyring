@@ -156,6 +156,81 @@ async fn values_never_reach_the_logs() {
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
     assert!(!support::body_text(res).await.contains("Sup3r-S3cret"));
 
+    // Typed secrets: create, set a new value and reveal, with a marker in
+    // every field, including the ones that aren't masked.
+    let typed: [(&str, &[(&str, &str)]); 4] = [
+        (
+            "login",
+            &[
+                ("url", "TYPLEAK-url"),
+                ("username", "TYPLEAK-user"),
+                ("password", "TYPLEAK-pass"),
+                ("notes", "TYPLEAK-notes"),
+            ],
+        ),
+        (
+            "database",
+            &[
+                ("server", "TYPLEAK-server"),
+                ("database", "TYPLEAK-db"),
+                ("username", "TYPLEAK-dbuser"),
+                ("password", "TYPLEAK-dbpass"),
+            ],
+        ),
+        (
+            "api-key",
+            &[
+                ("key", "TYPLEAK-key"),
+                ("endpoint", "TYPLEAK-endpoint"),
+                ("notes", "TYPLEAK-apinotes"),
+            ],
+        ),
+        (
+            "ssh-key",
+            &[
+                ("username", "TYPLEAK-sshuser"),
+                ("host", "TYPLEAK-host"),
+                ("private_key", "TYPLEAK-pk\nline"),
+                ("passphrase", "TYPLEAK-phrase"),
+            ],
+        ),
+    ];
+    for (slug, fields) in typed {
+        let name = format!("typed-{slug}");
+        let mut post = vec![
+            ("name", name.as_str()),
+            ("secret_type", slug),
+            ("enabled", "on"),
+        ];
+        post.extend_from_slice(fields);
+        let res = w.post("/v/kv-test/secrets/-/new", &post).await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let res = w
+            .post(&format!("/v/kv-test/secrets/{name}/value"), &post[1..])
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let res = w
+            .post(&format!("/v/kv-test/secrets/{name}/reveal"), &[])
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(support::body_text(res).await.contains("TYPLEAK"));
+        // A failed check, and the reason page.
+        let res = w
+            .post(
+                "/v/kv-test/secrets/-/new",
+                &[
+                    ("name", "bad name"),
+                    ("secret_type", slug),
+                    ("password", "TYPLEAK-bad"),
+                ],
+            )
+            .await;
+        assert!(!support::body_text(res).await.contains("TYPLEAK"));
+        let res = wr.post("/v/kv-test/secrets/-/new", &post).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert!(!support::body_text(res).await.contains("TYPLEAK"));
+    }
+
     // A certificate upload with a password, through to import.
     let pfx: &[u8] = include_bytes!("fixtures/test-plain.pfx");
     let res = w
@@ -358,6 +433,15 @@ async fn values_never_reach_the_logs() {
         "the import is logged per secret: {logs}"
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
+    assert!(
+        !logs.contains("TYPLEAK"),
+        "a typed secret's field leaked:\n{logs}"
+    );
+    assert!(
+        logs.contains("action=secret.create outcome=success")
+            && logs.contains("item_name=typed-login"),
+        "typed creates are logged: {logs}"
+    );
     assert!(
         !logs.contains("Sup3r-S3cret"),
         "value leaked into logs:\n{logs}"
