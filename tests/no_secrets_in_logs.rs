@@ -144,6 +144,46 @@ async fn values_never_reach_the_logs() {
     assert!(html.contains("Line 2 has 3 fields"), "{html}");
     assert!(!html.contains("Imp0rtLeak"));
 
+    // A bulk change: a review, then a run with one item refused and one
+    // failing, so every result path is logged.
+    let _ = w
+        .post(
+            "/v/kv-test/secrets/-/bulk",
+            &[
+                ("item", "IMPORT-ONE"),
+                ("op", "tag_set"),
+                ("tag_name", "owner"),
+            ],
+        )
+        .await;
+    *w.kv.state.fail_each.lock().unwrap() = vec![(
+        axum::http::Method::PATCH,
+        "/secrets/IMPORT-TWO/".into(),
+        500,
+        "InternalError",
+    )];
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/bulk/apply",
+            &[
+                ("item", "IMPORT-ONE"),
+                ("item", "IMPORT-TWO"),
+                ("item", "no-such-one"),
+                ("op", "tag_set"),
+                ("tag_name", "owner"),
+                ("tag_value", "ops"),
+            ],
+        )
+        .await;
+    let html = support::body_text(res).await;
+    w.kv.state.fail_each.lock().unwrap().clear();
+    assert!(
+        html.contains("Changed 0 secrets") || html.contains("Changed 1 secret"),
+        "{html}"
+    );
+    assert!(!html.contains("Sup3r-S3cret") && !html.contains("Imp0rtLeak"));
+    assert!(!html.contains("private detail"));
+
     // A generated value.
     let res = w
         .post(

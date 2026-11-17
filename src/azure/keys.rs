@@ -565,6 +565,25 @@ impl KeysApi<'_> {
             .await
     }
 
+    /// Change a key version's properties: only what `body` carries is
+    /// sent. Tags, when sent, replace the version's tags as a whole.
+    pub async fn update(
+        &self,
+        name: &str,
+        version: &str,
+        body: &crate::azure::secrets::UpdateProperties,
+    ) -> Result<KeyBundle, AzureError> {
+        self.azure
+            .send_json(
+                self.session,
+                Resource::KeyVault,
+                Method::PATCH,
+                &self.url(&format!("/keys/{name}/{version}")),
+                body,
+            )
+            .await
+    }
+
     pub async fn rotation_policy(&self, name: &str) -> Result<RotationPolicy, AzureError> {
         self.azure
             .get_json(

@@ -61,6 +61,9 @@ pub enum Action {
     /// A file of secrets imported. One event for the request, and one per
     /// secret written, with that secret's name and outcome.
     SecretImport,
+    /// Tags, expiry or enabled changed on many secrets at once. One event
+    /// for the request, and one per secret, as for an import.
+    SecretBulkUpdate,
     CertificateDownloadPrivateKey,
     CertificateUpload,
     CertificateCreate,
@@ -70,6 +73,8 @@ pub enum Action {
     CertificateDelete,
     CertificateRecover,
     CertificatePurge,
+    /// Tags or enabled changed on many certificates at once.
+    CertificateBulkUpdate,
     KeyCreate,
     KeyRotate,
     KeyRotationPolicySet,
@@ -77,6 +82,8 @@ pub enum Action {
     KeyDelete,
     KeyRecover,
     KeyPurge,
+    /// Tags, expiry or enabled changed on many keys at once.
+    KeyBulkUpdate,
     SessionSignIn,
     SessionSignInFailed,
     SessionSignOut,
@@ -88,7 +95,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 34] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -99,6 +106,7 @@ impl Action {
         Self::SecretRecover,
         Self::SecretPurge,
         Self::SecretImport,
+        Self::SecretBulkUpdate,
         Self::CertificateDownloadPrivateKey,
         Self::CertificateUpload,
         Self::CertificateCreate,
@@ -108,6 +116,7 @@ impl Action {
         Self::CertificateDelete,
         Self::CertificateRecover,
         Self::CertificatePurge,
+        Self::CertificateBulkUpdate,
         Self::KeyCreate,
         Self::KeyRotate,
         Self::KeyRotationPolicySet,
@@ -115,6 +124,7 @@ impl Action {
         Self::KeyDelete,
         Self::KeyRecover,
         Self::KeyPurge,
+        Self::KeyBulkUpdate,
         Self::SessionSignIn,
         Self::SessionSignInFailed,
         Self::SessionSignOut,
@@ -134,6 +144,7 @@ impl Action {
             Self::SecretRecover => "secret.recover",
             Self::SecretPurge => "secret.purge",
             Self::SecretImport => "secret.import",
+            Self::SecretBulkUpdate => "secret.bulk_update",
             Self::CertificateDownloadPrivateKey => "certificate.download_private_key",
             Self::CertificateUpload => "certificate.upload",
             Self::CertificateCreate => "certificate.create",
@@ -143,6 +154,7 @@ impl Action {
             Self::CertificateDelete => "certificate.delete",
             Self::CertificateRecover => "certificate.recover",
             Self::CertificatePurge => "certificate.purge",
+            Self::CertificateBulkUpdate => "certificate.bulk_update",
             Self::KeyCreate => "key.create",
             Self::KeyRotate => "key.rotate",
             Self::KeyRotationPolicySet => "key.rotation_policy.set",
@@ -150,6 +162,7 @@ impl Action {
             Self::KeyDelete => "key.delete",
             Self::KeyRecover => "key.recover",
             Self::KeyPurge => "key.purge",
+            Self::KeyBulkUpdate => "key.bulk_update",
             Self::SessionSignIn => "session.sign_in",
             Self::SessionSignInFailed => "session.sign_in_failed",
             Self::SessionSignOut => "session.sign_out",
@@ -209,6 +222,8 @@ pub enum Refusal {
     PurgeDisabled,
     /// The item belongs to a certificate and can only be used through it.
     ManagedItem,
+    /// A bulk tag change would take an item past Key Vault's 15 tags.
+    TagLimit,
     /// A form post with no live session.
     NoSession,
     /// The request couldn't be used as sent: a bad name or form field, a
@@ -234,12 +249,13 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 13] = [
+    pub const ALL: [Refusal; 14] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
         Self::PurgeDisabled,
         Self::ManagedItem,
+        Self::TagLimit,
         Self::NoSession,
         Self::InvalidRequest,
         Self::StaleSignIn,
@@ -257,6 +273,7 @@ impl Refusal {
             Self::TypedNameMismatch => "typed_name_mismatch",
             Self::PurgeDisabled => "purge_disabled",
             Self::ManagedItem => "managed_item",
+            Self::TagLimit => "tag_limit",
             Self::NoSession => "no_session",
             Self::InvalidRequest => "invalid_request",
             Self::StaleSignIn => "stale_sign_in",

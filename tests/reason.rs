@@ -407,3 +407,51 @@ fn bad_settings_stop_keyring_at_start() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn a_bulk_change_asks_for_the_reason_on_its_review_page() {
+    let w = seeded(&[ALL]).await;
+    w.kv.state.put("api-key", "v");
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/bulk",
+            &[
+                ("item", "db-password"),
+                ("item", "api-key"),
+                ("op", "tag_set"),
+                ("tag_name", "owner"),
+                ("tag_value", "payments"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body_text(res).await;
+    assert!(html.contains("name=\"reason\""), "{html}");
+    let patches = |w: &World| {
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("PATCH"))
+            .count()
+    };
+    let fields = [
+        ("item", "db-password"),
+        ("item", "api-key"),
+        ("op", "tag_set"),
+        ("tag_name", "owner"),
+        ("tag_value", "payments"),
+    ];
+    // Without a reason nothing is changed.
+    let res = w.post("/v/kv-test/secrets/-/bulk/apply", &fields).await;
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert_eq!(patches(&w), 0);
+    let mut with_reason = fields.to_vec();
+    with_reason.push(("reason", "Tagging the payments secrets"));
+    let res = w
+        .post("/v/kv-test/secrets/-/bulk/apply", &with_reason)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(patches(&w), 2);
+}

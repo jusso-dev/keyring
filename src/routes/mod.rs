@@ -7,6 +7,8 @@ mod audit;
 mod audit_across;
 pub(crate) mod audit_gate;
 mod auth;
+pub(crate) mod batch;
+mod bulk;
 mod certs;
 pub(crate) mod confirm;
 pub mod error;
@@ -103,6 +105,11 @@ fn vault_routes() -> Router<AppState> {
             audited(Action::SecretImport, secrets::import::confirm),
         )
         .route("/secrets/-/import/cancel", post(secrets::import::cancel))
+        .route("/secrets/-/bulk", post(bulk::review::<bulk::Secrets>))
+        .route(
+            "/secrets/-/bulk/apply",
+            audited(Action::SecretBulkUpdate, bulk::apply::<bulk::Secrets>),
+        )
         .route(
             "/secrets/-/deleted",
             get(lifecycle::handlers::list_deleted::<secrets::delete::Secrets>),
@@ -175,6 +182,17 @@ fn vault_routes() -> Router<AppState> {
         )
         .route("/certificates/-/upload/cancel", post(certs::upload::cancel))
         .route(
+            "/certificates/-/bulk",
+            post(bulk::review::<bulk::Certificates>),
+        )
+        .route(
+            "/certificates/-/bulk/apply",
+            audited(
+                Action::CertificateBulkUpdate,
+                bulk::apply::<bulk::Certificates>,
+            ),
+        )
+        .route(
             "/certificates/-/new",
             get(certs::create::form)
                 .merge(audited(Action::CertificateCreate, certs::create::create)),
@@ -241,6 +259,11 @@ fn vault_routes() -> Router<AppState> {
         .route(
             "/keys/-/new",
             get(keys::edit::create_form).merge(audited(Action::KeyCreate, keys::edit::create)),
+        )
+        .route("/keys/-/bulk", post(bulk::review::<bulk::Keys>))
+        .route(
+            "/keys/-/bulk/apply",
+            audited(Action::KeyBulkUpdate, bulk::apply::<bulk::Keys>),
         )
         .route(
             "/keys/-/deleted",
