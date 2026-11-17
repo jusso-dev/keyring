@@ -614,6 +614,8 @@ async fn audited_routes_write_exactly_one_event() {
             &w.csrf,
             &[
                 ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
                 ("minutes", "90"),
                 ("justification", "Fix\nprod\u{202E} FORGED=1"),
                 ("ticket_system", "SNOW"),
@@ -644,6 +646,8 @@ async fn audited_routes_write_exactly_one_event() {
             &w.csrf,
             &[
                 ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
                 ("minutes", "60"),
                 ("justification", "Fix prod now"),
                 ("ticket_number", "1"),
@@ -718,6 +722,8 @@ async fn audited_routes_write_exactly_one_event() {
             &w.csrf,
             &[
                 ("role", support::SECRETS_USER),
+                ("scope", rg),
+                ("schedule", "/s/sched"),
                 ("minutes", "60"),
                 ("justification", "Fix prod now"),
                 ("ticket_number", "1"),

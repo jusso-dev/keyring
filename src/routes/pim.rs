@@ -1431,8 +1431,22 @@ mod tests {
             url.contains("&scope=%2Fsubscriptions%2Fs1&schedule="),
             "{url}"
         );
-        assert!(shown.is(&el("/SUBSCRIPTIONS/S1", r)));
-        assert!(!shown.is(&el("/subscriptions/s2", r)));
+        // Matched on both the scope and the schedule, without regard to
+        // case (ARM changes the case of IDs between calls).
+        let same = |scope: &str, schedule: &str| {
+            let mut e = el(scope, r);
+            e.schedule_id = schedule.to_owned();
+            shown.is(&e)
+        };
+        assert!(same("/SUBSCRIPTIONS/S1", "/subscriptions/s1/providers/X/Y"));
+        assert!(!same(
+            "/subscriptions/s2",
+            "/subscriptions/s1/providers/x/y"
+        ));
+        assert!(!same(
+            "/subscriptions/s1",
+            "/subscriptions/s1/providers/x/z"
+        ));
         for (scope, schedule) in [
             ("/subscriptions/s1?x=1", "/a/b"),
             ("/subscriptions/s1/..", "/a/b"),

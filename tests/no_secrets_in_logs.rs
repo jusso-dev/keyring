@@ -286,6 +286,8 @@ async fn values_never_reach_the_logs() {
         }
         let fields = [
             ("role", support::SECRETS_USER),
+            ("scope", rg),
+            ("schedule", "/s/sched"),
             ("minutes", "60"),
             ("justification", "JUSTLEAK for the audit only"),
         ];
