@@ -301,8 +301,11 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 ### Audit
 
 - One ledger table. When, Who, What, Item, Result, From. Times are tabular and
-  don't wrap. Allowed is ok-coloured text with a check glyph; Refused is an
-  error badge; Unknown stays muted.
+  don't wrap. Allowed and Accepted (202, queued by Key Vault) are ok-coloured
+  text with a check glyph, Accepted with the status muted after it; Refused
+  (401, 403) is an error badge; Failed (other 4xx, 5xx) is a muted badge;
+  Unknown stays muted. One macro, `ui::audit_result`, draws the cell on every
+  audit table.
 - With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
   "Key Vault's log" and "Keyring activity", the open one with
   `aria-current="page"`, as on the expiry views. Keyring activity is the

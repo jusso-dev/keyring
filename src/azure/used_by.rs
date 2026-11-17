@@ -138,9 +138,9 @@ impl UsedByQuery {
         };
         if resource_specific {
             q.push_str(&format!(
-                "let vaultEvents = materialize(AZKVAuditLogs\n\
+                "let vaultEvents = AZKVAuditLogs\n\
                  | where TimeGenerated > ago({DAYS}d)\n\
-                 | where _ResourceId endswith strcat('/vaults/', tolower(vaultName)));\n\
+                 | where _ResourceId endswith strcat('/vaults/', tolower(vaultName));\n\
                  let callers = vaultEvents\n\
                  | where OperationName in ({ops})\n\
                  | extend Item = tostring(split(tostring(parse_url(column_ifexists('RequestUri', '')).Path), '/')[2])\n\
@@ -162,10 +162,10 @@ impl UsedByQuery {
             // AzureDiagnostics only has a column once data with it has
             // arrived, so every optional column goes through column_ifexists.
             q.push_str(&format!(
-                "let vaultEvents = materialize(AzureDiagnostics\n\
+                "let vaultEvents = AzureDiagnostics\n\
                  | where TimeGenerated > ago({DAYS}d)\n\
                  | where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'\n\
-                 | where Resource =~ vaultName);\n\
+                 | where Resource =~ vaultName;\n\
                  let callers = vaultEvents\n\
                  | where OperationName in ({ops})\n\
                  | extend Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2])\n\
@@ -183,9 +183,9 @@ impl UsedByQuery {
                  | extend CallerIp = tostring(column_ifexists('CallerIPAddress', ''))\n"
             ));
         }
-        q.push_str(
-            "| where Status between (200 .. 299) or (isnull(Status) and tostring(column_ifexists('ResultSignature', '')) =~ 'OK')\n",
-        );
+        // Allowed or accepted, by the audit view's one rule.
+        q.push_str(&crate::azure::audit::outcome_kql());
+        q.push_str("| where Outcome in ('allowed', 'accepted')\n");
         q.push_str(&format!(
             "| summarize Reads = count(), LastRead = max(TimeGenerated), Managed = countif(isnotempty(ManagedId)), ClientInfo = strcat_array(make_set(ClientInfo, {MAX_SEEN}), ', '), CallerIp = strcat_array(make_set(CallerIp, {MAX_SEEN}), ', ') by ObjectId, AppId, Upn\n\
              | order by LastRead desc\n\
@@ -456,7 +456,9 @@ mod tests {
                     4,
                     "the two name lines and two fixed ones"
                 );
-                assert!(k.contains("\nlet vaultEvents = materialize("));
+                assert!(k.contains("\nlet vaultEvents = "));
+                // Not materialised: a busy vault's 30 days would not fit the cache.
+                assert!(!k.contains("materialize"));
                 assert!(k.contains("\nlet callers = vaultEvents\n"));
                 assert!(k.contains("ago(30d)"));
                 assert!(k.contains("| summarize Reads = count(), LastRead = max(TimeGenerated)"));
@@ -520,8 +522,9 @@ mod tests {
                 "{op}"
             );
         }
-        // Only allowed calls count.
-        assert!(s.contains("| where Status between (200 .. 299)"));
+        // Only allowed calls count, by the audit view's one rule.
+        assert!(s.contains(&crate::azure::audit::outcome_kql()));
+        assert!(s.contains("| where Outcome in ('allowed', 'accepted')"));
     }
 
     #[test]

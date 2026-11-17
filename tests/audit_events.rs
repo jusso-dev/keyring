@@ -1273,3 +1273,72 @@ async fn audited_routes_write_exactly_one_event() {
     let ev = capture.one_event("no proxy");
     assert!(ev.get("client_ip").is_none(), "{ev}");
 }
+
+/// Key Vault answers a certificate create with 202 Accepted (the mock does
+/// the same). Keyring's own event for it is a success, not a refusal. A
+/// form Keyring turns down itself, before calling Key Vault, is refused
+/// with `invalid_request`.
+#[tokio::test]
+async fn an_accepted_certificate_create_is_a_success() {
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(keyring::telemetry::filter(
+            tracing_subscriber::filter::LevelFilter::WARN,
+        ))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .event_format(keyring::telemetry::JsonLines)
+                .with_writer(capture.clone()),
+        );
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let w = support::world().await;
+    let fields = |name: &'static str, cn: &'static str| {
+        vec![
+            ("name", name),
+            ("common_name", cn),
+            ("validity_months", "12"),
+            ("issuer", "Self"),
+            ("key", "RSA-2048"),
+            ("format", "pfx"),
+            ("renewal", "auto"),
+            ("renew_days", "30"),
+        ]
+    };
+
+    let status = post(
+        &w,
+        "/v/kv-test/certificates/-/new",
+        &w.csrf,
+        &fields("web-tls", "app.example.com"),
+        &[SAME_SITE],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        w.kv.state.creates.lock().unwrap().len(),
+        1,
+        "Key Vault was asked"
+    );
+    let ev = capture.one_event("certificate create");
+    assert_eq!(ev["action"], "certificate.create");
+    assert_eq!(ev["outcome"], "success", "{ev}");
+    assert!(ev.get("reason_code").is_none(), "{ev}");
+    assert_eq!(ev["item_name"], "web-tls");
+    assert!(ev["kv_request_id"].is_string());
+
+    // Turned down by Keyring's own form check: Key Vault is never called.
+    let status = post(
+        &w,
+        "/v/kv-test/certificates/-/new",
+        &w.csrf,
+        &fields("other-tls", ""),
+        &[SAME_SITE],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(w.kv.state.creates.lock().unwrap().len(), 1);
+    let ev = capture.one_event("certificate create, bad form");
+    assert_eq!(ev["outcome"], "refused");
+    assert_eq!(ev["reason_code"], "invalid_request");
+}

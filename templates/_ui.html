@@ -46,6 +46,20 @@
 {%- if enabled && !expired && !within30 && !within90 && !not_yet && !managed %}<span class="badge badge-ok">Active</span>{% endif -%}
 {%- endmacro -%}
 
+{#- The Result cell of an audit row (an EventRow). One rule decides the
+    outcome (src/azure/audit.rs, Outcome::of): Allowed and Accepted are
+    ok-coloured text, Refused an error badge, Failed a muted badge, Unknown
+    muted text. Azure's status and signature follow where they add
+    something. -#}
+{%- macro audit_result(r) -%}
+{%- if r.is_allowed() %}<span class="result-ok">Allowed</span>
+{%- elif r.is_accepted() %}<span class="result-ok">Accepted</span> <span class="muted small">({{ r.result }})</span>
+{%- elif r.is_refused() %}<span class="badge badge-error">Refused ({{ r.result }})</span>
+{%- elif r.is_failed() %}<span class="badge badge-muted">Failed ({{ r.result }})</span>
+{%- else %}<span class="muted">Unknown</span>{% if !r.result.is_empty() %} <span class="muted small">({{ r.result }})</span>{% endif %}
+{%- endif -%}
+{%- endmacro -%}
+
 {#- Tags as name=value, or a muted "None". A tag with an empty value shows
     its name only. -#}
 {%- macro tags(list) -%}

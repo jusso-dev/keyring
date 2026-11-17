@@ -15,7 +15,8 @@ use serde_json::Value;
 
 use crate::auth::session::Session;
 use crate::azure::audit::{
-    BadFilter, Event, MAX_ROWS, Range, Workspace, is_person, is_safe_resource_id, kql_string,
+    BadFilter, Event, MAX_ROWS, Outcome, Range, Workspace, is_person, is_safe_resource_id,
+    kql_string, outcome_kql, status,
 };
 use crate::azure::{AzureClient, AzureError, Resource};
 
@@ -29,7 +30,7 @@ pub enum Report {
     PrivateKeys,
     /// Deletes, purges and recoveries.
     Changes,
-    /// Refused requests (403), grouped by person and vault.
+    /// Refused requests (401 or 403), grouped by person and vault.
     Refused,
     /// Everything one person did.
     Person,
@@ -92,7 +93,7 @@ impl Report {
                 "Every delete, permanent delete (purge) and recovery of a secret, certificate or key, allowed or refused."
             }
             Self::Refused => {
-                "Requests Key Vault refused (403), counted by person and vault, most refused first."
+                "Requests Key Vault refused (401 or 403), counted by person and vault, most refused first."
             }
             Self::Person => {
                 "Everything one person did, by part of their sign-in name, email or ID."
@@ -115,8 +116,11 @@ impl Report {
 
     /// The fixed text after the `let` lines and the shared source.
     fn body(self) -> String {
-        let allowed =
-            "| where Status between (200 .. 299) or (isnull(Status) and ResultSignature =~ 'OK')\n";
+        let allowed = format!(
+            "| where Outcome in ('{}', '{}')\n",
+            Outcome::Allowed.kql(),
+            Outcome::Accepted.kql()
+        );
         let latest = format!("| order by TimeGenerated desc\n| take {MAX_ROWS}");
         match self {
             Self::Reads => {
@@ -144,10 +148,11 @@ impl Report {
             }
             Self::Refused => format!(
                 "audit\n\
-                 | where Status == 403 or (isnull(Status) and ResultSignature =~ 'Forbidden')\n\
+                 | where Outcome == '{refused}'\n\
                  | summarize Refused = count(), LastSeen = max(TimeGenerated), Operations = strcat_array(make_set(OperationName, 10), ', ') by VaultId, Who\n\
                  | order by Refused desc\n\
-                 | take {MAX_ROWS}"
+                 | take {MAX_ROWS}",
+                refused = Outcome::Refused.kql()
             ),
             Self::Person => format!("audit\n| where Who contains who\n{latest}"),
         }
@@ -230,7 +235,8 @@ impl ReportQuery {
                  | extend Status = toint(column_ifexists('httpStatusCode_d', real(null)))\n"
             ));
         }
-        q.push_str("| project TimeGenerated, VaultId = _ResourceId, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client, Status;\n");
+        q.push_str(&outcome_kql());
+        q.push_str("| project TimeGenerated, VaultId = _ResourceId, Who, OperationName, Item, ResultSignature = tostring(column_ifexists('ResultSignature', '')), CallerIpAddress = Client, Status, ResultType = tostring(column_ifexists('ResultType', '')), Outcome;\n");
         q.push_str(&self.report.body());
         q
     }
@@ -351,6 +357,7 @@ fn parse(result: QueryResult, grouped: bool) -> Answer {
         idx("ResultSignature"),
         idx("CallerIpAddress"),
     );
+    let (si, yi) = (idx("Status"), idx("ResultType"));
     Answer::Events(
         t.rows
             .iter()
@@ -363,6 +370,8 @@ fn parse(result: QueryResult, grouped: bool) -> Answer {
                     item: get(r, ii),
                     result: get(r, ri),
                     client_ip: get(r, pi),
+                    status: status(si.and_then(|i| r.get(i))),
+                    result_type: get(r, yi),
                 },
             })
             .collect(),
@@ -564,7 +573,11 @@ mod tests {
                 .kql(&[KV_A.into()], true)
         };
         assert!(k(Report::Reads).contains("| where OperationName == 'SecretGet'"));
-        assert!(k(Report::Reads).contains("Status between (200 .. 299)"));
+        // Allowed means the shared outcome rule, so 202 Accepted counts.
+        assert!(k(Report::Reads).contains("| where Outcome in ('allowed', 'accepted')"));
+        assert!(k(Report::Reads).contains(&crate::azure::audit::outcome_kql()));
+        assert!(k(Report::Refused).contains("| where Outcome == 'refused'"));
+        assert!(!k(Report::Refused).contains("Status == 403"));
         assert!(k(Report::PrivateKeys).contains("join kind=leftsemi certificates on VaultId, Key"));
         let changes = k(Report::Changes);
         for op in CHANGE_OPERATIONS {
@@ -700,6 +713,8 @@ mod tests {
                 item: String::new(),
                 result: String::new(),
                 client_ip: String::new(),
+                status: None,
+                result_type: String::new(),
             },
         };
         let many: Vec<VaultEvent> = (0..MAX_ROWS).map(|_| ev("2026-11-01")).collect();

@@ -581,6 +581,11 @@ pub(crate) struct ArmState {
     pub diagnostics_by_vault: Mutex<std::collections::HashMap<String, Option<serde_json::Value>>>,
     /// Log Analytics rows returned: (time, who, operation, item, result, ip).
     pub audit_rows: Mutex<Vec<[String; 6]>>,
+    /// Rows as they sit in the table (`AZKVAuditLogs` or
+    /// `AzureDiagnostics`, by the query), such as the fixtures in
+    /// `tests/fixtures/audit/`. Answered after `audit_rows`, with the
+    /// columns the audit view's query projects. See [`project_raw`].
+    pub audit_raw: Mutex<Vec<serde_json::Value>>,
     /// Make Log Analytics answer 403.
     pub audit_forbidden: Mutex<bool>,
     /// Status to answer for one workspace, keyed by the end of its
@@ -1083,6 +1088,7 @@ pub(crate) async fn start_arm() -> MockArm {
         diagnostics_paths: Mutex::new(Vec::new()),
         diagnostics_by_vault: Mutex::new(std::collections::HashMap::new()),
         audit_rows: Mutex::new(Vec::new()),
+        audit_raw: Mutex::new(Vec::new()),
         audit_forbidden: Mutex::new(false),
         audit_fail_workspace: Mutex::new(Vec::new()),
         used_by_partial: Mutex::new(false),
@@ -1295,19 +1301,38 @@ async fn arm_fallback(
                 .unwrap_or_default();
             return json_response(StatusCode::OK, answer_report(&query, &events));
         }
-        let rows: Vec<serde_json::Value> = s
+        // Rows from `audit_rows` have no status or result type, as when
+        // the columns are missing (null after `column_ifexists`).
+        let mut rows: Vec<serde_json::Value> = s
             .audit_rows
             .lock()
             .unwrap()
             .iter()
-            .map(|r| json!(r))
+            .map(|r| json!([r[0], r[1], r[2], r[3], r[4], r[5], null, ""]))
             .collect();
+        let resource_specific = query.contains("\nAZKVAuditLogs\n");
+        rows.extend(
+            s.audit_raw
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| {
+                    r["Type"]
+                        == if resource_specific {
+                            "AZKVAuditLogs"
+                        } else {
+                            "AzureDiagnostics"
+                        }
+                })
+                .map(|r| project_raw(r, resource_specific)),
+        );
         return json_response(
             StatusCode::OK,
             json!({"tables": [{"name": "PrimaryResult", "columns": [
                 {"name": "TimeGenerated", "type": "datetime"}, {"name": "Who", "type": "string"},
                 {"name": "OperationName", "type": "string"}, {"name": "Item", "type": "string"},
-                {"name": "ResultSignature", "type": "string"}, {"name": "CallerIpAddress", "type": "string"}
+                {"name": "ResultSignature", "type": "string"}, {"name": "CallerIpAddress", "type": "string"},
+                {"name": "Status", "type": "int"}, {"name": "ResultType", "type": "string"}
             ], "rows": rows}]}),
         );
     }
@@ -1315,6 +1340,51 @@ async fn arm_fallback(
         StatusCode::NOT_FOUND,
         json!({"error": {"code": "NotFound", "message": "x"}}),
     )
+}
+
+/// One raw Key Vault audit row, projected the way the audit view's query
+/// does for its table: the item from the request URI's path, the caller
+/// from the claims, the status from `HttpStatusCode` (`AZKVAuditLogs`) or
+/// `httpStatusCode_d` (`AzureDiagnostics`, a real), as an int.
+pub(crate) fn project_raw(r: &serde_json::Value, resource_specific: bool) -> serde_json::Value {
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_owned();
+    let (uri, who, ip, status) = if resource_specific {
+        let c = &r["Identity"]["claim"];
+        (
+            text(&r["RequestUri"]),
+            text(&c["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn"]),
+            text(&r["CallerIpAddress"]),
+            &r["HttpStatusCode"],
+        )
+    } else {
+        (
+            text(&r["requestUri_s"]),
+            text(&r["identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_upn_s"]),
+            text(&r["CallerIPAddress"]),
+            &r["httpStatusCode_d"],
+        )
+    };
+    let item = uri
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split('?').next())
+        .and_then(|path| path.split('/').nth(2))
+        .unwrap_or_default()
+        .to_owned();
+    let status = status
+        .as_f64()
+        .map(|f| json!(f as i64))
+        .unwrap_or(json!(null));
+    json!([
+        text(&r["TimeGenerated"]),
+        who,
+        text(&r["OperationName"]),
+        item,
+        text(&r["ResultSignature"]),
+        ip,
+        status,
+        text(&r["ResultType"])
+    ])
 }
 
 /// Answer a query over `KeyringAudit_CL`: the rows whose `Vault` matches
@@ -1420,8 +1490,13 @@ impl RawEvent {
 
     fn signature(&self) -> &'static str {
         match self.status {
+            201 => "Created",
+            202 => "Accepted",
+            204 => "NoContent",
             200..=299 => "OK",
+            401 => "Unauthorized",
             403 => "Forbidden",
+            429 => "TooManyRequests",
             _ => "Error",
         }
     }
@@ -1452,7 +1527,7 @@ pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Val
     let allowed = |e: &&RawEvent| (200..300).contains(&e.status);
     let picked: Vec<&RawEvent> = if query.contains("summarize Refused = count()") {
         let mut groups: Vec<(String, String, u64, String, Vec<String>)> = Vec::new();
-        for e in mine.iter().filter(|e| e.status == 403) {
+        for e in mine.iter().filter(|e| matches!(e.status, 401 | 403)) {
             match groups
                 .iter_mut()
                 .find(|g| g.0 == e.vault_id && g.1 == e.who)
@@ -1530,13 +1605,19 @@ pub(crate) fn answer_report(query: &str, events: &[RawEvent]) -> serde_json::Val
                 e.item,
                 e.signature(),
                 "203.0.113.5",
-                e.status
+                e.status,
+                if (200..300).contains(&e.status) {
+                    "Success"
+                } else {
+                    "Failure"
+                }
             ])
         })
         .collect();
     json!({"tables": [{"name": "PrimaryResult", "columns": [
         {"name": "TimeGenerated"}, {"name": "VaultId"}, {"name": "Who"}, {"name": "OperationName"},
-        {"name": "Item"}, {"name": "ResultSignature"}, {"name": "CallerIpAddress"}, {"name": "Status"}
+        {"name": "Item"}, {"name": "ResultSignature"}, {"name": "CallerIpAddress"}, {"name": "Status"},
+        {"name": "ResultType"}
     ], "rows": rows}]})
 }
 
