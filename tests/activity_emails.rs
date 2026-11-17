@@ -361,7 +361,9 @@ async fn role_use_emails_the_owners_with_role_scope_and_duration() {
         .await;
     assert_eq!(res.status(), StatusCode::OK);
     let m = mails(&acs, 1).await;
-    assert_eq!(to(&m[0]), ["lead@example.com"]);
+    // The role is at the resource group, above the vault, so it reaches
+    // other vaults too: the admins are told as well as this vault's owners.
+    assert_eq!(to(&m[0]), ["lead@example.com", "ops@example.com"]);
     let t = text(&m[0]);
     assert!(t.contains("Role: Key Vault Secrets User"), "{t}");
     assert!(t.contains(&format!("Scope: {RG}")), "{t}");

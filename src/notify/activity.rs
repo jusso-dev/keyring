@@ -60,6 +60,10 @@ pub const MAX_LISTED: usize = 50;
 /// Longest wait for the vault's owners from Resource Graph.
 pub const OWNERS_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Most reads of a vault's owners in flight at once. Past it, the notice
+/// goes to the admins.
+pub const MAX_OWNER_READS: usize = 16;
+
 /// A watched item's recipients, parsed from its tags. `Debug` never prints
 /// an address.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -126,6 +130,8 @@ pub struct ActivityWatch {
     azure: AzureClient,
     /// Times of watched-read emails per item, in the last hour.
     reads: Mutex<HashMap<ItemKey, VecDeque<SystemTime>>>,
+    /// Bounds the reads of vault owners in flight.
+    owner_reads: Arc<tokio::sync::Semaphore>,
 }
 
 impl std::fmt::Debug for ActivityWatch {
@@ -259,6 +265,7 @@ impl ActivityWatch {
             notifier,
             azure,
             reads: Mutex::new(HashMap::new()),
+            owner_reads: Arc::new(tokio::sync::Semaphore::new(MAX_OWNER_READS)),
         })
     }
 
@@ -267,9 +274,10 @@ impl ActivityWatch {
         lock(&self.reads).len()
     }
 
-    /// Take one watched-read email for this item. False when it has had
+    /// Take one watched-read email for this item. `None` when it has had
     /// its share this hour, or when the map is full of live entries.
-    fn allow_read(&self, item: &ItemRef) -> bool {
+    /// `Some(true)` when this one is the hour's last.
+    fn allow_read(&self, item: &ItemRef) -> Option<bool> {
         let now = self.clock.now();
         let hour = Duration::from_secs(3600);
         let fresh = |t: &SystemTime| now.duration_since(*t).unwrap_or_default() < hour;
@@ -282,7 +290,7 @@ impl ActivityWatch {
         if !m.contains_key(&key) && m.len() >= MAX_TRACKED_ITEMS {
             m.retain(|_, v| v.back().is_some_and(fresh));
             if m.len() >= MAX_TRACKED_ITEMS {
-                return false;
+                return None;
             }
         }
         let e = m.entry(key).or_default();
@@ -290,10 +298,10 @@ impl ActivityWatch {
             e.pop_front();
         }
         if e.len() >= READS_PER_ITEM_PER_HOUR {
-            return false;
+            return None;
         }
         e.push_back(now);
-        true
+        Some(e.len() >= READS_PER_ITEM_PER_HOUR)
     }
 
     fn when(&self) -> String {
@@ -322,8 +330,9 @@ impl ActivityWatch {
         url
     }
 
-    /// The notice's common part: who, what, when and where from.
-    fn base(&self, ev: &AuditEvent, heading: &str) -> ActivityNotice {
+    /// The notice's common part: who, what, when and, with `with_ip`,
+    /// where from.
+    fn base(&self, ev: &AuditEvent, heading: &str, with_ip: bool) -> ActivityNotice {
         let who = ev
             .actor_upn
             .as_deref()
@@ -333,10 +342,11 @@ impl ActivityWatch {
             .fact("Who", who.to_owned())
             .fact("What", words(ev.action).to_owned())
             .fact("When", self.when());
-        if let Some(ip) = ev
-            .client_ip
-            .as_deref()
-            .and_then(|i| i.parse::<IpAddr>().ok())
+        if with_ip
+            && let Some(ip) = ev
+                .client_ip
+                .as_deref()
+                .and_then(|i| i.parse::<IpAddr>().ok())
         {
             n = n.fact("From address", ip.to_string());
         }
@@ -355,7 +365,10 @@ impl ActivityWatch {
         if let (Some(p), Some(t)) = (&self.settings.ticket, ev.ticket.as_deref())
             && p.matches(t)
             && t.len() <= 64
-            && t.bytes().all(|b| b.is_ascii_graphic())
+            // Whatever the pattern lets through, nothing a mail client
+            // could turn into a link.
+            && t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'#'))
         {
             n = n.fact("Ticket", t.to_owned());
         }
@@ -383,18 +396,28 @@ impl ActivityWatch {
         if to.is_empty() {
             return;
         }
-        if !self.allow_read(&item) {
+        let Some(last) = self.allow_read(&item) else {
             tracing::info!(
                 kind = NotifyType::WatchedReads.as_str(),
                 "notify: watched item read too often this hour; not emailed again"
             );
             return;
-        }
-        let n = self
-            .base(ev, "A watched item was read")
+        };
+        let mut n = self
+            // A `notify` address is chosen by whoever can write the item's
+            // tags. It is told where a reader came from only when the
+            // operator has limited recipients to chosen domains.
+            .base(
+                ev,
+                "A watched item was read",
+                self.notifier.restricts_domains(),
+            )
             .fact("Vault", item.vault().to_owned())
             .fact("Item", format!("{} {}", item.kind().as_str(), item.name()))
             .line("Someone read an item that lists you in its notify tag (or as its owner). If you expected it, there is nothing to do.");
+        if last {
+            n = n.line("This is the last email about reads of this item for up to an hour. Later reads in that time are in Keyring's audit log only.");
+        }
         let n = self.reason_facts(ev, n).link(
             self.audit_link(item.vault(), Some(item.name())),
             "Open the item's activity in Keyring",
@@ -411,7 +434,7 @@ impl ActivityWatch {
         let kind = kind_of(ev.action)?;
         let item = ItemRef::new(ev.vault.as_deref()?, kind, ev.item_name.as_deref()?)?;
         let n = self
-            .base(ev, "An item was deleted")
+            .base(ev, "An item was deleted", true)
             .fact("Vault", item.vault().to_owned())
             .fact("Item", format!("{} {}", item.kind().as_str(), item.name()))
             .line("You get this as an owner of the vault (its keyring-owners tag), or as a Keyring admin when the vault names no owner.");
@@ -435,7 +458,7 @@ impl ActivityWatch {
             return None;
         }
         let mut n = self
-            .base(ev, "Several items were changed at once")
+            .base(ev, "Several items were changed at once", true)
             .fact("Vault", vault.to_ascii_lowercase())
             .fact("Changed", names.len().to_string())
             .line("You get this as an owner of the vault (its keyring-owners tag), or as a Keyring admin when the vault names no owner.");
@@ -468,7 +491,7 @@ impl ActivityWatch {
             "A PIM role was turned off"
         };
         let mut n = self
-            .base(ev, heading)
+            .base(ev, heading, true)
             .fact("Vault", vault.to_ascii_lowercase())
             .fact("Role", name.to_owned())
             .fact("Scope", scope.to_owned());
@@ -496,16 +519,16 @@ impl ActivityWatch {
         session: Option<&Arc<Session>>,
         n: ActivityNotice,
         item: Option<ItemRef>,
+        admins_too: bool,
     ) {
         let actor = ev.actor_upn.clone();
         let send = {
             let me = self.clone();
-            move |owners: Vec<Address>| {
-                let to = if owners.is_empty() {
-                    me.notifier.admins().to_vec()
-                } else {
-                    owners
-                };
+            move |mut owners: Vec<Address>| {
+                if owners.is_empty() || admins_too {
+                    owners.extend(me.notifier.admins().iter().cloned());
+                }
+                let to = owners;
                 let to = without_actor(to, actor.as_deref());
                 if to.is_empty() {
                     return;
@@ -518,10 +541,11 @@ impl ActivityWatch {
                 });
             }
         };
-        let (Some(session), Some(vault), Ok(rt)) = (
+        let (Some(session), Some(vault), Ok(rt), Ok(permit)) = (
             session.cloned(),
             ev.vault.clone(),
             tokio::runtime::Handle::try_current(),
+            self.owner_reads.clone().try_acquire_owned(),
         ) else {
             send(Vec::new());
             return;
@@ -535,6 +559,7 @@ impl ActivityWatch {
             )
             .await;
             drop(session);
+            drop(permit);
             let owners = match read {
                 Ok(Ok(Some(tags))) => crate::owner::vault_owners(&tags),
                 _ => Vec::new(),
@@ -574,7 +599,7 @@ impl Observe for Observer {
             }
             Trigger::Destructive if ok => {
                 if let Some((n, item)) = me.destructive(ev) {
-                    me.to_owners(NotifyType::Destructive, ev, facts.session, n, item);
+                    me.to_owners(NotifyType::Destructive, ev, facts.session, n, item, false);
                 }
             }
             // The request's own event only: per-item events have no
@@ -586,14 +611,21 @@ impl Observe for Observer {
                         && ev.reason_code.as_deref() == Some("partly_changed")) =>
             {
                 if let Some(n) = me.bulk(ev, facts.changed) {
-                    me.to_owners(NotifyType::Destructive, ev, facts.session, n, None);
+                    me.to_owners(NotifyType::Destructive, ev, facts.session, n, None, false);
                 }
             }
             // A request waiting for approval ends `success` with PIM's
             // status as its code: the role isn't on, so nothing is sent.
             Trigger::Role if ok && ev.reason_code.is_none() => {
                 if let Some(n) = me.role(ev) {
-                    me.to_owners(NotifyType::RoleUse, ev, facts.session, n, None);
+                    // A role at a scope above the vault reaches other
+                    // vaults too, whichever vault's page it was turned on
+                    // from, so the admins are told as well.
+                    let wide = ev
+                        .role_scope
+                        .as_deref()
+                        .is_some_and(|s| !s.to_ascii_lowercase().contains("/vaults/"));
+                    me.to_owners(NotifyType::RoleUse, ev, facts.session, n, None, wide);
                 }
             }
             _ => {}
