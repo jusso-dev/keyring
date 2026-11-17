@@ -13,6 +13,10 @@
       <option value="tag_remove">Remove a tag</option>
       <option value="description_set">Set the description</option>
       <option value="description_remove">Remove the description</option>
+      <option value="owner_set">Set the owner</option>
+      {% if !shell.require_owner %}<option value="owner_remove">Remove the owner</option>{% endif %}
+      <option value="notify_set">Set the notify list</option>
+      <option value="notify_remove">Remove the notify list</option>
       {% if bulk_expiry %}<option value="expiry">Set expiry date</option>{% endif %}
       <option value="enable">Enable</option>
       <option value="disable">Disable</option>
@@ -29,6 +33,16 @@
   <div>
     <label for="bulk-description">Description (for Set the description)</label>
     <input id="bulk-description" name="description" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
+  </div>
+  <div>
+    <label for="bulk-owner">Owner (for Set the owner)</label>
+    <input id="bulk-owner" name="owner" type="text" inputmode="email" maxlength="256" list="owner-options"{% call ui::ident() %}{% endcall %}>
+    <datalist id="owner-options">{% for o in tag_suggest.owners %}<option value="{{ o }}">{% endfor %}</datalist>
+  </div>
+  <div>
+    <label for="bulk-notify">Notify (for Set the notify list)</label>
+    <p class="field-help" id="bulk-notify-help">Up to {{ crate::owner::MAX_NOTIFY }} addresses, separated by commas.</p>
+    <input id="bulk-notify" name="notify" type="text" inputmode="email" maxlength="256" aria-describedby="bulk-notify-help"{% call ui::ident() %}{% endcall %}>
   </div>
   {% if bulk_expiry %}
   <div>

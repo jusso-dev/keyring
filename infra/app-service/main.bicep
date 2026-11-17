@@ -109,6 +109,9 @@ param reasonTicketPattern string = ''
 @maxLength(200)
 param passwordPolicy string = ''
 
+@description('Refuse to create or edit a secret, certificate or key without an owner tag, and skip import rows without one. A Keyring control only: the CLI and portal aren\'t limited by it (see README.md, "Owners").')
+param requireOwner bool = false
+
 @description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
 @minValue(0)
 @maxValue(8)
@@ -326,6 +329,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         empty(requireReason) ? [] : [{ name: 'KEYRING_REQUIRE_REASON', value: requireReason }],
         empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
         empty(passwordPolicy) ? [] : [{ name: 'KEYRING_PASSWORD_POLICY', value: passwordPolicy }],
+        requireOwner ? [{ name: 'KEYRING_REQUIRE_OWNER', value: 'true' }] : [],
         auditSettings,
         notifySettings
       )

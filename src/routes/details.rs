@@ -33,7 +33,7 @@ use crate::routes::assets::render;
 use crate::routes::error::{Halt, Need, PageError, PageResult, Problem};
 use crate::routes::forms::FieldErrors;
 use crate::routes::lifecycle::{Kind, redirect_with};
-use crate::routes::secrets::form::with_note;
+use crate::routes::secrets::form::with_fields;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::Shell;
 use crate::routes::tag_rows::{self, TagField, TagPost};
@@ -46,7 +46,12 @@ pub(crate) struct DetailsForm {
     pub csrf: String,
     #[serde(default)]
     pub description: String,
-    /// The tag rows, without the description.
+    /// The `owner` and `notify` tags. Not posted keeps them.
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub notify: Option<String>,
+    /// The tag rows, without the description, owner and notify.
     #[serde(flatten)]
     pub tag_rows: TagPost,
     /// The version the form was opened on, and its `updated` time.
@@ -81,15 +86,33 @@ impl Current {
     }
 }
 
+impl DetailsForm {
+    fn owners(&self) -> crate::owner::Posted<'_> {
+        crate::owner::Posted {
+            owner: self.owner.as_deref(),
+            notify: self.notify.as_deref(),
+        }
+    }
+}
+
 /// The tags to write, from the form and the current tags. `Ok(None)` when
-/// nothing would change. Tags a row can't show are kept as they are.
+/// nothing would change. Tags a row can't show are kept as they are, and
+/// so are an owner or notify list left as the form showed them.
 pub(crate) fn new_tags(
     form: &DetailsForm,
     current: &BTreeMap<String, String>,
+    rules: crate::owner::Rules<'_>,
 ) -> Result<Option<BTreeMap<String, String>>, FieldErrors> {
     let mut errors = FieldErrors::new();
     let base = tag_rows::check(&form.tag_rows, current, &mut errors);
-    let tags = with_note(&base, &form.description, &mut errors);
+    let tags = with_fields(
+        &base,
+        current,
+        &form.description,
+        form.owners(),
+        rules,
+        &mut errors,
+    );
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -104,6 +127,7 @@ struct DetailsPage {
     kind: Kind,
     name: String,
     description: String,
+    owners: crate::owner::Fields,
     tags: TagField,
     version: String,
     updated: String,
@@ -128,15 +152,17 @@ fn page(
     errors: FieldErrors,
     suggest: tag_rows::Suggestions,
 ) -> Response {
-    let (description, tags) = match posted {
+    let (description, owners, tags) = match posted {
         Some(f) => (
             f.description.clone(),
+            crate::owner::Fields::posted(f.owners(), &current.tags),
             TagField::posted(&f.tag_rows, &current.tags),
         ),
         None => (
             description::of(&current.tags)
                 .unwrap_or_default()
                 .to_owned(),
+            crate::owner::Fields::of(&current.tags),
             TagField::of(&current.tags),
         ),
     };
@@ -154,6 +180,7 @@ fn page(
                 kind,
                 name,
                 description,
+                owners,
                 tags: tags.with(suggest),
                 version: current.version.clone(),
                 updated: current.updated(),
@@ -369,7 +396,7 @@ pub(crate) async fn save<E: Editable>(
     }
     crate::audit::note_version(&current.version);
     let item = E::KIND.item_url(&vault, &name);
-    let tags = match new_tags(&f, &current.tags) {
+    let tags = match new_tags(&f, &current.tags, crate::owner::Rules::of(&state.config)) {
         Ok(Some(t)) => t,
         Ok(None) => {
             return Ok(redirect_with(
@@ -419,6 +446,8 @@ mod tests {
             .collect()
     }
 
+    const R: crate::owner::Rules<'static> = crate::owner::Rules::OFF;
+
     fn form(description: &str, rows: &[(&str, &str)]) -> DetailsForm {
         DetailsForm {
             description: description.into(),
@@ -430,7 +459,7 @@ mod tests {
     #[test]
     fn note_is_merged_with_the_tags() {
         let cur = tags(&[("env", "prod")]);
-        let t = new_tags(&form("Web front end", &[("env", "prod")]), &cur)
+        let t = new_tags(&form("Web front end", &[("env", "prod")]), &cur, R)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -439,12 +468,12 @@ mod tests {
         );
         // Unchanged: nothing to send.
         assert!(
-            new_tags(&form("Web front end", &[("env", "prod")]), &t)
+            new_tags(&form("Web front end", &[("env", "prod")]), &t, R)
                 .unwrap()
                 .is_none()
         );
         // Empty removes the note and keeps the rest.
-        let t2 = new_tags(&form("", &[("env", "prod")]), &t)
+        let t2 = new_tags(&form("", &[("env", "prod")]), &t, R)
             .unwrap()
             .unwrap();
         assert_eq!(t2, cur);
@@ -454,7 +483,7 @@ mod tests {
     fn tags_a_row_cant_show_are_kept() {
         let cur = tags(&[("a=b", " c "), ("two", "x\ny"), ("description", "old")]);
         // a=b has a row and comes back as it was; the other is kept.
-        let t = new_tags(&form("new", &[("a=b", " c ")]), &cur)
+        let t = new_tags(&form("new", &[("a=b", " c ")]), &cur, R)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -468,16 +497,49 @@ mod tests {
         let full: BTreeMap<String, String> =
             (0..15).map(|i| (format!("k{i}"), "v".into())).collect();
         let rows: Vec<(&str, &str)> = full.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let e = new_tags(&form("note", &rows), &full).unwrap_err();
+        let e = new_tags(&form("note", &rows), &full, R).unwrap_err();
         assert!(e.error_for("description").unwrap().contains("15 tags"));
-        let e = new_tags(&form("", &[("description", "sneaky")]), &BTreeMap::new()).unwrap_err();
+        let e = new_tags(&form("", &[("description", "sneaky")]), &BTreeMap::new(), R).unwrap_err();
         assert!(
             e.error_for("tag-name-1")
                 .unwrap()
                 .contains("Description field")
         );
-        let e = new_tags(&form("a\u{202E}b", &[]), &BTreeMap::new()).unwrap_err();
+        let e = new_tags(&form("a\u{202E}b", &[]), &BTreeMap::new(), R).unwrap_err();
         assert!(e.error_for("description").is_some());
+    }
+
+    #[test]
+    fn owner_and_notify_are_merged_and_checked() {
+        let cur = tags(&[("env", "prod"), ("owner", "Payments Team")]);
+        // Untouched odd owner, new notify: the owner is kept as it is.
+        let mut f = form("", &[("env", "prod")]);
+        f.owner = Some("Payments Team".into());
+        f.notify = Some("sam@example.com".into());
+        let on = crate::owner::Rules {
+            allowed: None,
+            require: true,
+        };
+        let t = new_tags(&f, &cur, on).unwrap().unwrap();
+        assert_eq!(t["owner"], "Payments Team");
+        assert_eq!(t["notify"], "sam@example.com");
+        // A changed owner is checked.
+        f.owner = Some("Payments".into());
+        let e = new_tags(&f, &cur, R).unwrap_err();
+        assert!(e.error_for("owner").is_some());
+        // Removing the owner is refused with the policy on.
+        f.owner = Some(String::new());
+        let e = new_tags(&f, &cur, on).unwrap_err();
+        assert_eq!(e.error_for("owner"), Some(crate::owner::OWNER_NEEDED));
+        assert!(
+            !new_tags(&f, &cur, R)
+                .unwrap()
+                .unwrap()
+                .contains_key("owner")
+        );
+        // A form from before the fields keeps both.
+        let old = form("", &[("env", "prod")]);
+        assert!(new_tags(&old, &cur, on).unwrap().is_none());
     }
 
     #[test]

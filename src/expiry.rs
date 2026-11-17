@@ -126,6 +126,20 @@ impl Item {
             .find(|(k, _)| k == crate::description::TAG)
             .map_or("", |(_, v)| v.as_str())
     }
+    /// The `owner` tag, or empty.
+    pub(crate) fn owner(&self) -> &str {
+        self.tag(crate::owner::OWNER_TAG)
+    }
+    /// The `notify` tag, or empty.
+    pub(crate) fn notify(&self) -> &str {
+        self.tag(crate::owner::NOTIFY_TAG)
+    }
+    fn tag(&self, name: &str) -> &str {
+        self.tags
+            .iter()
+            .find(|(k, _)| k == name)
+            .map_or("", |(_, v)| v.as_str())
+    }
     pub(crate) fn group(&self, now: i64) -> Group {
         Group::of(self.expires, now)
     }
@@ -153,11 +167,12 @@ impl Item {
             .any(|(a, b)| a.eq_ignore_ascii_case(k) && v.is_none_or(|v| b.eq_ignore_ascii_case(v)))
     }
 
-    /// The tags as `name=value; ...`, without the description.
+    /// The tags as `name=value; ...`, without the description, owner and
+    /// notify, which have their own columns.
     pub(crate) fn tags_text(&self) -> String {
         self.tags
             .iter()
-            .filter(|(k, _)| k != crate::description::TAG)
+            .filter(|(k, _)| !crate::owner::has_own_field(k))
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join("; ")
@@ -205,9 +220,11 @@ pub(crate) fn csv_field(v: &str) -> String {
 }
 
 /// CSV of items. Columns: vault, type, name, status, expires (ISO), group,
-/// description, tags. No values.
+/// description, owner, notify, tags. No values.
 pub(crate) fn to_csv(items: &[Item], now: i64) -> String {
-    let mut out = String::from("Vault,Type,Name,Enabled,Expires (UTC),Group,Description,Tags\r\n");
+    let mut out = String::from(
+        "Vault,Type,Name,Enabled,Expires (UTC),Group,Description,Owner,Notify,Tags\r\n",
+    );
     for i in items {
         let row = [
             csv_field(&i.vault),
@@ -217,6 +234,8 @@ pub(crate) fn to_csv(items: &[Item], now: i64) -> String {
             i.expires.map(dates::iso_date).unwrap_or_default(),
             i.group(now).label().to_owned(),
             csv_field(i.description()),
+            csv_field(i.owner()),
+            csv_field(i.notify()),
             csv_field(&i.tags_text()),
         ];
         out.push_str(&row.join(","));
@@ -233,6 +252,8 @@ pub(crate) fn not_read_row(vault: &str, reason: &str) -> String {
         csv_field(vault),
         "NOT READ".to_owned(),
         csv_field(reason),
+        String::new(),
+        String::new(),
         String::new(),
         String::new(),
         String::new(),
@@ -307,11 +328,11 @@ mod tests {
         let lines: Vec<_> = csv.lines().collect();
         assert_eq!(
             lines[0],
-            "Vault,Type,Name,Enabled,Expires (UTC),Group,Description,Tags"
+            "Vault,Type,Name,Enabled,Expires (UTC),Group,Description,Owner,Notify,Tags"
         );
         assert_eq!(
             lines[1],
-            "kv,Secret,db-password,Yes,2027-01-18,Next 7 days,,env=prod"
+            "kv,Secret,db-password,Yes,2027-01-18,Next 7 days,,,,env=prod"
         );
         assert!(
             lines[2].starts_with("kv,Secret,\"'=HYPERLINK(\"\"x\"\")\""),
@@ -328,7 +349,7 @@ mod tests {
         let csv = to_csv(&[noted], NOW);
         let row = csv.split("\r\n").nth(1).unwrap();
         assert!(
-            row.ends_with(",\"'=cmd|' /C calc'!A0\nline two\",env=prod"),
+            row.ends_with(",\"'=cmd|' /C calc'!A0\nline two\",,,env=prod"),
             "{row}"
         );
         assert_eq!(csv_field("-1+1"), "'-1+1");

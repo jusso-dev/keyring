@@ -89,9 +89,10 @@ pub struct SkippedSecret {
     pub original: String,
     pub name: String,
     pub reason: String,
-    /// Its value didn't meet `KEYRING_PASSWORD_POLICY`, so the import
-    /// writes a `password_policy` refusal event for it.
-    pub policy: bool,
+    /// A Keyring-side rule refused it (`KEYRING_PASSWORD_POLICY`,
+    /// `KEYRING_REQUIRE_OWNER`), so the import writes a refusal event for
+    /// it with this reason code.
+    pub refusal: Option<crate::audit::Refusal>,
 }
 
 /// Where a [`PendingImport`] waits. `generation` goes up each time the

@@ -294,11 +294,14 @@ pub enum Refusal {
     /// `KEYRING_PASSWORD_POLICY`. Says nothing about the value or which
     /// rule it failed.
     PasswordPolicy,
+    /// `KEYRING_REQUIRE_OWNER` is on and the item would have been saved
+    /// without an `owner` tag. Says nothing about the addresses.
+    OwnerRequired,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 15] = [
+    pub const ALL: [Refusal; 16] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -314,6 +317,7 @@ impl Refusal {
         Self::StepUpNotMet,
         Self::ReasonRequired,
         Self::PasswordPolicy,
+        Self::OwnerRequired,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -333,6 +337,7 @@ impl Refusal {
             Self::StepUpNotMet => "step_up_not_met",
             Self::ReasonRequired => "reason_required",
             Self::PasswordPolicy => "password_policy",
+            Self::OwnerRequired => "owner_required",
         }
     }
 }

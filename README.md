@@ -148,6 +148,7 @@ The demo is in `tests/screenshots.rs` and needs no Azure. The script uses a pinn
 - **Used by in the last 30 days**: on each secret, certificate and key page, and before you set a new value, roll back, disable, rotate or delete, a panel lists the people, apps and managed identities that read or used it, from Key Vault's audit log, so you can see what might break. It's advice: if the log can't be read, or the vault's events haven't arrived yet, it says why and you can still go ahead. An empty list is never shown as proof that a change is safe, and the panel always says which workspaces and period it looked at.
 - **Tags**: every form that sets tags has a row per tag, a name and a value, with suggestions of the names and values already used in the vault (plain HTML, so they work without JavaScript). The list filters suggest `name` and `name=value` from what's on the page, and each tag on an item's page links to the list filtered by it.
 - **Descriptions**: a note on any secret, certificate or key, kept in its `description` tag (see [Well-known tags](#well-known-tags)). Set it when you create or edit an item, or with **Edit details** on a certificate or key, or on many at once; it shows under the item's name, in a list column, in search and in the CSV exports.
+- **Owners**: who looks after each secret, certificate and key, kept in its `owner` and `notify` tags, and who owns each vault, from the vault's `keyring-owners` tag (see [Well-known tags](#well-known-tags)). Owner and Notify fields sit beside Description on every item form, the owner shows on each item's page and in a list column, **Owned by me** on the lists shows what you own or are told about, and vault health warns about a vault with no owners. With `KEYRING_REQUIRE_OWNER=true`, Keyring won't create or edit an item without an owner (see [Owners](#owners)).
 - Deletes need you to type the item's name first.
 
 ## Password policy
@@ -163,8 +164,29 @@ Keyring stores nothing, so the few things it keeps about an item live in the ite
 | Tag | On | Meaning |
 | --- | --- | --- |
 | `description` | secret, certificate, key | A note on what the item is for: up to 256 characters, line breaks allowed. Set with the Description field. Anyone who can see the item's tags can read it, so don't put secrets or personal details in it |
+| `owner` | secret, certificate, key | One email address: the person (their UPN) or team who looks after the item. Set with the Owner field |
+| `notify` | secret, certificate, key | Up to 5 more email addresses to tell about the item, separated by commas, within the tag's 256 characters. Set with the Notify field |
+| `keyring-owners` | vault (an Azure resource tag, not a Key Vault tag) | The vault's owners: email addresses separated by commas. Keyring reads it from Resource Graph and never changes it. Set it in the vault's **Tags** blade in the Azure portal, or with `az tag update --resource-id <vault ID> --operation merge --tags keyring-owners=ops@example.com` |
 | `rotation`, `rotation-last`, `rotation-status` | secret | What the last rotation did, written by your rotation job and read by Keyring ([docs/rotation.md](docs/rotation.md)) |
 
+Addresses in these tags are personal data that anyone who can read the item's tags (or the vault's) can already see. Keyring shows them, but never logs them, puts them in an audit event, or puts one in a link. Each must be one plain address, such as `alex@example.com`, and in `KEYRING_NOTIFY_ALLOWED_DOMAINS` when that is set. A value set in the portal or the CLI that isn't is shown as it is, with a note, and kept unless you change that field.
+
+### Owners
+
+**Owned by me** on the secrets, certificates and keys lists shows the items whose `owner`, or one of whose `notify` addresses, is the address you signed in with, ignoring case. It is a tick box in the filter form, so it works without JavaScript and with the other filters and paging, and the link it makes says only `mine=1`: never your address.
+
+With `KEYRING_REQUIRE_OWNER=true`, Keyring refuses to save an item without an `owner`:
+
+| Where | What happens |
+| --- | --- |
+| Create a secret, certificate or key; upload a certificate | Refused with an error on the Owner field |
+| Edit details and Set a new value on a secret; Edit details on a certificate or key | Refused with an error on the Owner field when the owner is empty, including an item that never had one. An owner set elsewhere that isn't a plain address counts, and is kept |
+| Import from a file | A row without an `owner` column value is skipped and named in the preview, and gets its own `owner_required` event. A `.env` file has no owner column, so with the policy on, import from a CSV |
+| Copy to another vault | Refused unless the source has an owner and Tags is ticked, so the copy brings it |
+| Change many at once | **Remove the owner** isn't offered and is refused; the other changes don't touch the owner |
+| Rotate a key, roll back a secret, enable, disable, renew a certificate | Not checked: they keep the item's tags as they are, and no form shows the owner |
+
+Like the password policy, it is a Keyring rule: Key Vault doesn't know about it, and the Azure CLI and portal aren't limited by it. The emails that use these tags (access requests and activity) check `KEYRING_NOTIFY_ALLOWED_DOMAINS` again when they send.
 ## How access works
 
 ```
@@ -349,6 +371,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_STEP_UP_AUTH_CONTEXT` | Optional. A Conditional Access authentication context ID, `c1` to `c99`. Before a reveal, private key download, rollback, copy to another vault or purge, Keyring checks the sign-in met it and, if not, asks Entra for it. Checked at start. See [Step-up](docs/deploy.md#step-up-before-sensitive-actions) |
 | `KEYRING_REQUIRE_REASON` | Optional. `off` (default), `reveal` or `all`. With `reveal`, Keyring asks for a reason (5 to 200 characters) before it shows or copies a secret value or downloads a private key; with `all`, before every change too. The reason goes on the audit event. Not a hard control: the CLI needs no reason. Checked at start. See [Reasons](docs/deploy.md#a-reason-before-a-value-is-shown) |
 | `KEYRING_REASON_TICKET_PATTERN` | Optional. A regular expression a ticket reference must match as a whole, such as `(INC\|CHG)[0-9]{7}`. Shape only: no ticket system is called. Needs `KEYRING_REQUIRE_REASON`. Checked at start |
+| `KEYRING_REQUIRE_OWNER` | Optional. `true` to refuse creating or editing a secret, certificate or key without an `owner` tag, on every form that shows the Owner field, and to skip import rows without one. Off by default. Not a hard control: the Azure CLI and portal aren't limited. See [Owners](#owners) |
 | `KEYRING_PASSWORD_POLICY` | Optional. Rules for a password typed into a Password secret or a Login's password field, on create and on Set a new value, and for each imported value, such as `min=14,upper,lower,digit,symbol,max-repeat=3,common`. Each part is off unless listed: `min=N` (fewest characters, 1 to 256), `upper`, `lower`, `digit`, `symbol`, `max-repeat=N` (most of one character in a row, 1 to 64) and `common` (not on Keyring's built-in list of common passwords). Unset means no policy. A Keyring control only: the CLI and portal aren't limited by it. Checked at start: an unknown or repeated part, or a number out of range, stops Keyring starting. See [Password policy](#password-policy) |
 | `KEYRING_STEP_UP_MAX_AGE` | Optional. Minutes, 1 to 720, since the person last signed in for those same actions to go ahead. Older, and Keyring asks for a fresh sign-in. For tenants without Conditional Access. Checked at start |
 | `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |

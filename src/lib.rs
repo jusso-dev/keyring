@@ -14,6 +14,7 @@ pub(crate) mod generator;
 pub(crate) mod health;
 pub mod http;
 pub mod notify;
+pub mod owner;
 pub mod password_policy;
 pub(crate) mod pkcs12;
 pub mod reason;

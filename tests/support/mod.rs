@@ -2030,3 +2030,23 @@ pub(crate) fn hidden_value(html: &str, field: &str) -> Option<String> {
     let end = html[start..].find('"')? + start;
     Some(html[start..end].to_owned())
 }
+
+/// Email settings as `KEYRING_NOTIFY_*` would set them, for tests that need
+/// `allowed_domains` without starting the sender. No managed identity is
+/// set, so nothing is ever sent.
+pub(crate) fn world_notify_settings() -> keyring::config::NotifySettings {
+    keyring::config::NotifySettings {
+        endpoint: "https://keyring-mail.australia.communication.azure.com".into(),
+        sender: keyring::notify::Address::parse("DoNotReply@mail.example.com").unwrap(),
+        admins: Vec::new(),
+        allowed_domains: None,
+        types: Vec::new(),
+        audit_recipients: false,
+        per_hour: 10,
+        burst_threshold: 50,
+        tuning: keyring::notify::sender::Tuning::default(),
+        eventgrid_audience: None,
+        hook_tuning: keyring::notify::expiry::HookTuning::default(),
+        health_tuning: keyring::notify::health::Tuning::default(),
+    }
+}

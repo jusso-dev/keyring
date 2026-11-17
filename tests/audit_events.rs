@@ -1011,7 +1011,7 @@ async fn audited_routes_write_exactly_one_event() {
             ("item", "bulk-gone"),
             ("item", "web-tls"),
             ("op", "tag_set"),
-            ("tag_name", "owner"),
+            ("tag_name", "rota"),
             ("tag_value", "ops"),
         ],
         &[SAME_SITE, ("user-agent", "BulkBrowser/1.0")],

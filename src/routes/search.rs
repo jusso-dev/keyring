@@ -97,6 +97,7 @@ impl SearchQuery {
                 .any(|(k, v)| format!("{k}={v}").to_lowercase().contains(&q))
             || i.content_type.to_lowercase().contains(&q)
             || i.description().to_lowercase().contains(&q)
+            || i.owner().to_lowercase().contains(&q)
     }
 
     fn matches(&self, i: &Item, now: i64) -> bool {
@@ -124,6 +125,7 @@ pub(super) struct Row {
     /// Tags, without the description.
     pub tags: Vec<(String, String)>,
     pub description: String,
+    pub owner: crate::owner::Display,
 }
 
 pub(super) struct VaultResults {
@@ -241,10 +243,11 @@ pub(super) async fn page(
             tags: i
                 .tags
                 .iter()
-                .filter(|(k, _)| k != crate::description::TAG)
+                .filter(|(k, _)| !crate::owner::has_own_field(k))
                 .cloned()
                 .collect(),
             description: i.description().to_owned(),
+            owner: crate::owner::Display::of_owner(i.owner()),
         };
         match out.groups.last_mut() {
             Some(g) if g.vault == i.vault => g.rows.push(row),

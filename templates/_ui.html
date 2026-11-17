@@ -121,6 +121,40 @@
   {% include "_field_error.html" %}
 {%- endmacro -%}
 
+{#- The owner and notify fields (src/owner.rs), after Description. `v` is
+    an owner::Fields, `owners` the owner addresses used in the vault. Plain
+    text inputs, so a value set elsewhere comes back as it was shown. A
+    value Keyring wouldn't write is shown as it is with a note, and kept
+    unless it is changed. -#}
+{%- macro owner_fields(v, owners) -%}
+{%- let field_name = "owner" %}
+  <label for="owner">Owner{% if !shell.require_owner %} <span class="muted">(optional)</span>{% endif %}</label>
+  <p class="field-help" id="owner-help">The email address of the person or team who looks after this, such as alex@example.com. One address, saved as the <span class="mono">owner</span> tag, so anyone who can see the tags can read it.{% if shell.require_owner %} Keyring is set to need one.{% else %} Leave it empty to remove it.{% endif %}</p>
+  {%- if v.owner_odd %}
+  <p class="field-help" id="owner-note">This owner was set outside Keyring and isn't one plain address. It's kept as it is unless you change it.</p>
+  {%- endif %}
+  <input id="owner" name="owner" type="text" inputmode="email" value="{{ v.owner }}" maxlength="256" list="owner-options"{% call ident() %}{% endcall %}{% if v.owner_odd %}{% call aria("owner", "owner-help owner-note") %}{% endcall %}{% else %}{% call aria("owner", "owner-help") %}{% endcall %}{% endif %}>
+  <datalist id="owner-options">{% for o in owners %}<option value="{{ o }}">{% endfor %}</datalist>
+  {% include "_field_error.html" %}
+{%- let field_name = "notify" %}
+  <label for="notify">Notify <span class="muted">(optional)</span></label>
+  <p class="field-help" id="notify-help">Up to {{ crate::owner::MAX_NOTIFY }} more addresses to tell about this, separated by commas. Saved as the <span class="mono">notify</span> tag. Leave it empty to remove it.</p>
+  {%- if v.notify_odd %}
+  <p class="field-help" id="notify-note">This list was set outside Keyring and isn't plain addresses separated by commas. It's kept as it is unless you change it.</p>
+  {%- endif %}
+  <input id="notify" name="notify" type="text" inputmode="email" value="{{ v.notify }}" maxlength="256"{% call ident() %}{% endcall %}{% if v.notify_odd %}{% call aria("notify", "notify-help notify-note") %}{% endcall %}{% else %}{% call aria("notify", "notify-help") %}{% endcall %}{% endif %}>
+  {% include "_field_error.html" %}
+{%- endmacro -%}
+
+{#- An owner value on a page: each entry that parses as an address is a
+    mailto link, anything else plain text. `d` is an owner::Display.
+    A muted "None" when there is nothing. -#}
+{%- macro owner_value(d) -%}
+{%- if d.is_empty() %}<span class="muted">None</span>
+{%- else %}{% for e in d.entries %}{% if !loop.first %}, {% endif %}{% if let Some(href) = e.mailto() %}<a href="{{ href }}">{{ e.text() }}</a>{% else %}<span class="mono">{{ e.text() }}</span>{% endif %}{% endfor %}{% if d.odd %} <span class="muted small">(not a plain address)</span>{% endif %}
+{%- endif -%}
+{%- endmacro -%}
+
 {#- Tags as rows (src/routes/tag_rows.rs): a name and a value input per
     tag, numbered, so an error sits beside its row. `t` is a TagField. The
     datalists suggest names and values from the vault's own lists, with no

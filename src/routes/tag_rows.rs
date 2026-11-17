@@ -20,6 +20,11 @@
 //! list cache when it is fresh, within [`SUGGEST_TIME`]. Never the
 //! `description` note. If the lists can't be read in time, the form shows
 //! without suggestions and works the same.
+//!
+//! **Tags with their own field.** `description`, `owner` and `notify`
+//! ([`crate::owner::has_own_field`]) are never shown in a row, never
+//! suggested as names, and refused in a row with a pointer to their field.
+//! Owner values that are plain addresses are suggested in the owner field.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
@@ -28,8 +33,12 @@ use std::time::Duration;
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::description;
+use crate::owner;
 use crate::routes::forms::FieldErrors;
 use crate::routes::secrets::form::{DESCRIPTION_IS_A_FIELD, MAX_TAG_NAME, MAX_TAG_VALUE, MAX_TAGS};
+
+/// Said when `owner` or `notify` is typed as an ordinary tag name.
+pub(crate) const OWNER_IS_A_FIELD: &str = "The owner and notify tags are set with the Owner and Notify fields. Put the addresses there, not in Tags.";
 
 /// Most rows read from a post, and shown on a form.
 pub(crate) const MAX_ROWS: usize = 40;
@@ -78,10 +87,11 @@ pub(crate) fn fits(name: &str, value: &str) -> bool {
     !name.trim().is_empty() && !breaks(name) && !breaks(value)
 }
 
-/// The tags a row can't show, without the note. Kept as they are.
+/// The tags a row can't show, without the ones that have their own field.
+/// Kept as they are.
 pub(crate) fn locked(tags: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     tags.iter()
-        .filter(|(k, v)| k.as_str() != description::TAG && !fits(k, v))
+        .filter(|(k, v)| !owner::has_own_field(k) && !fits(k, v))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
 }
@@ -206,8 +216,8 @@ impl<'de> serde::Deserialize<'de> for TagPost {
 }
 
 /// The tags to write: the rows, checked, and the tags of `current` a row
-/// can't show, kept. Without the note, which [`super::secrets::form::with_note`]
-/// merges in after. Each problem goes on its row's field, or on `tags`. A
+/// can't show, kept. Without the note, the owner and notify, which
+/// [`super::secrets::form::with_fields`] merges in after. Each problem goes on its row's field, or on `tags`. A
 /// post with no tag fields at all keeps every tag as it is.
 pub(crate) fn check(
     post: &TagPost,
@@ -215,7 +225,7 @@ pub(crate) fn check(
     errors: &mut FieldErrors,
 ) -> BTreeMap<String, String> {
     if !post.shown && !post.old_box && !post.odd && post.rows.is_empty() {
-        return description::without(current);
+        return owner::without_fields(current);
     }
     let kept = locked(current);
     let mut tags = kept.clone();
@@ -243,6 +253,8 @@ pub(crate) fn check(
         }
         let problem = if description::is_reserved(name) {
             Some((name_id, DESCRIPTION_IS_A_FIELD.to_owned()))
+        } else if owner::is_reserved(name) {
+            Some((name_id, OWNER_IS_A_FIELD.to_owned()))
         } else if breaks(name) {
             Some((
                 name_id,
@@ -288,7 +300,7 @@ pub(crate) fn check(
         errors.push(
             "tags",
             format!(
-                "Key Vault allows up to {MAX_TAGS} tags, the description included. This has {}.",
+                "Key Vault allows up to {MAX_TAGS} tags, the description, owner and notify included. This has {}.",
                 tags.len()
             ),
         );
@@ -331,7 +343,7 @@ impl TagField {
     pub(crate) fn of(tags: &BTreeMap<String, String>) -> Self {
         let mut rows: Vec<TagRow> = tags
             .iter()
-            .filter(|(k, v)| k.as_str() != description::TAG && fits(k, v))
+            .filter(|(k, v)| !owner::has_own_field(k) && fits(k, v))
             .take(MAX_ROWS)
             .enumerate()
             .map(|(i, (k, v))| TagRow::new(i + 1, k, v))
@@ -394,11 +406,13 @@ pub(crate) struct NameValues {
 }
 
 /// Tag names in use, most used first, each with its values, and the most
-/// used values overall.
+/// used values overall. Owners are the `owner` values that are plain
+/// addresses, for the owner field.
 #[derive(Default)]
 pub(crate) struct Suggestions {
     pub names: Vec<NameValues>,
     pub values: Vec<String>,
+    pub owners: Vec<String>,
 }
 
 /// Fit for a suggestion: short, on one line, with nothing hidden in it.
@@ -416,7 +430,8 @@ fn ranked(counts: HashMap<&str, usize>, max: usize) -> Vec<&str> {
 }
 
 impl Suggestions {
-    /// From each item's tags. The note is never suggested.
+    /// From each item's tags. The note is never suggested, and the tags
+    /// with their own field aren't suggested as tags.
     pub(crate) fn from_sets<'a, I, T>(sets: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -425,9 +440,13 @@ impl Suggestions {
         let mut names: HashMap<&str, usize> = HashMap::new();
         let mut by_name: HashMap<&str, HashMap<&str, usize>> = HashMap::new();
         let mut values: HashMap<&str, usize> = HashMap::new();
+        let mut owners: HashMap<&str, usize> = HashMap::new();
         for set in sets {
             for (k, v) in set {
-                if k == description::TAG || !usable(k) {
+                if k == owner::OWNER_TAG && usable(v) && crate::notify::Address::parse(v).is_ok() {
+                    *owners.entry(v).or_default() += 1;
+                }
+                if owner::has_own_field(k) || !usable(k) {
                     continue;
                 }
                 *names.entry(k).or_default() += 1;
@@ -452,6 +471,10 @@ impl Suggestions {
         Self {
             names,
             values: ranked(values, MAX_VALUES)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            owners: ranked(owners, owner::MAX_SUGGESTED)
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
@@ -640,11 +663,17 @@ mod tests {
             (&long, ""),
             ("v", &"x".repeat(MAX_TAG_VALUE + 1)),
             ("description", "x"),
+            ("owner", "a@example.com"),
+            (" notify", "b@example.com"),
+            ("Owner", "kept as an ordinary tag"),
         ]);
         let (_, e) = checked(&p, &BTreeMap::new());
         assert!(e.error_for("tag-name-1").unwrap().contains("512"));
         assert!(e.error_for("tag-value-2").unwrap().contains("256"));
         assert_eq!(e.error_for("tag-name-3"), Some(DESCRIPTION_IS_A_FIELD));
+        assert_eq!(e.error_for("tag-name-4"), Some(OWNER_IS_A_FIELD));
+        assert_eq!(e.error_for("tag-name-5"), Some(OWNER_IS_A_FIELD));
+        assert!(e.error_for("tag-name-6").is_none());
         let many: Vec<(String, String)> = (0..16).map(|i| (format!("k{i}"), "v".into())).collect();
         let rows: Vec<(&str, &str)> = many.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
         let (_, e) = checked(&TagPost::rows(&rows), &BTreeMap::new());
@@ -675,7 +704,7 @@ mod tests {
         // A post with no tag fields at all changes nothing.
         let (t, e) = checked(&TagPost::default(), &cur);
         assert!(e.is_empty());
-        assert_eq!(t, description::without(&cur));
+        assert_eq!(t, owner::without_fields(&cur));
     }
 
     #[test]
@@ -699,6 +728,8 @@ mod tests {
             ("q\"<x>&", "'v' <b>"),
             ("flag", ""),
             ("description", "the note"),
+            ("owner", "odd\nowner"),
+            ("notify", "a@example.com"),
             ("multi", "line\nvalue"),
         ]);
         let field = TagField::of(&cur);
@@ -714,7 +745,7 @@ mod tests {
         }
         let (t, e) = checked(&post, &cur);
         assert!(e.is_empty());
-        assert_eq!(t, description::without(&cur));
+        assert_eq!(t, owner::without_fields(&cur));
         assert_eq!(field.rows.len(), 5 + EMPTY_ROWS);
         assert!(
             field
@@ -747,12 +778,19 @@ mod tests {
                 ("team", "data"),
                 ("description", "secret note"),
             ],
-            vec![("env", "prod"), ("owner", "a")],
-            vec![("env", "test"), ("team", "web")],
+            vec![("env", "prod"), ("owner", "a"), ("notify", "b@example.com")],
+            vec![
+                ("env", "test"),
+                ("team", "web"),
+                ("owner", "Alex@example.com"),
+            ],
+            vec![("owner", "Alex@example.com"), ("owner-team", "x")],
         ];
         let s = Suggestions::from_sets(items.iter().map(|t| t.iter().copied()));
         let names: Vec<&str> = s.names.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, ["env", "team", "owner"]);
+        assert_eq!(names, ["env", "team", "owner-team"]);
+        // Only owners that are plain addresses, never notify.
+        assert_eq!(s.owners, ["Alex@example.com"]);
         assert_eq!(s.names[0].values, ["prod", "test"]);
         assert_eq!(s.names[0].list_id, "tag-values-1");
         assert_eq!(s.values[0], "prod");

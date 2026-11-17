@@ -433,6 +433,130 @@ async fn values_never_reach_the_logs() {
         );
     }
 
+    // Owner and notify (#255): addresses are personal data, so they never
+    // reach a log line, an audit event, a flash message or a URL. Create,
+    // edit, a refused edit, Edit details (with Key Vault refusing first),
+    // the bulk change and the import, with KEYRING_REQUIRE_OWNER on so its
+    // refusals run too.
+    {
+        let wo = support::world_with(&[("KEYRING_REQUIRE_OWNER", "true")]).await;
+        let res = wo
+            .post(
+                "/v/kv-test/secrets/-/new",
+                &[
+                    ("name", "owned"),
+                    ("value", "v"),
+                    ("owner", "ownerleak@example.com"),
+                    ("notify", "notifyleak@example.com, notifyleak2@example.com"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        assert!(!support::location(&res).contains("leak"));
+        // Refused: no owner, then an owner that isn't an address.
+        for owner in ["", "OWNERLEAK not an address"] {
+            let res = wo
+                .post(
+                    "/v/kv-test/secrets/-/new",
+                    &[("name", "ownerless"), ("value", "v"), ("owner", owner)],
+                )
+                .await;
+            assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let (_, html) = wo.page("/v/kv-test/secrets/owned/edit").await;
+        let version = support::hidden_value(&html, "version").unwrap();
+        let updated = support::hidden_value(&html, "updated").unwrap();
+        for (owner, notify) in [
+            ("ownerleak@example.com", "bad OWNERLEAK, x"),
+            ("ownerleak2@example.com", "notifyleak3@example.com"),
+        ] {
+            let _ = wo
+                .post(
+                    "/v/kv-test/secrets/owned/edit",
+                    &[
+                        ("version", &version),
+                        ("updated", &updated),
+                        ("owner", owner),
+                        ("notify", notify),
+                    ],
+                )
+                .await;
+        }
+        assert_eq!(
+            wo.kv.state.current("owned").unwrap().tags["owner"],
+            "ownerleak2@example.com"
+        );
+        wo.kv.state.add_key_with("owned-key", "RSA", |_| {});
+        let path = "/v/kv-test/keys/owned-key/details";
+        let (_, html) = wo.page(path).await;
+        let version = support::hidden_value(&html, "version").unwrap();
+        let updated = support::hidden_value(&html, "updated").unwrap();
+        let f = [
+            ("version", version.as_str()),
+            ("updated", updated.as_str()),
+            ("owner", "ownerleak3@example.com"),
+            ("notify", "notifyleak4@example.com"),
+        ];
+        wo.kv.state.fail_each.lock().unwrap().push((
+            axum::http::Method::PATCH,
+            "/keys/owned-key/".into(),
+            403,
+            "ForbiddenByRbac",
+        ));
+        let res = wo.post(path, &f).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        assert!(!support::body_text(res).await.contains("leak@"));
+        wo.kv.state.fail_each.lock().unwrap().clear();
+        let res = wo.post(path, &f).await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        // The bulk change: set the owner and notify, and a refused remove.
+        for op in [
+            vec![("op", "owner_set"), ("owner", "ownerleak4@example.com")],
+            vec![("op", "notify_set"), ("notify", "notifyleak5@example.com")],
+            vec![("op", "owner_remove")],
+            vec![("op", "owner_set"), ("owner", "OWNERLEAK bad")],
+        ] {
+            let mut f = vec![("item", "owned")];
+            f.extend(op);
+            let res = wo.post("/v/kv-test/secrets/-/bulk", &f).await;
+            let _ = support::body_text(res).await;
+            let res = wo.post("/v/kv-test/secrets/-/bulk/apply", &f).await;
+            let _ = support::body_text(res).await;
+        }
+        assert_eq!(
+            wo.kv.state.current("owned").unwrap().tags["notify"],
+            "notifyleak5@example.com"
+        );
+        // An import with an owned row, an ownerless row the policy refuses,
+        // and a row whose owner isn't an address.
+        let res = wo
+            .post_multipart(
+                "/v/kv-test/secrets/-/import",
+                &[support::Part::File(
+                    "file",
+                    "s.csv",
+                    b"name,value,owner,notify\r\nOWN-IMP,v,ownerleak5@example.com,\"notifyleak6@example.com, notifyleak7@example.com\"\r\nOWN-NONE,v,,\r\nOWN-BAD,v,OWNERLEAK x,\r\n",
+                )],
+            )
+            .await;
+        let html = support::body_text(res).await;
+        let id = support::hidden_value(&html, "import_id").unwrap();
+        let res = wo
+            .post("/v/kv-test/secrets/-/import/confirm", &[("import_id", &id)])
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let _ = support::body_text(res).await;
+        assert_eq!(
+            wo.kv.state.current("OWN-IMP").unwrap().tags["owner"],
+            "ownerleak5@example.com"
+        );
+        assert!(wo.kv.state.current("OWN-NONE").is_none());
+        // The filter and the lists show the address; the filter's link
+        // carries only a flag.
+        let (_, html) = wo.page("/v/kv-test/secrets?mine=1").await;
+        assert!(!html.contains("mine=alex"));
+    }
+
     // Tag rows (#253): a tag value refused beside its row, one saved, and
     // the suggestions read back on a form. Tags aren't secret, but a row's
     // text is never logged either.
@@ -548,7 +672,7 @@ async fn values_never_reach_the_logs() {
                 ("item", "IMPORT-TWO"),
                 ("item", "no-such-one"),
                 ("op", "tag_set"),
-                ("tag_name", "owner"),
+                ("tag_name", "rota"),
                 ("tag_value", "ops"),
             ],
         )
@@ -1107,6 +1231,13 @@ async fn values_never_reach_the_logs() {
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
     assert!(!logs.contains("NOTELEAK"), "a description leaked:\n{logs}");
+    for leak in ["ownerleak", "notifyleak", "OWNERLEAK"] {
+        assert!(!logs.contains(leak), "an address leaked ({leak}):\n{logs}");
+    }
+    assert!(
+        logs.contains("reason_code=owner_required"),
+        "the owner policy's refusals are recorded: {logs}"
+    );
     assert!(!logs.contains("TAGLEAK"), "a tag row leaked:\n{logs}");
     for (action, item) in [
         ("secret.create", "noted"),
@@ -1377,6 +1508,9 @@ async fn values_never_reach_the_logs() {
         "GENLEAK_",
         "Imp0rtLeak",
         "NOTELEAK",
+        "ownerleak",
+        "notifyleak",
+        "OWNERLEAK",
         "POLLEAK",
         "user-api-token",
         "obo:",

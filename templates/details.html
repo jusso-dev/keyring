@@ -6,7 +6,7 @@
 {% block content %}
 <p class="back-link"><a href="{{ kind.item_url(vault, name) }}">Back to {{ name }}</a></p>
 <h1>Edit <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p>Changes the description and tags of the current version. Nothing else about the {{ kind.noun() }} changes, and no new version is made.</p>
+<p>Changes the description, owner, notify list and tags of the current version. Nothing else about the {{ kind.noun() }} changes, and no new version is made.</p>
 {% call ui::error_summary(errors) %}{% endcall %}
 {% call ui::optional_note() %}{% endcall %}
 <form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ name }}/details" class="stacked" novalidate>
@@ -16,7 +16,9 @@
 
   {% call ui::description_field(description, kind.noun()) %}{% endcall %}
 
-  {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
+  {% call ui::owner_fields(owners, tags.suggest.owners) %}{% endcall %}
+
+  {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, owner and notify, each name used once.") %}{% endcall %}
 
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
   <div class="actions">

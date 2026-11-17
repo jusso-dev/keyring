@@ -1,6 +1,8 @@
 //! Create a certificate from a policy: self-signed, or from an issuer the
 //! vault already has set up.
 
+use std::collections::BTreeMap;
+
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
@@ -21,7 +23,7 @@ use crate::routes::error::{Need, PageResult, rejection_message};
 use crate::routes::flash::{self, Flash};
 use crate::routes::forms::{CsrfForm, FieldErrors};
 use crate::routes::lifecycle::redirect_with;
-use crate::routes::secrets::form::with_note;
+use crate::routes::secrets::form::with_fields;
 use crate::routes::shell::Shell;
 use crate::routes::tag_rows::{self, Suggestions, TagField, TagPost};
 use crate::routes::vault_ctx::{azure_problem, check_csrf, checked_name, vault_path};
@@ -166,6 +168,20 @@ pub(crate) struct CreateForm {
     /// The note, kept in the `description` tag.
     #[serde(default)]
     pub description: String,
+    /// The `owner` and `notify` tags.
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub notify: Option<String>,
+}
+
+impl CreateForm {
+    fn owners(&self) -> crate::owner::Posted<'_> {
+        crate::owner::Posted {
+            owner: self.owner.as_deref(),
+            notify: self.notify.as_deref(),
+        }
+    }
 }
 
 fn is_dns_name(s: &str) -> bool {
@@ -188,6 +204,7 @@ fn is_dns_name(s: &str) -> bool {
 pub(crate) fn build(
     f: &CreateForm,
     issuers: &[String],
+    rules: crate::owner::Rules<'_>,
 ) -> Result<(String, CreateCert), FieldErrors> {
     let mut errors = FieldErrors::new();
     let name = f.name.trim().to_owned();
@@ -287,7 +304,8 @@ pub(crate) fn build(
             Vec::new()
         });
     let tags = tag_rows::check(&f.tag_rows, &Default::default(), &mut errors);
-    let tags = with_note(&tags, &f.description, &mut errors);
+    let none = BTreeMap::new();
+    let tags = with_fields(&tags, &none, &f.description, f.owners(), rules, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -335,6 +353,7 @@ struct CreatePage {
     /// Key Vault's own reason, after it refused the request.
     azure_message: Option<String>,
     tags: TagField,
+    owners: crate::owner::Fields,
 }
 
 impl CreatePage {
@@ -365,6 +384,7 @@ fn page(
     azure_message: Option<String>,
 ) -> axum::response::Response {
     let tags = TagField::posted(&form.tag_rows, &Default::default()).with(suggest);
+    let owners = crate::owner::Fields::posted(form.owners(), &BTreeMap::new());
     let status = if errors.is_empty() && azure_message.is_none() {
         StatusCode::OK
     } else {
@@ -380,6 +400,7 @@ fn page(
             issuers,
             azure_message,
             tags,
+            owners,
         }),
     )
         .into_response()
@@ -428,7 +449,7 @@ pub(crate) async fn create(
     let shell = check_csrf(&session, &vault, &f.csrf, shell)?;
     let certs = api(&state, &session, &vault);
     let issuers = load_issuers(&certs).await;
-    let (name, body) = match build(&f, &issuers.names) {
+    let (name, body) = match build(&f, &issuers.names, crate::owner::Rules::of(&state.config)) {
         Ok(ok) => {
             crate::audit::note_item(&ok.0);
             ok
@@ -541,6 +562,8 @@ pub(crate) async fn cancel_pending(
 mod tests {
     use super::*;
 
+    const R: crate::owner::Rules<'static> = crate::owner::Rules::OFF;
+
     fn form() -> CreateForm {
         CreateForm {
             csrf: "t".into(),
@@ -555,7 +578,7 @@ mod tests {
 
     #[test]
     fn defaults_make_a_sensible_self_signed_policy() {
-        let (name, body) = build(&form(), &[]).unwrap();
+        let (name, body) = build(&form(), &[], R).unwrap();
         assert_eq!(name, "web-tls");
         let p = serde_json::to_value(&body.policy).unwrap();
         assert_eq!(p["issuer"]["name"], "Self");
@@ -589,7 +612,7 @@ mod tests {
         f.issuer = "DigiCert-OV".into();
         f.format = "pem".into();
         f.dns_names = "www.example.com\n*.api.example.com\nWWW.example.com".into();
-        let (_, body) = build(&f, &["DigiCert-OV".into()]).unwrap();
+        let (_, body) = build(&f, &["DigiCert-OV".into()], R).unwrap();
         let p = serde_json::to_value(&body.policy).unwrap();
         assert_eq!(p["key_props"]["crv"], "P-256");
         assert_eq!(p["key_props"]["exportable"], false);
@@ -602,7 +625,7 @@ mod tests {
         let sans = p["x509_props"]["sans"]["dns_names"].as_array().unwrap();
         assert_eq!(sans.len(), 3, "duplicates removed, CN added: {sans:?}");
         f.renewal = "none".into();
-        let (_, body) = build(&f, &["DigiCert-OV".into()]).unwrap();
+        let (_, body) = build(&f, &["DigiCert-OV".into()], R).unwrap();
         assert!(body.policy.lifetime_actions.is_empty());
     }
 
@@ -614,7 +637,7 @@ mod tests {
         f.dns_names = "bad name.com".into();
         f.validity_months = "0".into();
         f.key = "DSA".into();
-        let fields: Vec<_> = build(&f, &[])
+        let fields: Vec<_> = build(&f, &[], R)
             .err()
             .unwrap()
             .iter()
@@ -626,7 +649,7 @@ mod tests {
         );
         let mut f = form();
         f.renew_days = "500".into();
-        assert_eq!(build(&f, &[]).err().unwrap()[0].field, "renew_days");
+        assert_eq!(build(&f, &[], R).err().unwrap()[0].field, "renew_days");
     }
 
     #[test]
@@ -635,13 +658,13 @@ mod tests {
         for bad in ["Unknown", "DigiCert-OV", "bad name"] {
             f.issuer = bad.into();
             assert_eq!(
-                build(&f, &["Other-CA".into()]).err().unwrap()[0].field,
+                build(&f, &["Other-CA".into()], R).err().unwrap()[0].field,
                 "issuer",
                 "{bad}"
             );
         }
         f.issuer = "Other-CA".into();
-        assert!(build(&f, &["Other-CA".into()]).is_ok());
+        assert!(build(&f, &["Other-CA".into()], R).is_ok());
     }
 
     #[test]
@@ -650,7 +673,7 @@ mod tests {
             let mut f = form();
             f.validity_months = months.into();
             f.renew_days = renew.into();
-            build(&f, &[]).map(|(_, b)| {
+            build(&f, &[], R).map(|(_, b)| {
                 b.policy.lifetime_actions[0]
                     .trigger
                     .days_before_expiry

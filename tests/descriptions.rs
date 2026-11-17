@@ -295,7 +295,10 @@ async fn certificate_create_upload_and_edit_details() {
     let (status, html) = w.page("/v/kv-test/certificates/edge/details").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("name=\"tag-name-1\" type=\"text\" value=\"env\""));
-    assert!(html.contains("name=\"tag-value-2\" type=\"text\" value=\"ops@example.com\""));
+    assert!(!html.contains("name=\"tag-name-2\" type=\"text\" value=\"owner\""));
+    assert!(
+        html.contains("name=\"owner\" type=\"text\" inputmode=\"email\" value=\"ops@example.com\"")
+    );
     let version = hidden_value(&html, "version").unwrap();
     let updated = hidden_value(&html, "updated").unwrap();
     let before = w.kv.state.certs.lock().unwrap()["edge"].clone();
@@ -307,8 +310,8 @@ async fn certificate_create_upload_and_edit_details() {
                 ("updated", &updated),
                 ("tag-name-1", "env"),
                 ("tag-value-1", "prod"),
-                ("tag-name-2", "owner"),
-                ("tag-value-2", "ops@example.com"),
+                ("owner", "ops@example.com"),
+                ("notify", ""),
                 ("description", "Edge proxy"),
             ],
         )
@@ -347,8 +350,8 @@ async fn certificate_create_upload_and_edit_details() {
         ("updated", updated.as_str()),
         ("tag-name-1", "env"),
         ("tag-value-1", "prod"),
-        ("tag-name-2", "owner"),
-        ("tag-value-2", "ops@example.com"),
+        ("owner", "ops@example.com"),
+        ("notify", ""),
         ("description", "Edge proxy"),
     ];
     let res = w.post("/v/kv-test/certificates/edge/details", &same).await;

@@ -147,8 +147,8 @@ pub(crate) fn counts(items: &[Item], now: i64) -> [usize; 5] {
 
 /// The CSV header. [`to_csv`] and [`not_read_row`] line up with it.
 const CSV_HEADER: &str =
-    "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Tags\r\n";
-const CSV_COLUMNS: usize = 9;
+    "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Owner,Notify,Tags\r\n";
+const CSV_COLUMNS: usize = 11;
 
 /// CSV of items. No values, only names and dates. Every free-text field
 /// goes through [`csv_field`], which stops a spreadsheet reading it as a
@@ -167,6 +167,8 @@ pub(crate) fn to_csv(items: &[Item], now: i64) -> String {
                 .unwrap_or_default(),
             Band::of(i.created, now).label().to_owned(),
             csv_field(i.description()),
+            csv_field(i.owner()),
+            csv_field(i.notify()),
             csv_field(&i.tags_text()),
         ];
         out.push_str(&row.join(","));
@@ -272,11 +274,11 @@ mod tests {
         let lines: Vec<_> = csv.lines().collect();
         assert_eq!(
             lines[0],
-            "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Tags"
+            "Vault,Type,Name,Enabled,Value changed (UTC),Days since,Band,Description,Owner,Notify,Tags"
         );
         assert_eq!(
             lines[1],
-            "kv,Secret,db-password,Yes,2027-01-05,10,Under 90 days,,env=prod"
+            "kv,Secret,db-password,Yes,2027-01-05,10,Under 90 days,,,,env=prod"
         );
         assert!(
             lines[2].starts_with("kv,Secret,\"'=HYPERLINK(\"\"x\"\")\""),
@@ -288,9 +290,20 @@ mod tests {
         let mut noted = item("noted", None);
         noted.tags.push(("description".into(), "@SUM(1)".into()));
         let csv = to_csv(&[noted], NOW);
-        assert!(csv.contains(",'@SUM(1),env=prod\r\n"), "{csv}");
+        assert!(csv.contains(",'@SUM(1),,,env=prod\r\n"), "{csv}");
+        // The owner and notify get their own guarded columns, not the tags.
+        let mut owned = item("owned", None);
+        owned.tags.push(("owner".into(), "=cmd@example.com".into()));
+        owned
+            .tags
+            .push(("notify".into(), "a@example.com, b@example.com".into()));
+        let csv = to_csv(&[owned], NOW);
+        assert!(
+            csv.contains(",'=cmd@example.com,\"a@example.com, b@example.com\",env=prod\r\n"),
+            "{csv}"
+        );
         let nr = not_read_row("-kv", "a, b");
-        assert_eq!(nr, "'-kv,NOT READ,\"a, b\",,,,,,\r\n");
+        assert_eq!(nr, "'-kv,NOT READ,\"a, b\",,,,,,,,\r\n");
         assert_eq!(nr.matches(',').count() - 1, CSV_COLUMNS - 1);
     }
 }

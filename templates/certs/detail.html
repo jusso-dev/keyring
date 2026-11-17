@@ -57,6 +57,8 @@
     <dt>Thumbprint</dt><dd class="mono">{{ ui::or_none(row.thumbprint) }}</dd>
     <dt>Serial number</dt><dd class="mono">{{ c.serial }}</dd>
     <dt>Version</dt><dd class="mono">{{ row.version }}</dd>
+    <dt>Owner</dt><dd>{{ ui::owner_value(row.owners.owner_shown()) }}</dd>
+    <dt>Notify</dt><dd>{{ ui::owner_value(row.owners.notify_shown()) }}</dd>
     <dt>Tags</dt><dd>{{ ui::tag_links(row.tags, "{}/certificates"|format(shell.vault_prefix())) }}</dd>
   </dl>
   {% else %}

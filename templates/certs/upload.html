@@ -36,7 +36,9 @@
 
   {% call ui::description_field(form.description, "certificate") %}{% endcall %}
 
-  {% call ui::tag_field(form.tags, "A name and a value for each tag. Up to 15 with the description, each name used once.") %}{% endcall %}
+  {% call ui::owner_fields(form.owners, form.tags.suggest.owners) %}{% endcall %}
+
+  {% call ui::tag_field(form.tags, "A name and a value for each tag. Up to 15 with the description, owner and notify, each name used once.") %}{% endcall %}
 
   <div class="checkbox">
     <input id="enabled" name="enabled" type="checkbox"{% if form.enabled %} checked{% endif %}>

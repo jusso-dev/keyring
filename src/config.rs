@@ -62,6 +62,9 @@ pub struct Config {
     /// `KEYRING_PASSWORD_POLICY`: rules for a password typed into a
     /// Password or Login secret. Off by default.
     pub password_policy: crate::password_policy::PasswordPolicy,
+    /// `KEYRING_REQUIRE_OWNER`: an item created or edited through a form
+    /// that shows the owner field must have an `owner` tag. Off by default.
+    pub require_owner: bool,
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
@@ -447,6 +450,14 @@ impl Config {
             })?,
         };
 
+        let require_owner = match get("KEYRING_REQUIRE_OWNER").as_deref() {
+            None => false,
+            Some(v) => parse_bool(v).ok_or_else(|| ConfigError::Invalid {
+                name: "KEYRING_REQUIRE_OWNER",
+                reason: "use true or false".into(),
+            })?,
+        };
+
         let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
             None => DEFAULT_STALE_AFTER_DAYS,
             Some(v) => v
@@ -464,6 +475,7 @@ impl Config {
             step_up,
             reason,
             password_policy,
+            require_owner,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -1434,6 +1446,22 @@ pub(crate) mod tests {
                 "KEYRING_TEST_LOGANALYTICS_URL",
                 "KEYRING_TEST_KEYVAULT_URL"
             ]
+        );
+    }
+
+    #[test]
+    fn parses_require_owner() {
+        let mut env = sample_env();
+        assert!(!load(&env).unwrap().require_owner, "off by default");
+        env.insert("KEYRING_REQUIRE_OWNER", "true".into());
+        assert!(load(&env).unwrap().require_owner);
+        env.insert("KEYRING_REQUIRE_OWNER", "sometimes".into());
+        assert_eq!(
+            load(&env).unwrap_err(),
+            ConfigError::Invalid {
+                name: "KEYRING_REQUIRE_OWNER",
+                reason: "use true or false".into(),
+            }
         );
     }
 
