@@ -226,7 +226,10 @@ pub(crate) async fn reveal(
         Ok(item) if item.managed.unwrap_or(false) => {
             return Err(managed_problem(shell, &vault, &name));
         }
-        Ok(_) => {}
+        // Who watches the item comes from its current version's tags,
+        // whichever version is read: Key Vault keeps tags per version, and
+        // Keyring writes them to the current one.
+        Ok(item) => crate::notify::activity::note_read(item.tags.as_ref()),
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
     }
     let bundle = match api(&state, &session, &vault)

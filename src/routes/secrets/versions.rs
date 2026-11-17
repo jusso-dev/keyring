@@ -289,6 +289,7 @@ pub(crate) async fn rollback(
             // The version restored from. The new version is in Key
             // Vault's own log, joined by kv_request_id.
             crate::audit::note_version(target.version());
+            crate::notify::activity::note_read(items[0].tags.as_ref());
             let short: String = target.version().chars().take(8).collect();
             let mut res = Redirect::to(&back).into_response();
             let new_short: String = new.version().chars().take(8).collect();

@@ -89,7 +89,8 @@ impl TicketPattern {
         &self.source
     }
 
-    fn matches(&self, ticket: &str) -> bool {
+    /// True when `ticket` matches the whole pattern.
+    pub fn matches(&self, ticket: &str) -> bool {
         self.re.is_match(ticket)
     }
 }

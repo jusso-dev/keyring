@@ -928,6 +928,12 @@ pub(crate) async fn apply<K: Which>(
         })
         .collect();
     let changed = rows.iter().filter(|r| r.done == Done::Changed).count();
+    audit::note_changed(
+        rows.iter()
+            .filter(|r| r.done == Done::Changed)
+            .map(|r| r.name.clone())
+            .collect(),
+    );
     let failed: Vec<&ResultRow> = rows
         .iter()
         .filter(|r| !matches!(r.done, Done::Changed | Done::NoChange))

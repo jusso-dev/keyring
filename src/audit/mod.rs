@@ -467,6 +467,44 @@ fn opt(v: &Option<String>) -> Option<tracing::field::DisplayValue<&str>> {
 /// it is caught, so it can never fail [`record_to`].
 pub trait Observe: Send + Sync + std::fmt::Debug {
     fn observe(&self, ev: &AuditEvent);
+
+    /// [`Observe::observe`] for a request's own event, with what the
+    /// request noted beside it that is never written on the event: the
+    /// session, a watched item's recipients and the names a bulk change
+    /// changed. Same rules: return at once, no network on this thread.
+    fn observe_request(&self, ev: &AuditEvent, _facts: &Facts<'_>) {
+        self.observe(ev);
+    }
+}
+
+/// What a request noted for observers, beside its event. Never written to
+/// a log or the sink.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Facts<'a> {
+    /// The verified session the request ran in.
+    pub session: Option<&'a Arc<Session>>,
+    /// The recipients of a watched item the request read.
+    pub watched: Option<&'a crate::notify::activity::Watched>,
+    /// Item names a bulk change changed, each already a checked name.
+    pub changed: &'a [String],
+}
+
+/// Several observers, each called in turn.
+#[derive(Debug)]
+pub struct Fanout(pub Vec<Arc<dyn Observe>>);
+
+impl Observe for Fanout {
+    fn observe(&self, ev: &AuditEvent) {
+        for o in &self.0 {
+            o.observe(ev);
+        }
+    }
+
+    fn observe_request(&self, ev: &AuditEvent, facts: &Facts<'_>) {
+        for o in &self.0 {
+            o.observe_request(ev, facts);
+        }
+    }
 }
 
 /// Write one audit event to standard output and, with the audit sink set,
@@ -481,6 +519,16 @@ pub fn record(ev: AuditEvent, sink: Option<&sink::AuditSink>) {
 /// [`record`], then hand the event to `observer`, if any. The only way an
 /// event is written.
 pub fn record_to(ev: AuditEvent, sink: Option<&sink::AuditSink>, observer: Option<&dyn Observe>) {
+    record_with(ev, sink, observer, &Facts::default());
+}
+
+/// [`record_to`] for a request's own event, with its [`Facts`].
+fn record_with(
+    ev: AuditEvent,
+    sink: Option<&sink::AuditSink>,
+    observer: Option<&dyn Observe>,
+    facts: &Facts<'_>,
+) {
     // Fields from Keyring or checked on the way in are written as they are.
     // The user agent, UPN, reason and ticket are written as plain strings,
     // which the text format quotes and escapes and JSON escapes, so a
@@ -526,7 +574,9 @@ pub fn record_to(ev: AuditEvent, sink: Option<&sink::AuditSink>, observer: Optio
     }
     if let Some(o) = observer {
         // Never let an observer fail the request that wrote the event.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| o.observe(&ev)));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            o.observe_request(&ev, facts);
+        }));
     }
 }
 
@@ -561,6 +611,12 @@ struct Draft {
     notify_event_count: Option<u64>,
     /// Watches the request's events, when the health watcher is on.
     observer: Option<Arc<dyn Observe>>,
+    /// The verified session, for observers only. Never on the event.
+    session: Option<Arc<Session>>,
+    /// A watched item's recipients, for observers only.
+    watched: Option<crate::notify::activity::Watched>,
+    /// Names a bulk change changed, for observers only.
+    changed: Vec<String>,
 }
 
 tokio::task_local! {
@@ -634,6 +690,23 @@ pub fn note_session(session: &Session) {
         d.actor_upn.clone_from(&session.user.username);
         d.session_ref = Some(session.audit_ref.clone());
     });
+}
+
+/// Keep the verified session beside the draft, for observers. It is never
+/// written on the event.
+pub fn keep_session(session: Arc<Session>) {
+    note(|d| d.session = Some(session));
+}
+
+/// The recipients of a watched item this request read. Used only if the
+/// request's event ends as a success. See [`crate::notify::activity`].
+pub fn note_watched(w: crate::notify::activity::Watched) {
+    note(|d| d.watched = Some(w));
+}
+
+/// The item names a bulk change changed. Each must be a checked name.
+pub fn note_changed(names: Vec<String>) {
+    note(|d| d.changed = names);
 }
 
 /// The person from a verified ID token, before any session is made for
@@ -870,8 +943,16 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     pending.done = true;
     let mut d = std::mem::take(&mut *lock(&draft));
     let observer = d.observer.take();
+    let session = d.session.take();
+    let watched = d.watched.take();
+    let changed = std::mem::take(&mut d.changed);
     if let Some(ev) = finish(d, res.status()) {
-        record_to(ev, state.audit_sink.as_deref(), observer.as_deref());
+        let facts = Facts {
+            session: session.as_ref(),
+            watched: watched.as_ref(),
+            changed: &changed,
+        };
+        record_with(ev, state.audit_sink.as_deref(), observer.as_deref(), &facts);
     }
     res
 }
