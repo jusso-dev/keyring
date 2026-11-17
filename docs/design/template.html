@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<title>$title$</title>
+<link rel="stylesheet" href="style.css">
+<style>@page { @top-left { content: "$running-title$"; } @bottom-left { content: "Version $version$ · $date$ · $status$"; } }</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="cover-band"></div>
+  <p class="cover-kicker">Solution Design Document</p>
+  <h1 class="cover-title">Keyring</h1>
+  <p class="cover-name">A plain-English web front end for Azure Key Vault</p>
+  <p class="cover-sub">Acts as the signed-in person. Stores nothing.</p>
+  <table class="cover-meta">
+    <tr><th>Version</th><td>$version$</td></tr>
+    <tr><th>Date</th><td>$date$</td></tr>
+    <tr><th>Status</th><td>$status$</td></tr>
+    <tr><th>Repository</th><td><code>github.com/jusso-dev/keyring</code></td></tr>
+  </table>
+  <p class="cover-note">Draft for review. Not reviewed, approved or endorsed by anyone.</p>
+</section>
+
+<section class="control">
+$control$
+</section>
+
+<nav class="toc">
+<h2 class="toc-title">Contents</h2>
+$toc$
+</nav>
+
+<main>
+$body$
+</main>
+
+</body>
+</html>
