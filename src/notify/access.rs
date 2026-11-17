@@ -51,12 +51,36 @@ pub const MAX_PLAIN_TICKET: usize = 32;
 const DOTS: [char; 8] = [
     '.', '\u{3002}', '\u{FF0E}', '\u{FF61}', '\u{2024}', '\u{FE52}', '\u{0701}', '\u{0702}',
 ];
+/// True for a full stop, a look-alike, or a character that Unicode's
+/// compatibility folding ends with one or turns into several: the numbers
+/// with a full stop (`⒈`), `㏇` (`Co.`), `㏂` and `㏘` (`a.m.`, `p.m.`), and
+/// the two and three dot leaders.
+fn is_dot(c: char) -> bool {
+    DOTS.contains(&c)
+        || matches!(
+            c,
+            '\u{2488}'
+                ..='\u{249B}'
+                    | '\u{1F100}'
+                    | '\u{33C7}'
+                    | '\u{33C2}'
+                    | '\u{33D8}'
+                    | '\u{2025}'
+                    | '\u{2026}'
+                    | '\u{FE19}'
+                    | '\u{FE30}'
+        )
+}
 /// Characters that may stand in for a colon.
-const COLONS: [char; 5] = [':', '\u{FF1A}', '\u{FE55}', '\u{A789}', '\u{2236}'];
+const COLONS: [char; 6] = [
+    ':', '\u{FF1A}', '\u{FE55}', '\u{A789}', '\u{2236}', '\u{FE13}',
+];
 /// Characters that may stand in for an at sign.
 const ATS: [char; 3] = ['@', '\u{FF20}', '\u{FE6B}'];
 /// Characters that may stand in for a slash or backslash.
-const SLASHES: [char; 6] = ['/', '\\', '\u{FF0F}', '\u{FF3C}', '\u{2215}', '\u{29F8}'];
+const SLASHES: [char; 7] = [
+    '/', '\\', '\u{FF0F}', '\u{FF3C}', '\u{2215}', '\u{29F8}', '\u{FE68}',
+];
 
 /// True when `text` holds nothing a mail client could turn into a link,
 /// so it can be quoted in an email from Keyring's own domain. Strict and
@@ -76,7 +100,7 @@ pub fn is_quotable(text: &str) -> bool {
         if ATS.contains(c) {
             return false;
         }
-        if DOTS.contains(c) && next.is_some_and(char::is_alphanumeric) {
+        if is_dot(*c) && next.is_some_and(char::is_alphanumeric) {
             return false;
         }
         if COLONS.contains(c) && next.is_some_and(|n| !n.is_whitespace()) {
@@ -210,6 +234,20 @@ struct NoticeHtml<'a> {
     n: &'a AccessRequestNotice,
 }
 
+impl AccessRequestNotice {
+    /// The requester's own copy: the same fields, said to them, with no
+    /// links. Sent on its own, so it never shows who else was asked.
+    #[must_use]
+    pub fn for_requester(mut self) -> Self {
+        self.heading = "Your access request was sent".to_owned();
+        self.lines = vec![
+            "This is a copy of the access request you sent from Keyring. Keyring can't grant access itself and keeps no request. If the request is granted, the role is given in Azure, and Keyring won't tell you.".to_owned(),
+        ];
+        self.links.clear();
+        self
+    }
+}
+
 impl EmailBody for AccessRequestNotice {
     fn render(&self, _ctx: &EmailContext<'_>) -> Result<Rendered, askama::Error> {
         Ok(Rendered {
@@ -219,10 +257,16 @@ impl EmailBody for AccessRequestNotice {
     }
 }
 
-/// One request per person, vault and role in [`WINDOW`], in memory. A
-/// restart resets it. The map is bounded: when full, entries whose window
-/// has passed are cleared first, and if it is still full a new key is
-/// refused, so filling the map can't reset anyone's limit.
+/// Most requests one person can have live at once, across every vault and
+/// role, so one person can't fill the map or use up an owner's mail.
+pub const MAX_PER_PERSON: usize = 10;
+
+/// One request per person, vault and role in [`WINDOW`], in memory, and at
+/// most [`MAX_PER_PERSON`] for one person. A key is `person|vault|role`,
+/// the vault in lower case. A restart resets it. The map is bounded: when
+/// full, entries whose window has passed are cleared first, and if it is
+/// still full a new key is refused, so filling the map can't reset
+/// anyone's limit.
 #[derive(Debug)]
 pub struct RequestLimit {
     window: Duration,
@@ -266,6 +310,19 @@ impl RequestLimit {
             if seen.len() >= self.max {
                 return false;
             }
+        }
+        // The person is the part before the first `|`.
+        let person = key.split_once('|').map_or(key, |(p, _)| p);
+        let theirs = seen
+            .iter()
+            .filter(|(k, t)| {
+                k.as_str() != key
+                    && now.duration_since(**t) < window
+                    && k.split_once('|').map_or(k.as_str(), |(p, _)| p) == person
+            })
+            .count();
+        if theirs >= MAX_PER_PERSON {
+            return false;
         }
         seen.insert(key.to_owned(), now);
         true
@@ -335,6 +392,10 @@ mod tests {
             "\\\\server\\share",
             "file:///etc/passwd",
             "xn--80ak6aa92e.com",
+            "mailto\u{FE13}alex",
+            "evil\u{2488}com",
+            "x\u{33C7}uk",
+            "evil\u{2026}com",
         ] {
             assert!(!is_quotable(bad), "{bad} should be withheld");
         }
@@ -435,6 +496,19 @@ mod tests {
         assert!(l.take_at("a", t0 + Duration::from_secs(3600)));
         l.release("b");
         assert!(l.take_at("b", t0));
+    }
+
+    #[test]
+    fn one_person_has_a_cap_across_vaults_and_roles() {
+        let l = RequestLimit::new(Duration::from_secs(3600), 1000);
+        let t0 = Instant::now();
+        for i in 0..MAX_PER_PERSON {
+            assert!(l.take_at(&format!("alex|kv-{i}|r"), t0));
+        }
+        assert!(!l.take_at("alex|kv-more|r", t0));
+        // Someone else is not held by it.
+        assert!(l.take_at("sam|kv-0|r", t0));
+        assert!(l.take_at("alex|kv-more|r", t0 + Duration::from_secs(3600)));
     }
 
     #[test]

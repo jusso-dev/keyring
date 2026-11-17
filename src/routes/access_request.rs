@@ -285,6 +285,8 @@ pub(super) async fn send(
     Form(form): Form<RequestForm>,
 ) -> PageResult {
     let (vault, shell) = vault_ctx::path_vault(&session, shell, Section::MyAccess, &vault)?;
+    // The token first, as on every form: a forged post is refused the
+    // same way whether or not access requests are on.
     let shell = check_csrf(&session, &vault, &form.csrf, shell)?;
     let Some(notifier) = state
         .notifier
@@ -379,7 +381,9 @@ pub(super) async fn send(
     let Some(who) = who else {
         return Err(off(shell));
     };
-    let key = format!("{who}|{vault}|{}", n.role);
+    // The vault in lower case: the address keeps the capitals typed, and
+    // each spelling must not be its own request.
+    let key = format!("{who}|{}|{}", vault.to_ascii_lowercase(), n.role);
     if !state.access_requests.take(&key) {
         crate::audit::refuse(Refusal::RateLimited);
         return Ok((
@@ -430,15 +434,12 @@ pub(super) async fn send(
         .into_iter()
         .filter(|a| notifier.allows(a))
         .collect();
-    let mut to = if owners.is_empty() {
+    let to = if owners.is_empty() {
         notifier.admins().to_vec()
     } else {
         owners
     };
     let upn = session.0.user.username.clone().unwrap_or_default();
-    if let Ok(me) = Address::parse(&upn) {
-        to.push(me);
-    }
     let scope = vault_id.as_ref().map(|id| match &n.item {
         Some((k, name)) => format!("{id}/{}/{name}", k.path()),
         None => id.clone(),
@@ -461,12 +462,26 @@ pub(super) async fn send(
         vault_id: vault_id.as_deref(),
         base_url: &state.config.base_url,
     });
+    // The requester's copy is its own email, so it never shows who the
+    // owners or admins are.
+    let copy = Address::parse(&upn)
+        .ok()
+        .filter(|me| !to.iter().any(|a| a.mailbox_key() == me.mailbox_key()))
+        .map(|me| (me, notice.clone().for_requester()));
     let queued = notifier.enqueue(Notification {
         kind: NotifyType::AccessRequests,
         to,
         item: None,
         data: notice,
     });
+    if let (crate::notify::Enqueued::Queued { .. }, Some((me, data))) = (&queued, copy) {
+        let _ = notifier.enqueue(Notification {
+            kind: NotifyType::AccessRequests,
+            to: vec![me],
+            item: None,
+            data,
+        });
+    }
     // Recorded on the event; the person sees the same page either way.
     match queued {
         crate::notify::Enqueued::Queued { .. } => crate::audit::succeed(),

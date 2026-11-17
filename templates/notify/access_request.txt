@@ -9,4 +9,4 @@
 {{ label }}: {{ url }}
 {%- endfor %}
 --
-Sent by Keyring (access-requests notices) to the vault's owners, with a copy to the person who asked. Keyring never puts a secret value in an email.
+Sent by Keyring (access-requests notices). The vault's owners are asked, and the person who asked gets their own copy. Keyring never puts a secret value in an email.

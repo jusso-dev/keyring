@@ -198,15 +198,19 @@ async fn sent_to_the_owners_with_a_copy() {
         "{html}"
     );
     assert!(!html.contains("owner@example.com"));
-    let mail = until_mail(&r, 1).await;
+    let mail = until_mail(&r, 2).await;
     assert_eq!(
         recipients(&mail[0]),
-        [
-            "owner@example.com",
-            "second@example.com",
-            "alex@example.com"
-        ]
+        ["owner@example.com", "second@example.com"]
     );
+    // The requester's copy is its own email: it names nobody else, says
+    // it is a copy and has no links.
+    assert_eq!(recipients(&mail[1]), ["alex@example.com"]);
+    let copy = mail[1]["content"]["plainText"].as_str().unwrap();
+    assert!(copy.contains("Your access request was sent"), "{copy}");
+    assert!(copy.contains("Role: Key Vault Secrets User"), "{copy}");
+    assert!(!copy.contains("owner@example.com") && !copy.contains("portal.azure.com"));
+    assert!(!copy.contains("names you"), "{copy}");
     let text = mail[0]["content"]["plainText"].as_str().unwrap();
     assert_eq!(mail[0]["content"]["subject"], "[Keyring] Access request");
     for want in [
@@ -230,11 +234,9 @@ async fn admins_when_the_vault_names_nobody_or_cannot_be_read() {
     let r = rig(None).await;
     let res = r.w.post(FORM, &fields(&[("scope", "vault")])).await;
     assert_eq!(res.status(), StatusCode::OK);
-    let mail = until_mail(&r, 1).await;
-    assert_eq!(
-        recipients(&mail[0]),
-        ["ops@example.com", "alex@example.com"]
-    );
+    let mail = until_mail(&r, 2).await;
+    assert_eq!(recipients(&mail[0]), ["ops@example.com"]);
+    assert_eq!(recipients(&mail[1]), ["alex@example.com"]);
     let text = mail[0]["content"]["plainText"].as_str().unwrap();
     assert!(text.contains("Scope: The whole vault"), "{text}");
 
@@ -245,12 +247,9 @@ async fn admins_when_the_vault_names_nobody_or_cannot_be_read() {
             .await;
     let html = body_text(res).await;
     assert!(!html.contains("mock failure") && !html.contains("InternalServerError"));
-    let mail = until_mail(&r, 2).await;
-    assert_eq!(
-        recipients(&mail[1]),
-        ["ops@example.com", "alex@example.com"]
-    );
-    let text = mail[1]["content"]["plainText"].as_str().unwrap();
+    let mail = until_mail(&r, 4).await;
+    assert_eq!(recipients(&mail[2]), ["ops@example.com"]);
+    let text = mail[2]["content"]["plainText"].as_str().unwrap();
     assert!(!text.contains("mock failure") && !text.contains("InternalServerError"));
     assert!(text.contains("https://portal.azure.com/#browse/Microsoft.KeyVault%2Fvaults"));
 }
@@ -265,11 +264,9 @@ async fn the_allow_list_holds_every_recipient() {
     .await;
     let res = r.w.post(FORM, &fields(&[])).await;
     assert_eq!(res.status(), StatusCode::OK);
-    let mail = until_mail(&r, 1).await;
-    assert_eq!(
-        recipients(&mail[0]),
-        ["owner@example.com", "alex@example.com"]
-    );
+    let mail = until_mail(&r, 2).await;
+    assert_eq!(recipients(&mail[0]), ["owner@example.com"]);
+    assert_eq!(recipients(&mail[1]), ["alex@example.com"]);
 }
 
 #[tokio::test]
@@ -285,6 +282,6 @@ async fn one_request_per_person_vault_and_role_an_hour() {
         r.w.post(FORM, &fields(&[("role", support::CERT_OFFICER)]))
             .await;
     assert_eq!(other.status(), StatusCode::OK);
-    until_mail(&r, 2).await;
-    assert_eq!(r.acs.state.attempts().len(), 2);
+    until_mail(&r, 4).await;
+    assert_eq!(r.acs.state.attempts().len(), 4);
 }
