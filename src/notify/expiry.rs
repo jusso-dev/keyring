@@ -19,8 +19,19 @@
 //!   Event Grid tries again later. Old entries are never dropped early, so
 //!   filling the map can't make a repeat go out. A restart forgets the
 //!   map, so one repeat can follow a restart.
-//! - **Rate limit.** A fixed one-minute window on the whole route, one
-//!   counter, so it can't grow.
+//! - **Topic.** Each event's `topic`, which Event Grid stamps itself and
+//!   a publisher can't write, must be a Key Vault resource ID whose vault
+//!   is the event's `VaultName` ([`checked_topic`]). An event from a custom
+//!   topic, or any other source, refuses the delivery. Nothing from `topic`
+//!   is logged or put in an email.
+//! - **Rate limits.** Two fixed one-minute windows, each one counter, so
+//!   neither can grow. The token is checked first. A delivery whose token
+//!   passed takes from [`HookTuning::per_minute`]; one whose token failed
+//!   takes from [`HookTuning::unauth_per_minute`] instead, so a flood of
+//!   bad tokens can't use up Event Grid's budget. Over the unauthenticated
+//!   counter, a request is answered 429 with no audit event and no log
+//!   line of its own; how many were dropped is logged once, in one `warn`
+//!   line, when the next window starts.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -53,8 +64,14 @@ pub const VALIDATION_EVENT: &str = "Microsoft.EventGrid.SubscriptionValidationEv
 /// Timings and sizes. Always the defaults outside tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HookTuning {
-    /// Deliveries a minute the route takes, from anyone, before 429.
+    /// Deliveries a minute with a token that passed, before 429.
     pub per_minute: u32,
+    /// Requests a minute with a token that failed, before 429. Those under
+    /// it are answered 401 and audited; those over it get 429 and are only
+    /// counted.
+    pub unauth_per_minute: u32,
+    /// Both counters' window. One minute outside tests.
+    pub rate_window: Duration,
     /// Most (item, version, event type) entries remembered.
     pub dedupe_capacity: usize,
     /// How long an entry is remembered.
@@ -67,6 +84,8 @@ impl Default for HookTuning {
     fn default() -> Self {
         Self {
             per_minute: 120,
+            unauth_per_minute: 60,
+            rate_window: Duration::from_secs(60),
             dedupe_capacity: 10_000,
             dedupe_for: Duration::from_secs(24 * 60 * 60),
             refetch_every: crate::auth::eventgrid::REFETCH_EVERY,
@@ -180,6 +199,9 @@ pub enum BadDelivery {
     /// An event that isn't one of the six, or with a field missing or
     /// malformed.
     BadEvent,
+    /// An event whose `topic` isn't the Key Vault named in its data: from
+    /// a custom topic, another source, or missing.
+    BadTopic,
 }
 
 impl BadDelivery {
@@ -189,6 +211,7 @@ impl BadDelivery {
             Self::TooMany => "too_many_events",
             Self::BadValidation => "bad_validation",
             Self::BadEvent => "bad_event",
+            Self::BadTopic => "bad_topic",
         }
     }
 }
@@ -216,7 +239,57 @@ fn checked_exp(v: &Value) -> Option<i64> {
     (0..=MAX_EXP).contains(&n).then_some(n)
 }
 
-fn checked_event(v: &Value) -> Option<ExpiryEvent> {
+/// A subscription ID: a GUID, 8-4-4-4-12 hex digits.
+fn is_guid(s: &str) -> bool {
+    let groups: Vec<&str> = s.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(g, n)| g.len() == n && g.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// A resource group name as Azure allows it: 1 to 90 letters, digits,
+/// `-`, `_`, `.`, `(` and `)`, not ending in `.`.
+fn is_resource_group(s: &str) -> bool {
+    (1..=90).contains(&s.chars().count())
+        && !s.ends_with('.')
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '(' | ')'))
+}
+
+/// Is `topic` the resource ID of Key Vault `vault`, that is
+/// `/subscriptions/<guid>/resourceGroups/<name>/providers/Microsoft.KeyVault/vaults/<vault>`?
+/// Event Grid sets `topic` on a system topic's events to the source
+/// resource's ID, and a publisher can't write it; a custom topic's events
+/// carry the custom topic's own ID. Compared without regard to case (Azure
+/// resource IDs aren't case-sensitive), every segment checked: no extra or
+/// empty segments.
+pub fn checked_topic(topic: &str, vault: &str) -> bool {
+    let parts: Vec<&str> = topic.split('/').collect();
+    let ["", subs, sub, rgs, rg, providers, namespace, vaults, name] = parts.as_slice() else {
+        return false;
+    };
+    subs.eq_ignore_ascii_case("subscriptions")
+        && is_guid(sub)
+        && rgs.eq_ignore_ascii_case("resourceGroups")
+        && is_resource_group(rg)
+        && providers.eq_ignore_ascii_case("providers")
+        && namespace.eq_ignore_ascii_case("Microsoft.KeyVault")
+        && vaults.eq_ignore_ascii_case("vaults")
+        && name.eq_ignore_ascii_case(vault)
+}
+
+fn checked_event(v: &Value) -> Result<ExpiryEvent, BadDelivery> {
+    let e = checked_fields(v).ok_or(BadDelivery::BadEvent)?;
+    let topic = v.get("topic").and_then(Value::as_str);
+    if !topic.is_some_and(|t| checked_topic(t, e.item.vault())) {
+        return Err(BadDelivery::BadTopic);
+    }
+    Ok(e)
+}
+
+fn checked_fields(v: &Value) -> Option<ExpiryEvent> {
     let o = v.as_object()?;
     let event_type = ExpiryEventType::parse(o.get("eventType")?.as_str()?)?;
     let data = o.get("data")?.as_object()?;
@@ -263,7 +336,7 @@ pub fn parse_delivery(body: &[u8]) -> Result<Delivery, BadDelivery> {
     }
     events
         .iter()
-        .map(|e| checked_event(e).ok_or(BadDelivery::BadEvent))
+        .map(checked_event)
         .collect::<Result<Vec<_>, _>>()
         .map(Delivery::Events)
 }
@@ -365,13 +438,33 @@ fn key(e: &ExpiryEvent) -> DedupeKey {
     )
 }
 
-/// The webhook's own state: what tokens must say, the route's rate limit,
-/// the dedupe map and when the signing keys were last refetched.
+/// What the unauthenticated counter said about a refused token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unauth {
+    /// Under the limit: answer 401 and audit it.
+    Counted,
+    /// Over the limit: answer 429, write no audit event and no line.
+    Dropped,
+}
+
+/// The unauthenticated counter's window.
+#[derive(Debug)]
+struct UnauthWindow {
+    start: Instant,
+    count: u32,
+    /// Refused tokens over the limit in this window, logged once when the
+    /// next window starts.
+    dropped: u64,
+}
+
+/// The webhook's own state: what tokens must say, the route's two rate
+/// limits, the dedupe map and when the signing keys were last refetched.
 pub struct ExpiryHook {
     pub expect: Expect,
     pub tuning: HookTuning,
     pub base_url: String,
     window: Mutex<(Instant, u32)>,
+    unauth: Mutex<UnauthWindow>,
     last_refetch: Mutex<Option<Instant>>,
     seen: Mutex<HashMap<DedupeKey, Instant>>,
 }
@@ -395,19 +488,25 @@ impl ExpiryHook {
             tuning,
             base_url,
             window: Mutex::new((Instant::now(), 0)),
+            unauth: Mutex::new(UnauthWindow {
+                start: Instant::now(),
+                count: 0,
+                dropped: 0,
+            }),
             last_refetch: Mutex::new(None),
             seen: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Take one delivery from the route's budget. False when over it.
+    /// Take one delivery whose token passed from the authenticated budget.
+    /// False when over it. Never called for a token that failed.
     pub fn take_rate(&self) -> bool {
         self.take_rate_at(Instant::now())
     }
 
     fn take_rate_at(&self, now: Instant) -> bool {
         let mut w = lock(&self.window);
-        if now.duration_since(w.0) >= Duration::from_secs(60) {
+        if now.duration_since(w.0) >= self.tuning.rate_window {
             *w = (now, 0);
         }
         if w.1 >= self.tuning.per_minute {
@@ -415,6 +514,36 @@ impl ExpiryHook {
         }
         w.1 += 1;
         true
+    }
+
+    /// Count one request whose token failed, on its own counter, which
+    /// never touches the authenticated budget.
+    pub fn take_unauth(&self) -> Unauth {
+        self.take_unauth_at(Instant::now())
+    }
+
+    fn take_unauth_at(&self, now: Instant) -> Unauth {
+        let mut w = lock(&self.unauth);
+        if now.duration_since(w.start) >= self.tuning.rate_window {
+            let dropped = w.dropped;
+            *w = UnauthWindow {
+                start: now,
+                count: 0,
+                dropped: 0,
+            };
+            if dropped > 0 {
+                tracing::warn!(
+                    dropped,
+                    "eventgrid: requests with a refused token over the limit; answered 429, not audited"
+                );
+            }
+        }
+        if w.count >= self.tuning.unauth_per_minute {
+            w.dropped = w.dropped.saturating_add(1);
+            return Unauth::Dropped;
+        }
+        w.count += 1;
+        Unauth::Counted
     }
 
     /// May the signing keys be refetched for an unknown `kid` now? At most
@@ -479,7 +608,7 @@ mod tests {
     fn ev(t: &str, obj: &str, name: &str) -> Value {
         json!({
             "id": "1",
-            "topic": "/subscriptions/x/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-test",
+            "topic": "/subscriptions/0a1b2c3d-4e5f-6789-abcd-ef0123456789/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-test",
             "subject": name,
             "eventType": t,
             "eventTime": "2026-11-17T00:00:00Z",
@@ -611,6 +740,7 @@ mod tests {
             },
             HookTuning {
                 per_minute: 2,
+                unauth_per_minute: 3,
                 dedupe_capacity: cap,
                 ..HookTuning::default()
             },
@@ -661,6 +791,101 @@ mod tests {
         assert!(h.take_rate_at(t0));
         assert!(!h.take_rate_at(t0));
         assert!(h.take_rate_at(t0 + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn the_unauthenticated_counter_caps_resets_and_is_separate() {
+        let h = hook(2);
+        let t0 = Instant::now();
+        for _ in 0..3 {
+            assert_eq!(h.take_unauth_at(t0), Unauth::Counted);
+        }
+        for _ in 0..100 {
+            assert_eq!(h.take_unauth_at(t0), Unauth::Dropped);
+        }
+        assert_eq!(lock(&h.unauth).dropped, 100);
+        // The authenticated budget is untouched.
+        assert!(h.take_rate_at(t0));
+        assert!(h.take_rate_at(t0));
+        // A new window: counted again, and the drop count starts over.
+        let t1 = t0 + Duration::from_secs(60);
+        assert_eq!(h.take_unauth_at(t1), Unauth::Counted);
+        assert_eq!(lock(&h.unauth).dropped, 0);
+        assert_eq!(lock(&h.unauth).count, 1);
+    }
+
+    const TOPIC: &str = "/subscriptions/0a1b2c3d-4e5f-6789-abcd-ef0123456789/resourceGroups/rg-keys_1(prod).a/providers/Microsoft.KeyVault/vaults/kv-test";
+
+    #[test]
+    fn the_topic_must_be_the_events_key_vault() {
+        assert!(checked_topic(TOPIC, "kv-test"));
+        // Resource IDs aren't case-sensitive.
+        assert!(checked_topic(&TOPIC.to_ascii_uppercase(), "kv-test"));
+        assert!(checked_topic(&TOPIC.to_ascii_lowercase(), "KV-TEST"));
+        let sub = "/subscriptions/0a1b2c3d-4e5f-6789-abcd-ef0123456789";
+        for bad in [
+            // A custom topic's own ID.
+            format!("{sub}/resourceGroups/rg/providers/Microsoft.EventGrid/topics/kv-test"),
+            // Another vault.
+            format!("{sub}/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-other"),
+            // The system topic's ID.
+            format!("{sub}/resourceGroups/rg/providers/Microsoft.EventGrid/systemTopics/kv-test"),
+            format!("{TOPIC}/secrets/x"),
+            format!("{TOPIC}/"),
+            format!("/{TOPIC}"),
+            TOPIC.trim_start_matches('/').to_owned(),
+            TOPIC.replace("/resourceGroups/", "/resourceGroups//"),
+            TOPIC.replace("0a1b2c3d-4e5f-6789-abcd-ef0123456789", "x"),
+            TOPIC.replace(
+                "0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+                "0a1b2c3d4e5f6789abcdef0123456789",
+            ),
+            TOPIC.replace(
+                "0a1b2c3d-4e5f-6789-abcd-ef0123456789",
+                "0a1b2c3d-4e5f-6789-abcd-ef012345678g",
+            ),
+            TOPIC.replace("rg-keys_1(prod).a", "rg."),
+            TOPIC.replace("rg-keys_1(prod).a", "rg/x"),
+            TOPIC.replace("rg-keys_1(prod).a", "rg x"),
+            TOPIC.replace("rg-keys_1(prod).a", &"r".repeat(91)),
+            TOPIC.replace("Microsoft.KeyVault", "Microsoft.KeyVaultX"),
+            TOPIC.replace("/vaults/", "/managedHSMs/"),
+            String::new(),
+            sub.to_owned(),
+        ] {
+            assert!(!checked_topic(&bad, "kv-test"), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_event_from_another_topic_refuses_the_delivery() {
+        let good = ev(
+            "Microsoft.KeyVault.SecretNearExpiry",
+            "Secret",
+            "db-password",
+        );
+        assert!(parse_delivery(&body(json!([good.clone()]))).is_ok());
+        let mut bad = Vec::new();
+        let edit = |f: &dyn Fn(&mut Value)| {
+            let mut e = good.clone();
+            f(&mut e);
+            e
+        };
+        bad.push(edit(&|e| {
+            e["topic"] = json!("/subscriptions/0a1b2c3d-4e5f-6789-abcd-ef0123456789/resourceGroups/rg/providers/Microsoft.EventGrid/topics/fake")
+        }));
+        bad.push(edit(&|e| e["data"]["VaultName"] = json!("kv-other")));
+        bad.push(edit(&|e| {
+            e.as_object_mut().unwrap().remove("topic");
+        }));
+        bad.push(edit(&|e| e["topic"] = json!(5)));
+        for b in bad {
+            assert_eq!(
+                parse_delivery(&body(json!([good.clone(), b.clone()]))),
+                Err(BadDelivery::BadTopic),
+                "{b}"
+            );
+        }
     }
 
     #[test]

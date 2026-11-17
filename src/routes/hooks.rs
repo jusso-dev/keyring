@@ -5,21 +5,37 @@
 //!
 //! 1. 404 unless email is on and `KEYRING_NOTIFY_TYPES` has `expiry`.
 //! 2. 405 unless POST.
-//! 3. 429 past the route's rate limit (one counter for everyone).
-//! 4. 401, with no body, unless the bearer token passes every check in
-//!    [`crate::auth::eventgrid`].
+//! 3. The bearer token, checked by [`crate::auth::eventgrid`] with no body
+//!    read. A token that fails takes one from the unauthenticated counter
+//!    ([`HookTuning::unauth_per_minute`]): under it, 401 with no body and
+//!    an audit event; over it, 429 with no audit event and no line of its
+//!    own (one `warn` line a window gives how many were dropped). Either
+//!    way the authenticated budget is untouched.
+//! 4. 429 past the authenticated budget ([`HookTuning::per_minute`]),
+//!    taken only by deliveries whose token passed.
 //! 5. 415 unless `Content-Type` is `application/json`.
 //! 6. 413 if `Content-Length` says more than 1 MB; the body is then read
 //!    with the same limit.
 //!
 //! Then the delivery is parsed, all or nothing (400 on anything
-//! malformed), the handshake is answered, or each event is deduplicated
-//! and queued. 200 once every event is queued or a repeat; 503 when the
-//! email queue or the dedupe map is full, so Event Grid retries.
+//! malformed, or an event whose `topic` isn't its Key Vault), the
+//! handshake is answered, or each event is deduplicated and queued. 200
+//! once every event is queued, a repeat, or has no allowed recipient. 503
+//! when the email queue or the dedupe map is full, or when every
+//! recipient is over the per-recipient rate limit, so Event Grid retries
+//! (its 24 hours of retries cover the one-hour rate window). Events
+//! already queued in that delivery stay remembered, so the retry skips
+//! them. An email that reached some recipients and left out others over
+//! their limit counts as sent and isn't retried, or the others would get
+//! it twice.
 //!
 //! Logged: a fixed reason code and counts. Never the token, its claims,
-//! the body, headers or an address. One `notify.webhook` audit event per
-//! delivery that got past the rate limit.
+//! the body, the `topic`, headers or an address. One `notify.webhook`
+//! audit event per request that reached the token check, except those
+//! over the unauthenticated counter.
+//!
+//! [`HookTuning::unauth_per_minute`]: crate::notify::expiry::HookTuning::unauth_per_minute
+//! [`HookTuning::per_minute`]: crate::notify::expiry::HookTuning::per_minute
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -31,6 +47,7 @@ use crate::audit::{self, Action, Outcome};
 use crate::auth::eventgrid;
 use crate::notify::expiry::{
     self, Delivery, ExpiryNotice, MAX_BODY_BYTES, MAX_HEADER_RECIPIENTS, RECIPIENT_HEADER, Seen,
+    Unauth,
 };
 use crate::notify::{Address, Enqueued, Notification, NotifyType};
 
@@ -87,13 +104,8 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
     if req.method() != Method::POST {
         return status(StatusCode::METHOD_NOT_ALLOWED);
     }
-    audit::set_action(Action::NotifyWebhook);
-    if !hook.take_rate() {
-        finish(Outcome::Refused, "rate_limited", None);
-        return status(StatusCode::TOO_MANY_REQUESTS);
-    }
 
-    // The token, before anything else is read.
+    // The token, before anything else is read or counted.
     let auth = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -112,6 +124,12 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
         Err(e) => Err(e),
     };
     if let Err(why) = checked {
+        // Its own counter, so a flood of bad tokens can't use up Event
+        // Grid's budget. Over it: no audit event, no line.
+        if hook.take_unauth() == Unauth::Dropped {
+            return status(StatusCode::TOO_MANY_REQUESTS);
+        }
+        audit::set_action(Action::NotifyWebhook);
         finish(Outcome::Refused, why.as_str(), None);
         return (
             StatusCode::UNAUTHORIZED,
@@ -121,6 +139,11 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
             ],
         )
             .into_response();
+    }
+    audit::set_action(Action::NotifyWebhook);
+    if !hook.take_rate() {
+        finish(Outcome::Refused, "rate_limited", None);
+        return status(StatusCode::TOO_MANY_REQUESTS);
     }
 
     if !is_json(req.headers()) {
@@ -176,10 +199,11 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
 
     let now = eventgrid::now_unix();
     let mut busy = false;
+    let mut limited = false;
     let mut queued = 0usize;
     let mut no_recipients = 0usize;
     for e in &events {
-        if busy {
+        if busy || limited {
             break;
         }
         match hook.reserve(e) {
@@ -204,13 +228,27 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
                 hook.release(e);
                 busy = true;
             }
-            // Nobody to send to, or a body that can't be sent: nothing a
-            // retry would change, so it stays remembered.
+            Enqueued::RateLimited => {
+                // Every recipient is over the per-recipient limit for the
+                // hour: the same as a full queue, so a later retry sends.
+                hook.release(e);
+                limited = true;
+            }
+            // Nobody allowed to send to, or a body that can't be sent:
+            // nothing a retry would change, so it stays remembered.
             Enqueued::NoRecipients | Enqueued::Invalid | Enqueued::Off => no_recipients += 1,
         }
     }
     if busy {
         finish(Outcome::Failed, "queue_full", Some(events.len()));
+        return status(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    if limited {
+        finish(
+            Outcome::Failed,
+            "recipient_rate_limited",
+            Some(events.len()),
+        );
         return status(StatusCode::SERVICE_UNAVAILABLE);
     }
     let code = if no_recipients > 0 {

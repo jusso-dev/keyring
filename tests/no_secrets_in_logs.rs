@@ -582,6 +582,9 @@ async fn values_never_reach_the_logs() {
             t.backoff_first = std::time::Duration::from_millis(10);
             t.poll_wait_default = std::time::Duration::from_millis(10);
             t.poll_wait_max = std::time::Duration::from_millis(20);
+            let h = &mut c.notify.as_mut().unwrap().hook_tuning;
+            h.unauth_per_minute = 5;
+            h.rate_window = std::time::Duration::from_millis(1500);
         },
     )
     .await;
@@ -717,7 +720,6 @@ async fn values_never_reach_the_logs() {
             eg::now() + 5 * 86_400,
         );
         ev["subject"] = serde_json::json!("BODYLEAK subject https://evil.example/");
-        ev["topic"] = serde_json::json!("BODYLEAK topic");
         ev["data"]["Id"] = serde_json::json!("https://evil.example/BODYLEAK");
         ev["data"]["Extra"] = serde_json::json!("BODYLEAK extra");
         let body = serde_json::json!([ev]).to_string();
@@ -775,6 +777,64 @@ async fn values_never_reach_the_logs() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // An event from a custom topic: refused, and nothing from `topic`
+        // reaches a line or an email.
+        let mut custom = ev.clone();
+        custom["topic"] = serde_json::json!(
+            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/TOPICLEAK/providers/Microsoft.EventGrid/topics/TOPICLEAK"
+        );
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([custom]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let mut not_topic = ev.clone();
+        not_topic["topic"] = serde_json::json!("TOPICLEAK\nFORGEDLINE");
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([not_topic]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // A flood of bad tokens: two above already counted, three more
+        // under the unauthenticated counter of 5, then 95 answered 429
+        // with no audit event and no line of their own.
+        let mut flood = Vec::new();
+        for _ in 0..98 {
+            let res = we
+                .app
+                .clone()
+                .oneshot(hook("FLOODLEAK.x.y", body.clone(), None))
+                .await
+                .unwrap();
+            flood.push(res.status());
+        }
+        assert!(flood[..3].iter().all(|s| *s == StatusCode::UNAUTHORIZED));
+        assert!(
+            flood[3..]
+                .iter()
+                .all(|s| *s == StatusCode::TOO_MANY_REQUESTS)
+        );
+        // The next window: one warn line with how many were dropped.
+        tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook("FLOODLEAK.x.y", body.clone(), None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
         let start = std::time::Instant::now();
         while acs.state.attempts().len() < before + 1 {
             assert!(
@@ -798,6 +858,8 @@ async fn values_never_reach_the_logs() {
             "VALCODELEAK",
             "TOKENCLAIMLEAK",
             "BADTOKENLEAK",
+            "TOPICLEAK",
+            "FLOODLEAK",
             webhook_token.as_str(),
             eg::EVENT_GRID_APP,
         ] {
@@ -1073,6 +1135,9 @@ async fn values_never_reach_the_logs() {
         "VALCODELEAK",
         "TOKENCLAIMLEAK",
         "BADTOKENLEAK",
+        "TOPICLEAK",
+        "FLOODLEAK",
+        "FORGEDLINE",
         "FORGEDLINE subject",
         "hookadmin@",
         support::eventgrid::EVENT_GRID_APP,
@@ -1087,8 +1152,32 @@ async fn values_never_reach_the_logs() {
         .lines()
         .filter(|l| l.contains("action=notify.webhook"))
         .collect();
-    assert_eq!(hook_events.len(), 5, "one per delivery: {hook_events:#?}");
-    for code in ["token_caller", "token_malformed", "bad_event"] {
+    // Good, handshake, bad token, other app, bad event, two bad topics,
+    // three of the flood under the counter and one in the next window:
+    // the 95 over the counter wrote nothing.
+    assert_eq!(hook_events.len(), 11, "bounded: {hook_events:#?}");
+    assert_eq!(
+        hook_events
+            .iter()
+            .filter(|l| l.contains("reason_code=token_malformed"))
+            .count(),
+        5,
+        "{hook_events:#?}"
+    );
+    let dropped: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("eventgrid: requests with a refused token over the limit"))
+        .collect();
+    assert_eq!(dropped.len(), 1, "{dropped:#?}");
+    assert!(dropped[0].contains("dropped=95"), "{}", dropped[0]);
+    assert_eq!(
+        logs.lines()
+            .filter(|l| l.contains("eventgrid: delivery"))
+            .count(),
+        11,
+        "one line per audited request, none for the dropped"
+    );
+    for code in ["token_caller", "token_malformed", "bad_event", "bad_topic"] {
         assert!(
             hook_events
                 .iter()

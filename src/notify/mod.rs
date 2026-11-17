@@ -480,8 +480,14 @@ pub enum Enqueued {
     QueueFull,
     /// Email is off, or this type isn't in `KEYRING_NOTIFY_TYPES`.
     Off,
-    /// Every recipient was outside the allow-list or over its rate limit.
+    /// Nobody left to send to, and at least one recipient was outside the
+    /// allow-list (or past the most an email takes): a retry wouldn't
+    /// change that.
     NoRecipients,
+    /// Nobody left to send to only because every allowed recipient is over
+    /// its rate limit. A caller that can ask to be retried later (an Event
+    /// Grid webhook) can answer 503; the limit's window is one hour.
+    RateLimited,
     /// The body couldn't be rendered, or was too large.
     Invalid,
 }

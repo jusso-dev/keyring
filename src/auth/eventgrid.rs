@@ -12,8 +12,9 @@
 //! - **Signature** with RS256 only (never `none`, never HS*), against the
 //!   tenant's published signing keys from the same cache sign-in uses. A
 //!   `kid` not in the cache refetches the keys once, as sign-in does on a
-//!   key rollover, at most once every [`REFETCH_EVERY`], and only for a
-//!   token whose claims would otherwise pass.
+//!   key rollover, at most once every [`REFETCH_EVERY`]. Claims are read
+//!   before the signature, so anyone can forge claims that pass: that
+//!   time limit, not the claims, is what bounds refetches.
 //! - **`iss`**: the tenant's v1 issuer (`https://sts.windows.net/<tenant>/`)
 //!   or its v2 issuer (`<authority>/<tenant>/v2.0`). Which one Event Grid's
 //!   token has depends on the app registration's
@@ -257,8 +258,9 @@ pub fn now_unix() -> i64 {
 }
 
 /// Check a bearer token end to end. `may_refetch` is asked once, only when
-/// the `kid` isn't in the cache and every claim already passed, and says
-/// whether a refetch of the signing keys is allowed now.
+/// the `kid` isn't in the cache and every (still unverified) claim passed,
+/// and says whether a refetch of the signing keys is allowed now: the
+/// caller's five-minute limit is the real bound.
 pub async fn verify(
     token: &str,
     expect: &Expect,

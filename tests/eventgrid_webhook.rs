@@ -580,19 +580,254 @@ async fn the_route_is_rate_limited() {
         c.notify.as_mut().unwrap().hook_tuning.per_minute = 3;
     })
     .await;
-    // Bad tokens use up the budget too, so a flood can't get through.
-    for _ in 0..3 {
-        let (s, _) = send(&r, Some("x.y.z"), &json!([]), &[]).await;
-        assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let token = good_token(&r);
+    for name in ["a", "b", "c"] {
+        let (s, _) = send(
+            &r,
+            Some(&token),
+            &one("SecretNearExpiry", "Secret", name),
+            &[],
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{name}");
     }
     let (s, _) = send(
         &r,
-        Some(&good_token(&r)),
-        &one("SecretNearExpiry", "Secret", "a"),
+        Some(&token),
+        &one("SecretNearExpiry", "Secret", "d"),
         &[],
     )
     .await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_flood_of_bad_tokens_does_not_stop_a_good_delivery() {
+    let r = rig_with(&[], |c| {
+        let t = &mut c.notify.as_mut().unwrap().hook_tuning;
+        t.per_minute = 3;
+        t.unauth_per_minute = 5;
+    })
+    .await;
+    let body = one("SecretNearExpiry", "Secret", "db-password");
+    // Many more bad tokens than either budget, in the same minute.
+    let mut answers = Vec::new();
+    for _ in 0..200 {
+        answers.push(send(&r, Some("x.y.z"), &body, &[]).await.0);
+    }
+    let unauthorised = answers
+        .iter()
+        .filter(|s| **s == StatusCode::UNAUTHORIZED)
+        .count();
+    assert_eq!(
+        unauthorised, 5,
+        "401 while under the unauthenticated counter"
+    );
+    assert!(
+        answers[5..]
+            .iter()
+            .all(|s| *s == StatusCode::TOO_MANY_REQUESTS),
+        "then 429"
+    );
+    // Event Grid's budget is untouched.
+    let token = good_token(&r);
+    for name in ["a", "b", "c"] {
+        let (s, _) = send(
+            &r,
+            Some(&token),
+            &one("SecretNearExpiry", "Secret", name),
+            &[],
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{name}");
+    }
+    until("three emails", || r.acs.state.attempts().len() == 3).await;
+}
+
+#[tokio::test]
+async fn the_unauthenticated_counter_resets_each_window() {
+    let r = rig_with(&[], |c| {
+        let t = &mut c.notify.as_mut().unwrap().hook_tuning;
+        t.unauth_per_minute = 2;
+        t.rate_window = Duration::from_millis(300);
+    })
+    .await;
+    let body = one("SecretNearExpiry", "Secret", "db-password");
+    let mut first = Vec::new();
+    for _ in 0..4 {
+        first.push(send(&r, Some("x.y.z"), &body, &[]).await.0);
+    }
+    assert_eq!(
+        first,
+        [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::TOO_MANY_REQUESTS
+        ]
+    );
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    let (s, _) = send(&r, Some("x.y.z"), &body, &[]).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "a new window");
+}
+
+#[tokio::test]
+async fn every_recipient_over_the_rate_limit_is_503_and_retried() {
+    let r = rig_with(&[], |c| {
+        let n = c.notify.as_mut().unwrap();
+        n.tuning.rate_window = Duration::from_millis(1500);
+    })
+    .await;
+    let token = good_token(&r);
+    let hook = r.w.state.expiry_hook.clone().unwrap();
+    // 25 distinct events, one admin, the default 20 an hour.
+    let events: Vec<Value> = (0..25)
+        .map(|i| eg::event("SecretNearExpiry", "Secret", &format!("s{i:02}"), soon()))
+        .collect();
+    let mut answers = Vec::new();
+    for e in &events {
+        answers.push(send(&r, Some(&token), &json!([e]), &[]).await.0);
+    }
+    assert!(
+        answers[..20].iter().all(|s| *s == StatusCode::OK),
+        "{answers:?}"
+    );
+    assert!(
+        answers[20..]
+            .iter()
+            .all(|s| *s == StatusCode::SERVICE_UNAVAILABLE),
+        "{answers:?}"
+    );
+    assert_eq!(hook.dedupe_len(), 20, "the five refused aren't remembered");
+    until("twenty emails", || r.acs.state.attempts().len() == 20).await;
+
+    // The same five again in one delivery, still inside the window: 503.
+    let rest = json!(events[20..].to_vec());
+    let (s, _) = send(&r, Some(&token), &rest, &[]).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(hook.dedupe_len(), 20);
+
+    // Event Grid retries the whole lot after the window: the five are
+    // sent and the first 20 are not sent again.
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    for chunk in events.chunks(10) {
+        let (s, _) = send(&r, Some(&token), &json!(chunk.to_vec()), &[]).await;
+        assert_eq!(s, StatusCode::OK);
+    }
+    until("25 emails", || r.acs.state.attempts().len() == 25).await;
+    settle().await;
+    assert_eq!(r.acs.state.attempts().len(), 25);
+    assert_eq!(hook.dedupe_len(), 25);
+}
+
+#[tokio::test]
+async fn a_delivery_cut_short_by_the_rate_limit_keeps_what_it_queued() {
+    let r = rig_with(&[("KEYRING_NOTIFY_RATE_PER_HOUR", "2")], |_| {}).await;
+    let token = good_token(&r);
+    let hook = r.w.state.expiry_hook.clone().unwrap();
+    let events: Vec<Value> = (0..4)
+        .map(|i| eg::event("SecretNearExpiry", "Secret", &format!("s{i}"), soon()))
+        .collect();
+    let (s, _) = send(&r, Some(&token), &json!(events), &[]).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    // The two queued stay remembered; the rest aren't.
+    assert_eq!(hook.dedupe_len(), 2);
+    until("two emails", || r.acs.state.attempts().len() == 2).await;
+}
+
+#[tokio::test]
+async fn partly_rate_limited_recipients_count_as_sent() {
+    let r = rig_with(
+        &[
+            ("KEYRING_NOTIFY_ALLOWED_DOMAINS", "example.com"),
+            ("KEYRING_NOTIFY_RATE_PER_HOUR", "1"),
+        ],
+        |_| {},
+    )
+    .await;
+    let token = good_token(&r);
+    let hook = r.w.state.expiry_hook.clone().unwrap();
+    let (s, _) = send(
+        &r,
+        Some(&token),
+        &one("SecretNearExpiry", "Secret", "a"),
+        &[("keyring-notify", "alex@example.com")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    // alex is over the limit, sam isn't: sam gets it, and it's done.
+    let (s, _) = send(
+        &r,
+        Some(&token),
+        &one("SecretNearExpiry", "Secret", "b"),
+        &[("keyring-notify", "alex@example.com,sam@example.com")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(hook.dedupe_len(), 2);
+    until("two emails", || r.acs.state.attempts().len() == 2).await;
+    assert_eq!(
+        r.acs.state.attempts()[1].body["recipients"]["to"],
+        json!([{ "address": "sam@example.com" }])
+    );
+    // Outside the allow-list is permanent: 200, and remembered.
+    let (s, _) = send(
+        &r,
+        Some(&token),
+        &one("SecretNearExpiry", "Secret", "c"),
+        &[("keyring-notify", "eve@evil.example")],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(hook.dedupe_len(), 3);
+}
+
+#[tokio::test]
+async fn only_key_vault_topics_are_taken() {
+    let r = rig().await;
+    let token = good_token(&r);
+    let sub = "/subscriptions/00000000-0000-0000-0000-000000000000";
+    let base = eg::event("SecretNearExpiry", "Secret", "db-password", soon());
+    let with_topic = |t: Option<String>| {
+        let mut e = base.clone();
+        match t {
+            Some(t) => e["topic"] = json!(t),
+            None => {
+                e.as_object_mut().unwrap().remove("topic");
+            }
+        }
+        json!([e])
+    };
+    let refused = [
+        Some(format!(
+            "{sub}/resourceGroups/rg/providers/Microsoft.EventGrid/topics/kv-test"
+        )),
+        Some(format!(
+            "{sub}/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-other"
+        )),
+        None,
+        Some(format!(
+            "{sub}/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-test/secrets/db-password"
+        )),
+        Some(format!(
+            "{sub}/resourceGroups/rg/providers/Microsoft.EventGrid/systemTopics/kv-test"
+        )),
+    ];
+    for t in refused {
+        let (s, body) = send(&r, Some(&token), &with_topic(t.clone()), &[]).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{t:?}");
+        assert_eq!(body, "", "{t:?}");
+    }
+    settle().await;
+    assert!(r.acs.state.attempts().is_empty());
+    // Any case is the same resource ID.
+    let odd = format!(
+        "{}/RESOURCEGROUPS/rg/PROVIDERS/microsoft.keyvault/VAULTS/KV-TEST",
+        sub.to_ascii_uppercase()
+    );
+    let (s, _) = send(&r, Some(&token), &with_topic(Some(odd)), &[]).await;
+    assert_eq!(s, StatusCode::OK);
+    until("one email", || r.acs.state.attempts().len() == 1).await;
 }
 
 #[tokio::test]

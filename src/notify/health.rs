@@ -439,6 +439,9 @@ impl HealthWatch {
         }
     }
 
+    /// Queue a notice. Whatever happens (queued, queue full, rate limited,
+    /// nobody allowed) the notice isn't retried: the sender has counted a
+    /// drop, and a later incident sends its own email.
     fn send(&self, n: HealthNotice) {
         let _ = self.notifier.enqueue(Notification {
             kind: NotifyType::Health,

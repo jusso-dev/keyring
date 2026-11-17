@@ -102,7 +102,7 @@ const EXEMPT: &[(&str, &str)] = &[
 /// tests.
 const SELF_AUDITED: &[(&str, &str)] = &[(
     "/hooks/eventgrid",
-    "notify.webhook, one per delivery past the rate limit, written by the handler (no session, no form token); tests/eventgrid_webhook.rs and tests/no_secrets_in_logs.rs",
+    "notify.webhook, one per request that reaches the token check (bounded for bad tokens), written by the handler (no session, no form token); tests/eventgrid_webhook.rs and tests/no_secrets_in_logs.rs",
 )];
 
 /// One route in `src/routes/mod.rs` that takes a POST.
