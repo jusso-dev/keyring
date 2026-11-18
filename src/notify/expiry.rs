@@ -157,14 +157,17 @@ impl ExpiryEventType {
         }
     }
 
-    fn heading(self) -> &'static str {
-        match self {
-            Self::SecretNearExpiry => "A secret expires soon",
-            Self::SecretExpired => "A secret has expired",
-            Self::CertificateNearExpiry => "A certificate expires soon",
-            Self::CertificateExpired => "A certificate has expired",
-            Self::KeyNearExpiry => "A key expires soon",
-            Self::KeyExpired => "A key has expired",
+    /// The email's headline. `passed` is whether the item's expiry time
+    /// has already gone by: a NearExpiry event can arrive after that (#292),
+    /// and the headline must agree with the body.
+    fn heading(self, passed: bool) -> &'static str {
+        match (self.kind(), passed || self.expired()) {
+            (ItemKind::Secret, false) => "A secret expires soon",
+            (ItemKind::Secret, true) => "A secret has expired",
+            (ItemKind::Certificate, false) => "A certificate expires soon",
+            (ItemKind::Certificate, true) => "A certificate has expired",
+            (ItemKind::Key, false) => "A key expires soon",
+            (ItemKind::Key, true) => "A key has expired",
         }
     }
 }
@@ -378,13 +381,10 @@ impl ExpiryNotice {
     pub fn new(e: &ExpiryEvent, now: i64, base_url: &str) -> Self {
         let date = crate::dates::format_date(e.expires);
         let rel = crate::dates::relative_days(e.expires, now);
-        let verb = if e.expires <= now {
-            "expired on"
-        } else {
-            "expires on"
-        };
+        let passed = e.expires <= now;
+        let verb = if passed { "expired on" } else { "expires on" };
         Self {
-            heading: e.event_type.heading(),
+            heading: e.event_type.heading(passed),
             line: format!(
                 "{} in {} {verb} {date} ({rel}).",
                 e.item.name(),
@@ -993,5 +993,34 @@ mod tests {
             "{}",
             n.line
         );
+    }
+
+    #[test]
+    fn a_near_expiry_event_after_the_expiry_time_says_expired() {
+        // #292: the NearExpiry event arrived after EXP had passed.
+        let e = event("e2e-expiring");
+        assert_eq!(e.event_type, ExpiryEventType::SecretNearExpiry);
+        let n = ExpiryNotice::new(&e, e.expires + 9 * 60, "https://k");
+        assert_eq!(n.heading, "A secret has expired");
+        assert!(n.line.contains("expired on"), "{}", n.line);
+        let r = n
+            .render(&EmailContext {
+                kind: NotifyType::Expiry,
+                item: Some(&e.item),
+                link: None,
+            })
+            .unwrap();
+        for b in [&r.text, &r.html] {
+            assert!(b.contains("A secret has expired"), "{b}");
+            assert!(!b.contains("expires soon"), "{b}");
+        }
+        // Before EXP it still says soon; an Expired event always says expired.
+        let n = ExpiryNotice::new(&e, e.expires - 86_400, "https://k");
+        assert_eq!(n.heading, "A secret expires soon");
+        for t in ExpiryEventType::ALL {
+            let early = t.heading(false);
+            assert_eq!(early.ends_with("has expired"), t.expired(), "{t:?}");
+            assert!(t.heading(true).ends_with("has expired"), "{t:?}");
+        }
     }
 }

@@ -209,6 +209,14 @@ pub struct Session {
     /// A conditional access challenge from a failed on-behalf-of exchange,
     /// sent with the next sign-in so Entra asks for what's missing.
     claims_challenge: Mutex<Option<String>>,
+    /// An on-behalf-of exchange was refused because the sign-in needs MFA
+    /// (see [`crate::auth::entra::MFA_CODES`]). The next sign-in asks for
+    /// MFA and a fresh sign-in. Only the token broker sets it.
+    mfa_needed: std::sync::atomic::AtomicBool,
+    /// This session came from a sign-in that asked Entra for MFA. Set by the
+    /// sign-in callback from the sealed login cookie, never from the
+    /// request. A second MFA refusal then shows a page instead of looping.
+    mfa_asked: std::sync::atomic::AtomicBool,
     /// `acrs` and `auth_time` from the verified ID token, for step-up. See
     /// [`crate::auth::step_up`].
     sign_in: Mutex<SignInFacts>,
@@ -258,6 +266,30 @@ impl Session {
 
     pub fn claims_challenge(&self) -> Option<String> {
         lock(&self.claims_challenge).clone()
+    }
+
+    /// Note that Entra wants MFA before it will exchange this session's
+    /// token. See [`Session::mfa_needed`].
+    pub fn set_mfa_needed(&self) {
+        self.mfa_needed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// True once an exchange was refused because the sign-in needs MFA.
+    pub fn mfa_needed(&self) -> bool {
+        self.mfa_needed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Note that this session's sign-in asked Entra for MFA. Called by the
+    /// sign-in callback only.
+    pub fn set_mfa_asked(&self) {
+        self.mfa_asked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// True if this session's sign-in already asked Entra for MFA.
+    pub fn mfa_asked(&self) -> bool {
+        self.mfa_asked.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// How the person signed in, from the verified ID token.
@@ -702,6 +734,8 @@ impl SessionStore {
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
             claims_challenge: Mutex::new(None),
+            mfa_needed: std::sync::atomic::AtomicBool::new(false),
+            mfa_asked: std::sync::atomic::AtomicBool::new(false),
             sign_in: Mutex::new(SignInFacts::default()),
             pending_upload: Mutex::new(None),
             pending_import: Mutex::new(ImportSlot::default()),

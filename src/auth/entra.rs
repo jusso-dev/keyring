@@ -45,6 +45,17 @@ const SIGN_IN_AGAIN_CODES: [u64; 12] = [
     700082, // refresh token expired after 90 days without use
 ];
 
+/// Entra error numbers that mean the sign-in needs a stronger method,
+/// usually MFA. A fresh sign-in that reuses Entra's single sign-on session
+/// would only bring back the same token, so the next sign-in must ask for
+/// MFA. All are also in [`SIGN_IN_AGAIN_CODES`].
+pub const MFA_CODES: [u64; 4] = [50076, 50078, 50079, 50158];
+
+/// True if Entra's error numbers say the sign-in needs MFA.
+pub fn needs_mfa(codes: &[u64]) -> bool {
+    codes.iter().any(|c| MFA_CODES.contains(c))
+}
+
 /// Entra error numbers for a Conditional Access policy the sign-in didn't
 /// meet. From Microsoft's AADSTS reference; which of these Entra sends back
 /// to Keyring, rather than showing on its own page, needs a real tenant.
@@ -80,7 +91,7 @@ pub fn classify(error: &str, codes: &[u64]) -> EntraAdvice {
 }
 
 /// `invalid_grant (AADSTS50013)`, or just the error when there's no number.
-fn describe_code(error: &str, codes: &[u64]) -> String {
+pub fn describe_code(error: &str, codes: &[u64]) -> String {
     match codes.first() {
         Some(n) => format!("{error} (AADSTS{n})"),
         None => error.to_owned(),
@@ -160,6 +171,16 @@ mod tests {
             classify("access_denied", &[65001, 53003]),
             EntraAdvice::ConsentNeeded
         );
+    }
+
+    #[test]
+    fn mfa_codes_are_sign_in_again_codes() {
+        for n in MFA_CODES {
+            assert!(SIGN_IN_AGAIN_CODES.contains(&n), "{n}");
+        }
+        assert!(needs_mfa(&[50076]));
+        assert!(!needs_mfa(&[70008]));
+        assert!(!needs_mfa(&[]));
     }
 
     #[test]

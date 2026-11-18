@@ -920,6 +920,9 @@ pub fn note_azure_error(err: &AzureError) {
             code.clone().unwrap_or_else(|| format!("http_{status}")),
         ),
         AzureError::Token(TokenError::SignInAgain) => (Outcome::Failed, "sign_in_again".into()),
+        AzureError::Token(TokenError::MfaStillNeeded { .. }) => {
+            (Outcome::Denied, "mfa_still_needed".into())
+        }
         AzureError::Token(TokenError::ConsentNeeded) => (Outcome::Denied, "consent_needed".into()),
         AzureError::Token(TokenError::Refused { code }) => (Outcome::Denied, code.clone()),
         AzureError::Token(TokenError::Unreachable(_)) => {

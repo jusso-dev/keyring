@@ -800,3 +800,132 @@ async fn signed_in_person_is_known_by_object_and_tenant_id() {
         format!("oid:{},tid:{}", support::USER_OID, support::TENANT)
     );
 }
+
+// #294: Entra refuses the on-behalf-of exchange because the sign-in needs
+// MFA. "Sign in again" must get the person through MFA, not loop.
+
+const MFA_ASK: &str = r#"{"access_token":{"amr":{"essential":true,"values":["mfa"]}}}"#;
+
+impl Harness {
+    /// `/auth/start` from a browser that has `session`.
+    async fn start_from(&self, session: &str) -> (url::Url, String) {
+        let res = self
+            .get("/auth/start?return_to=%2Fvaults", &[session.to_owned()])
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let url = url::Url::parse(location(&res)).unwrap();
+        let login = set_cookies(&res)
+            .into_iter()
+            .find(|c| c.starts_with("keyring_login="))
+            .expect("login cookie");
+        (url, cookie_pair(&login))
+    }
+
+    /// Finish a sign-in started at `url`, returning the new session cookie.
+    async fn finish(&self, url: &url::Url, login: String) -> String {
+        *self.idp.state.nonce.lock().unwrap() = query(url, "nonce");
+        let state = query(url, "state").unwrap();
+        let res = self
+            .get(&format!("/auth/callback?code=abc&state={state}"), &[login])
+            .await;
+        assert_eq!(res.status(), StatusCode::SEE_OTHER, "{}", body(res).await);
+        cookie_pair(
+            &set_cookies(&res)
+                .into_iter()
+                .find(|c| c.starts_with("keyring_session="))
+                .expect("session cookie"),
+        )
+    }
+
+    /// Open a page that needs an Azure token, with Entra refusing it.
+    async fn refused(&self, session: &str, error: &'static str) -> (StatusCode, String) {
+        *self.idp.state.grant_error.lock().unwrap() = Some((error, 50076));
+        let res = self.get("/vaults", &[session.to_owned()]).await;
+        (res.status(), body(res).await)
+    }
+}
+
+#[tokio::test]
+async fn mfa_refusal_with_a_challenge_sends_that_challenge_next() {
+    let h = Harness::new().await;
+    let (session, _) = h.sign_in("/").await;
+    // The mock sends a `claims` challenge with interaction_required.
+    let (status, html) = h.refused(&session, "interaction_required").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(html.contains("Please sign in again"), "{html}");
+    let (url, _) = h.start_from(&session).await;
+    let claims = query(&url, "claims").expect("claims sent");
+    assert!(claims.contains("capolids"), "{claims}");
+    assert_eq!(query(&url, "prompt").as_deref(), Some("login"));
+}
+
+#[tokio::test]
+async fn mfa_refusal_without_a_challenge_asks_for_mfa_next() {
+    let h = Harness::new().await;
+    let (session, _) = h.sign_in("/").await;
+    // As seen on a real tenant: invalid_grant, 50076, no `claims`.
+    let (status, _) = h.refused(&session, "invalid_grant").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (url, _) = h.start_from(&session).await;
+    assert_eq!(query(&url, "claims").as_deref(), Some(MFA_ASK));
+    assert_eq!(query(&url, "prompt").as_deref(), Some("login"));
+}
+
+#[tokio::test]
+async fn a_second_mfa_refusal_shows_a_page_instead_of_looping() {
+    let h = Harness::new().await;
+    let (session, _) = h.sign_in("/").await;
+    h.refused(&session, "invalid_grant").await;
+    let (url, login) = h.start_from(&session).await;
+    let session = h.finish(&url, login).await;
+    // Entra still says 50076 after a sign-in that asked for MFA.
+    let (status, html) = h.refused(&session, "invalid_grant").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        html.contains("Entra ID keeps asking for a stronger sign-in"),
+        "{html}"
+    );
+    assert!(html.contains("AADSTS50076"), "{html}");
+    assert!(html.contains("Azure portal"), "{html}");
+    assert!(!html.contains("Sign in again"), "{html}");
+}
+
+#[tokio::test]
+async fn nothing_in_the_request_asks_for_mfa() {
+    let h = Harness::new().await;
+    let (session, _) = h.sign_in("/").await;
+    // No refusal yet: no query value, with or without a session, asks
+    // Entra for MFA or a fresh sign-in.
+    for path in [
+        "/auth/start?return_to=%2F&mfa=true",
+        "/auth/start?return_to=%2F&reason=mfa",
+        "/auth/start?return_to=%2F&claims=%7B%7D&prompt=login",
+    ] {
+        for cookies in [vec![], vec![session.clone()]] {
+            let res = h.get(path, &cookies).await;
+            let url = url::Url::parse(location(&res)).unwrap();
+            assert_eq!(query(&url, "claims"), None, "{path}");
+            assert_eq!(query(&url, "prompt"), None, "{path}");
+        }
+    }
+    // An ordinary sign-in after such a request, followed by an MFA
+    // refusal, still gets one MFA sign-in rather than the loop page.
+    let (url, login) = {
+        let res = h
+            .get(
+                "/auth/start?return_to=%2F&mfa=true",
+                std::slice::from_ref(&session),
+            )
+            .await;
+        let url = url::Url::parse(location(&res)).unwrap();
+        let login = set_cookies(&res)
+            .into_iter()
+            .find(|c| c.starts_with("keyring_login="))
+            .unwrap();
+        (url, cookie_pair(&login))
+    };
+    let session = h.finish(&url, login).await;
+    let (status, html) = h.refused(&session, "invalid_grant").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(html.contains("Please sign in again"), "{html}");
+}

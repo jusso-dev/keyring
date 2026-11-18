@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::Deserialize;
 
 use crate::auth::assertion::Credential;
-use crate::auth::entra::{EntraAdvice, classify};
+use crate::auth::entra::{EntraAdvice, classify, describe_code, needs_mfa};
 use crate::auth::session::{Session, UserTokens};
 use crate::config::Config;
 use crate::http::HttpError;
@@ -196,6 +196,11 @@ pub enum TokenError {
     /// The user must sign in again: their session ran out, or Entra wants
     /// fresh sign-in (MFA or a conditional access policy).
     SignInAgain,
+    /// Entra still wants a stronger sign-in (MFA) after a sign-in that
+    /// already asked for it. Signing in again would loop, so the person is
+    /// told what else to try. `code` is the OAuth error with the Entra
+    /// error number, for example `invalid_grant (AADSTS50076)`.
+    MfaStillNeeded { code: String },
     /// An admin has to consent to Keyring calling this API for the user.
     ConsentNeeded,
     /// Entra refused for another reason. `code` is the OAuth error code.
@@ -208,6 +213,9 @@ impl fmt::Display for TokenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SignInAgain => f.write_str("user needs to sign in again"),
+            Self::MfaStillNeeded { code } => {
+                write!(f, "MFA still required after asking for it: {code}")
+            }
             Self::ConsentNeeded => f.write_str("consent required"),
             Self::Refused { code } => write!(f, "token request refused: {code}"),
             Self::Unreachable(m) => write!(f, "token endpoint unreachable: {m}"),
@@ -242,10 +250,16 @@ struct TokenFailure {
     claims: Option<String>,
 }
 
-/// Map a refused token request with the shared classifier.
-fn token_error(failure: &TokenFailure) -> TokenError {
+/// Map a refused token request with the shared classifier. `mfa_asked` is
+/// true when this session's sign-in already asked Entra for MFA.
+fn token_error(failure: &TokenFailure, mfa_asked: bool) -> TokenError {
     let error = crate::auth::oidc::safe_code(&failure.error);
     match classify(&error, &failure.error_codes) {
+        EntraAdvice::SignInAgain if mfa_asked && needs_mfa(&failure.error_codes) => {
+            TokenError::MfaStillNeeded {
+                code: describe_code(&error, &failure.error_codes),
+            }
+        }
         EntraAdvice::SignInAgain => TokenError::SignInAgain,
         EntraAdvice::ConsentNeeded => TokenError::ConsentNeeded,
         EntraAdvice::Configuration { code } | EntraAdvice::PolicyNotMet { code } => {
@@ -420,14 +434,23 @@ impl TokenBroker {
                 if let Some(c) = f.claims.as_deref() {
                     session.set_claims_challenge(c);
                 }
-                // Only codes are logged. Descriptions can be long and aren't needed.
+                let err = token_error(&f, session.mfa_asked());
+                // Entra wants MFA. The next sign-in asks for it, with
+                // Entra's own challenge if it sent one (see
+                // `routes::auth::start`).
+                if err == TokenError::SignInAgain && needs_mfa(&f.error_codes) {
+                    session.set_mfa_needed();
+                }
+                // Only codes, and whether a claims challenge came back, are
+                // logged. Never the challenge itself or the description.
                 tracing::warn!(
-                    error = ?f.error,
+                    error = ?crate::auth::oidc::safe_code(&f.error),
                     codes = ?f.error_codes,
-                    suberror = ?f.suberror,
+                    suberror = ?f.suberror.as_deref().map(crate::auth::oidc::safe_code),
+                    claims_challenge = f.claims.is_some(),
                     "token request refused"
                 );
-                Err(token_error(&f))
+                Err(err)
             }
             Err(_) => {
                 tracing::warn!(
@@ -474,40 +497,61 @@ mod tests {
     #[test]
     fn classifies_entra_errors() {
         assert_eq!(
-            token_error(&failure("invalid_grant", &[65001])),
+            token_error(&failure("invalid_grant", &[65001]), false),
             TokenError::ConsentNeeded
         );
         assert_eq!(
-            token_error(&failure("consent_required", &[])),
+            token_error(&failure("consent_required", &[]), false),
             TokenError::ConsentNeeded
         );
         assert_eq!(
-            token_error(&failure("interaction_required", &[50076])),
+            token_error(&failure("interaction_required", &[50076]), false),
             TokenError::SignInAgain
         );
         assert_eq!(
-            token_error(&failure("invalid_grant", &[70008])),
+            token_error(&failure("invalid_grant", &[70008]), false),
             TokenError::SignInAgain
         );
         // A wrong ENTRA_API_SCOPE: signing in again wouldn't help.
         assert_eq!(
-            token_error(&failure("invalid_grant", &[50013])),
+            token_error(&failure("invalid_grant", &[50013]), false),
             TokenError::Refused {
                 code: "invalid_grant (AADSTS50013)".into()
             }
         );
         assert_eq!(
-            token_error(&failure("invalid_client", &[7000215])),
+            token_error(&failure("invalid_client", &[7000215]), false),
             TokenError::Refused {
                 code: "invalid_client (AADSTS7000215)".into()
             }
         );
         // A crafted error name can't reach the page or the log as-is.
         assert_eq!(
-            token_error(&failure("x\nFORGED", &[])),
+            token_error(&failure("x\nFORGED", &[]), false),
             TokenError::Refused {
                 code: "unrecognised".into()
             }
+        );
+    }
+
+    #[test]
+    fn mfa_refusal_after_asking_for_mfa_does_not_loop() {
+        // The first refusal: sign in again (and ask for MFA).
+        assert_eq!(
+            token_error(&failure("invalid_grant", &[50076]), false),
+            TokenError::SignInAgain
+        );
+        // The same refusal after a sign-in that asked for MFA.
+        assert_eq!(
+            token_error(&failure("invalid_grant", &[50076]), true),
+            TokenError::MfaStillNeeded {
+                code: "invalid_grant (AADSTS50076)".into()
+            }
+        );
+        // Other sign-in-again codes are unaffected.
+        assert_eq!(
+            token_error(&failure("invalid_grant", &[70008]), true),
+            TokenError::SignInAgain
         );
     }
 
