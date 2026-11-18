@@ -185,14 +185,11 @@ async fn keyring_activity_rows_stay_on_one_line_with_plain_labels() {
     clipped(col(&html, "keyring-caption", "Who"), "who");
     clipped(col(&html, "keyring-caption", "Item"), "item");
     let what = col(&html, "keyring-caption", "What");
-    clipped(what, "what");
-    // A plain label shows, not the code; the code stays in the markup.
+    // A plain label shows in full (labels are short, so What is never
+    // cut), not the code; the code stays in the markup.
     let bulk = Action::SecretBulkUpdate;
     assert_eq!(bulk.as_str(), "secret.bulk_update");
-    assert!(
-        what.contains(&format!(">{}</span>", bulk.label())),
-        "{what}"
-    );
+    assert!(what.contains(&format!(">{}<data", bulk.label())), "{what}");
     assert!(!what.contains(">secret.bulk_update<"), "{what}");
     assert!(what.contains("value=\"secret.bulk_update\""), "{what}");
     // Result is a badge, as everywhere else.
@@ -260,7 +257,7 @@ async fn keyring_activity_keeps_the_whole_reason_and_ticket_readable() {
     assert!(ticket.contains(">INC-20418</td>"), "{ticket}");
     // The label doesn't claim the share happened; Result says it didn't.
     let what = col(&html, "keyring-caption", "What");
-    assert!(what.contains(">Share secret</span>"), "{what}");
+    assert!(what.contains(">Share secret<data"), "{what}");
     assert!(col(&html, "keyring-caption", "Result").contains("Refused by Keyring"));
 
     // A short reason shows as it is, with no disclosure.

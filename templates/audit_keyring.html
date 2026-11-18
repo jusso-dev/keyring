@@ -10,7 +10,7 @@
 <p>Read as you, from Keyring's own audit table.</p>
 <p>What is each action in plain words. The Action filter lists each one with its code, such as <span class="mono">secret.bulk_update</span>, which is what Keyring writes to its audit table. Events with no one signed in, such as emails and Event Grid deliveries, show as Keyring, marked System.</p>
 <p>Item takes an item's name. Person takes part of a sign-in name or email, such as name@example.com, or a full object ID.</p>
-<p>Why shows the reason a person gave; a long one opens in full when you select it. Ticket is shown on its own.</p>
+<p>Why shows the reason a person gave; a long one opens in full when you select it. When Keyring refused an action, Why starts with its reason code, such as <span class="mono">reveal_limited</span>. Ticket is shown on its own.</p>
 {% endcall %}
 </div>
 <nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring" aria-current="page">Keyring activity</a></p></nav>
@@ -55,10 +55,10 @@
     <tr>
       <td class="cell-time">{{ ui::when(r.when) }}</td>
       <td class="cell-text cell-fluid cell-who">{{ ui::keyring_who(r) }}</td>
-      <th scope="row" class="cell-text cell-fluid"><span class="clip clip-md">{{ r.label }}</span><data class="visually-hidden" value="{{ r.action }}"> ({{ r.action }})</data></th>
+      <th scope="row" class="cell-text">{{ r.label }}<data class="visually-hidden" value="{{ r.action }}"> ({{ r.action }})</data></th>
       <td class="cell-text item-name cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
-      <td class="nowrap">{% if r.outcome == "success" %}<span class="badge badge-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %} <span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
-      <td class="cell-text cell-fluid">{% if r.reason.is_empty() %}<span class="muted">None</span>{% else %}{% call ui::clip_more(r.reason, "lg", 40, "reason") %}{% endcall %}{% endif %}</td>
+      <td class="nowrap">{% if r.outcome == "success" %}<span class="badge badge-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}</td>
+      <td class="cell-text cell-fluid">{% if !r.reason_code.is_empty() %}<span class="mono small">{{ r.reason_code }}</span>{% if !r.reason.is_empty() %} {% endif %}{% endif %}{% if !r.reason.is_empty() %}{% call ui::clip_more(r.reason, "lg", 40, "reason") %}{% endcall %}{% elif r.reason_code.is_empty() %}<span class="muted">None</span>{% endif %}</td>
       <td class="mono small nowrap">{% if r.ticket.is_empty() %}<span class="muted">None</span>{% else %}{{ r.ticket }}{% endif %}</td>
       <td class="mono small nowrap col-p3">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
