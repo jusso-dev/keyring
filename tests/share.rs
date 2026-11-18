@@ -226,6 +226,22 @@ async fn falls_back_to_a_plain_assignment_when_pim_isnt_licensed() {
 }
 
 #[tokio::test]
+async fn a_pim_setting_that_refuses_is_not_stepped_round() {
+    let World { w, .. } = world().await;
+    w.arm.state.share.lock().unwrap().pim_fail =
+        Some((400, "RoleAssignmentRequestPolicyValidationFailed"));
+    let res = share_with(&w, BLAIR, "", &in_days(10)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    let html = body_text(res).await;
+    assert!(html.contains("Not shared"), "{html}");
+    assert!(html.contains("no end date"), "{html}");
+    // PIM was asked, and no plain assignment was made in its place.
+    let b = bodies(&w);
+    assert_eq!(b.len(), 1, "{b:?}");
+    assert_eq!(b[0].1["properties"]["requestType"], "AdminAssign");
+}
+
+#[tokio::test]
 async fn an_overdue_plain_share_is_flagged_on_the_panel_and_the_review() {
     let World { w, .. } = world().await;
     let past = chrono::Utc::now().date_naive() - chrono::Duration::days(3);

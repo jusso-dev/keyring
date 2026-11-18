@@ -103,6 +103,9 @@ pub enum Action {
     RoleActivate,
     /// A PIM activated role turned off (`SelfDeactivate`) from Keyring.
     RoleDeactivate,
+    /// A person refused by Key Vault asked the vault's owners for a role
+    /// (#258). Keyring emails them and grants nothing.
+    AccessRequest,
     /// A secret shared with a person or group (#286): a time-limited Key
     /// Vault Secrets User assignment on the secret, made as the sharer.
     /// A share Keyring refuses is this action with outcome `refused`.
@@ -128,7 +131,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -164,6 +167,7 @@ impl Action {
         Self::KeyBulkUpdate,
         Self::RoleActivate,
         Self::RoleDeactivate,
+        Self::AccessRequest,
         Self::ShareGrant,
         Self::ShareRevoke,
         Self::SessionSignIn,
@@ -213,6 +217,7 @@ impl Action {
             Self::KeyBulkUpdate => "key.bulk_update",
             Self::RoleActivate => "role.activate",
             Self::RoleDeactivate => "role.deactivate",
+            Self::AccessRequest => "access.request",
             Self::ShareGrant => "share.grant",
             Self::ShareRevoke => "share.revoke",
             Self::SessionSignIn => "session.sign_in",
@@ -311,6 +316,12 @@ pub enum Refusal {
     /// `KEYRING_REQUIRE_OWNER` is on and the item would have been saved
     /// without an `owner` tag. Says nothing about the addresses.
     OwnerRequired,
+    /// The item's `keyring-reveal` tag says Keyring mustn't show, copy or
+    /// export its value. Says nothing about the value.
+    RevealLimited,
+    /// The person asked for the same role on the same vault within the
+    /// hour (`access.request`). Nothing was sent.
+    RateLimited,
     /// A share to the person sharing.
     ShareToSelf,
     /// A share's end date was in the past, or past
@@ -326,7 +337,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 20] = [
+    pub const ALL: [Refusal; 22] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -343,6 +354,8 @@ impl Refusal {
         Self::ReasonRequired,
         Self::PasswordPolicy,
         Self::OwnerRequired,
+        Self::RevealLimited,
+        Self::RateLimited,
         Self::ShareToSelf,
         Self::ShareDate,
         Self::SharePrincipal,
@@ -367,6 +380,8 @@ impl Refusal {
             Self::ReasonRequired => "reason_required",
             Self::PasswordPolicy => "password_policy",
             Self::OwnerRequired => "owner_required",
+            Self::RevealLimited => "reveal_limited",
+            Self::RateLimited => "rate_limited",
             Self::ShareToSelf => "share_to_self",
             Self::ShareDate => "share_date",
             Self::SharePrincipal => "share_principal",
@@ -423,6 +438,10 @@ pub struct AuditEvent {
     /// How many events an Event Grid delivery held (`notify.webhook`
     /// only), when it could be read.
     pub notify_event_count: Option<u64>,
+    /// A reveal limit changed (`keyring-reveal`): what it was and what it
+    /// became, each `unset`, `copy-only`, `none` or `other`.
+    pub reveal_limit_from: Option<&'static str>,
+    pub reveal_limit_to: Option<&'static str>,
     /// The object ID a secret was shared with or revoked from (`share.*`
     /// only), checked to be a GUID.
     pub share_principal_id: Option<String>,
@@ -464,6 +483,8 @@ impl AuditEvent {
             notify_recipient_count: None,
             notify_recipients: None,
             notify_event_count: None,
+            reveal_limit_from: None,
+            reveal_limit_to: None,
             share_principal_id: None,
             share_principal_type: None,
             share_until: None,
@@ -608,6 +629,8 @@ fn record_with(
         notify_recipient_count = ev.notify_recipient_count,
         notify_recipients = opt(&ev.notify_recipients),
         notify_event_count = ev.notify_event_count,
+        reveal_limit_from = ev.reveal_limit_from.map(tracing::field::display),
+        reveal_limit_to = ev.reveal_limit_to.map(tracing::field::display),
         share_principal_id = opt(&ev.share_principal_id),
         share_principal_type = ev.share_principal_type.map(tracing::field::display),
         share_until = opt(&ev.share_until),
@@ -651,6 +674,9 @@ struct Draft {
     user_agent: Option<String>,
     vault: Option<String>,
     item_name: Option<String>,
+    /// The item's kind, for an action that isn't on one kind of item
+    /// (`access.request`).
+    item_kind: Option<&'static str>,
     item_version: Option<String>,
     kv_request_id: Option<String>,
     reason: Option<String>,
@@ -660,6 +686,8 @@ struct Draft {
     role_duration: Option<String>,
     notify_type: Option<&'static str>,
     notify_event_count: Option<u64>,
+    reveal_limit_from: Option<&'static str>,
+    reveal_limit_to: Option<&'static str>,
     share_principal_id: Option<String>,
     share_principal_type: Option<&'static str>,
     share_until: Option<String>,
@@ -784,6 +812,15 @@ pub fn note_item(name: &str) {
     note(|d| d.item_name = Some(name.to_owned()));
 }
 
+/// A reveal limit changed, from one fixed word to another
+/// ([`crate::reveal_limit::word`]).
+pub fn note_reveal_limit(from: &'static str, to: &'static str) {
+    note(|d| {
+        d.reveal_limit_from = Some(from);
+        d.reveal_limit_to = Some(to);
+    });
+}
+
 /// The item version read or restored. Must already be checked.
 pub fn note_version(version: &str) {
     note(|d| d.item_version = Some(version.to_owned()));
@@ -837,6 +874,27 @@ pub fn note_share(
         }
         if path.is_some() {
             d.share_path = path;
+        }
+    });
+}
+
+/// An access request (`access.request`): the role GUID, the ARM scope
+/// asked for when the vault's resource ID was read, the item's kind when
+/// the request is for one item, and the reason and ticket, already checked
+/// by [`crate::reason`].
+pub fn note_access_request(
+    role: &str,
+    scope: Option<&str>,
+    item_kind: Option<&'static str>,
+    given: Option<&crate::reason::Given>,
+) {
+    note(|d| {
+        d.role = Some(role.to_owned());
+        d.role_scope = scope.map(str::to_owned);
+        d.item_kind = item_kind;
+        if let Some(g) = given {
+            d.reason = Some(g.reason.clone());
+            d.ticket.clone_from(&g.ticket);
         }
     });
 }
@@ -1096,6 +1154,9 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.user_agent = d.user_agent;
     ev.vault = d.vault;
     ev.item_name = d.item_name;
+    if d.item_kind.is_some() {
+        ev.item_kind = d.item_kind;
+    }
     ev.item_version = d.item_version;
     ev.kv_request_id = d.kv_request_id;
     ev.reason = d.reason;
@@ -1105,6 +1166,8 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.role_duration = d.role_duration;
     ev.notify_type = d.notify_type;
     ev.notify_event_count = d.notify_event_count;
+    ev.reveal_limit_from = d.reveal_limit_from;
+    ev.reveal_limit_to = d.reveal_limit_to;
     ev.share_principal_id = d.share_principal_id;
     ev.share_principal_type = d.share_principal_type;
     ev.share_until = d.share_until;

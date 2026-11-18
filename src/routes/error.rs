@@ -136,6 +136,9 @@ pub struct Problem {
     pub pim_need: Option<Need>,
     /// "Activate" for that role, when the person is eligible for it.
     pub offer: Option<Offer>,
+    /// "Request access" for that role, when no PIM eligibility is offered
+    /// and access requests are on (#258): the form, a local path.
+    pub request: Option<Offer>,
 }
 
 /// An offer to turn on an eligible PIM role, shown beside "What to ask for".
@@ -159,6 +162,7 @@ impl Problem {
             also: None,
             pim_need: None,
             offer: None,
+            request: None,
         }
     }
 
@@ -449,8 +453,10 @@ impl IntoResponse for PageError {
         let (next_url, next_label) = self.problem.next.link();
         // A refusal that could be lifted by turning on a PIM role is kept
         // on the response for `routes::pim::offer_layer` to look at.
-        let pending = (self.problem.pim_need.is_some() && self.problem.offer.is_none())
-            .then(|| crate::routes::pim::OfferPending(Box::new(self.clone())));
+        let pending = (self.problem.pim_need.is_some()
+            && self.problem.offer.is_none()
+            && self.problem.request.is_none())
+        .then(|| crate::routes::pim::OfferPending(Box::new(self.clone())));
         let page = ErrorPage {
             shell: self.shell,
             problem: &self.problem,

@@ -169,8 +169,28 @@ Keyring stores nothing, so the few things it keeps about an item live in the ite
 | `notify` | secret, certificate, key | Up to 5 more email addresses to tell about the item, separated by commas, within the tag's 256 characters. Set with the Notify field |
 | `keyring-owners` | vault (an Azure resource tag, not a Key Vault tag) | The vault's owners: email addresses separated by commas. Keyring reads it from Resource Graph and never changes it. Set it in the vault's **Tags** blade in the Azure portal, or with `az tag update --resource-id <vault ID> --operation merge --tags keyring-owners=ops@example.com` |
 | `rotation`, `rotation-last`, `rotation-status` | secret | What the last rotation did, written by your rotation job and read by Keyring ([docs/rotation.md](docs/rotation.md)) |
+| `keyring-reveal` | secret, certificate | A reveal limit: `copy-only` or `none`. Set with the Reveal limit control on a secret's forms or a certificate's Edit details. See [Reveal limits](#reveal-limits) |
 
 Addresses in these tags are personal data that anyone who can read the item's tags (or the vault's) can already see. Keyring shows them, a plain address as a `mailto:` link, but never logs them, puts them in an audit event or a flash message, or builds one of its own URLs (a query string, redirect, filter suggestion or pager link) with an address in it. Each must be one plain address, such as `alex@example.com`, and in `KEYRING_NOTIFY_ALLOWED_DOMAINS` when that is set. A value set in the portal or the CLI that isn't is shown as it is, with a note, and kept unless you change that field.
+
+### Reveal limits
+
+A `keyring-reveal` tag on a sensitive secret or certificate limits what Keyring does with its value:
+
+| Value | Secret | Certificate |
+| --- | --- | --- |
+| `copy-only` | No Show value: **Copy value** puts it on your clipboard without showing it on screen, and Keyring tries to clear the clipboard after 30 seconds (a browser can refuse, for example in a background tab). It keeps the value off a screen someone else can see (over a shoulder, a shared or recorded screen); it doesn't stop the signed-in person, who can paste it. Copy to another vault still works, and the copy keeps the limit | The private key can't be downloaded (a file has no clipboard to clear), the same as `none` |
+| `none` | Keyring refuses to show it, copy it, or copy it to another vault, and says to use the app's own identity or the Azure CLI | The private key can't be downloaded. The public certificate can |
+| anything else, or the name in another case | Treated as `none`, shown as it is with a note, and kept until someone changes it. An unknown value never means "no limit" | Same |
+
+What it is and isn't:
+
+- **A Keyring control, like step-up.** Key Vault doesn't know about it. The Azure CLI, the portal and the SDKs aren't limited by it, and anyone who can change the item's tags can change it there.
+- **`copy-only` keeps the value off the screen, not out of the browser.** To copy, the value has to reach your browser. It is in the page as a hidden form field, never shown, selectable or read out by a screen reader, and the page says so.
+- **Every check is on the server**, on each path that could show or carry the value: reveal of any version (the current version's limit or the asked-for version's, whichever is stricter), copy to another vault, private key download, rollback, Set a new value, Edit details, import and the bulk change. A limit is checked before the value is read, and again on what Key Vault sends back, so a tag added in between still stops it. It is checked before step-up or a reason is asked for.
+- **Nothing in Keyring drops it by accident.** Rollback, Set a new value, import over an existing secret, certificate upload over an existing certificate and copy to another vault (whatever is ticked) all carry the stricter limit onto the new version. Tag rows, the bulk change and import files refuse the tag name.
+- **Loosening it is gated and audited.** Through Keyring, the limit is changed only with its own control. Loosening it (`none` to `copy-only` or no limit, `copy-only` to no limit) needs the same step-up and reason as a reveal; strengthening it needs nothing extra. The audit event says it changed, from what to what (`reveal_limit_from`, `reveal_limit_to`: `unset`, `copy-only`, `none` or `other`). A refusal is an audit event with `reason_code` `reveal_limited`, and isn't a read.
+- Keys have no value to show, so the control isn't on keys.
 
 ### Owners
 
@@ -335,6 +355,8 @@ For access-policy vaults, the matching permissions are: secrets Get and List for
 Role changes can take a few minutes to apply.
 
 **PIM.** If your organisation uses Privileged Identity Management for Azure resources and you're eligible for the role a "You don't have access" page names, the page offers **Activate** beside "What to ask for". You pick how long (up to what PIM allows), give a reason and a ticket if PIM asks for them, and Keyring sends the request to PIM as you. PIM decides: it may turn the role on, wait for an approver, or ask you to sign in again with a stronger method. **My access** under each vault lists your Key Vault roles there, eligible and on, with time left and **Deactivate**. Keyring keeps nothing: it reads all of this from Azure each time, and needs no new permission. Without PIM, or without an eligible role, the 403 page is as it was.
+
+**Request access.** Where PIM isn't available (it needs Entra ID P2) and email is on with `access-requests`, the same page offers **Request access** instead: pick this item or the whole vault, give a reason and an optional ticket, and Keyring emails the vault's owners (its `keyring-owners` tag, or Keyring's admins when it names nobody) with a copy to you. Keyring can't grant access itself and keeps no request: the email links to the vault's Access control page in the Azure portal. One request per role and vault an hour. **My access** lists the same for each Key Vault role you don't have.
 
 Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
 

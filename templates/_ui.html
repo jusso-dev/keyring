@@ -146,6 +146,31 @@
   {% include "_field_error.html" %}
 {%- endmacro -%}
 
+{#- The reveal limit control (`keyring-reveal`, src/reveal_limit.rs) on a
+    secret's forms and a certificate's Edit details. `r` is a
+    reveal_limit::Field. Loosening it needs step-up and, when reasons are
+    asked for before a reveal, a reason: those fields show here unless the
+    form already asks for a reason for every change. -#}
+{%- macro reveal_field(r, noun) -%}
+{%- let field_name = "reveal" %}
+  <label for="reveal">Reveal limit</label>
+  <p class="field-help" id="reveal-help">How far Keyring will go with this {{ noun }}'s {% if noun == "certificate" %}private key{% else %}value{% endif %}. Copy only hides the value on screen but still sends it to the browser for Copy. No reveal refuses showing, copying and downloading it in Keyring. Saved as the <span class="mono">keyring-reveal</span> tag. It is a Keyring control: the Azure CLI and portal aren't limited by it. Loosening it asks you to confirm it's you, and is recorded.</p>
+  {%- if let Some(odd) = r.odd %}
+  <p class="field-help" id="reveal-note">This limit was set outside Keyring as <span class="mono">{{ odd }}</span>, which Keyring doesn't know, so it treats it as No reveal. It's kept as it is unless you choose another.</p>
+  {%- endif %}
+  <select id="reveal" name="reveal"{% if r.odd.is_some() %}{% call aria("reveal", "reveal-help reveal-note") %}{% endcall %}{% else %}{% call aria("reveal", "reveal-help") %}{% endcall %}{% endif %}>
+    {% if r.odd.is_some() %}<option value="keep"{% if r.is("keep") %} selected{% endif %}>Keep as set elsewhere (treated as no reveal)</option>{% endif %}
+    <option value=""{% if r.is("") %} selected{% endif %}>No limit</option>
+    <option value="copy-only"{% if r.is("copy-only") %} selected{% endif %}>Copy only{% if noun == "certificate" %} (no private key download){% endif %}</option>
+    <option value="none"{% if r.is("none") %} selected{% endif %}>No reveal</option>
+  </select>
+  {% include "_field_error.html" %}
+  {%- if shell.asks_reason_to_reveal() && !shell.asks_reason_to_change() && r.limited %}
+  <p class="field-help">If you loosen the limit, give a reason. Otherwise leave it empty.</p>
+  {% call reason_fields("") %}{% endcall %}
+  {%- endif %}
+{%- endmacro -%}
+
 {#- An owner value on a page: each entry that parses as an address is a
     mailto link, anything else plain text. `d` is an owner::Display.
     A muted "None" when there is nothing. -#}

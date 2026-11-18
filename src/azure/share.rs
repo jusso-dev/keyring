@@ -8,7 +8,7 @@
 //!   roleAssignmentScheduleRequests/{new GUID}` (api-version 2020-10-01),
 //!   `requestType` `AdminAssign`, `scheduleInfo.expiration.type`
 //!   `AfterDateTime` with `endDateTime`. Azure removes it at the end.
-//! - **Without PIM** (the licence or a policy refused it):
+//! - **Without PIM** (the tenant has no licence for it):
 //!   `PUT {secret}/providers/Microsoft.Authorization/roleAssignments/
 //!   {new GUID}` (api-version 2022-04-01). Azure has no end date for
 //!   these, so the `description` records it in a fixed form, and Keyring
@@ -518,9 +518,11 @@ pub async fn pim_shares(
             }
             Some("AdminRemove")
                 if done
-                    && p.justification
-                        .as_deref()
-                        .is_some_and(|j| j.starts_with("Revoked by Keyring by ")) =>
+                    && p.justification.as_deref().is_some_and(|j| {
+                        // Exactly what Keyring's revoke writes.
+                        j.strip_prefix("Revoked by Keyring by ")
+                            .is_some_and(is_guid)
+                    }) =>
             {
                 removed.push((p.scope, p.principal_id.to_ascii_lowercase(), created));
             }
@@ -540,13 +542,17 @@ pub async fn pim_shares(
     Ok(shares)
 }
 
-/// The Azure codes that mean PIM can't be used for this share, so Keyring
-/// makes a plain assignment instead: no licence, or a PIM setting refused.
+/// The Azure code that means PIM can't be used for this share, so Keyring
+/// makes a plain assignment instead: the tenant has no licence for it.
+///
+/// A PIM setting that refuses the request (multifactor sign-in, a shorter
+/// longest time, a ticket) is not one: a plain assignment has no end date
+/// and would step round the rule the organisation set, so the share is
+/// refused and the page names the rule.
 pub fn falls_back(err: &AzureError) -> bool {
     matches!(
         err,
-        AzureError::Status { code: Some(c), .. }
-            if c == LICENCE_REQUIRED || c == crate::azure::pim::POLICY_FAILED
+        AzureError::Status { code: Some(c), .. } if c == LICENCE_REQUIRED
     )
 }
 
@@ -617,7 +623,7 @@ mod tests {
             message: None,
         };
         assert!(falls_back(&e(400, LICENCE_REQUIRED)));
-        assert!(falls_back(&e(400, crate::azure::pim::POLICY_FAILED)));
+        assert!(!falls_back(&e(400, crate::azure::pim::POLICY_FAILED)));
         assert!(!falls_back(&e(403, "AuthorizationFailed")));
         assert!(!falls_back(&AzureError::Unreadable));
     }

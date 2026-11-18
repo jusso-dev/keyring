@@ -80,6 +80,8 @@ KeyringAudit_CL
         "NotifyRecipientCount", column_ifexists("NotifyRecipientCount", int(null)),
         "NotifyRecipients", column_ifexists("NotifyRecipients", ""),
         "NotifyEventCount", column_ifexists("NotifyEventCount", int(null)),
+        "RevealLimitFrom", column_ifexists("RevealLimitFrom", ""),
+        "RevealLimitTo", column_ifexists("RevealLimitTo", ""),
         "SharePrincipalId", column_ifexists("SharePrincipalId", ""),
         "SharePrincipalType", column_ifexists("SharePrincipalType", ""),
         "ShareUntil", column_ifexists("ShareUntil", ""),

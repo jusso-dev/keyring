@@ -323,6 +323,8 @@ const SCHEMA_V1_ADDED: &[&str] = &[
     "notify_recipient_count",
     "notify_recipients",
     "notify_type",
+    "reveal_limit_from",
+    "reveal_limit_to",
     "role",
     "role_duration",
     "role_scope",
@@ -541,6 +543,8 @@ async fn audited_routes_write_exactly_one_event() {
         ev.notify_recipient_count = Some(2);
         ev.notify_recipients = Some("a@example.com,b@example.com".into());
         ev.notify_event_count = Some(3);
+        ev.reveal_limit_from = Some("none");
+        ev.reveal_limit_to = Some("copy-only");
         ev.share_principal_id = Some("aaaaaaaa-0000-0000-0000-000000000002".into());
         ev.share_principal_type = Some("user");
         ev.share_until = Some("2026-11-25".into());
@@ -1215,7 +1219,7 @@ async fn audited_routes_write_exactly_one_event() {
     // --- Step-up: a sensitive action sent off to confirm it's you ------
     let w = seeded(&[("KEYRING_STEP_UP_AUTH_CONTEXT", "c1")]).await;
     capture.take_events();
-    let kv_calls = w.kv.state.log.lock().unwrap().len();
+    let kv_calls = w.kv.state.value_reads().len();
     let status = post(
         &w,
         "/v/kv-test/secrets/db-password/reveal",
@@ -1231,10 +1235,11 @@ async fn audited_routes_write_exactly_one_event() {
     assert_eq!(ev["reason_code"], "step_up_required");
     assert_eq!(ev["actor_oid"], OID);
     assert_eq!(ev["item_name"], "db-password");
+    // Only the versions list, for the reveal limit: no value was read.
     assert_eq!(
-        w.kv.state.log.lock().unwrap().len(),
+        w.kv.state.value_reads().len(),
         kv_calls,
-        "nothing reached Key Vault"
+        "no value was read"
     );
     // The step-up sign-in comes back without the context: refused.
     let start = w

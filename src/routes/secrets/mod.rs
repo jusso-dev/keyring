@@ -52,6 +52,10 @@ pub(super) struct SecretRow {
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The `keyring-reveal` limit, and the tag as set when Keyring didn't
+    /// write it.
+    pub limit: crate::reveal_limit::Limit,
+    pub limit_odd: Option<String>,
     /// The tags the tag filter and search box match: every tag but the
     /// description, `owner` and `notify` included.
     pub filter_tags: Vec<(String, String)>,
@@ -93,6 +97,8 @@ impl SecretRow {
             description,
             owners,
             managed: item.managed.unwrap_or(false),
+            limit: crate::reveal_limit::of(item.tags()),
+            limit_odd: crate::reveal_limit::Field::of(item.tags()).odd,
             filter_tags,
             filter_text,
         }
@@ -478,6 +484,8 @@ mod tests {
             description: String::new(),
             owners: crate::owner::OfItem::default(),
             managed: false,
+            limit: crate::reveal_limit::Limit::Open,
+            limit_odd: None,
             filter_tags: tags
                 .iter()
                 .map(|(k, v)| ((*k).into(), (*v).into()))

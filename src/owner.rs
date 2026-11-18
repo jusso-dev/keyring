@@ -308,9 +308,13 @@ pub fn notify_of(tags: &BTreeMap<String, String>) -> Option<&str> {
 }
 
 /// True for a tag name Keyring shows in its own field rather than as a
-/// tag: the description, the owner and notify.
+/// tag: the description, the owner and notify, and the reveal limit
+/// (`keyring-reveal` in any case, [`crate::reveal_limit::is_tag`]).
 pub fn has_own_field(name: &str) -> bool {
-    name == crate::description::TAG || name == OWNER_TAG || name == NOTIFY_TAG
+    name == crate::description::TAG
+        || name == OWNER_TAG
+        || name == NOTIFY_TAG
+        || crate::reveal_limit::is_tag(name)
 }
 
 /// The tags without the ones that have their own field, for tag rows and

@@ -414,6 +414,12 @@ pub(crate) fn answer(
     if *method != Method::GET {
         return None;
     }
+    // An unfiltered list at a secret is the Access section's read: the
+    // main mock answers it, with every assignment and the shares beside
+    // them.
+    if is_assign && !filtered {
+        return None;
+    }
     let scope = path
         .split("/providers/Microsoft.Authorization/")
         .next()

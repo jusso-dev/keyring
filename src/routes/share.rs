@@ -70,17 +70,11 @@ const PICKER_MAX_SESSIONS: usize = 10_000;
 /// The roles that can make a share, named on a 403.
 const WHO_CAN_SHARE: &str = "You need a role that can create role assignments on this secret or its vault: Owner, User Access Administrator, or Key Vault Data Access Administrator (which can be limited to assigning Key Vault Secrets User). Ask your admin for one of them.";
 
-/// The tag a reveal limit (#261 part 2) is kept in.
-///
-/// Until #285 lands, this is checked here on its own: the tag present
-/// under any spelling, with any value, refuses a share, since no value is
-/// less strict than the default. Swap for `crate::reveal_limit::strictest`
-/// once that is on main.
-const REVEAL_LIMIT_TAG: &str = "keyring-reveal";
-
+/// True when the tags hold a reveal limit (`keyring-reveal`, #261 part 2)
+/// under any spelling and with any value: no value is less strict than
+/// the default, so any of them refuses a share.
 fn has_reveal_limit(tags: &std::collections::BTreeMap<String, String>) -> bool {
-    tags.keys()
-        .any(|k| k.trim().eq_ignore_ascii_case(REVEAL_LIMIT_TAG))
+    tags.keys().any(|k| crate::reveal_limit::is_tag(k))
 }
 
 /// Middleware on every sharing route: "not found" unless
@@ -404,6 +398,28 @@ fn azure_refused(shell: Shell, err: &AzureError, lead: String, back: &str) -> Ha
             "Already shared",
             format!("{lead} They already have Key Vault Secrets User on this secret."),
         ),
+        AzureError::Status { code: Some(c), .. } if c == crate::azure::pim::POLICY_FAILED => {
+            use crate::azure::pim::BrokenRule as B;
+            // Only the rule's name is read from Azure's message.
+            let why: Vec<&str> = crate::azure::pim::broken_rules(err)
+                .into_iter()
+                .map(|b| match b {
+                    B::Expiration => "PIM won't allow this role for that long: pick an earlier end date.",
+                    B::Justification => "PIM wants a reason for this role.",
+                    B::Ticketing => "PIM wants a ticket number for this role, which Keyring's share doesn't send.",
+                    B::Mfa => "PIM wants you to have signed in with multifactor authentication: sign out and in again with it, then try again.",
+                    B::Eligibility => "PIM's settings don't allow this assignment.",
+                })
+                .collect();
+            let why = if why.is_empty() {
+                "A PIM setting for this role refused the request.".to_owned()
+            } else {
+                why.join(" ")
+            };
+            Problem::new(StatusCode::CONFLICT, "Not shared", lead).with_hint(format!(
+                "{why} Keyring doesn't make a plain role assignment instead, because that would have no end date and step round the PIM setting."
+            ))
+        }
         AzureError::Status { status, code, .. } => {
             let code = code
                 .as_deref()
@@ -549,7 +565,11 @@ pub(crate) async fn grant(
     };
     crate::audit::note_share(&scope, &to.id, None, None, Some(path.as_str()));
 
-    send_emails(&state, &session, &vault, &name, &to, &me, until, path).await;
+    // While PIM waits for an approval nobody has access yet, so nobody is
+    // told they do.
+    if !waiting {
+        send_emails(&state, &session, &vault, &name, &to, &me, until, path).await;
+    }
 
     let who = if to.display_name.is_empty() {
         to.id.clone()
@@ -566,7 +586,7 @@ pub(crate) async fn grant(
             dmy(until)
         ),
         (SharePath::Plain, _) => format!(
-            "Shared {name} with {who} until {}. PIM isn't available for this (licence or policy), so Keyring made a plain role assignment. Azure won't remove this access on the end date. Keyring will show it as overdue.",
+            "Shared {name} with {who} until {}. PIM isn't licensed in this tenant, so Keyring made a plain role assignment. Azure won't remove this access on the end date. Keyring will show it as overdue.",
             dmy(until)
         ),
     };
@@ -881,9 +901,11 @@ async fn read_shared_with(
     let mut rows: Vec<SharedRow> = Vec::new();
     for a in &assigned {
         let is_su = a.role == share::SECRETS_USER;
+        // A PIM share past its date has ended: an assignment still there
+        // was made by someone else, and isn't Keyring's to revoke.
         let pim_share = pim
             .iter()
-            .find(|p| p.principal_id == a.principal_id && is_su);
+            .find(|p| p.principal_id == a.principal_id && is_su && p.until >= today);
         let mut row = SharedRow {
             principal_id: a.principal_id.clone(),
             name: name_of(&a.principal_id),
@@ -1012,6 +1034,9 @@ async fn find_share(
             .find(|p| {
                 p.principal_id.eq_ignore_ascii_case(principal)
                     && p.scope.eq_ignore_ascii_case(scope)
+                    // Ended shares aren't revoked: what is there now was
+                    // made by someone else.
+                    && p.until >= today()
             })
             .map(Found::Pim));
     }
