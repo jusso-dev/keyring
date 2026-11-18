@@ -50,7 +50,10 @@ async fn shows_keyring_events_read_as_the_person() {
     assert!(html.contains("purge_disabled"));
     assert!(html.contains("alex@example.com"));
     assert!(html.contains("<time datetime=\"2026-11-17T01:02:03Z\">17 Nov 2026, 01:02</time>"));
-    assert!(!html.contains(">Secret deleted</span>"), "another vault's row");
+    assert!(
+        !html.contains(">Secret deleted</span>"),
+        "another vault's row"
+    );
     assert!(html.contains("aria-current=\"page\">Keyring activity"));
 
     // Against the configured workspace, with the person's Log Analytics
@@ -130,7 +133,8 @@ async fn caps_at_500_rows() {
     let (_, html) = w.page("/v/kv-test/audit/keyring").await;
     assert!(html.contains("Showing the 500 most recent events"));
     assert_eq!(
-        html.matches("<th scope=\"row\" class=\"cell-text\">").count(),
+        html.matches("<th scope=\"row\" class=\"cell-text cell-fluid\">")
+            .count(),
         500
     );
 }

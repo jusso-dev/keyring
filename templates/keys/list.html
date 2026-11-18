@@ -37,17 +37,17 @@
 {% let bulk_needs = hints.needs(Action::UpdateKey) %}{% let bulk_expiry = true %}{% let bulk_base = "/keys" %}{% let bulk_plural = "keys" %}
 {% include "bulk/_form.html" %}
 {% call ui::table_wrap("key-table-caption") %}
-<table id="key-table">
+<table id="key-table" class="one-line">
   <caption class="visually-hidden" id="key-table-caption">Keys in {{ vault }}</caption>
   <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col" class="col-p3">Created</th><th scope="col">Expires</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <td><input type="checkbox" id="pick-{{ row.name }}" name="item" value="{{ row.name }}" form="bulk-form"><label for="pick-{{ row.name }}" class="visually-hidden">Select {{ row.name }}</label></td>
-      <th scope="row"><a class="item-name clip clip-lg" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
+      <th scope="row" class="cell-fluid"><a class="item-name clip clip-lg" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
       <td class="nowrap">{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
-      <td class="note-cell col-p2">{{ ui::note_cell(row.description) }}</td>
-      <td class="owner-cell">{{ ui::owner_cell(row.owners.owner_shown()) }}</td>
+      <td class="note-cell col-p2 cell-fluid">{{ ui::note_cell(row.description) }}</td>
+      <td class="owner-cell cell-fluid">{{ ui::owner_cell(row.owners.owner_shown()) }}</td>
       <td class="nowrap col-p3">{{ ui::or_none(row.created) }}</td>
       <td class="nowrap">{{ ui::expires(row.expires, row.expires_note) }}</td>
     </tr>

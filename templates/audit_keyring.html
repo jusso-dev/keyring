@@ -46,18 +46,18 @@
 {% elif !rows.is_empty() %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 {% call ui::table_wrap("keyring-caption") %}
-<table class="ledger">
+<table class="ledger one-line">
   <caption class="visually-hidden" id="keyring-caption">Keyring activity for {{ vault }}</caption>
   <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">Why</th><th scope="col">From</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>
       <td class="cell-time">{{ ui::when(r.when) }}</td>
-      <td class="cell-text nowrap">{{ ui::keyring_who(r) }}</td>
-      <th scope="row" class="cell-text"><span class="clip clip-md">{{ r.label }}</span><data class="visually-hidden" value="{{ r.action }}"> ({{ r.action }})</data></th>
-      <td class="cell-text item-name"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
+      <td class="cell-text cell-fluid">{{ ui::keyring_who(r) }}</td>
+      <th scope="row" class="cell-text cell-fluid"><span class="clip clip-md">{{ r.label }}</span><data class="visually-hidden" value="{{ r.action }}"> ({{ r.action }})</data></th>
+      <td class="cell-text item-name cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
       <td class="nowrap">{% if r.outcome == "success" %}<span class="badge badge-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %} <span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
-      <td class="cell-text">{% if r.reason.is_empty() && r.ticket.is_empty() %}<span class="muted">None</span>{% else %}<span class="clip clip-md">{{ r.reason }}{% if !r.ticket.is_empty() %} <span class="muted small">Ticket {{ r.ticket }}</span>{% endif %}</span>{% endif %}</td>
+      <td class="cell-text cell-fluid">{% if r.reason.is_empty() && r.ticket.is_empty() %}<span class="muted">None</span>{% else %}<span class="clip clip-md">{{ r.reason }}{% if !r.ticket.is_empty() %} <span class="muted small">Ticket {{ r.ticket }}</span>{% endif %}</span>{% endif %}</td>
       <td class="mono small nowrap">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}

@@ -126,7 +126,7 @@ async fn each_type_round_trips_create_reveal_set_and_roll_back() {
         let (_, list) = w.page("/v/kv-test/secrets").await;
         assert!(
             list.contains(&format!(
-                "<td class=\"tech col-p3\"><span class=\"clip clip-sm\">{}</span></td>",
+                "<td class=\"tech col-p3 cell-fluid\"><span class=\"clip clip-sm\">{}</span></td>",
                 escaped(label)
             )),
             "{slug}"

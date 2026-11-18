@@ -46,7 +46,7 @@
 {% let bulk_needs = hints.needs(Action::UpdateCertificate) %}{% let bulk_expiry = false %}{% let bulk_base = "/certificates" %}{% let bulk_plural = "certificates" %}
 {% include "bulk/_form.html" %}
 {% call ui::table_wrap("cert-table-caption") %}
-<table id="cert-table">
+<table id="cert-table" class="one-line">
   <caption class="visually-hidden" id="cert-table-caption">Certificates in {{ vault }}</caption>
   <thead><tr>
     <th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col">Expires</th><th scope="col" class="col-p3">Thumbprint</th>
@@ -55,12 +55,12 @@
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }} {{ row.thumbprint|lower }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <td><input type="checkbox" id="pick-{{ row.name }}" name="item" value="{{ row.name }}" form="bulk-form"><label for="pick-{{ row.name }}" class="visually-hidden">Select {{ row.name }}</label></td>
-      <th scope="row"><a class="item-name clip clip-lg" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a></th>
+      <th scope="row" class="cell-fluid"><a class="item-name clip clip-lg" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a></th>
       <td class="nowrap">{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
-      <td class="note-cell col-p2">{{ ui::note_cell(row.description) }}</td>
-      <td class="owner-cell">{{ ui::owner_cell(row.owners.owner_shown()) }}</td>
+      <td class="note-cell col-p2 cell-fluid">{{ ui::note_cell(row.description) }}</td>
+      <td class="owner-cell cell-fluid">{{ ui::owner_cell(row.owners.owner_shown()) }}</td>
       <td class="nowrap">{{ ui::expires(row.expires, row.expires_note) }}</td>
-      <td class="tech col-p3"><span class="clip clip-md mono">{{ ui::or_none(row.thumbprint) }}</span></td>
+      <td class="tech col-p3 cell-fluid"><span class="clip clip-md mono">{{ ui::or_none(row.thumbprint) }}</span></td>
     </tr>
     {% endfor %}
   </tbody>

@@ -56,20 +56,20 @@
 <section aria-labelledby="vault-{{ g.vault }}">
   <h2 id="vault-{{ g.vault }}"><span class="item-name">{{ g.vault }}</span> <span class="muted">({{ g.rows.len() }})</span></h2>
   {% call ui::table_wrap("vault-{}-caption"|format(g.vault)) %}
-  <table>
+  <table class="one-line">
     <caption class="visually-hidden" id="vault-{{ g.vault }}-caption">Matches in {{ g.vault }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col" class="col-p3">Content type</th><th scope="col">Expires</th><th scope="col" class="col-p3">Tags</th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col" class="col-p3">Content type</th><th scope="col">Expires</th><th scope="col" class="col-p4">Tags</th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.status.enabled %} class="row-muted"{% endif %}>
-        <th scope="row"><a class="item-name clip clip-lg" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
+        <th scope="row" class="cell-fluid"><a class="item-name clip clip-lg" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
         <td class="nowrap">{{ r.kind.label() }}</td>
         <td class="nowrap">{% call ui::status(r.status.enabled, r.status.expired, r.status.within30, r.status.within90, r.status.not_yet, r.status.managed) %}{% endcall %}</td>
-        <td class="note-cell col-p2">{% call ui::note_cell(r.description) %}{% endcall %}</td>
-        <td class="owner-cell">{% call ui::owner_cell(r.owner) %}{% endcall %}</td>
-        <td class="tech col-p3"><span class="clip clip-sm">{% call ui::or_none(r.content_type) %}{% endcall %}</span></td>
+        <td class="note-cell col-p2 cell-fluid">{% call ui::note_cell(r.description) %}{% endcall %}</td>
+        <td class="owner-cell cell-fluid">{% call ui::owner_cell(r.owner) %}{% endcall %}</td>
+        <td class="tech col-p3 cell-fluid"><span class="clip clip-sm">{% call ui::or_none(r.content_type) %}{% endcall %}</span></td>
         <td class="nowrap">{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
-        <td class="tag-cell col-p3"><span class="clip clip-md">{% call ui::tags(r.tags) %}{% endcall %}</span></td>
+        <td class="tag-cell col-p4 cell-fluid"><span class="clip clip-md">{% call ui::tags(r.tags) %}{% endcall %}</span></td>
       </tr>
       {% endfor %}
     </tbody>

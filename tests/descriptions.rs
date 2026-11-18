@@ -422,7 +422,7 @@ async fn key_create_and_edit_details() {
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
     assert_eq!(tags_of(&body)["description"], "Signs invoices");
     let (_, html) = w.page("/v/kv-test/keys").await;
-    assert!(html.contains("<td class=\"note-cell col-p2\"><span class=\"clip clip-md\">Signs invoices</span></td>"));
+    assert!(html.contains("<td class=\"note-cell col-p2 cell-fluid\"><span class=\"clip clip-md\">Signs invoices</span></td>"));
     let (_, html) = w.page("/v/kv-test/keys/signing/details").await;
     assert!(html.contains(">Signs invoices</textarea>"));
     assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""));

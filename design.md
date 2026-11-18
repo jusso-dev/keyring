@@ -304,7 +304,8 @@ they are names to open.
   Expires. Tags are on each item's page and found with the Tag filter.
   The stale badge sits in the Status cell. Below 1100px (`68.75rem`) the
   lower-priority columns hide with CSS: content type first (`col-p3`),
-  then description (`col-p2`). No column picker and no script.
+  then description (`col-p2`). Search, which also has Type, hides its Tags
+  column (`col-p4`) below 76rem of table width. No column picker and no script.
 - Tables scroll sideways inside `.table-wrap` only on small screens.
   Nothing else on a page scrolls sideways.
 

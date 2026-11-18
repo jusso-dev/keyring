@@ -134,8 +134,8 @@ async fn expiry_dashboard_lists_failed_rotations() {
     assert!(html.contains(r#"Rotation failed <span class="muted">(1)</span>"#));
     let section = html.split(r#"id="rotation-failed""#).nth(1).unwrap();
     let section = section.split("</section>").next().unwrap();
-    assert!(section.contains(r#">sql-login <span class="badge badge-error">Failed</span>"#));
-    assert!(section.contains(r#"<td class="item-name">sql-rotator</td>"#));
+    assert!(section.contains(r#">sql-login</span> <span class="badge badge-error">Failed</span>"#));
+    assert!(section.contains(r#"<span class="clip clip-md">sql-rotator</span></td>"#));
     assert!(section.contains("2 Nov 2026"));
     assert!(!section.contains("storage-key"));
     assert!(!section.contains(">odd"));

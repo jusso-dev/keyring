@@ -37,7 +37,7 @@
 <p>{{ rows.len() }} vault{% if rows.len() != 1 %}s{% endif %} checked: {{ warnings }} warning{% if warnings != 1 %}s{% endif %} and {{ unknowns }} check{% if unknowns != 1 %}s{% endif %} Keyring couldn't read.{% if !per_item_checks %} Certificate renewal and key rotation are checked when you pick one vault.{% endif %}</p>
 
 {% call ui::table_wrap("health-caption") %}
-<table class="ledger">
+<table class="ledger one-line check-grid">
   <caption class="visually-hidden" id="health-caption">Checks for each vault</caption>
   <thead>
     <tr>
@@ -50,7 +50,7 @@
     {% for r in rows %}
     <tr>
       <th scope="row" class="item-name">{{ r.vault }}</th>
-      <td class="owner-cell">{% call ui::owner_value(r.owners) %}{% endcall %}</td>
+      <td class="owner-cell cell-fluid">{% call ui::owner_cell(r.owners) %}{% endcall %}</td>
       {% for f in r.findings %}
       <td>{% if f.deferred %}<span class="muted">Pick this vault</span>{% else %}<span class="badge {{ f.status.css() }}">{{ f.status.label() }}</span>{% endif %}</td>
       {% endfor %}

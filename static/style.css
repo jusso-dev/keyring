@@ -799,16 +799,16 @@ a.button-danger:hover {
   background: transparent;
   color: var(--color-ink);
 }
-.fpill select { max-width: 14rem; text-overflow: ellipsis; font-weight: 600; cursor: pointer; }
+.fpill select { width: auto; max-width: 12rem; text-overflow: ellipsis; font-weight: 600; cursor: pointer; }
 /* The pill draws the ring, so the control inside doesn't draw a second. */
 .fpill input:focus-visible, .fpill select:focus-visible { outline: none; }
-.fpill input[type="search"], .fpill input.fpill-wide { width: 14rem; }
-.fpill input[type="text"] { width: 9rem; }
+.fpill input[type="search"], .fpill input.fpill-wide { width: 12rem; }
+.fpill input[type="text"] { width: 8rem; }
 .fpill input.fpill-num { width: 4rem; }
 /* A hint or unit the person needs while typing, kept visible. */
 .fpill-hint {
   flex: none;
-  padding: 0 var(--space-2xs) 0 0;
+  padding: 0 var(--space-2xs) 0 var(--space-3xs);
   font-size: var(--text-caption);
   line-height: var(--lh-caption);
   color: var(--color-ink-2);
@@ -1033,7 +1033,8 @@ table.ledger th.mono,
    in the page, so a screen reader reads it all, and the item's own page
    shows it in full. */
 .clip {
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
   max-width: 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1046,6 +1047,30 @@ table.ledger th.mono,
 .clip-lg { max-width: 16rem; }
 td.note-cell, td.owner-cell, td.owner-cell .mono, td.tech, td.tag-cell { white-space: nowrap; overflow-wrap: normal; }
 td.note-cell .clip { font-size: var(--text-caption); line-height: var(--lh-caption); }
+/* A data table (table.one-line: lists, audit, expiry, age, health,
+   search, used by, access) keeps every cell on one line. Tables of
+   reasons (bulk review, import results) and values shown only on their
+   page (versions, import preview) wrap as before. */
+table.one-line tbody th, table.one-line tbody td { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+/* On a wide screen the free-text columns are fluid: they share what the
+   other columns leave and cut with an ellipsis, so the table never scrolls
+   sideways. The clip's own width is the cap. On a small screen they keep
+   their width and the table scrolls inside its wrapper instead. */
+@media (min-width: 48rem) {
+  .cell-fluid { max-width: 0; }
+  .cell-fluid > .clip, .cell-fluid > a.clip { max-width: min(100%, 16rem); }
+  .cell-fluid > .clip-sm { max-width: min(100%, 10rem); }
+  .cell-fluid > .clip-md { max-width: min(100%, 14rem); }
+  .cell-fluid > .clip-lg { max-width: min(100%, 20rem); }
+  /* Each fluid column keeps enough to be read before the cut. */
+  .cell-fluid > .clip { min-width: 6rem; }
+  .cell-fluid > .clip-sm { min-width: 5rem; }
+  .cell-fluid > .clip-lg { min-width: 9rem; }
+}
+/* A table with a column per check (vault health): the short headers may
+   take two lines, so the rows fit without scrolling sideways. */
+table.check-grid thead th { white-space: normal; min-width: 0; vertical-align: bottom; }
+table.check-grid th, table.check-grid td { padding-left: var(--space-2xs); padding-right: var(--space-2xs); }
 /* A time or date: compact, tabular, one line. */
 .cell-time, td.nowrap { white-space: nowrap; }
 time { white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -1062,6 +1087,7 @@ td.nowrap .muted { font-size: var(--text-caption); line-height: var(--lh-caption
 /* Lower-priority columns give way when the table's area is narrow:
    content type first, then description. CSS only, no column picker. */
 .table-wrap { container-type: inline-size; }
+@container (max-width: 76rem) { .col-p4 { display: none; } }
 @container (max-width: 68.75rem) { .col-p3 { display: none; } }
 @container (max-width: 56rem) { .col-p2 { display: none; } }
 dd.note { white-space: pre-line; }
@@ -1374,7 +1400,7 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   border-radius: var(--radius);
   background: var(--color-surface);
 }
-.pins { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-2xs); align-items: baseline; min-width: 0; }
+.pins { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-2xs); align-items: baseline; min-width: 0; }
 .pins h2 { margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--color-ink-2); }
 .pin-list { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-sm); margin: 0; padding: 0; list-style: none; min-width: 0; }
 .pin-list li { margin: 0; overflow-wrap: anywhere; }

@@ -17,7 +17,7 @@
   {% else %}
   <p>{{ used_by.counted() }}. Anything listed may break if the {{ used_by.noun }} changes, is disabled or is deleted.</p>
   {% call ui::table_wrap("used-by-caption") %}
-  <table class="ledger">
+  <table class="ledger one-line">
     <caption class="visually-hidden" id="used-by-caption">Who used this {{ used_by.noun }} in the last 30 days</caption>
     <thead><tr><th scope="col">Who</th><th scope="col">Kind</th><th scope="col">Object ID</th><th scope="col">Last (UTC)</th><th scope="col">{{ used_by.column() }}</th><th scope="col">From</th></tr></thead>
     <tbody>

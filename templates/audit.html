@@ -70,16 +70,16 @@
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 <p class="toolbar-meta"><strong>{{ rows.len() }} event{% if rows.len() != 1 %}s{% endif %}</strong></p>
 {% call ui::table_wrap("audit-caption") %}
-<table class="ledger">
+<table class="ledger one-line">
   <caption class="visually-hidden" id="audit-caption">Audit events for {{ vault }}</caption>
   <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>
       <td class="cell-time">{{ ui::when(r.when) }}</td>
-      <td class="cell-text"><span class="clip clip-lg">{{ r.who }}</span></td>
-      <th scope="row" class="cell-text"><span class="clip clip-md">{{ r.what }}</span>{% if r.operation != r.what %}<span class="visually-hidden"> ({{ r.operation }})</span>{% endif %}</th>
-      <td class="cell-text item-name"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
+      <td class="cell-text cell-fluid"><span class="clip clip-lg">{{ r.who }}</span></td>
+      <th scope="row" class="cell-text cell-fluid"><span class="clip clip-md">{{ r.what }}</span>{% if r.operation != r.what %}<span class="visually-hidden"> ({{ r.operation }})</span>{% endif %}</th>
+      <td class="cell-text item-name cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
       <td class="nowrap">{% call ui::audit_result(r) %}{% endcall %}</td>
       <td class="mono small nowrap">{{ ui::or_none(r.client_ip) }}</td>
     </tr>

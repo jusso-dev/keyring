@@ -102,7 +102,10 @@ fn seed_payments(kv: &KvState) {
         v.exp = Some(n - 6 * DAY);
         v.tags = tags(&[
             ("owner", OWNER_LONG),
-            ("description", "Verifies webhook calls from the card processor"),
+            (
+                "description",
+                "Verifies webhook calls from the card processor",
+            ),
         ]);
     });
     kv.put_with("legacy-ftp-password", "demo-legacy-value", |v| {

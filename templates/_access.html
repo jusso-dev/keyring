@@ -47,7 +47,7 @@
 {% else %}
 <p class="muted">{{ access.entries.len() }} assignment{% if access.entries.len() != 1 %}s{% endif %}{% if access.groups() > 0 %}, {{ access.groups() }} of them to groups{% endif %}.</p>
 {% call ui::table_wrap(prefix ~ "access-caption") %}
-<table class="ledger">
+<table class="ledger one-line">
   <caption class="visually-hidden" id="{{ prefix }}access-caption">Role assignments that reach {% if access.for_item %}this item{% else %}this vault{% endif %}</caption>
   <thead><tr><th scope="col">Who</th><th scope="col">Type</th><th scope="col">Role</th><th scope="col">Comes from</th></tr></thead>
   <tbody>

@@ -569,11 +569,19 @@ async fn list_pages_like_secrets() {
             .add_key_with(&format!("key-{i:03}"), "RSA", |_| {});
     }
     let (_, html) = w.page("/v/kv-test/keys").await;
-    assert_eq!(html.matches("<th scope=\"row\">").count(), 100);
+    assert_eq!(
+        html.matches("<th scope=\"row\" class=\"cell-fluid\">")
+            .count(),
+        100
+    );
     assert!(html.contains("Page 1 of 2, keys 1 to 100"));
     assert!(html.contains(">Next</a>"), "{html}");
     let (_, html) = w.page("/v/kv-test/keys?page=2").await;
-    assert_eq!(html.matches("<th scope=\"row\">").count(), 5);
+    assert_eq!(
+        html.matches("<th scope=\"row\" class=\"cell-fluid\">")
+            .count(),
+        5
+    );
     assert!(html.contains(">key-104<"));
 }
 

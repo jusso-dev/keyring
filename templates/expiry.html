@@ -53,15 +53,15 @@
   <h2 id="rotation-failed">Rotation failed <span class="muted">({{ failed.len() }})</span></h2>
   <p class="muted">Secrets whose <span class="mono">rotation-status</span> tag says <span class="mono">failed</span>. This is what the tags say, not something Keyring checked. See <a href="https://github.com/jusso-dev/keyring/blob/main/docs/rotation.md" rel="noopener noreferrer">rotation</a>.</p>
   {% call ui::table_wrap("rotation-failed-caption") %}
-  <table class="ledger">
+  <table class="ledger one-line">
     <caption class="visually-hidden" id="rotation-failed-caption">Rotation failed</caption>
     <thead><tr><th scope="col">Name</th><th scope="col">Vault</th><th scope="col">Rotated by</th><th scope="col">Last attempt</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for f in failed %}
       <tr>
-        <th scope="row" class="item-name">{{ f.name }} <span class="{{ f.rotation.status.css() }}">{{ f.rotation.status.label() }}</span></th>
-        <td class="item-name">{{ f.vault }}</td>
-        <td class="item-name">{{ f.rotation.by }}</td>
+        <th scope="row" class="item-name cell-fluid"><span class="clip clip-lg">{{ f.name }}</span> <span class="{{ f.rotation.status.css() }}">{{ f.rotation.status.label() }}</span></th>
+        <td class="item-name nowrap">{{ f.vault }}</td>
+        <td class="item-name cell-fluid"><span class="clip clip-md">{{ f.rotation.by }}</span></td>
         <td class="nowrap">{{ f.rotation.last }}</td>
         <td><a class="button button-small" href="/v/{{ f.vault }}/secrets/{{ f.name }}">Open<span class="visually-hidden"> {{ f.name }} in {{ f.vault }}</span></a></td>
       </tr>
@@ -83,18 +83,18 @@
 <section aria-labelledby="group-{{ g.group.slug() }}">
   <h2 id="group-{{ g.group.slug() }}">{{ g.group.label() }} <span class="muted">({{ g.count }})</span></h2>
   {% call ui::table_wrap("group-{}-caption"|format(g.group.slug())) %}
-  <table class="ledger">
+  <table class="ledger one-line">
     <caption class="visually-hidden" id="group-{{ g.group.slug() }}-caption">{{ g.group.label() }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Owner</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Expires</th><th scope="col">Owner</th><th scope="col" class="col-p3">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
-        <th scope="row" class="item-name">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <th scope="row" class="item-name cell-fluid"><span class="clip clip-lg">{{ r.name }}</span>{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
         <td>{{ r.kind.label() }}</td>
-        <td class="item-name">{{ r.vault }}</td>
+        <td class="item-name nowrap">{{ r.vault }}</td>
         <td class="nowrap">{{ ui::expires(r.expires, r.note) }}</td>
-        <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
-        <td>{{ ui::or_none(r.tags) }}</td>
+        <td class="owner-cell cell-fluid">{% call ui::owner_cell(r.owner) %}{% endcall %}</td>
+        <td class="col-p3 cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.tags) }}</span></td>
         <td>
           <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>
         </td>

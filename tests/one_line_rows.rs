@@ -184,15 +184,14 @@ async fn keyring_activity_rows_stay_on_one_line_with_plain_labels() {
     assert!(what.contains("value=\"secret.bulk_update\""), "{what}");
     // Result is a badge, as everywhere else.
     assert!(
-        col(&html, "keyring-caption", "Result").contains("<span class=\"badge badge-ok\">Done</span>")
+        col(&html, "keyring-caption", "Result")
+            .contains("<span class=\"badge badge-ok\">Done</span>")
     );
     // No one signed in: Keyring, marked System.
     assert!(html.contains("Keyring <span class=\"badge badge-muted\">System</span>"));
     assert!(!html.contains("Nobody signed in"));
     // The filter offers each action by label, with its code.
-    assert!(html.contains(
-        "<option value=\"notify.sent\">Email sent (notify.sent)</option>"
-    ));
+    assert!(html.contains("<option value=\"notify.sent\">Email sent (notify.sent)</option>"));
 }
 
 /// Every action Keyring can write has a plain label, and no two share one.
