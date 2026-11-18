@@ -689,6 +689,7 @@ async fn apply_inner(
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &source_path)),
     };
     crate::audit::note_version(bundle.item.version());
+    crate::notify::activity::note_read(bundle.item.tags.as_ref());
     // Checked again on what was read, in case it changed since the
     // properties were read. The value is dropped unused.
     if bundle.item.managed.unwrap_or(false) {

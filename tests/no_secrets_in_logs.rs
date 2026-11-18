@@ -1337,6 +1337,282 @@ async fn values_never_reach_the_logs() {
     }
     assert!(wl.kv.state.value_reads().is_empty(), "nothing was read");
 
+    // Activity emails (#259): every trigger, with canaries in the reason,
+    // the ticket, the PIM justification, the description and a tag value.
+    // None may reach an email body, and no address may reach a log line.
+    let acs2 = support::acs::start().await;
+    let mi2 = support::start_identity().await;
+    let wa = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", mi2.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_TYPES",
+                "watched-reads,destructive,role-use".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_ADMINS", "actadmin@example.com".to_owned()),
+            ("KEYRING_NOTIFY_OWNER_ON_READ", "true".to_owned()),
+            ("KEYRING_REQUIRE_REASON", "all".to_owned()),
+            ("KEYRING_REASON_TICKET_PATTERN", "[A-Z]+-[0-9]+".to_owned()),
+            ("KEYRING_ALLOW_PURGE", "true".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", acs2.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.backoff_first = std::time::Duration::from_millis(10);
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    {
+        let mut row = support::vault_row("kv-test", "sub-a", true);
+        row["tags"]["keyring-owners"] = serde_json::json!("actowner@example.com");
+        *wa.arm.state.vaults.lock().unwrap() = vec![row];
+        let mut m = wa.arm.state.authz.lock().unwrap();
+        let rg = "/subscriptions/sub-a/resourceGroups/rg-kv-test";
+        let sched = "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/b1477448-2cc6-4ceb-93b4-54a202a89413";
+        m.pim.eligible = vec![(rg.into(), support::SECRETS_USER.into(), sched.into())];
+        m.pim.policies.insert(
+            support::SECRETS_USER.into(),
+            support::pim_rules("PT8H", true, true, false),
+        );
+    }
+    let tagged = |name: &str| {
+        let first = wa.kv.state.put_with(name, VALUE, |v| {
+            v.tags
+                .insert("notify".into(), "actwatch@example.com".into());
+            v.tags
+                .insert("owner".into(), "actitemowner@example.com".into());
+            v.tags.insert("description".into(), "DESCLEAK note".into());
+            v.tags.insert("env".into(), "TAGVALUELEAK".into());
+        });
+        let _ = wa.kv.state.put_with(name, VALUE, |v| {
+            v.tags
+                .insert("notify".into(), "actwatch@example.com".into());
+            v.tags.insert("description".into(), "DESCLEAK note".into());
+            v.tags.insert("env".into(), "TAGVALUELEAK".into());
+        });
+        first
+    };
+    let why = [
+        ("reason", "REASONACTLEAK checking https://evil.example/"),
+        ("ticket", "INC-4242"),
+    ];
+    let first = tagged("act-one");
+    for (path, extra) in [
+        ("/v/kv-test/secrets/act-one/reveal", vec![]),
+        (
+            "/v/kv-test/secrets/act-one/rollback",
+            vec![("version", first.as_str())],
+        ),
+        (
+            "/v/kv-test/secrets/act-one/delete",
+            vec![("confirm_name", "act-one")],
+        ),
+    ] {
+        let mut f = why.to_vec();
+        f.extend(extra);
+        let res = wa.post(path, &f).await;
+        assert!(
+            res.status().is_success() || res.status().is_redirection(),
+            "{path}"
+        );
+        let _ = support::body_text(res).await;
+    }
+    tagged("act-two");
+    let mut f = why.to_vec();
+    f.extend([
+        ("item", "act-two"),
+        ("op", "tag_set"),
+        ("tag_name", "rota"),
+        ("tag_value", "BULKTAGLEAK"),
+    ]);
+    let res = wa.post("/v/kv-test/secrets/-/bulk/apply", &f).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let res = wa
+        .post(
+            "/v/kv-test/my-access/activate",
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", "/subscriptions/sub-a/resourceGroups/rg-kv-test"),
+                (
+                    "schedule",
+                    "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/b1477448-2cc6-4ceb-93b4-54a202a89413",
+                ),
+                ("back", "/v/kv-test/secrets"),
+                ("minutes", "60"),
+                ("justification", "JUSTIFYACTLEAK https://evil.example/"),
+                ("ticket_system", "TKTSYSLEAK"),
+                ("ticket_number", "TKTNUMLEAK"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let start = std::time::Instant::now();
+    while acs2.state.attempts().len() < 5 {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "activity emails: {}",
+            acs2.state.attempts().len()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let abodies = acs2.state.all_bodies();
+    assert!(abodies.contains("Ticket: INC-4242"), "{abodies}");
+    for leak in [
+        "Sup3r-S3cret",
+        "REASONACTLEAK",
+        "JUSTIFYACTLEAK",
+        "TKTSYSLEAK",
+        "TKTNUMLEAK",
+        "DESCLEAK",
+        "TAGVALUELEAK",
+        "BULKTAGLEAK",
+        "evil.example",
+        "user-api-token",
+        support::MI_ACS_TOKEN,
+    ] {
+        assert!(
+            !abodies.contains(leak),
+            "{leak} reached an activity email:\n{abodies}"
+        );
+    }
+    drop(mi2);
+
+    // Access requests (#258): canaries in the reason, the ticket and the
+    // form body. A linkable reason and ticket never reach the email; a
+    // plain one does. Neither reaches a log line except the request's own
+    // audit event. Nothing else typed reaches either.
+    let aacs = support::acs::start().await;
+    let ami = support::start_identity().await;
+    let wa = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", ami.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "access-requests".to_owned()),
+            ("KEYRING_NOTIFY_ADMINS", "ops@example.com".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", aacs.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    {
+        let mut row = support::vault_row("kv-test", "00000000-0000-0000-0000-00000000000a", true);
+        row["tags"] = serde_json::json!({"keyring-owners": "reqowner@example.com"});
+        *wa.arm.state.vaults.lock().unwrap() = vec![row];
+    }
+    wa.kv.state.put("db-password", VALUE);
+    for (role, reason, ticket) in [
+        (
+            support::SECRETS_USER,
+            "REQLINKLEAK see https://evil.example/login now",
+            "REQTICKLEAK.evil.example",
+        ),
+        (
+            support::CERT_OFFICER,
+            "REQPLAINREASON needed for the release",
+            "REQPLAINTICKET-7",
+        ),
+    ] {
+        let res = wa
+            .post(
+                "/v/kv-test/my-access/request",
+                &[
+                    ("role", role),
+                    ("scope", "item"),
+                    ("kind", "secret"),
+                    ("name", "db-password"),
+                    ("back", "/v/kv-test/secrets/db-password"),
+                    ("reason", reason),
+                    ("ticket", ticket),
+                    ("extra", "REQBODYLEAK attacker@evil.example"),
+                    ("to", "REQTOLEAK@evil.example"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let _ = support::body_text(res).await;
+    }
+    // A repeat within the hour: refused, nothing more sent.
+    let res = wa
+        .post(
+            "/v/kv-test/my-access/request",
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", "vault"),
+                ("reason", "REQREPEAT asking again"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    let _ = support::body_text(res).await;
+    {
+        let start = std::time::Instant::now();
+        while aacs.state.attempts().len() < 2 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "two access request emails"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+    let abodies = aacs.state.all_bodies();
+    assert!(
+        abodies.contains("REQPLAINREASON needed for the release"),
+        "{abodies}"
+    );
+    assert!(abodies.contains("REQPLAINTICKET-7"), "{abodies}");
+    assert!(abodies.contains("reqowner@example.com"));
+    for leak in [
+        "REQLINKLEAK",
+        "REQTICKLEAK",
+        "evil.example",
+        "REQBODYLEAK",
+        "REQTOLEAK",
+        "Sup3r-S3cret",
+        support::MI_ACS_TOKEN,
+        support::IDENTITY_HEADER,
+        "user-api-token",
+        wa.cookie.as_str(),
+        wa.csrf.as_str(),
+    ] {
+        assert!(
+            !abodies.contains(leak),
+            "{leak} reached an access request email:\n{abodies}"
+        );
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -1367,7 +1643,15 @@ async fn values_never_reach_the_logs() {
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
     assert!(!logs.contains("NOTELEAK"), "a description leaked:\n{logs}");
-    for leak in ["ownerleak", "notifyleak", "OWNERLEAK"] {
+    for leak in [
+        "ownerleak",
+        "notifyleak",
+        "OWNERLEAK",
+        "actwatch@",
+        "actitemowner@",
+        "actowner@",
+        "actadmin@",
+    ] {
         assert!(!logs.contains(leak), "an address leaked ({leak}):\n{logs}");
     }
     assert!(
@@ -1542,6 +1826,50 @@ async fn values_never_reach_the_logs() {
     for line in logs.lines().filter(|l| l.contains("health:")) {
         assert!(!line.contains("alex@example.com"), "{line}");
         assert!(!line.contains("ops@example.com"), "{line}");
+    }
+
+    // Access requests: the reason and ticket only on the request's own
+    // audit event; nothing else typed and no address anywhere.
+    for leak in ["REQBODYLEAK", "REQTOLEAK", "reqowner@", "attacker@"] {
+        assert!(!logs.contains(leak), "{leak} leaked into logs:\n{logs}");
+    }
+    // One event per request: two sent, one refused for the hour.
+    let req_events: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("kind=audit") && l.contains("action=access.request"))
+        .collect();
+    assert_eq!(req_events.len(), 3, "{req_events:#?}");
+    assert_eq!(
+        req_events
+            .iter()
+            .filter(|l| l.contains("outcome=success")
+                && l.contains("role_scope=/subscriptions/00000000-0000-0000-0000-00000000000a/")
+                && l.contains("item_kind=secret")
+                && l.contains("item_name=db-password"))
+            .count(),
+        2,
+        "{req_events:#?}"
+    );
+    assert!(
+        req_events
+            .iter()
+            .any(|l| l.contains("outcome=refused") && l.contains("reason_code=rate_limited")),
+        "{req_events:#?}"
+    );
+    for canary in [
+        "REQLINKLEAK",
+        "REQTICKLEAK",
+        "REQPLAINREASON",
+        "REQPLAINTICKET",
+        "REQREPEAT",
+    ] {
+        assert!(logs.contains(canary), "{canary} is on its audit event");
+        for line in logs.lines().filter(|l| l.contains(canary)) {
+            assert!(
+                line.contains("kind=audit") && line.contains("action=access.request"),
+                "{line}"
+            );
+        }
     }
 
     // Email: no address, Azure message, ACS token or body in any line,

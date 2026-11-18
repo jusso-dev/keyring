@@ -1,0 +1,19 @@
+{{ n.heading }}
+{% for l in n.lines %}
+{{ l }}
+{%- endfor %}
+{% for (label, value) in n.facts %}
+{{ label }}: {{ value }}
+{%- endfor %}
+{% if !n.items.is_empty() %}
+Items changed:
+{% for i in n.items %}- {{ i }}
+{% endfor %}
+{%- if n.more > 0 %}and {{ n.more }} more
+{% endif %}
+{%- endif %}
+{% if let Some((url, label)) = n.link %}
+{{ label }}: {{ url }}
+{% endif %}
+--
+Sent by Keyring (activity notices). Keyring never puts a secret value, a reason or a justification in an email.

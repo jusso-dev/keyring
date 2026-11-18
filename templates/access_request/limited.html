@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Already requested - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>You've already asked</h1>
+  <p>You asked for <strong>{{ role_name }}</strong> on this vault within the last hour, so nothing more was sent. Keyring sends one request for each role and vault an hour.</p>
+  <p><a class="button" href="{{ back }}">Back</a></p>
+</div>
+{% endblock %}

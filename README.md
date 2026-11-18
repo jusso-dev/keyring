@@ -355,6 +355,8 @@ Role changes can take a few minutes to apply.
 
 **PIM.** If your organisation uses Privileged Identity Management for Azure resources and you're eligible for the role a "You don't have access" page names, the page offers **Activate** beside "What to ask for". You pick how long (up to what PIM allows), give a reason and a ticket if PIM asks for them, and Keyring sends the request to PIM as you. PIM decides: it may turn the role on, wait for an approver, or ask you to sign in again with a stronger method. **My access** under each vault lists your Key Vault roles there, eligible and on, with time left and **Deactivate**. Keyring keeps nothing: it reads all of this from Azure each time, and needs no new permission. Without PIM, or without an eligible role, the 403 page is as it was.
 
+**Request access.** Where PIM isn't available (it needs Entra ID P2) and email is on with `access-requests`, the same page offers **Request access** instead: pick this item or the whole vault, give a reason and an optional ticket, and Keyring emails the vault's owners (its `keyring-owners` tag, or Keyring's admins when it names nobody) with a copy to you. Keyring can't grant access itself and keeps no request: the email links to the vault's Access control page in the Azure portal. One request per role and vault an hour. **My access** lists the same for each Key Vault role you don't have.
+
 Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
 
 ## Configuration
@@ -379,6 +381,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_NOTIFY_ALLOWED_DOMAINS` | Optional. Every recipient must be in one of these domains |
 | `KEYRING_NOTIFY_RATE_PER_HOUR` | Optional. Emails an hour to one recipient for one type, 1 to 1000. Default 20 |
 | `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | Optional. `true` to put recipients' addresses on audit events. Off by default |
+| `KEYRING_NOTIFY_OWNER_ON_READ` | Optional. `true` to send watched-read emails to the item's `owner` as well as its `notify` addresses. Off by default. Set `KEYRING_NOTIFY_ALLOWED_DOMAINS` before turning `watched-reads` on. See [Activity emails](docs/deploy.md#activity-emails) |
 | `KEYRING_EVENTGRID_AUDIENCE` | Optional, with `expiry` in `KEYRING_NOTIFY_TYPES`. The `aud` Event Grid's token must have on `/hooks/eventgrid`. Default: Keyring's app ID URI, `api://<client ID>`. See [Expiry emails from Keyring](docs/alerts.md#expiry-emails-from-keyring) |
 | `KEYRING_EVENTGRID_SUBSCRIPTIONS` | Recommended with `expiry` in `KEYRING_NOTIFY_TYPES`. Subscription IDs, separated by commas, whose Key Vaults may send expiry events. Unset accepts any subscription. See [Which subscriptions may send](docs/alerts.md#which-subscriptions-may-send) |
 | `KEYRING_NOTIFY_BURST_THRESHOLD` | Optional. With `health` on: more than this many refused or denied requests from one person or address in 15 minutes emails the admins, 1 to 1000. Default 20. See [Health notices](docs/deploy.md#health-notices) |

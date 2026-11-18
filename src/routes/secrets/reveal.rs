@@ -232,7 +232,14 @@ pub(crate) async fn reveal(
         Ok((_, items)) if items.first().is_some_and(|i| i.managed.unwrap_or(false)) => {
             return Err(managed_problem(shell, &vault, &name));
         }
-        Ok((limit, _)) => limit,
+        Ok((limit, items)) => {
+            // Who watches the item comes from its current version's tags,
+            // whichever version is read: Key Vault keeps tags per version,
+            // and Keyring writes them to the current one. Used only if the
+            // reveal ends as a success.
+            crate::notify::activity::note_read(items.first().map(|i| i.tags()));
+            limit
+        }
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
     };
     if limit.refuses_reveal() {
