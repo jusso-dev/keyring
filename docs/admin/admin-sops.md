@@ -21,7 +21,7 @@ Settings and template parameters are described once, in the README (Configuratio
 | Date | 18-11-2026 |
 | Owner | Keyring maintainer |
 | Review | After any release that changes deployment, settings or email |
-| Status | Draft. The sections marked "Coming with" are filled in when those changes merge |
+| Status | Draft |
 
 ## Contents
 
@@ -39,6 +39,7 @@ Settings and template parameters are described once, in the README (Configuratio
 12. [Upgrade Keyring](#12-upgrade-keyring)
 13. [Remove Keyring](#13-remove-keyring)
 14. [Run the real-tenant checklist](#14-run-the-real-tenant-checklist)
+15. [Turn on sharing](#15-turn-on-sharing)
 
 ---
 
@@ -323,15 +324,35 @@ Not yet confirmed on a real tenant: every Sentinel step. See the "Sentinel:" row
 
 2. For your own domain: in the portal, open the Email Communication Service, the domain, **Provision domains**, and add the TXT, SPF and two DKIM records it shows, then **Verify** each. Add a DMARC record as your mail policy says.
 
-3. Send a test health email: set `KEYRING_NOTIFY_BURST_THRESHOLD` to `3` for the test, then, as someone with no role on a test vault, try to show a secret there four times. The admins get "Many refused requests in a short time". Set the threshold back afterwards. This is the checklist row "Health email: refusal burst link".
+3. To send emails to people as well as admins, add the types you want to `notifyTypes`, separated by commas, and redeploy:
+
+   - `access-requests`: **Request access** on the "You don't have access" page and on My access, emailed to the vault's `keyring-owners` or the admins (walkthrough 10). Keyring grants nothing.
+   - `watched-reads`: an email to an item's `notify` addresses when its value is revealed, its private key downloaded, it is copied to another vault or rolled back. At most 4 an hour per item.
+   - `destructive`: deletes, permanent deletes and bulk changes, to the vault's owners or the admins.
+   - `role-use`: PIM roles turned on or off through Keyring, to the vault's owners or the admins, and to the admins as well for a role above the vault.
+
+   **Set `notifyAllowedDomains` before you turn `watched-reads` on.** Anyone who can write an item's tags can put any address in `notify`, then read the item to send that address mail. With allowed domains set, Keyring emails only those domains, and only then does a watched-read email show the address the reader came from.
+
+   To send watched-read emails to the item's `owner` as well, set `KEYRING_NOTIFY_OWNER_ON_READ=true`. The host templates have no parameter for it, and a setting added by hand is removed by the next deployment, so set it again after each redeploy:
+
+   ```sh
+   az webapp config appsettings set -g <resource group> -n <name> --settings KEYRING_NOTIFY_OWNER_ON_READ=true
+   az containerapp update -g <resource group> -n <name> --set-env-vars KEYRING_NOTIFY_OWNER_ON_READ=true
+   ```
+
+4. Make sure each onboarded vault has its `keyring-owners` tag (SOP 1, step 5). Without it, access requests, deletes, bulk changes and role use go to the admins.
+
+5. Send a test health email: set `KEYRING_NOTIFY_BURST_THRESHOLD` to `3` for the test, then, as someone with no role on a test vault, try to show a secret there four times. The admins get "Many refused requests in a short time". Set the threshold back afterwards. This is the checklist row "Health email: refusal burst link".
 
 **Verification.**
 
 - `/healthz/notify` shows `status=ok`, and `delivered` rises after a send.
 - The email arrives from `DoNotReply@<your domain>`, subject `[Keyring] Health`, and its headers show `dkim=pass` and `spf=pass` for a custom domain.
 - `KeyringAudit_CL` (if on) has a `notify.sent` row with no address in it.
+- With `access-requests` on: as a test person with no role on a test vault, open a secret there, select **Request access** and **Send request**. The vault's owners get `[Keyring] Access request` and the test person gets their own copy.
+- With `watched-reads` on: put a test address in a test secret's **Notify**, reveal it, and the address gets `[Keyring] Watched item read`.
 
-Not yet confirmed on a real tenant: every email step. See the "Email" and "The two-action role is enough to send" rows in the checklist's "Deployment" section.
+Not yet confirmed on a real tenant: every email step. See the "Email", "The two-action role is enough to send" and "Activity email:" rows in the checklist's "Deployment" section, and its "Access requests" section.
 
 ---
 
@@ -366,17 +387,24 @@ Not yet confirmed on a real tenant: every email step. See the "Email" and "The t
 
 4. Remove your own app role assignment, as alerts.md shows. Event Grid's stays.
 
-### Coming with #278: the subscription allow-list
+5. Check `KEYRING_EVENTGRID_SUBSCRIPTIONS`, the list of Azure subscriptions whose vaults may send events to Keyring. The host templates set it from `eventGridSubscriptions`, which defaults to the subscription Keyring is deployed in, when `expiry` is in `notifyTypes`. If the vault is in another subscription, add that subscription's ID and redeploy Keyring (SOP 12, step 3):
 
-A later change (#278) adds `KEYRING_EVENTGRID_SUBSCRIPTIONS`, a list of the Azure subscriptions whose vaults may send events to Keyring. This SOP will gain a step to set it when that change is on main. Until then, Keyring checks each event's `topic` is a Key Vault, as alerts.md describes.
+   ```
+   eventGridSubscriptions = '<Keyring subscription id>,<vault subscription id>'
+   ```
+
+   IDs are separated by commas, at most 50. An entry that isn't a GUID, an empty entry (such as a trailing comma) or more than 50 stops Keyring at start, naming the setting. An empty value is the same as unset: Keyring then accepts a vault in any subscription and warns at start. Don't leave it empty.
+
+   An event from a vault in a subscription that isn't listed refuses the whole delivery with 400 and `reason_code` `subscription_not_allowed`, and Event Grid dead-letters it if a container is set. See alerts.md, "Which subscriptions may send".
 
 **Verification.**
 
 - The subscription `expiry-to-keyring` shows **Succeeded** in the portal.
 - Keyring's audit has a `notify.webhook` event with `reason_code` `validation`.
 - Set a test secret's expiry a few minutes ahead in a test vault: one email per event arrives, subject `[Keyring] Expiry: secret <name> in <vault>`, and audit shows `notify.webhook` with `queued` and a `notify.sent`.
+- Keyring's start-up log has no warning that `KEYRING_EVENTGRID_SUBSCRIPTIONS` is unset.
 
-Not yet confirmed on a real tenant: every webhook step. See "Event Grid delivers with Entra auth", "The claims Event Grid's token carries", "An expiry email arrives", "Which `aud` form arrives" and "The `topic` a Key Vault event carries" in the checklist's "Deployment" section.
+Not yet confirmed on a real tenant: every webhook step. See "Event Grid delivers with Entra auth", "The claims Event Grid's token carries", "An expiry email arrives", "Which `aud` form arrives", "The `topic` a Key Vault event carries" and "A vault in an unlisted subscription is refused" in the checklist's "Deployment" section.
 
 ---
 
@@ -461,6 +489,7 @@ Not yet confirmed on a real tenant: the step-up round trip. See the four "Step-u
 2. Run **Refused requests** across vaults for the last 7 days, and look at anyone unexpected.
 3. Check Keyring's own config vault on **Expiry**: `entra-client-secret` (if used) shouldn't be close to expiry.
 4. Check the image digest is still the release you meant to run (SOP 12).
+5. With sharing on (SOP 15) and no PIM licensing: open the access review (walkthrough 14) on each vault and look for **Overdue share**. Ask the sharer to revoke it, or revoke it yourself.
 
 **Verification.** Record the date and anything found in your operations log.
 
@@ -556,3 +585,63 @@ Set an availability test or alert on `/healthz/audit` and `/healthz/notify` so a
 7. Delete and purge the test vaults afterwards.
 
 **Verification.** The rows you ran have a result, and a pull request with the updated checklist (and any mock fixes) is open.
+
+---
+
+## 15. Turn on sharing
+
+**Purpose.** Let people share one secret with a colleague or a security group until a date, from the secret's page (walkthrough 16).
+
+**When to run.** When your organisation decides people may share single secrets through Keyring. Pilot it on a test vault first.
+
+**Who.** An owner of Keyring's app registration and a Privileged Role Administrator (or Global Administrator) in Entra ID to grant admin consent; Contributor on Keyring's resource group to change its settings; Microsoft Sentinel Contributor on the workspace for the alert rule.
+
+**Before you start.**
+
+- Know whether your tenant has Entra ID P2 (PIM). It decides whether shares end by themselves (see below).
+- Decide the longest a share may last, from 1 to 365 days. The default is 30.
+- Turn on step-up and the reason gate first (SOP 9), so a share needs the same confirmation and reason as a reveal.
+
+**What a share is.** Keyring gives the person or group the Key Vault Secrets User role on that one secret, as the person sharing, with their own token. Only someone Azure lets create a role assignment on the secret can share: Owner, User Access Administrator, or Key Vault Data Access Administrator (which can be limited by a condition to assigning only Key Vault Secrets User). Keyring's managed identity makes no assignment and needs no new permission. Keyring stores nothing about shares.
+
+- **With PIM licensing**, a share is a PIM assignment with an end date, and Azure removes the access at the end of that day.
+- **Without PIM licensing**, Keyring makes a plain role assignment. Azure does NOT remove it on the end date. Keyring shows it as **Overdue** on the secret's **Shared with** section and in the access review until someone revokes it.
+- **When a PIM setting refuses the request** (multifactor sign-in, a shorter time, a ticket), the share is refused. There is no fallback to a plain assignment.
+
+**Steps.**
+
+1. In Keyring's app registration, open **API permissions > Add a permission > Microsoft Graph > Delegated permissions**, and add `User.ReadBasic.All` and `GroupMember.Read.All`. Or run:
+
+   ```sh
+   az ad app permission add --id <Keyring's ENTRA_CLIENT_ID> --api 00000003-0000-0000-c000-000000000000 \
+     --api-permissions <User.ReadBasic.All permission id>=Scope <GroupMember.Read.All permission id>=Scope
+   ```
+
+2. Select **Grant admin consent for** your tenant. `GroupMember.Read.All` needs admin consent. Keyring calls Graph as the signed-in person, so they find only who they could find themselves. Without consent, the picker says so and people can't be picked.
+
+3. Set `KEYRING_SHARING=true`, and `KEYRING_SHARE_MAX_DAYS` if you want other than 30. To email the person shared with and the sharer, add `shares` to `notifyTypes` and redeploy (SOP 12, step 3). The host templates have no parameter for the two sharing settings, and a setting added by hand is removed by the next deployment, so set them again after each redeploy:
+
+   ```sh
+   az webapp config appsettings set -g <resource group> -n <name> \
+     --settings KEYRING_SHARING=true KEYRING_SHARE_MAX_DAYS=<days>
+   az containerapp update -g <resource group> -n <name> \
+     --set-env-vars KEYRING_SHARING=true KEYRING_SHARE_MAX_DAYS=<days>
+   ```
+
+   A `KEYRING_SHARE_MAX_DAYS` outside 1 to 365 stops Keyring at start.
+
+4. Recommended: check step-up (`stepUpAuthContext` or `stepUpMaxAge`) and `requireReason` (`reveal` or `all`) are set (SOP 9). Sharing then asks for the same confirmation and reason as a reveal.
+
+5. Turn on the Sentinel rule `rules/shares.kql` (SOP 6): set `enableShares = true`, and optionally `shareThreshold` (default 5) and `shareWindowMinutes` (default 60), and redeploy `infra/sentinel`. It alerts on a share to a guest account, or more than `shareThreshold` shares by one person in the window. It needs the audit sink (SOP 5).
+
+6. Tell the vault owners: without PIM licensing, shares stay until revoked. Add a check for **Overdue** shares to the access review (walkthrough 14) and the weekly checks (SOP 11).
+
+**Verification.**
+
+- A secret's page on an RBAC vault has **Share** and a **Shared with** section. A vault on access policies has no **Share**.
+- As a test person with User Access Administrator on a test vault, share a test secret with a second test person until tomorrow. The page says which way it was made. In the portal, the secret's **Access control (IAM)** shows one Key Vault Secrets User assignment at the secret's scope.
+- The second person can read the value. After **Revoke**, they can't (Azure can take a few minutes).
+- Keyring's audit has `share.grant` and `share.revoke`, and `KeyringAudit_CL` (if on) has the same.
+- As someone with only Key Vault Secrets Officer, a share is refused naming the roles that can share.
+
+Not yet confirmed on a real tenant: every sharing step, including the PIM end date, the plain fallback, revoke, the Graph search with and without consent, and the guest alert. See the "Sharing a secret" section of [real-vault-checklist.md](../real-vault-checklist.md).

@@ -265,6 +265,7 @@ const BOLD_NOT_IN_TEMPLATES: &[(&str, &str)] = &[
     ("No certificate yet", "src/routes/certs/download.rs"),
     ("Permanent delete is turned off", "src/routes/lifecycle.rs"),
     ("Please sign in again", "src/routes/error.rs"),
+    ("Not shown in Keyring", "src/routes/reveal_limit.rs"),
     ("Role turned on", "src/routes/pim.rs"),
     ("That didn't go through", "src/routes/error.rs"),
     ("That import has expired", "src/routes/secrets/import.rs"),
@@ -329,6 +330,11 @@ const BOLD_NOT_IN_TEMPLATES: &[(&str, &str)] = &[
     ),
     ("Refused requests", "src/azure/audit_across.rs"),
     ("Activity by one person", "src/azure/audit_across.rs"),
+    // Field labels of the access request and activity emails, built in
+    // src/notify/access.rs and src/notify/activity.rs.
+    ("Asked by", "src/notify/access.rs"),
+    ("Scope", "src/notify/access.rs"),
+    ("From address", "src/notify/activity.rs"),
     // Subjects of the health emails, built in src/notify/health.rs.
     ("Keyring's audit sink is failing", "src/notify/health.rs"),
     ("Keyring's audit sink has recovered", "src/notify/health.rs"),

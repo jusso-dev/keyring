@@ -43,7 +43,7 @@ Keyring stores nothing of its own, so all of this lives in the item's Key Vault 
 
 4. Type up to 5 more addresses in **Notify**, separated by commas.
 
-   They are saved as the `notify` tag. These are the people to tell about the item. On main today, Keyring's own emails don't use them yet; see [12 Notifications people receive](12-notifications.md).
+   They are saved as the `notify` tag. These are the people to tell about the item. When your Keyring sends watched-read emails, these addresses are told each time someone reveals the item's value, downloads its private key, copies it to another vault or rolls it back (and the owner too, if your Keyring is set to tell owners). See [12 Notifications people receive](12-notifications.md).
 
 5. If the page says "This owner was set outside Keyring and isn't one plain address. It's kept as it is unless you change it.", leave the field alone to keep it, or replace it with one address.
 
