@@ -60,6 +60,15 @@ pub(crate) struct SecretForm {
     /// The `notify` tag. Empty removes it; not posted keeps it.
     #[serde(default)]
     pub notify: Option<String>,
+    /// The reveal limit (`keyring-reveal`): empty, `copy-only`, `none` or
+    /// `keep`. Not posted keeps it.
+    #[serde(default)]
+    pub reveal: Option<String>,
+    /// A reason and ticket, asked for when the reveal limit is loosened.
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub ticket: String,
     /// Checkbox: present means on.
     #[serde(default)]
     pub enabled: Option<String>,
@@ -202,6 +211,13 @@ pub(crate) fn one_tag(name: &str, value: &str) -> Result<(String, String), Strin
                 .into(),
         );
     }
+    if crate::reveal_limit::is_tag(k) {
+        crate::audit::refuse(crate::audit::Refusal::RevealLimited);
+        return Err(
+            "The keyring-reveal tag can't be changed in bulk. Set the reveal limit on each item's Edit details, where loosening it is checked and recorded."
+                .into(),
+        );
+    }
     if k.contains(['\n', '\r']) || v.contains(['\n', '\r']) {
         return Err("A tag can't have a line break in it.".into());
     }
@@ -292,6 +308,8 @@ fn properties(
         rules,
         errors,
     );
+    let tags =
+        crate::reveal_limit::merge_posted(&tags, current_tags, form.reveal.as_deref(), errors);
     Properties {
         content_type: (!content_type.is_empty()).then(|| content_type.to_owned()),
         attributes: Attributes {

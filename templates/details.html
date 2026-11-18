@@ -18,6 +18,8 @@
 
   {% call ui::owner_fields(owners, tags.suggest.owners) %}{% endcall %}
 
+  {% if let Some(r) = reveal %}{% call ui::reveal_field(r, "certificate") %}{% endcall %}{% endif %}
+
   {% call ui::tag_field(tags, "A name and a value for each tag. Up to 15 with the description, owner and notify, each name used once.") %}{% endcall %}
 
   {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}

@@ -1013,3 +1013,142 @@ async fn a_set_audience_replaces_the_app_id_uri() {
     .await;
     assert_eq!(s, StatusCode::OK);
 }
+
+const LISTED: &str = "00000000-0000-0000-0000-000000000000";
+const UNLISTED: &str = "5ab1eaed-0bad-4bad-8bad-5ec0ffee5ab1";
+
+/// The support event, with its vault in subscription `sub`.
+fn in_subscription(name: &str, sub: &str) -> Value {
+    let mut e = eg::event("SecretNearExpiry", "Secret", name, soon());
+    e["topic"] = json!(format!(
+        "/subscriptions/{sub}/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-test"
+    ));
+    e
+}
+
+#[tokio::test]
+async fn only_listed_subscriptions_are_taken() {
+    // Listed in another case, with a second entry and spaces.
+    let list = format!(" 11111111-2222-3333-4444-555555555555 , {}", LISTED);
+    let r = rig_with(&[("KEYRING_EVENTGRID_SUBSCRIPTIONS", &list)], |_| {}).await;
+    let hook = r.w.state.expiry_hook.clone().unwrap();
+    let token = good_token(&r);
+    // Another subscription: 400 with no body, nothing sent, nothing
+    // remembered.
+    let (s, body) = send(
+        &r,
+        Some(&token),
+        &json!([in_subscription("db-password", UNLISTED)]),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(body, "");
+    // A mixed batch with one event from an unlisted subscription is
+    // refused whole.
+    let (s, _) = send(
+        &r,
+        Some(&token),
+        &json!([
+            in_subscription("db-password", LISTED),
+            in_subscription("other", UNLISTED)
+        ]),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    settle().await;
+    assert!(r.acs.state.attempts().is_empty(), "nothing sent");
+    assert_eq!(hook.dedupe_len(), 0, "nothing remembered");
+    // A topic that isn't a Key Vault ID is still bad_topic: same answer.
+    let mut custom = in_subscription("db-password", UNLISTED);
+    custom["topic"] = json!(format!(
+        "/subscriptions/{UNLISTED}/resourceGroups/rg/providers/Microsoft.EventGrid/topics/kv-test"
+    ));
+    let (s, _) = send(&r, Some(&token), &json!([custom]), &[]).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // The listed subscription delivers, and its ID in upper case too.
+    let (s, _) = send(
+        &r,
+        Some(&token),
+        &json!([in_subscription("db-password", LISTED)]),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let upper = "0A1B2C3D-4E5F-6789-ABCD-EF0123456789";
+    let r2 = rig_with(
+        &[(
+            "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+            &upper.to_ascii_lowercase(),
+        )],
+        |_| {},
+    )
+    .await;
+    let (s, _) = send(
+        &r2,
+        Some(&good_token(&r2)),
+        &json!([in_subscription("db-password", upper)]),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    until("one email", || r.acs.state.attempts().len() == 1).await;
+    until("one email", || r2.acs.state.attempts().len() == 1).await;
+}
+
+#[tokio::test]
+async fn with_no_list_any_subscription_is_taken() {
+    let r = rig().await;
+    assert_eq!(r.w.state.expiry_hook.as_ref().unwrap().subscriptions, None);
+    let (s, _) = send(
+        &r,
+        Some(&good_token(&r)),
+        &json!([in_subscription("db-password", UNLISTED)]),
+        &[],
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    until("one email", || r.acs.state.attempts().len() == 1).await;
+}
+
+#[test]
+fn a_bad_subscription_list_stops_start_up() {
+    let base: Vec<(&str, &str)> = vec![
+        ("ENTRA_TENANT_ID", support::TENANT),
+        ("ENTRA_CLIENT_ID", support::CLIENT_ID),
+        (
+            "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+            support::IDENTITY_CLIENT_ID,
+        ),
+        ("IDENTITY_ENDPOINT", "http://127.0.0.1:9/token"),
+        ("IDENTITY_HEADER", support::IDENTITY_HEADER),
+        ("APP_BASE_URL", "http://localhost:3000"),
+        (
+            "SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789abcdef",
+        ),
+        (
+            "KEYRING_NOTIFY_ACS_ENDPOINT",
+            "https://keyring-mail.australia.communication.azure.com",
+        ),
+        ("KEYRING_NOTIFY_SENDER", "DoNotReply@mail.example.com"),
+        ("KEYRING_NOTIFY_TYPES", "expiry"),
+    ];
+    let load = |value: &str| {
+        keyring::config::Config::from_lookup(|k| {
+            if k == "KEYRING_EVENTGRID_SUBSCRIPTIONS" {
+                return Some(value.to_owned());
+            }
+            base.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| (*v).to_owned())
+        })
+    };
+    assert!(load(LISTED).is_ok());
+    for bad in ["SUBLISTLEAK", "00000000-0000-0000-0000-000000000000,", ","] {
+        let err = load(bad).unwrap_err().to_string();
+        assert!(err.contains("KEYRING_EVENTGRID_SUBSCRIPTIONS"), "{err}");
+        assert!(!err.contains("SUBLISTLEAK"), "{err}");
+    }
+}

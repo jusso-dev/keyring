@@ -51,6 +51,14 @@ pub(crate) struct DetailsForm {
     pub owner: Option<String>,
     #[serde(default)]
     pub notify: Option<String>,
+    /// The reveal limit, on certificates only. Not posted keeps it.
+    #[serde(default)]
+    pub reveal: Option<String>,
+    /// A reason and ticket, asked for when the reveal limit is loosened.
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub ticket: String,
     /// The tag rows, without the description, owner and notify.
     #[serde(flatten)]
     pub tag_rows: TagPost,
@@ -113,6 +121,8 @@ pub(crate) fn new_tags(
         rules,
         &mut errors,
     );
+    let tags =
+        crate::reveal_limit::merge_posted(&tags, current, form.reveal.as_deref(), &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -128,6 +138,8 @@ struct DetailsPage {
     name: String,
     description: String,
     owners: crate::owner::Fields,
+    /// The reveal limit control: certificates only.
+    reveal: Option<crate::reveal_limit::Field>,
     tags: TagField,
     version: String,
     updated: String,
@@ -152,11 +164,12 @@ fn page(
     errors: FieldErrors,
     suggest: tag_rows::Suggestions,
 ) -> Response {
-    let (description, owners, tags) = match posted {
+    let (description, owners, tags, reveal) = match posted {
         Some(f) => (
             f.description.clone(),
             crate::owner::Fields::posted(f.owners(), &current.tags),
             TagField::posted(&f.tag_rows, &current.tags),
+            crate::reveal_limit::Field::posted(f.reveal.as_deref(), &current.tags),
         ),
         None => (
             description::of(&current.tags)
@@ -164,8 +177,10 @@ fn page(
                 .to_owned(),
             crate::owner::Fields::of(&current.tags),
             TagField::of(&current.tags),
+            crate::reveal_limit::Field::of(&current.tags),
         ),
     };
+    let reveal = (kind == Kind::Certificate).then_some(reveal);
     let status = if errors.is_empty() {
         StatusCode::OK
     } else {
@@ -181,6 +196,7 @@ fn page(
                 name,
                 description,
                 owners,
+                reveal,
                 tags: tags.with(suggest),
                 version: current.version.clone(),
                 updated: current.updated(),
@@ -396,6 +412,12 @@ pub(crate) async fn save<E: Editable>(
     }
     crate::audit::note_version(&current.version);
     let item = E::KIND.item_url(&vault, &name);
+    // Keys have no value, so their form has no limit control; a limit tag
+    // set elsewhere is kept as it is.
+    let mut f = f;
+    if E::KIND != Kind::Certificate {
+        f.reveal = None;
+    }
     let tags = match new_tags(&f, &current.tags, crate::owner::Rules::of(&state.config)) {
         Ok(Some(t)) => t,
         Ok(None) => {
@@ -420,6 +442,32 @@ pub(crate) async fn save<E: Editable>(
             ));
         }
     };
+    // Loosening the reveal limit: step-up and a reason, as for a reveal.
+    let form_url = vault_path(&vault, &format!("{}/{name}/details", E::KIND.base()));
+    let (shell, errors) = crate::routes::reveal_limit::loosening(
+        &state,
+        &session,
+        shell,
+        crate::audit::Action::CertificateUpdate,
+        &current.tags,
+        &tags,
+        &f.reason,
+        &f.ticket,
+        &form_url,
+    )?;
+    if !errors.is_empty() {
+        let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+        return Ok(page(
+            shell,
+            vault,
+            E::KIND,
+            name,
+            &current,
+            Some(&f),
+            errors,
+            suggest,
+        ));
+    }
     match E::write(&state, &session, &vault, &name, &current.version, tags).await {
         Ok(()) => Ok(redirect_with(
             &state,

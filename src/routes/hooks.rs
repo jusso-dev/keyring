@@ -20,7 +20,9 @@
 //!    with the same limit.
 //!
 //! Then the delivery is parsed, all or nothing (400 on anything
-//! malformed, or an event whose `topic` isn't its Key Vault), the
+//! malformed, an event whose `topic` isn't its Key Vault, or, with
+//! `KEYRING_EVENTGRID_SUBSCRIPTIONS` set, a vault in a subscription not in
+//! that list), before any dedupe or email work. Then the
 //! handshake is answered, or each event is deduplicated and queued. 200
 //! once every event is queued, a repeat, or has no allowed recipient. 503
 //! when the email queue or the dedupe map is full, or when every
@@ -174,7 +176,7 @@ pub(super) async fn eventgrid(State(state): State<AppState>, req: Request) -> Re
         return status(StatusCode::PAYLOAD_TOO_LARGE);
     };
 
-    let events = match expiry::parse_delivery(&bytes) {
+    let events = match expiry::parse_delivery(&bytes, hook.subscriptions.as_deref()) {
         Ok(Delivery::Validation(code)) => {
             finish(Outcome::Success, "validation", Some(1));
             let body = serde_json::json!({ "validationResponse": code }).to_string();

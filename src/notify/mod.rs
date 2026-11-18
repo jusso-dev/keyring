@@ -22,6 +22,8 @@
 //!   `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`, which puts them on audit events
 //!   (and so in the audit log line).
 
+pub mod access;
+pub mod activity;
 pub mod expiry;
 pub mod health;
 pub mod rate;
@@ -283,7 +285,7 @@ impl ItemKind {
         }
     }
 
-    fn path(self) -> &'static str {
+    pub fn path(self) -> &'static str {
         match self {
             Self::Secret => "secrets",
             Self::Certificate => "certificates",
