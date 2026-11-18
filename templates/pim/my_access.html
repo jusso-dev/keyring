@@ -4,6 +4,7 @@
 {% block content %}
 <h1>My access <span class="muted">to {{ vault }}</span></h1>
 <p>Your own Key Vault roles that reach this vault: the ones on now, and the ones you can turn on through Privileged Identity Management (PIM). Read from Azure each time; Keyring keeps nothing.</p>
+{% if sharing %}<p><a href="{{ shell.vault_prefix() }}/my-access/shares">My shares</a>: secrets shared with you, and the ones you shared.</p>{% endif %}
 {% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
 <h2>On now</h2>
 {% if active.is_empty() %}
@@ -88,5 +89,12 @@
 </table>
 {% endcall %}
 <p class="muted">Requests waiting for approval are decided in PIM. <a href="{{ portal }}">Open PIM in the Azure portal</a>.</p>
+{% endif %}
+{% if !requests.is_empty() %}
+<h2>Request access</h2>
+<p>Ask this vault's owners for a Key Vault role you don't have and can't turn on through PIM. Keyring emails them your request; it can't grant access itself.</p>
+<ul>
+  {% for (name, url) in requests %}<li><a href="{{ url }}">Request {{ name }}</a></li>{% endfor %}
+</ul>
 {% endif %}
 {% endblock %}

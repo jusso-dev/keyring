@@ -9,7 +9,8 @@ People who run Keyring have their own guide, the [administrator SOPs](../admin/a
 - Button, field, link and heading names are in bold, exactly as Keyring shows them.
 - Messages Keyring shows are in "quotes".
 - Names in examples (`kv-payments-prod`, `db-connection-string`, `alex.taylor@demo.example`) are made up. So are the people in the screenshots, which come from Keyring's demo over mock Azure services.
-- Where a part of Keyring isn't built yet, the walkthrough says so in a section headed "Coming with" and the issue number. Nothing in those sections is a step you can follow today.
+- Steps that have only been checked against Keyring's mock Azure services say "Not yet confirmed on a real tenant" and point to the matching rows in the real-tenant checklist.
+- Some parts of Keyring are only there when whoever runs it turns them on, such as access requests, activity emails and sharing. The walkthrough says how to tell.
 
 ## Who does what
 
@@ -21,7 +22,7 @@ Keyring has no roles of its own. You use it with your own Azure roles, the same 
 | Secrets officer | Key Vault Secrets Officer on the vault. Key Vault Secrets User reads values but can't change them | Application teams who look after their own secrets | 01 to 03, 06, 07, 08, 10, 13 |
 | Certificates officer | Key Vault Certificates Officer. Key Vault Certificate User to download a private key | Platform and web teams who look after TLS certificates | 01, 03, 04, 07, 08 |
 | Crypto officer | Key Vault Crypto Officer | Teams whose apps sign, encrypt or wrap with keys | 01, 03, 05, 07, 08 |
-| Vault administrator | Key Vault Administrator, or the three officer roles together | The people who own a vault | All of 01 to 13 |
+| Vault administrator | Key Vault Administrator, or the three officer roles together. To share a secret, also Owner, User Access Administrator or Key Vault Data Access Administrator | The people who own a vault | All of 01 to 13, and 16 |
 | Auditor | Reader on the vaults, and Log Analytics Reader on the workspaces they send their logs to | Security, risk and audit staff | 11, 14, 15 |
 
 The README's role table lists the role for every action, one row at a time. Ask whoever looks after your vaults for a role; Keyring can't grant one.
@@ -40,6 +41,7 @@ Keyring adds a few checks of its own. These depend on how your Keyring is set up
 - a password policy for passwords you type (`KEYRING_PASSWORD_POLICY`)
 - an owner on every item (`KEYRING_REQUIRE_OWNER`)
 - no permanent deletes unless they are turned on (`KEYRING_ALLOW_PURGE`)
+- reveal limits on a sensitive secret or certificate (its `keyring-reveal` tag)
 
 These are Keyring's rules, not Key Vault's. Someone with the same Azure role can still use the Azure CLI or the portal without them. They are there for the Keyring path and for the audit log.
 
@@ -71,3 +73,4 @@ Each walkthrough names the Keyring audit actions its steps write, such as `secre
 | 13 | Password policy and reveal limits |
 | 14 | Access review report |
 | 15 | For auditors |
+| 16 | Share a secret |

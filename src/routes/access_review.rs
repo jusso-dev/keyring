@@ -290,6 +290,9 @@ fn entry_text(e: &Entry) -> String {
     if e.has_condition {
         s.push_str(", with a condition");
     }
+    if let Some(d) = &e.overdue_share {
+        s.push_str(&format!(", shared through Keyring until {d}, OVERDUE"));
+    }
     let scope = if e.scope.is_empty() { "/" } else { &e.scope };
     s.push_str(&format!(" at {} {scope}", e.origin.label()));
     s
@@ -765,6 +768,7 @@ mod tests {
             eligible: false,
             can_grant: false,
             has_condition: false,
+            overdue_share: None,
         }
     }
 

@@ -23,6 +23,7 @@ const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
 const PINS_JS: &str = include_str!("../../static/pins.js");
 const TAGS_JS: &str = include_str!("../../static/tags.js");
+const SHARE_JS: &str = include_str!("../../static/share.js");
 
 /// Legacy font files for cached stylesheets. Latin subset only.
 const FONTS: [(&str, &[u8]); 4] = [
@@ -63,6 +64,7 @@ fn lookup(file: &str) -> Option<(&'static str, &'static str)> {
         "app.js" => Some((APP_JS, "text/javascript; charset=utf-8")),
         "pins.js" => Some((PINS_JS, "text/javascript; charset=utf-8")),
         "tags.js" => Some((TAGS_JS, "text/javascript; charset=utf-8")),
+        "share.js" => Some((SHARE_JS, "text/javascript; charset=utf-8")),
         _ => None,
     }
 }
@@ -77,6 +79,7 @@ static STYLE_VERSION: LazyLock<String> = LazyLock::new(|| hash(STYLE_CSS));
 static APP_VERSION: LazyLock<String> = LazyLock::new(|| hash(APP_JS));
 static PINS_VERSION: LazyLock<String> = LazyLock::new(|| hash(PINS_JS));
 static TAGS_VERSION: LazyLock<String> = LazyLock::new(|| hash(TAGS_JS));
+static SHARE_VERSION: LazyLock<String> = LazyLock::new(|| hash(SHARE_JS));
 
 fn version(file: &str) -> Option<&'static str> {
     match file {
@@ -84,6 +87,7 @@ fn version(file: &str) -> Option<&'static str> {
         "app.js" => Some(APP_VERSION.as_str()),
         "pins.js" => Some(PINS_VERSION.as_str()),
         "tags.js" => Some(TAGS_VERSION.as_str()),
+        "share.js" => Some(SHARE_VERSION.as_str()),
         _ => None,
     }
 }

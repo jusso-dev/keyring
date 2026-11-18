@@ -147,6 +147,12 @@ pub const COLUMNS: &[Column] = &[
     col("NotifyRecipientCount", "int", "notify_recipient_count"),
     col("NotifyRecipients", "string", "notify_recipients"),
     col("NotifyEventCount", "int", "notify_event_count"),
+    col("RevealLimitFrom", "string", "reveal_limit_from"),
+    col("RevealLimitTo", "string", "reveal_limit_to"),
+    col("SharePrincipalId", "string", "share_principal_id"),
+    col("SharePrincipalType", "string", "share_principal_type"),
+    col("ShareUntil", "string", "share_until"),
+    col("SharePath", "string", "share_path"),
     col("WriterIdentityClientId", "string", WRITER),
     col("KeyringInstance", "string", "instance"),
     col("KeyringVersion", "string", "keyring_version"),
@@ -182,6 +188,12 @@ fn value(ev: &AuditEvent, field: &str, writer: &str) -> Option<Value> {
         "notify_recipient_count" => ev.notify_recipient_count.map(Value::from),
         "notify_recipients" => s(&ev.notify_recipients),
         "notify_event_count" => ev.notify_event_count.map(Value::from),
+        "reveal_limit_from" => ev.reveal_limit_from.map(Value::from),
+        "reveal_limit_to" => ev.reveal_limit_to.map(Value::from),
+        "share_principal_id" => s(&ev.share_principal_id),
+        "share_principal_type" => ev.share_principal_type.map(Value::from),
+        "share_until" => s(&ev.share_until),
+        "share_path" => ev.share_path.map(Value::from),
         "instance" => Some(instance().into()),
         "keyring_version" => Some(KEYRING_VERSION.into()),
         WRITER => Some(writer.into()),
@@ -616,12 +628,18 @@ mod tests {
             &mut ev.role_scope,
             &mut ev.role_duration,
             &mut ev.notify_recipients,
+            &mut ev.share_principal_id,
+            &mut ev.share_until,
         ] {
             *f = Some("x".into());
         }
+        ev.share_principal_type = Some("user");
+        ev.share_path = Some("pim");
         ev.notify_type = Some("expiry");
         ev.notify_recipient_count = Some(1);
         ev.notify_event_count = Some(2);
+        ev.reveal_limit_from = Some("unset");
+        ev.reveal_limit_to = Some("none");
         ev
     }
 

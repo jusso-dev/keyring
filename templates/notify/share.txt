@@ -1,0 +1,24 @@
+{{ n.heading() }}
+{% if let Some(i) = item %}
+{%- match n.side %}
+{%- when crate::notify::share::Side::Recipient %}
+You can now read the secret {{ i.name() }} in {{ i.vault() }} until {{ n.until }}.
+{%- when crate::notify::share::Side::Sharer %}
+You shared the secret {{ i.name() }} in {{ i.vault() }} until {{ n.until }}.
+{%- endmatch %}
+{%- if n.removed_by_azure %}
+Azure removes this access at the end of {{ n.until }}.
+{%- else %}
+Azure won't remove this access on the end date. Keyring will show it as overdue until someone revokes it.
+{%- endif %}
+
+Secret: {{ i.name() }}
+Vault: {{ i.vault() }}
+{%- endif %}
+{{ n.other_label() }}: {{ n.other }}
+Until: {{ n.until }}
+{% if let Some(l) = link %}
+Open it in Keyring: {{ l }}
+{% endif %}
+--
+Sent by Keyring ({{ kind }} notices). Keyring never puts a secret value in an email.

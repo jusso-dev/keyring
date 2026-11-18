@@ -142,6 +142,26 @@ impl AzureClient {
             .map_err(|_| unreadable(resource, &method_path(&Method::GET, url)))
     }
 
+    /// GET with extra request headers (fixed names and values from
+    /// Keyring, such as Graph's `ConsistencyLevel: eventual`) and parse
+    /// JSON.
+    pub async fn get_json_with<T: DeserializeOwned>(
+        &self,
+        session: &Session,
+        resource: Resource,
+        url: &str,
+        headers: &[(&'static str, &'static str)],
+    ) -> Result<T, AzureError> {
+        let res = self
+            .send_inner(session, resource, Method::GET, url, None, headers)
+            .await;
+        if let Err(e) = &res {
+            crate::audit::note_azure_error(e);
+        }
+        serde_json::from_slice(&res?)
+            .map_err(|_| unreadable(resource, &method_path(&Method::GET, url)))
+    }
+
     /// Send a JSON body (POST, PUT, PATCH) and parse the JSON reply.
     pub async fn send_json<T: DeserializeOwned>(
         &self,
@@ -170,7 +190,9 @@ impl AzureClient {
         url: &str,
         body: Option<Vec<u8>>,
     ) -> Result<Vec<u8>, AzureError> {
-        let res = self.send_inner(session, resource, method, url, body).await;
+        let res = self
+            .send_inner(session, resource, method, url, body, &[])
+            .await;
         if let Err(e) = &res {
             crate::audit::note_azure_error(e);
         }
@@ -189,6 +211,7 @@ impl AzureClient {
         method: Method,
         url: &str,
         body: Option<Vec<u8>>,
+        headers: &[(&'static str, &'static str)],
     ) -> Result<Vec<u8>, AzureError> {
         let mut retried = false;
         let mut throttled = 0;
@@ -199,6 +222,9 @@ impl AzureClient {
                 .request(method.clone(), url)
                 .header(AUTHORIZATION, format!("Bearer {}", token.expose()))
                 .header(ACCEPT, "application/json");
+            for (name, value) in headers {
+                req = req.header(*name, *value);
+            }
             if resource == Resource::KeyVault {
                 // A new ID for every call, retries included. Key Vault
                 // writes it to its diagnostic log, and the audit event

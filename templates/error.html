@@ -11,6 +11,10 @@
   <p>You're eligible for {{ o.role }} through Privileged Identity Management. You can turn it on yourself.</p>
   <p><a class="button" href="{{ o.url }}">Activate {{ o.role }}</a></p>
   {%- endif %}
+  {%- if let Some(r) = problem.request %}
+  <p>You can ask this vault's owners for {{ r.role }}. Keyring emails them your request; it can't grant access itself.</p>
+  <p><a class="button" href="{{ r.url }}">Request access</a></p>
+  {%- endif %}
   <p><a class="button" href="{{ next_url }}">{{ next_label }}</a>{% if let Some((url, label)) = also %} <a href="{{ url }}">{{ label }}</a>{% endif %}</p>
 </div>
 {% endblock %}

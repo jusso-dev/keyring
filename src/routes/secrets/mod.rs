@@ -52,6 +52,10 @@ pub(super) struct SecretRow {
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
     pub managed: bool,
+    /// The `keyring-reveal` limit, and the tag as set when Keyring didn't
+    /// write it.
+    pub limit: crate::reveal_limit::Limit,
+    pub limit_odd: Option<String>,
     /// The tags the tag filter and search box match: every tag but the
     /// description, `owner` and `notify` included.
     pub filter_tags: Vec<(String, String)>,
@@ -93,6 +97,8 @@ impl SecretRow {
             description,
             owners,
             managed: item.managed.unwrap_or(false),
+            limit: crate::reveal_limit::of(item.tags()),
+            limit_odd: crate::reveal_limit::Field::of(item.tags()).odd,
             filter_tags,
             filter_text,
         }
@@ -396,6 +402,8 @@ struct DetailPage {
     rotation: Option<crate::rotation::Rotation>,
     access: crate::routes::access::Access,
     hints: crate::routes::hints::Hints,
+    /// The Shared with panel, with `KEYRING_SHARING` on.
+    shared_with: Option<crate::routes::share::SharedWith>,
 }
 
 pub(super) async fn detail(
@@ -408,11 +416,12 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let secrets = api(&state, &session, &vault);
-    let (item, used_by, access, hints) = tokio::join!(
+    let (item, used_by, access, hints, shared_with) = tokio::join!(
         secrets.properties(&name),
         crate::routes::used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::hints::for_item(&state, &session, &vault, Kind::Secret, &name),
+        crate::routes::share::for_item(&state, &session, &vault, &name),
     );
     let item = match item {
         Ok(item) => item,
@@ -446,6 +455,7 @@ pub(super) async fn detail(
         used_by,
         access,
         hints,
+        shared_with,
     })
     .into_response())
 }
@@ -474,6 +484,8 @@ mod tests {
             description: String::new(),
             owners: crate::owner::OfItem::default(),
             managed: false,
+            limit: crate::reveal_limit::Limit::Open,
+            limit_odd: None,
             filter_tags: tags
                 .iter()
                 .map(|(k, v)| ((*k).into(), (*v).into()))

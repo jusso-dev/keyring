@@ -1,6 +1,7 @@
 //! HTTP routes.
 
 mod access;
+pub(crate) mod access_request;
 mod access_review;
 mod age;
 pub mod assets;
@@ -33,8 +34,10 @@ pub(crate) mod paging;
 pub(crate) mod pim;
 pub(crate) mod reason;
 mod rejection;
+pub(crate) mod reveal_limit;
 pub mod search;
 mod secrets;
+pub(crate) mod share;
 pub(crate) mod shell;
 pub(crate) mod step_up;
 pub(crate) mod tag_rows;
@@ -176,6 +179,24 @@ fn vault_routes() -> Router<AppState> {
             get(secrets::copy::page).merge(audited(Action::SecretCopyRead, secrets::copy::apply)),
         )
         .route("/secrets/{name}/copy/review", get(secrets::copy::review))
+        // Sharing (#286). Every sharing route answers "not found" unless
+        // KEYRING_SHARING=true, before the reason gate or the handler.
+        .route(
+            "/secrets/{name}/share",
+            get(share::form)
+                .merge(audited(Action::ShareGrant, share::grant))
+                .route_layer(middleware::from_fn(share::require_on)),
+        )
+        .route(
+            "/secrets/{name}/share/revoke",
+            get(share::revoke_form)
+                .merge(audited(Action::ShareRevoke, share::revoke))
+                .route_layer(middleware::from_fn(share::require_on)),
+        )
+        .route(
+            "/share/people",
+            get(share::people).route_layer(middleware::from_fn(share::require_on)),
+        )
         .route(
             "/secrets/{name}/reveal",
             audited(Action::SecretReveal, secrets::reveal::reveal),
@@ -343,12 +364,20 @@ fn vault_routes() -> Router<AppState> {
         .route("/access/review.csv", get(access_review::csv))
         .route("/my-access", get(pim::my_access))
         .route(
+            "/my-access/shares",
+            get(share::my_shares).route_layer(middleware::from_fn(share::require_on)),
+        )
+        .route(
             "/my-access/activate",
             get(pim::activate_form).merge(audited(Action::RoleActivate, pim::activate)),
         )
         .route(
             "/my-access/deactivate",
             audited(Action::RoleDeactivate, pim::deactivate),
+        )
+        .route(
+            "/my-access/request",
+            get(access_request::form).merge(audited(Action::AccessRequest, access_request::send)),
         )
         // A change to a vault drops the list search keeps for it.
         .route_layer(middleware::from_fn(every_vault::forget_on_change))
@@ -392,6 +421,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route_layer(middleware::from_fn(rejection::layer))
         // For the reason gate and the reason fields on forms.
         .route_layer(axum::Extension(state.config.clone()))
+        // For the reason gate's reveal limit check.
+        .route_layer(axum::Extension(state.clone()))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,

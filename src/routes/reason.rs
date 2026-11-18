@@ -148,6 +148,37 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
             .check(&session.0.sign_in_facts(), SystemTime::now())
             .is_ok();
     let purge_ok = !is_purge(action) || config.allow_purge;
+    // A reveal limit that refuses this anyway is said first, before the
+    // person is sent to step up or asked for a reason. Read from
+    // properties only, never a value.
+    if csrf_ok
+        && crate::reason::is_reveal(action)
+        && let (Some(state), Some(name)) = (
+            parts.extensions.get::<crate::AppState>().cloned(),
+            target.name.clone(),
+        )
+    {
+        let shell = Shell::from_request_parts(&mut parts, &())
+            .await
+            .unwrap_or_default()
+            .for_vault(&target.vault, &session)
+            .at(target.section);
+        crate::audit::note_vault(&target.vault);
+        crate::audit::note_item(&name);
+        if let Some(res) = crate::routes::reveal_limit::refuse_early(
+            &state,
+            &session,
+            shell,
+            action,
+            &target.vault,
+            &name,
+            field("version").unwrap_or_default(),
+        )
+        .await
+        {
+            return res;
+        }
+    }
     if csrf_ok && step_up_ok && purge_ok {
         let asked = field("reason").is_some();
         match config.reason.check(
@@ -287,6 +318,11 @@ fn words(action: Action) -> (&'static str, &'static str, &'static str) {
             "Why are you copying this value?",
             "Your organisation asks for a reason before Keyring reads a secret value, including to copy it. Nothing has been read or copied yet.",
             "Copy value",
+        ),
+        Action::ShareGrant => (
+            "Why are you sharing this secret?",
+            "Your organisation asks for a reason before Keyring gives anyone else access to a secret. Nothing has been shared yet.",
+            "Share",
         ),
         Action::CertificateDownloadPrivateKey => (
             "Why do you need the private key?",

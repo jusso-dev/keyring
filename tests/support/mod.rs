@@ -8,6 +8,7 @@ pub(crate) mod eventgrid;
 pub(crate) mod ingestion;
 pub(crate) mod keys;
 pub(crate) mod keyvault;
+pub(crate) mod share;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -627,6 +628,9 @@ pub(crate) struct ArmState {
     /// Access (role assignments, eligibility, role definitions and the
     /// vault resource). See [`AuthzMock`].
     pub authz: Mutex<AuthzMock>,
+    /// Shares (#286): assignments and schedule requests at a secret's
+    /// scope. See [`share::ShareArm`].
+    pub share: Mutex<share::ShareArm>,
 }
 
 /// What the mock ARM answers for the Access reads. Like ARM, the
@@ -1002,11 +1006,19 @@ async fn authz_answer(s: &ArmState, path: &str, query: &str, bearer: String) -> 
         if m.assignments_forbidden {
             return Some(forbidden());
         }
-        let value: Vec<_> = m
+        let mut value: Vec<_> = m
             .assignments
             .iter()
             .map(|a| assignment_json("roleAssignments", a))
             .collect();
+        // Shares (#286) are role assignments too: ARM lists them, with
+        // their description, beside the rest.
+        value.extend(s.share.lock().unwrap().assignments.iter().map(|a| {
+            json!({"name": a.name, "properties": {
+                "scope": a.scope, "principalId": a.principal_id, "principalType": a.principal_type,
+                "roleDefinitionId": format!("/subscriptions/sub-a/providers/Microsoft.Authorization/roleDefinitions/{}", a.role),
+                "description": a.description}})
+        }));
         return Some(json_response(StatusCode::OK, json!({"value": value})));
     }
     if path.ends_with(ELIGIBLE) {
@@ -1109,6 +1121,7 @@ pub(crate) async fn start_arm() -> MockArm {
         keyring_rows: Mutex::new(Vec::new()),
         keyring_partial: Mutex::new(false),
         authz: Mutex::new(AuthzMock::with_builtin_roles()),
+        share: Mutex::new(share::ShareArm::default()),
     });
     let app = Router::new()
         .route(
@@ -1183,6 +1196,15 @@ async fn arm_fallback(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_owned();
+    // Percent-decoded, as ARM reads it, for the share mock's filters.
+    let decoded: String =
+        openidconnect::url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+    if let Some(res) = share::answer(&s.share, &method, &path, &decoded, &body) {
+        return res;
+    }
     if let Some(res) = pim_answer(&s, &method, &path, uri.query().unwrap_or_default(), &body).await
     {
         return res;
@@ -2167,6 +2189,7 @@ pub(crate) fn world_notify_settings() -> keyring::config::NotifySettings {
         allowed_domains: None,
         types: Vec::new(),
         audit_recipients: false,
+        owner_on_read: false,
         per_hour: 10,
         burst_threshold: 50,
         tuning: keyring::notify::sender::Tuning::default(),
