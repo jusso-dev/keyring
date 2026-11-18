@@ -108,6 +108,9 @@ pub(crate) struct Entry {
     /// Owner, Contributor or User Access Administrator.
     pub can_grant: bool,
     pub has_condition: bool,
+    /// A share Keyring made whose end date has passed, but which Azure
+    /// hasn't removed (a plain assignment, #286). `DD-MM-YYYY`.
+    pub overdue_share: Option<String>,
 }
 
 /// One access policy, in plain words.
@@ -420,6 +423,10 @@ async fn assignments(
             eligible: is_eligible,
             can_grant,
             has_condition: a.has_condition,
+            overdue_share: a
+                .shared_until
+                .filter(|u| *u < crate::azure::secrets::now_ts().div_euclid(86_400) * 86_400)
+                .map(crate::routes::share::dmy),
         });
     }
     if unread_roles > 0 {
@@ -784,6 +791,7 @@ mod tests {
                 eligible: true,
                 can_grant: false,
                 has_condition: false,
+                overdue_share: None,
             }],
             notes: vec!["Eligible (PIM) assignments aren't listed.".into()],
             ..Access::default()

@@ -8,6 +8,7 @@
   <script src="{{ crate::routes::assets::url("app.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("pins.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("tags.js") }}" defer></script>
+  {%- block scripts %}{% endblock %}
 </head>
 <body data-idle-seconds="{{ shell.idle_seconds() }}">
   <a class="skip-link" href="#main">Skip to content</a>

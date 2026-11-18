@@ -47,16 +47,25 @@ pub enum Resource {
     Management,
     /// Log Analytics, for the audit view.
     LogAnalytics,
+    /// Microsoft Graph, for the share picker's names only
+    /// (`User.ReadBasic.All`, `GroupMember.Read.All`, delegated).
+    Graph,
 }
 
 impl Resource {
-    const ALL: [Resource; 3] = [Self::KeyVault, Self::Management, Self::LogAnalytics];
+    const ALL: [Resource; 4] = [
+        Self::KeyVault,
+        Self::Management,
+        Self::LogAnalytics,
+        Self::Graph,
+    ];
 
     fn index(self) -> usize {
         match self {
             Self::KeyVault => 0,
             Self::Management => 1,
             Self::LogAnalytics => 2,
+            Self::Graph => 3,
         }
     }
 
@@ -65,6 +74,7 @@ impl Resource {
             Self::KeyVault => "https://vault.azure.net/.default",
             Self::Management => "https://management.azure.com/.default",
             Self::LogAnalytics => "https://api.loganalytics.io/.default",
+            Self::Graph => "https://graph.microsoft.com/.default",
         }
     }
 }
@@ -522,6 +532,7 @@ mod tests {
             Resource::KeyVault,
             Resource::Management,
             Resource::LogAnalytics,
+            Resource::Graph,
         ] {
             assert!(r.scope().ends_with("/.default"));
         }

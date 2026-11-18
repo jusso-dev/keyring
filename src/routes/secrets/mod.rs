@@ -402,6 +402,8 @@ struct DetailPage {
     rotation: Option<crate::rotation::Rotation>,
     access: crate::routes::access::Access,
     hints: crate::routes::hints::Hints,
+    /// The Shared with panel, with `KEYRING_SHARING` on.
+    shared_with: Option<crate::routes::share::SharedWith>,
 }
 
 pub(super) async fn detail(
@@ -414,11 +416,12 @@ pub(super) async fn detail(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let secrets = api(&state, &session, &vault);
-    let (item, used_by, access, hints) = tokio::join!(
+    let (item, used_by, access, hints, shared_with) = tokio::join!(
         secrets.properties(&name),
         crate::routes::used_by::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::access::for_item(&state, &session, &vault, Kind::Secret, &name),
         crate::routes::hints::for_item(&state, &session, &vault, Kind::Secret, &name),
+        crate::routes::share::for_item(&state, &session, &vault, &name),
     );
     let item = match item {
         Ok(item) => item,
@@ -452,6 +455,7 @@ pub(super) async fn detail(
         used_by,
         access,
         hints,
+        shared_with,
     })
     .into_response())
 }

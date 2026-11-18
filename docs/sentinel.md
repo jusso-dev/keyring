@@ -118,6 +118,7 @@ Each is a Sentinel Scheduled rule, created with `enabled` set to its parameter (
 | One person denied in several vaults | `rules/denied-probing.kql` | `enableDeniedProbing` | `probingVaults` (3), `probingDenied` (5), `probingWindowMinutes` (60). Counts `Outcome == "denied"` |
 | Sensitive action outside working hours | `rules/off-hours.kql` | `enableOffHours` | `offHoursActions` (the three purges and `certificate.download_private_key`), `offHoursTerms` (`bulk`), `utcOffsetMinutes` (600), `workStartHour` (8), `workEndHour` (18), `workDays` (Monday to Friday), `offHoursWindowMinutes` (15) |
 | Forged or cross-site requests | `rules/app-attack.kql` | `enableAppAttack` | `attackThreshold` (5), `attackWindowMinutes` (15). Counts `refused` with `csrf` or `cross_site` by address |
+| Secret shared with a guest, or many shares | `rules/shares.kql` | `enableShares` | `shareThreshold` (5), `shareWindowMinutes` (60). Counts successful `share.grant` by person: any share whose `SharePrincipalType` is `guest`, or more than the threshold in the window |
 | No audit events while Key Vault saw Keyring | `rules/audit-gap.kql` | `enableAuditGap` | `auditGapHours` (6), and needs `keyringOutboundIps` |
 | SecretGet from Keyring with no audit event | `rules/unmatched-secret-get.kql` | `enableUnmatchedSecretGet` | Needs `keyringOutboundIps`. Leave off for now (below) |
 

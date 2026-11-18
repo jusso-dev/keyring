@@ -22,6 +22,8 @@ KeyringAudit_CL
     Verb in ("set", "update", "rollback", "bulk_update", "write"), "Set",
     Action == "role.activate", "Enable",
     Action == "role.deactivate", "Disable",
+    Action == "share.grant", "Enable",
+    Action == "share.revoke", "Disable",
     "Other")
 | where array_length(eventtype_in) == 0 or EventType in~ (eventtype_in)
 | extend EventResult = iff(Outcome == "success", "Success", "Failure")
@@ -80,6 +82,10 @@ KeyringAudit_CL
         "NotifyEventCount", column_ifexists("NotifyEventCount", int(null)),
         "RevealLimitFrom", column_ifexists("RevealLimitFrom", ""),
         "RevealLimitTo", column_ifexists("RevealLimitTo", ""),
+        "SharePrincipalId", column_ifexists("SharePrincipalId", ""),
+        "SharePrincipalType", column_ifexists("SharePrincipalType", ""),
+        "ShareUntil", column_ifexists("ShareUntil", ""),
+        "SharePath", column_ifexists("SharePath", ""),
         "WriterIdentityClientId", WriterIdentityClientId,
         "KeyringInstance", KeyringInstance)
 | where array_length(object_has_any) == 0 or Object has_any (object_has_any)

@@ -50,6 +50,10 @@ const KQL: &[(&str, &str)] = &[
         include_str!("../infra/sentinel/rules/app-attack.kql"),
     ),
     (
+        "rules/shares.kql",
+        include_str!("../infra/sentinel/rules/shares.kql"),
+    ),
+    (
         "rules/audit-gap.kql",
         include_str!("../infra/sentinel/rules/audit-gap.kql"),
     ),
@@ -486,7 +490,7 @@ fn rule_keys() -> Vec<&'static str> {
 #[test]
 fn every_rule_is_off_unless_its_parameter_turns_it_on() {
     let keys = rule_keys();
-    assert_eq!(keys.len(), 7);
+    assert_eq!(keys.len(), 8);
     for key in &keys {
         let entry = MAIN
             .find(&format!("key: '{key}'"))

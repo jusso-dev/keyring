@@ -319,6 +319,11 @@ fn words(action: Action) -> (&'static str, &'static str, &'static str) {
             "Your organisation asks for a reason before Keyring reads a secret value, including to copy it. Nothing has been read or copied yet.",
             "Copy value",
         ),
+        Action::ShareGrant => (
+            "Why are you sharing this secret?",
+            "Your organisation asks for a reason before Keyring gives anyone else access to a secret. Nothing has been shared yet.",
+            "Share",
+        ),
         Action::CertificateDownloadPrivateKey => (
             "Why do you need the private key?",
             "Your organisation asks for a reason before Keyring downloads a private key. Nothing has been downloaded yet.",

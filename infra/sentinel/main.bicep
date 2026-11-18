@@ -138,6 +138,17 @@ param attackThreshold int = 5
 @maxValue(1440)
 param attackWindowMinutes int = 15
 
+// Shares (#286)
+@description('Turn on: a secret shared through Keyring with a guest account, or more than shareThreshold shares by one person in the window.')
+param enableShares bool = false
+@description('Shares by one person in the window above which an alert is raised.')
+@minValue(1)
+param shareThreshold int = 5
+@description('Window for the shares rule, in minutes. The rule also runs this often.')
+@minValue(5)
+@maxValue(1440)
+param shareWindowMinutes int = 60
+
 // Audit gap
 @description('Turn on: no Keyring events at all while Key Vault logged changes or reads from Keyring\'s outbound addresses. Needs keyringOutboundIps.')
 param enableAuditGap bool = false
@@ -262,6 +273,18 @@ var allRules = [
     period: 'PT${attackWindowMinutes + ingestionDelayMinutes}M'
     tactics: ['InitialAccess']
     entities: [ipEntity, accountEntity]
+  }
+  {
+    key: 'shares'
+    create: true
+    enabled: enableShares
+    displayName: 'Keyring: secret shared with a guest, or many shares'
+    description: 'A person shared a secret through Keyring with a guest account, or made more than ${shareThreshold} shares in ${shareWindowMinutes} minutes. A share is a Key Vault Secrets User assignment made as that person.'
+    query: 'let window = ${shareWindowMinutes}m;\n${delayLet}let shareThreshold = ${shareThreshold};\n${loadTextContent('rules/shares.kql')}'
+    frequency: 'PT${shareWindowMinutes}M'
+    period: 'PT${shareWindowMinutes + ingestionDelayMinutes}M'
+    tactics: ['Persistence', 'CredentialAccess']
+    entities: [accountEntity, ipEntity]
   }
   {
     key: 'audit-gap'
