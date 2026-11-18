@@ -67,10 +67,19 @@
 <span class="clip clip-{{ size }}">{{ text }}</span>
 {%- endmacro -%}
 
+{#- Text in a cell that may be longer than the column: shown whole when
+    it fits `limit` characters, otherwise cut to one line in a <details>
+    summary that opens to the whole text. Reachable by keyboard, pointer
+    and touch, with no script. -#}
+{%- macro clip_more(text, size, limit, what) -%}
+{%- if text.chars().count() <= limit %}{{ text }}{% else %}<details class="cell-more"><summary><span class="clip clip-{{ size }}">{{ text }}</span><span class="visually-hidden"> Show the whole {{ what }}</span></summary><p>{{ text }}</p></details>{% endif -%}
+{%- endmacro -%}
+
 {#- A time from a log (a dates::LogTime): compact to show, the ISO time
-    in the datetime attribute. The column header names the zone. -#}
+    in the datetime attribute. The column header names the zone. A time
+    Keyring couldn't read is shown as it came, escaped, with no <time>. -#}
 {%- macro when(t) -%}
-<time datetime="{{ t.iso }}">{{ t.short }}</time>
+{%- if let Some(iso) = t.iso %}<time datetime="{{ iso }}">{{ t.short }}</time>{% elif t.short.is_empty() %}<span class="muted">Not given</span>{% else %}{{ t.short }}{% endif -%}
 {%- endmacro -%}
 
 {#- Keyring activity's Who: the person, or "Keyring" with a muted System
@@ -85,9 +94,9 @@
 <div class="fpill"><label for="tag">Tag</label><input id="tag" name="tag" type="text" value="{{ value }}" list="tag-filter-options" aria-describedby="tag-help"{% call ident() %}{% endcall %}><span class="fpill-hint" id="tag-help">name or name=value</span>{% call filter_options(options) %}{% endcall %}</div>
 {%- endmacro -%}
 
-{#- "Owned by me" as a checkbox pill. Its meaning is in "About this page". -#}
+{#- "Owned by me" as a checkbox pill, with what it matches beside it. -#}
 {%- macro mine_filter(checked) -%}
-<div class="fpill fpill-check"><input id="mine" name="mine" type="checkbox" value="1"{% if checked %} checked{% endif %}><label for="mine">Owned by me</label></div>
+<div class="fpill fpill-check"><input id="mine" name="mine" type="checkbox" value="1"{% if checked %} checked{% endif %} aria-describedby="mine-help"><label for="mine">Owned by me</label><span class="fpill-hint" id="mine-help">Matches items you own or are on the notify list for.</span></div>
 {%- endmacro -%}
 
 {#- Tags as name=value, or a muted "None". A tag with an empty value shows
@@ -201,9 +210,14 @@
   {%- endif %}
 {%- endmacro -%}
 
-{#- An owner in a list cell: one line, cut at the column's width. -#}
+{#- An owner in a list cell. One short entry is shown as it is. Anything
+    longer, or more than one entry, is one line in a <details> summary
+    that opens to every entry with its link, so no address is out of
+    reach. -#}
 {%- macro owner_cell(d) -%}
-<span class="clip clip-lg">{% call owner_value(d) %}{% endcall %}</span>
+{%- if d.fits(28) %}<span class="clip clip-lg">{% call owner_value(d) %}{% endcall %}</span>
+{%- else %}<details class="cell-more"><summary><span class="clip clip-lg">{{ d.entries[0].text() }}</span>{% if d.entries.len() > 1 %} <span class="muted small">+{{ d.entries.len() - 1 }} more</span>{% endif %}<span class="visually-hidden"> Show every owner</span></summary><p>{% call owner_value(d) %}{% endcall %}</p></details>
+{%- endif -%}
 {%- endmacro -%}
 
 {#- An owner value on a page: each entry that parses as an address is a

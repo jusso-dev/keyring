@@ -67,7 +67,7 @@
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="item-name nowrap">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
       <td class="cell-fluid"><span class="clip clip-md">{{ ui::or_none(v.subscription_name) }}</span></td>
-      <td class="nowrap">{{ ui::or_none(v.resource_group) }}</td>
+      <td class="cell-fluid">{% if v.resource_group.is_empty() %}<span class="muted">None</span>{% else %}{% call ui::clip_more(v.resource_group, "md", 22, "resource group") %}{% endcall %}{% endif %}</td>
       <td class="nowrap col-p3">{{ ui::or_none(v.location) }}</td>
       <td class="owner-cell cell-fluid">{{ ui::owner_cell(crate::owner::vault_display(v.tags)) }}</td>
       <td class="nowrap col-p3">{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>

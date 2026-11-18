@@ -59,7 +59,7 @@
     <tbody>
       {% for f in failed %}
       <tr>
-        <th scope="row" class="item-name cell-fluid"><span class="clip clip-lg">{{ f.name }}</span> <span class="{{ f.rotation.status.css() }}">{{ f.rotation.status.label() }}</span></th>
+        <th scope="row" class="item-name cell-fluid"><span class="name-badge"><span class="clip clip-lg">{{ f.name }}</span> <span class="{{ f.rotation.status.css() }}">{{ f.rotation.status.label() }}</span></span></th>
         <td class="item-name nowrap">{{ f.vault }}</td>
         <td class="item-name cell-fluid"><span class="clip clip-md">{{ f.rotation.by }}</span></td>
         <td class="nowrap">{{ f.rotation.last }}</td>
@@ -89,7 +89,7 @@
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
-        <th scope="row" class="item-name cell-fluid"><span class="clip clip-lg">{{ r.name }}</span>{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <th scope="row" class="item-name cell-fluid"><span class="name-badge"><span class="clip clip-lg">{{ r.name }}</span>{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</span></th>
         <td>{{ r.kind.label() }}</td>
         <td class="item-name nowrap">{{ r.vault }}</td>
         <td class="nowrap">{{ ui::expires(r.expires, r.note) }}</td>

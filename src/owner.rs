@@ -424,6 +424,17 @@ pub struct Display {
 }
 
 impl Display {
+    /// True when the whole value fits a list cell as it is: at most one
+    /// entry, of at most `chars` characters. Otherwise the cell opens to
+    /// every entry.
+    pub fn fits(&self, chars: usize) -> bool {
+        self.entries.len() <= 1
+            && self
+                .entries
+                .iter()
+                .all(|e| e.text().chars().count() <= chars)
+    }
+
     pub fn of(value: &str) -> Self {
         let mut d = Self::default();
         for e in value.split(',') {

@@ -22,7 +22,7 @@ This walkthrough covers everything you do with one secret: create it (a plain va
 
 1. Select **Secrets**.
 
-   The list shows each secret's status, description, owner, content type, when its value last changed, when it expires and its tags. "Values stay hidden until you open a secret and ask to see one." Links above the list count the expired, expiring, disabled and long-unchanged secrets; select one to show just those.
+   The list shows each secret's status, description, owner, content type, when its value last changed and when it expires. Open a secret to see its tags. "Values stay hidden until you open a secret and ask to see one." Links above the list count the expired, expiring, disabled and long-unchanged secrets; select one to show just those.
 
    ![The secrets list.](../images/screenshots/secrets-list.png)
 

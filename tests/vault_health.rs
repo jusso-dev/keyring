@@ -298,11 +298,13 @@ async fn csv_lists_every_check_and_says_what_it_leaves_out() {
     let lines: Vec<&str> = body.lines().collect();
     assert_eq!(
         lines[0],
-        "Vault,Subscription,Resource group,Check,Result,Detail,Guide"
+        "Vault,Subscription,Resource group,Owners,Check,Result,Detail,Guide"
     );
     assert_eq!(lines.len(), 1 + CHECKS);
     assert!(
-        lines[1].starts_with("kv-test,sub-a,\"'=HYPERLINK(\"\"x\"\")\",Audit logs,Pass,"),
+        lines[1].starts_with(
+            "kv-test,sub-a,\"'=HYPERLINK(\"\"x\"\")\",ops@example.com; Platform team,Audit logs,Pass,"
+        ),
         "{}",
         lines[1]
     );
@@ -315,7 +317,7 @@ async fn csv_lists_every_check_and_says_what_it_leaves_out() {
     assert!(cert.contains(",Unknown,") && cert.contains("pick this vault on its own"));
 
     let body = body_text(w.get("/vault-health.csv?vault=kv-gone").await).await;
-    assert!(body.contains("kv-gone,,,,NOT READ,Not in the list of vaults you can see"));
+    assert!(body.contains("kv-gone,,,,,NOT READ,Not in the list of vaults you can see"));
 }
 
 #[tokio::test]

@@ -32,6 +32,30 @@ fn event(vault: &str, action: &str, outcome: &str) -> Vec<(&'static str, Value)>
     ]
 }
 
+/// The events table's body, apart from the filter form.
+fn rows_of(html: &str) -> &str {
+    let at = html.find("id=\"keyring-caption\"").expect("events table");
+    let body = &html[at..];
+    &body[body.find("<tbody>").unwrap()..body.find("</tbody>").unwrap()]
+}
+
+/// The action's label is in a row of the events table, and its code is
+/// an option of the Action filter: each checked where it lives, so one
+/// can't stand in for the other.
+fn assert_row_and_option(html: &str, a: keyring::audit::Action) {
+    let rows = rows_of(html);
+    assert!(
+        rows.contains(&format!(">{}</span>", a.label())),
+        "no {a} row"
+    );
+    let select = &html[html.find("<select id=\"action\"").unwrap()..];
+    let select = &select[..select.find("</select>").unwrap()];
+    assert!(
+        select.contains(&format!("<option value=\"{}\">", a.as_str())),
+        "no {a} option"
+    );
+}
+
 #[tokio::test]
 async fn shows_keyring_events_read_as_the_person() {
     let w = world().await;
@@ -44,14 +68,13 @@ async fn shows_keyring_events_read_as_the_person() {
     ];
     let (status, html) = w.page("/v/kv-test/audit/keyring").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Secret value shown"));
-    assert!(html.contains("value=\"secret.reveal\""));
+    assert_row_and_option(&html, keyring::audit::Action::SecretReveal);
     assert!(html.contains("Refused by Keyring"));
     assert!(html.contains("purge_disabled"));
     assert!(html.contains("alex@example.com"));
-    assert!(html.contains("<time datetime=\"2026-11-17T01:02:03Z\">17 Nov 2026, 01:02</time>"));
+    assert!(html.contains("<time datetime=\"2026-11-17T01:02:03.456Z\">17 Nov 2026, 01:02</time>"));
     assert!(
-        !html.contains(">Secret deleted</span>"),
+        !rows_of(&html).contains(keyring::audit::Action::SecretDelete.label()),
         "another vault's row"
     );
     assert!(html.contains("aria-current=\"page\">Keyring activity"));
@@ -82,7 +105,7 @@ async fn reason_and_ticket_are_shown_as_text() {
     assert!(!html.contains("<b>INC</b>"));
     assert!(html.contains("&#60;script&#62;alert(1)&#60;/script&#62;"));
     assert!(!html.contains("\" onmouseover=\""));
-    assert!(html.contains("Ticket CHG-1"));
+    assert!(html.contains(">CHG-1&#34; onmouseover=&#34;x</td>"));
 }
 
 #[tokio::test]
@@ -205,8 +228,7 @@ async fn says_when_log_analytics_returned_only_part() {
     let (status, html) = w.page("/v/kv-test/audit/keyring").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("only part of the result"));
-    assert!(html.contains("Secret value shown"));
-    assert!(html.contains("value=\"secret.reveal\""));
+    assert_row_and_option(&html, keyring::audit::Action::SecretReveal);
     *w.arm.state.keyring_partial.lock().unwrap() = false;
     let (_, html) = w.page("/v/kv-test/audit/keyring").await;
     assert!(!html.contains("only part of the result"));

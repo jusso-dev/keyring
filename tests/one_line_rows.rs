@@ -19,6 +19,13 @@ fn first_row<'a>(html: &'a str, caption_id: &str) -> Vec<&'a str> {
     let at = html
         .find(&format!("id=\"{caption_id}\""))
         .unwrap_or_else(|| panic!("no table {caption_id}"));
+    // The table that holds this caption carries the one-line rule.
+    let table = html[..at].rfind("<table").unwrap();
+    let open = &html[table..table + html[table..].find('>').unwrap()];
+    assert!(
+        open.contains("one-line"),
+        "{caption_id}: the table isn't one-line: {open}"
+    );
     let body = &html[at..];
     let body = &body[body.find("<tbody>").unwrap()..];
     let row = &body[..body.find("</tr>").unwrap()];
@@ -138,7 +145,7 @@ async fn key_vault_audit_rows_stay_on_one_line() {
     let when = col(&html, "audit-caption", "When (UTC)");
     timed(when, "when");
     assert!(
-        when.contains("<time datetime=\"2026-11-18T05:22:09Z\">18 Nov 2026, 05:22</time>"),
+        when.contains("<time datetime=\"2026-11-18T05:22:09.123Z\">18 Nov 2026, 05:22</time>"),
         "{when}"
     );
     clipped(col(&html, "audit-caption", "Who"), "who");
@@ -172,15 +179,21 @@ async fn keyring_activity_rows_stay_on_one_line_with_plain_labels() {
     let when = col(&html, "keyring-caption", "When (UTC)");
     timed(when, "when");
     assert!(
-        when.contains("<time datetime=\"2026-11-18T05:22:09Z\">18 Nov 2026, 05:22</time>"),
+        when.contains("<time datetime=\"2026-11-18T05:22:09.456Z\">18 Nov 2026, 05:22</time>"),
         "{when}"
     );
     clipped(col(&html, "keyring-caption", "Who"), "who");
     clipped(col(&html, "keyring-caption", "Item"), "item");
     let what = col(&html, "keyring-caption", "What");
     clipped(what, "what");
-    // A plain label shows; the code stays in the markup.
-    assert!(what.contains(">Bulk change to secrets</span>"), "{what}");
+    // A plain label shows, not the code; the code stays in the markup.
+    let bulk = Action::SecretBulkUpdate;
+    assert_eq!(bulk.as_str(), "secret.bulk_update");
+    assert!(
+        what.contains(&format!(">{}</span>", bulk.label())),
+        "{what}"
+    );
+    assert!(!what.contains(">secret.bulk_update<"), "{what}");
     assert!(what.contains("value=\"secret.bulk_update\""), "{what}");
     // Result is a badge, as everywhere else.
     assert!(
@@ -191,7 +204,12 @@ async fn keyring_activity_rows_stay_on_one_line_with_plain_labels() {
     assert!(html.contains("Keyring <span class=\"badge badge-muted\">System</span>"));
     assert!(!html.contains("Nobody signed in"));
     // The filter offers each action by label, with its code.
-    assert!(html.contains("<option value=\"notify.sent\">Email sent (notify.sent)</option>"));
+    let sent = Action::NotifySent;
+    assert_eq!(sent.as_str(), "notify.sent");
+    assert!(html.contains(&format!(
+        "<option value=\"notify.sent\">{} (notify.sent)</option>",
+        sent.label()
+    )));
 }
 
 /// Every action Keyring can write has a plain label, and no two share one.
@@ -212,4 +230,94 @@ fn every_audit_action_has_a_label() {
         assert_eq!(Action::label_for(a.as_str()), Some(label));
     }
     assert_eq!(Action::label_for("not.an.action"), None);
+}
+
+fn reason_event(reason: &str, ticket: &str) -> Vec<(&'static str, Value)> {
+    let mut e = keyring_event("share.grant", UPN, "refused");
+    e.push(("Reason", json!(reason)));
+    e.push(("Ticket", json!(ticket)));
+    e
+}
+
+/// The reason and ticket are the point of the log, and this view is the
+/// only place they show: a long reason opens in full, and the ticket has
+/// its own column so the reason can never hide it.
+#[tokio::test]
+async fn keyring_activity_keeps_the_whole_reason_and_ticket_readable() {
+    const WS: &str = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/law";
+    const LONG_REASON: &str = "Checking the settlement job's database login after the failed nightly run, before the bank file cut-off at noon";
+    let w = support::world_with(&[("KEYRING_AUDIT_WORKSPACE_ID", WS)]).await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    *w.arm.state.keyring_rows.lock().unwrap() = vec![reason_event(LONG_REASON, "INC-20418")];
+    let (_, html) = w.page("/v/kv-test/audit/keyring").await;
+    let why = col(&html, "keyring-caption", "Why");
+    assert!(why.contains("<details class=\"cell-more\">"), "{why}");
+    assert!(
+        why.contains(&format!("<p>{}</p>", LONG_REASON.replace('\'', "&#39;"))),
+        "{why}"
+    );
+    let ticket = col(&html, "keyring-caption", "Ticket");
+    assert!(ticket.contains(">INC-20418</td>"), "{ticket}");
+    // The label doesn't claim the share happened; Result says it didn't.
+    let what = col(&html, "keyring-caption", "What");
+    assert!(what.contains(">Share secret</span>"), "{what}");
+    assert!(col(&html, "keyring-caption", "Result").contains("Refused by Keyring"));
+
+    // A short reason shows as it is, with no disclosure.
+    *w.arm.state.keyring_rows.lock().unwrap() = vec![reason_event("Rotation check", "CHG-1")];
+    let (_, html) = w.page("/v/kv-test/audit/keyring").await;
+    let why = col(&html, "keyring-caption", "Why");
+    assert!(why.contains(">Rotation check</td>"), "{why}");
+}
+
+/// A time that isn't a whole UTC time is shown as it came, escaped, with
+/// no `<time>`; an empty one says so.
+#[tokio::test]
+async fn unreadable_times_have_no_time_element() {
+    const WS: &str = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/law";
+    let w = support::world_with(&[("KEYRING_AUDIT_WORKSPACE_ID", WS)]).await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    let mut odd = keyring_event("secret.reveal", UPN, "success");
+    odd[0] = ("TimeGenerated", json!("2026-11-18T05:22:09+02:00<b>"));
+    let mut empty = keyring_event("secret.reveal", UPN, "success");
+    empty[0] = ("TimeGenerated", Value::Null);
+    *w.arm.state.keyring_rows.lock().unwrap() = vec![odd];
+    let (_, html) = w.page("/v/kv-test/audit/keyring").await;
+    let when = col(&html, "keyring-caption", "When (UTC)");
+    assert!(!when.contains("<time"), "{when}");
+    assert!(
+        when.contains("2026-11-18T05:22:09+02:00&#60;b&#62;"),
+        "{when}"
+    );
+    *w.arm.state.keyring_rows.lock().unwrap() = vec![empty];
+    let (_, html) = w.page("/v/kv-test/audit/keyring").await;
+    let when = col(&html, "keyring-caption", "When (UTC)");
+    assert!(!when.contains("<time"), "{when}");
+    assert!(when.contains("Not given"), "{when}");
+}
+
+/// Every owner address stays reachable when the cell is cut: more than
+/// one, or a long one, opens in a disclosure with each link.
+#[tokio::test]
+async fn clipped_owners_and_resource_groups_open_in_full() {
+    let w = support::world().await;
+    let mut row = support::vault_row("kv-test", "sub-a", true);
+    row["tags"] = json!({"keyring-owners": format!("{UPN}, ops@example.com")});
+    row["resourceGroup"] =
+        json!("rg-payments-settlement-reconciliation-production-australiaeast-001");
+    *w.arm.state.vaults.lock().unwrap() = vec![row];
+    let (_, html) = w.page("/vaults").await;
+    let owners = col(&html, "vault-table-caption", "Owners");
+    assert!(owners.contains("<details class=\"cell-more\">"), "{owners}");
+    assert!(owners.contains("+1 more"), "{owners}");
+    assert!(
+        owners.contains("href=\"mailto:ops@example.com\""),
+        "{owners}"
+    );
+    let rg = col(&html, "vault-table-caption", "Resource group");
+    assert!(rg.contains("<details class=\"cell-more\">"), "{rg}");
+    assert!(
+        rg.contains("<p>rg-payments-settlement-reconciliation-production-australiaeast-001</p>"),
+        "{rg}"
+    );
 }

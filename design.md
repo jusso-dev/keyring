@@ -294,6 +294,17 @@ they are names to open.
     reads all of it, and the item's own page shows it in full. Where a
     page is the only place a value is shown (versions, import preview), it
     wraps in full (`td.mono-wrap`).
+  - A value that is only shown here, or whose every part matters (an
+    event's reason, a vault's owners, a resource group), isn't just cut:
+    past its column it is a `details.cell-more` whose summary is the cut
+    line and opens to the whole value, links included, at a readable
+    width (12 to 24rem). Keyboard, pointer and touch reach it with no
+    script, and the row grows only while open.
+  - A name with a badge after it sits in `.name-badge`: the name gives
+    way, the badge always stays inside the cell.
+  - A table may let a short phrase column wrap (`td.cell-wrap`: an access
+    assignment's Role and Comes from), so a long role name never forces
+    the table to scroll sideways.
   - No `title` tooltips: they can't be reached by touch or keyboard.
   - `tests/one_line_rows.rs` checks the main lists and both audit views
     carry these classes on those columns.
@@ -312,7 +323,10 @@ they are names to open.
 ## Toolbar (lists)
 
 - `form.filters` sits straight above the table: one row of 32px filter
-  pills on a white bar with a hairline border, as in the Azure portal.
+  pills on a white bar with a hairline border, as in the Azure portal,
+  wrapping to a second row only when the pills don't fit. At 48rem and
+  below the pills stack, each a full row, with the checkbox pill and Apply
+  sharing the last.
 - A **filter pill** (`.fpill`) is one bordered 32px box: the `<label>` as
   a caption-size ink-2 prefix ("Status"), a colon, then the borderless
   select or input inside it ("Status: All secrets"). The whole pill takes
@@ -324,7 +338,8 @@ they are names to open.
   name=value", `.fpill-hint`, tied with `aria-describedby`), and the bulk
   change's "Key Vault can't remove an expiry date" beside the date.
   A unit ("days") is a suffix the same way.
-- "Owned by me" is a checkbox pill.
+- "Owned by me" is a checkbox pill, with "Matches items you own or are on
+  the notify list for." beside it, tied with `aria-describedby`.
 - The last item is a compact secondary **Apply** button (Search, Check or
   Run report where the page says so). Enter in any text box applies the
   filters too, as a plain GET form. Clear is a text link after it.
@@ -464,16 +479,26 @@ padding above and below each row. It stacks below 30rem.
 - With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
   "Key Vault's log" and "Keyring activity", the open one with
   `aria-current="page"`, as on the expiry views. Keyring activity is the
-  same ledger with When (UTC), Who, What, Item, Result, Why, From. What is
-  the action's plain label ("Bulk change to secrets", "Email sent", "Share
-  revoked") from `Action::label` in `src/audit/mod.rs`, the one place
-  labels live; a test fails if an action has none. The dotted code
+  same ledger with When (UTC), Who, What, Item, Result, Why, Ticket,
+  From (From gives way below 1100px, `col-p3`). What is the action's plain label ("Bulk change secrets", "Send
+  email", "Revoke share") from `Action::label` in `src/audit/mod.rs`, the
+  one place labels live; a test fails if an action has none. Labels name
+  what was asked for, never how it ended ("Share secret", not "Secret
+  shared"), because a refused or failed event has the same label and the
+  Result column carries the outcome. The dotted code
   (`secret.bulk_update`) is in the Action filter's options and in Log
   Analytics. An event with no person is Who "Keyring" with a muted
   `badge-muted` "System" badge. Result: Done is an ok badge; "Denied by
   Azure" and "Refused by Keyring" are error badges; Failed is a muted
   badge; the reason code follows on the same line, muted and mono. Why is
-  the reason, then "Ticket ..." muted on the same line, or muted "None".
+  the reason in full when short, otherwise a `details.cell-more` that opens
+  to all of it; Ticket is its own column, so a long reason never hides it.
+  Muted "None" when either is empty. The event is the only place these
+  are shown, so they are never only cut.
+- Times: `<time datetime>` with milliseconds kept when the log has them.
+  A time that isn't a whole UTC time (`YYYY-MM-DDTHH:MM:SS`, an optional
+  fraction, `Z`) is shown as it came, escaped, with no `<time>`; an empty
+  one is muted "Not given".
 - Across vaults (`/audit`): the fixed reports first, as a `.card-list` of
   links. The open one has `aria-current="page"`, the accent tint, an accent
   border and an underline, so it isn't colour alone. Then the same ledger

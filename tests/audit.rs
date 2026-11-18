@@ -46,7 +46,7 @@ async fn shows_recent_events_in_plain_words() {
     assert!(html.contains("Viewed secret value"));
     assert!(html.contains("Rotated key"));
     assert!(html.contains("alex@example.com"));
-    assert!(html.contains("<time datetime=\"2026-11-09T10:00:00Z\">9 Nov 2026, 10:00</time>"));
+    assert!(html.contains("<time datetime=\"2026-11-09T10:00:00.123Z\">9 Nov 2026, 10:00</time>"));
     assert!(html.contains("Refused (Forbidden)"));
     assert!(html.contains("Unknown"));
     // Queried with the Log Analytics OBO token, against the resource-specific table.
