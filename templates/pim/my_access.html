@@ -4,6 +4,7 @@
 {% block content %}
 <h1>My access <span class="muted">to {{ vault }}</span></h1>
 <p>Your own Key Vault roles that reach this vault: the ones on now, and the ones you can turn on through Privileged Identity Management (PIM). Read from Azure each time; Keyring keeps nothing.</p>
+{% if sharing %}<p><a href="{{ shell.vault_prefix() }}/my-access/shares">My shares</a>: secrets shared with you, and the ones you shared.</p>{% endif %}
 {% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
 <h2>On now</h2>
 {% if active.is_empty() %}

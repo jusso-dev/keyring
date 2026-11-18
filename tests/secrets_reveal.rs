@@ -143,6 +143,44 @@ fn pins_script_is_small_dependency_free_and_same_origin() {
     assert!(js.contains("try {\n    start();"));
 }
 
+/// static/share.js (#286), the share picker, keeps to the same rules and
+/// its own size limit. It may call Keyring's own picker endpoint, and
+/// nothing else, and writes results with textContent only.
+#[test]
+fn share_script_is_small_dependency_free_and_same_origin() {
+    let js = include_str!("../static/share.js");
+    assert!(js.lines().count() < 160, "keep share.js small");
+    for banned in [
+        "import ",
+        "require(",
+        "eval(",
+        "new Function",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "http://",
+        "https://",
+        "localStorage",
+        "sessionStorage",
+        "cookie",
+        ".href =",
+        "location",
+        "onclick",
+        "setAttribute(\"on",
+    ] {
+        assert!(!js.contains(banned), "share.js must not use {banned}");
+    }
+    assert_eq!(js.matches("fetch(").count(), 1, "one call, to the picker");
+    assert!(
+        js.contains("URL_RE.test(url"),
+        "the endpoint is checked first"
+    );
+    assert!(js.contains("credentials: \"same-origin\""));
+    assert!(js.contains("encodeURIComponent(q)"));
+    assert!(js.contains("try {\n    start();"));
+}
+
 /// static/tags.js (#253), the tag rows script, keeps to the same rules and
 /// its own size limit. It builds rows with createElement and textContent.
 #[test]
@@ -174,14 +212,14 @@ fn tags_script_is_small_dependency_free_and_same_origin() {
 }
 
 /// No other script ships: every file under static/ that ends in .js is one
-/// of the three, and each is served.
+/// of the four, and each is served. share.js loads only on the Share form.
 #[test]
-fn only_three_scripts_ship() {
+fn only_four_scripts_ship() {
     let mut js: Vec<String> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|n| n.ends_with(".js"))
         .collect();
     js.sort();
-    assert_eq!(js, ["app.js", "pins.js", "tags.js"]);
+    assert_eq!(js, ["app.js", "pins.js", "share.js", "tags.js"]);
 }

@@ -45,6 +45,9 @@ pub struct RoleAssignment {
     pub principal_type: String,
     /// An ABAC condition narrows what it allows.
     pub has_condition: bool,
+    /// A share Keyring made (#286): the end date in its fixed description,
+    /// Unix seconds at midnight UTC. `None` for every other assignment.
+    pub shared_until: Option<i64>,
 }
 
 /// What an assignment, active or eligible, is made of. Both lists share it.
@@ -61,6 +64,8 @@ struct AssignmentProps {
     principal_type: Option<String>,
     #[serde(default)]
     condition: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +81,11 @@ impl From<AssignmentProps> for RoleAssignment {
             principal_id: p.principal_id,
             principal_type: p.principal_type.unwrap_or_default(),
             has_condition: p.condition.is_some_and(|c| !c.trim().is_empty()),
+            shared_until: p
+                .description
+                .as_deref()
+                .and_then(crate::azure::share::read_marker)
+                .map(|(_, until)| until),
         }
     }
 }
