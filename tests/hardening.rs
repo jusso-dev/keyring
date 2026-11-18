@@ -16,6 +16,8 @@ const MUTATING: &[&str] = &[
     "/v/kv-test/secrets/db-password/rollback",
     "/v/kv-test/secrets/db-password/copy",
     "/v/kv-test/secrets/db-password/reveal",
+    "/v/kv-test/secrets/db-password/share",
+    "/v/kv-test/secrets/db-password/share/revoke",
     "/v/kv-test/secrets/db-password/delete",
     "/v/kv-test/secrets/-/deleted/old-secret/recover",
     "/v/kv-test/secrets/-/deleted/old-secret/purge",
@@ -56,7 +58,9 @@ const MUTATING: &[&str] = &[
 ];
 
 async fn seeded() -> support::World {
-    let w = support::world_with(&[("KEYRING_ALLOW_PURGE", "true")]).await;
+    // Sharing on, so its POST routes are checked here too.
+    let w =
+        support::world_with(&[("KEYRING_ALLOW_PURGE", "true"), ("KEYRING_SHARING", "true")]).await;
     let s = &w.kv.state;
     let v1 = s.put("db-password", "one");
     s.put("db-password", "two");

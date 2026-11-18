@@ -1613,6 +1613,126 @@ async fn values_never_reach_the_logs() {
         );
     }
 
+    // Sharing (#286): a picker search, a grant through PIM, one that falls
+    // back to a plain assignment, a refused one, a revoke, and the emails.
+    // The picker's text, Graph's and Azure's messages, display names,
+    // addresses and the reason reach no log line and no email.
+    let sacs = support::acs::start().await;
+    let smi = support::start_identity().await;
+    let graph = support::share::start_graph().await;
+    let ws = support::world_configured(
+        vec![
+            ("KEYRING_SHARING", "true".to_owned()),
+            ("KEYRING_TEST_GRAPH_URL", graph.url()),
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", smi.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "shares".to_owned()),
+            ("KEYRING_REQUIRE_REASON", "reveal".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", sacs.url()),
+        ],
+        |_| {},
+    )
+    .await;
+    *ws.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    ws.kv.state.put("db-password", VALUE);
+    let blair = "aaaaaaaa-0000-0000-0000-000000000002";
+    graph.add(support::share::Person::user(
+        support::USER_OID,
+        "SHARERNAMELEAK",
+        "sharerleak@example.com",
+    ));
+    graph.add(support::share::Person::user(
+        blair,
+        "RECIPIENTNAMELEAK\nFORGEDLINE",
+        "recipientleak@example.com",
+    ));
+    let until = (chrono::Utc::now().date_naive() + chrono::Duration::days(3))
+        .format("%Y-%m-%d")
+        .to_string();
+    let res = ws.get("/v/kv-test/share/people?q=PICKERQUERYLEAK").await;
+    let _ = support::body_text(res).await;
+    let share = |extra: Vec<(&'static str, String)>| {
+        let ws = &ws;
+        let until = until.clone();
+        async move {
+            let mut f = vec![
+                ("principal", blair.to_owned()),
+                ("until", until),
+                ("reason", "SHAREREASONLEAK handover".to_owned()),
+            ];
+            f.extend(extra);
+            let f: Vec<(&str, &str)> = f.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let res = ws.post("/v/kv-test/secrets/db-password/share", &f).await;
+            let status = res.status();
+            let _ = support::body_text(res).await;
+            status
+        }
+    };
+    assert_eq!(share(vec![]).await, StatusCode::SEE_OTHER);
+    ws.arm.state.share.lock().unwrap().pim_fail = Some((400, "AadPremiumLicenseRequired"));
+    assert_eq!(share(vec![]).await, StatusCode::SEE_OTHER);
+    ws.arm.state.share.lock().unwrap().pim_fail = Some((403, "AuthorizationFailed"));
+    assert_eq!(share(vec![]).await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        share(vec![("who", "WHOLEAK@example.com".into())]).await,
+        StatusCode::SEE_OTHER,
+        "the picked ID wins over the typed text"
+    );
+    let name = ws
+        .arm
+        .state
+        .share
+        .lock()
+        .unwrap()
+        .assignments
+        .iter()
+        .find(|a| a.description.is_some())
+        .unwrap()
+        .name
+        .clone();
+    let res = ws
+        .post(
+            "/v/kv-test/secrets/db-password/share/revoke",
+            &[("assignment", &name), ("confirm_name", "db-password")],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let start = std::time::Instant::now();
+    while sacs.state.attempts().len() < 4 && start.elapsed() < std::time::Duration::from_secs(5) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let sbodies = sacs.state.all_bodies();
+    assert!(
+        sbodies.contains("recipientleak@example.com"),
+        "the recipient was mailed"
+    );
+    for leak in [
+        "Sup3r-S3cret",
+        "SHAREREASONLEAK",
+        "PICKERQUERYLEAK",
+        "WHOLEAK",
+        support::share::LEAK,
+        "\\nFORGEDLINE",
+        "obo:",
+    ] {
+        assert!(
+            !sbodies.contains(leak),
+            "{leak} reached a share email:\n{sbodies}"
+        );
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -1659,6 +1779,30 @@ async fn values_never_reach_the_logs() {
         "the owner policy's refusals are recorded: {logs}"
     );
     assert!(!logs.contains("TAGLEAK"), "a tag row leaked:\n{logs}");
+    for leak in [
+        "PICKERQUERYLEAK",
+        "SHARERNAMELEAK",
+        "RECIPIENTNAMELEAK",
+        "sharerleak@",
+        "recipientleak@",
+        "WHOLEAK",
+        support::share::LEAK,
+        "obo:https://graph",
+    ] {
+        assert!(!logs.contains(leak), "{leak} from sharing leaked:\n{logs}");
+    }
+    assert!(
+        logs.contains("action=share.grant outcome=success")
+            && logs.contains("share_path=plain")
+            && logs.contains("share_path=pim")
+            && logs.contains("share_principal_type=user")
+            && logs.contains("action=share.revoke outcome=success"),
+        "shares are audited: {logs}"
+    );
+    assert!(
+        logs.contains("reason=\"SHAREREASONLEAK handover\""),
+        "the reason goes on the share's audit event"
+    );
     for (action, item) in [
         ("secret.create", "noted"),
         ("secret.update", "noted"),

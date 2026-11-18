@@ -30,6 +30,12 @@
     "why": "192.0.2.66, with three csrf and two cross_site. Not the typed name mismatches, and 192.0.2.77 has one"
   },
   {
+    "rule": "shares",
+    "lets": "let KeyringAudit_CL = KeyringRows;\nlet delay = 10m;\nlet window = 60m;\nlet shareThreshold = 5;",
+    "rows": 2,
+    "why": "Fay shared with a guest; Gus made six shares in the hour. Hal made one share to a member and had one refused"
+  },
+  {
     "rule": "audit-gap",
     "lets": "let KeyringAudit_CL = KeyringRows;\nlet window = 6h;\nlet keyringIps = dynamic([\"203.0.113.10\"]);\nlet KeyVaultCalls = KeyVaultRows;",
     "rows": 0,

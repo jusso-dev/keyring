@@ -1,12 +1,17 @@
 // Hand-written stand-ins for the parts of the browser that static/app.js,
-// static/pins.js and static/tags.js use: a few DOM elements, a clock with timers, the clipboard and fetch.
+// static/pins.js, static/tags.js and static/share.js use: a few DOM elements, a clock with timers, the clipboard and fetch.
 // No packages. Only as much as the script needs.
 
 import fs from "node:fs";
 import vm from "node:vm";
 
 const read = (name) => fs.readFileSync(new URL(`../../static/${name}`, import.meta.url), "utf8");
-const SCRIPTS = { "app.js": read("app.js"), "pins.js": read("pins.js"), "tags.js": read("tags.js") };
+const SCRIPTS = {
+  "app.js": read("app.js"),
+  "pins.js": read("pins.js"),
+  "tags.js": read("tags.js"),
+  "share.js": read("share.js"),
+};
 
 // localStorage. `refuse` makes every call throw, as private modes and
 // policies do; `full` makes writes throw, as a full quota does.

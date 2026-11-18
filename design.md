@@ -572,6 +572,19 @@ Read as "make a new version". The primary button is the accent, never danger.
 - Under them a muted line says the list is kept in this browser only and is
   cleared on sign-out, with a **Clear** text button.
 
+### Share picker
+
+- On the Share form only, `static/share.js` turns the "Share with" box into
+  a search. Results are a plain bordered list (`ul.share-results`) of
+  `.button-link` rows under the box: the name and type in ink, the address
+  muted after them. Picking one fills the box and a hidden object ID.
+- A polite status line under the box says how many were found, or why the
+  directory couldn't be searched. Without JavaScript the box takes an exact
+  email address or object ID and nothing else changes.
+- The secret's **Shared with** section is a ledger table under Used by. A
+  share past its date has the danger **Overdue** badge; Revoke is a
+  secondary button that opens a typed-name confirmation.
+
 ## Motion
 
 Only colour changes on hover, 120ms ease-out. No transforms, no reveals.
