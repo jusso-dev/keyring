@@ -1,10 +1,12 @@
 {#- "Used by in the last 30 days", on an item's page and on the forms that
     change it. Advice only: whatever it says, the form below works. Needs
-    `used_by`. What was looked at and what the log can't show stay beside
-    the advice in every state, and an empty list never reads as safe. -#}
+    `used_by`. What was looked at and what the log can't show sit in a
+    closed "How this is worked out" in every state; the advice and the
+    consequence stay visible, and an empty list never reads as safe. -#}
 {%- import "_ui.html" as ui -%}
 <section aria-labelledby="used-by-heading" class="used-by">
   <h2 id="used-by-heading">Used by in the last 30 days</h2>
+  <p class="muted">Who used this {{ used_by.noun }}, from Key Vault's audit log. <a href="{{ used_by.audit_url }}">See every event</a></p>
   {% if let Some(why) = used_by.unavailable %}
   <div class="empty-state">
     <p>{{ why }} You can still go ahead.</p>
@@ -13,7 +15,7 @@
   {% elif used_by.callers.is_empty() %}
   <div class="empty-state"><p>{{ used_by.empty }}</p></div>
   {% else %}
-  <p class="muted">{{ used_by.counted() }}, from Key Vault's audit log. Anything listed may break if the {{ used_by.noun }} changes, is disabled or is deleted. <a href="{{ used_by.audit_url }}">See every event</a>.</p>
+  <p>{{ used_by.counted() }}. Anything listed may break if the {{ used_by.noun }} changes, is disabled or is deleted.</p>
   {% call ui::table_wrap("used-by-caption") %}
   <table class="ledger">
     <caption class="visually-hidden" id="used-by-caption">Who used this {{ used_by.noun }} in the last 30 days</caption>
@@ -35,5 +37,5 @@
   {% if used_by.capped %}<p class="muted">Showing the {{ used_by.callers.len() }} most recent. <a href="{{ used_by.audit_url }}">See every event</a> for the rest.</p>{% endif %}
   {% endif %}
   {% for n in used_by.notes %}<p class="notice notice-warn">{{ n }}</p>{% endfor %}
-  <p class="muted small">{% if let Some(c) = used_by.coverage() %}{{ c }} {% endif %}{{ used_by.limits() }}{% if used_by.callers.is_empty() %} <a href="{{ used_by.audit_url }}">See every event</a>.{% endif %}</p>
+  <details class="about"><summary>How this is worked out</summary><p>{% if let Some(c) = used_by.coverage() %}{{ c }} {% endif %}{{ used_by.limits() }}</p></details>
 </section>

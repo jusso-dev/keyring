@@ -78,9 +78,9 @@
     {% for (v, audit) in vaults %}
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="item-name">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
-      <td>{{ ui::or_none(v.subscription_name) }}</td>
-      <td>{{ ui::or_none(v.resource_group) }}</td>
-      <td>{{ ui::or_none(v.location) }}</td>
+      <td class="tech"><span class="clip">{{ ui::or_none(v.subscription_name) }}</span></td>
+      <td class="tech"><span class="clip">{{ ui::or_none(v.resource_group) }}</span></td>
+      <td class="nowrap">{{ ui::or_none(v.location) }}</td>
       <td class="owner-cell">{{ ui::owner_value(crate::owner::vault_display(v.tags)) }}</td>
       <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
       <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>

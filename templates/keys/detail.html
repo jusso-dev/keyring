@@ -116,7 +116,7 @@
 {% include "_used_by.html" %}
 <section aria-labelledby="access-heading" id="access-and-sharing">
   <h2 id="access-heading">Access</h2>
-  <p class="muted">Role assignments that reach this key, from the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
+  <p class="muted">Who can reach this key. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
   {% let prefix = "item-" %}
   {% include "_access.html" %}
 </section>

@@ -36,7 +36,9 @@ decoration: no illustrations, gradients, background art, charts or scores.
   - **Form pages** (create, edit, upload, renewal, rotation policy,
     generator): fields grouped under small section headings (Basics,
     Value, Expiry, Ownership and notes, Tags, Advanced), 40rem wide at
-    most.
+    most. One rhythm: `--space-sm` (16px) above each field's label,
+    `--space-lg` (32px) above each section heading. A field label that
+    isn't a `<label>` (such as "Type of secret") is `p.field-label`.
   - **Decision pages** (confirm, disable, rotate, rollback, upload preview,
     sign-in, signed out, errors): one narrow panel that ends in its action.
   - **Ledger pages** (audit, expiry, vault health, access): the table is the page.
@@ -116,6 +118,8 @@ Text needs 4.5:1. Control borders, glyphs and focus rings need 3:1.
 | chrome-link | chrome | 9.69 | Top bar links |
 | chrome-ink / chrome-muted / chrome-link | chrome-2 | 11.61 / 6.34 / 7.91 | Vault switcher name, label and link |
 | rule-strong | chrome | 3.63 | Vault switcher border (3:1) |
+| chrome-muted | chrome-2 | 6.34 | Search icon and account icon (3:1) |
+| accent | paper / paper-2 | 6.19 / 5.73 | Pin star (3:1) |
 | ink-2 | paper | 6.64 | Column headers on the paper header row, nav group labels |
 | ink | paper-2 | 13.83 | Info notice, toolbar button hover, More menu hover |
 | danger | surface | 6.55 | Delete in the More menu |
@@ -183,9 +187,17 @@ heights and three weights.
 
 - **Top bar** (48px, dark chrome): the mark and "Keyring", then the vault
   switcher (a "Vault" label, the vault name and "Change vault", or "Choose
-  a vault"), the global search (a plain GET form to `/search`, a visually
-  hidden label, a small Search button), and the signed-in person with
-  "Sign out" at the right. Below 48rem it wraps and search takes its own row.
+  a vault"), the global search, and the signed-in person with "Sign out"
+  at the right. Below 48rem it wraps and search takes its own row.
+- **Search** is a plain GET form to `/search` with a visually hidden
+  label, styled like the Azure portal's: a 20rem field on chrome-2 with a
+  rule-strong border, chrome-ink text and a leading 16px search icon in
+  chrome-muted (inline SVG, `aria-hidden`). The Search button is quiet:
+  no fill or border, chrome-link text, chrome-2 on hover. Enter also
+  searches.
+- **Account** is a compact chip: 24px high, caption size, a person icon,
+  chrome-2 fill, a rule-strong border and fully rounded ends. "Sign out"
+  stays a text link beside it.
 - **Section nav** (12rem, paper, hairline right): items in groups, each
   group with a caption label.
   - Vault: Secrets, Certificates, Keys
@@ -206,7 +218,7 @@ heights and three weights.
   `span` with `aria-current="page"`. Item pages: Vaults > vault > Secrets >
   name. It replaces every "Back to" link.
 - **Title row**: the h1 (`--text-title`), then status badges, then the Pin
-  button when the script adds it.
+  button when the script adds it, styled as a command bar button.
 - **Description**: one line, `p.page-desc`, ink-2. An item's own
   description (`.item-note`) takes its place on detail pages.
 - **About this page**: `details.about`, closed, a summary with an info
@@ -263,6 +275,11 @@ they are names to open.
 - **Ledger** (`table.ledger`, audit and expiry): no frame, sits on the page.
   A 2px ink rule above the header, a 1px ink rule under it, hairline rules
   between rows and hairline column rules. Times and dates don't wrap.
+- Rows stay one line, about 40px, on list pages. Names, dates, expiry,
+  owners and tags don't wrap. Technical values (content type,
+  subscription, resource group) sit in `td.tech` with a `span.clip`: one
+  line, cut with an ellipsis past 16rem. No `title` tooltips (they can't
+  be reached by touch or keyboard); the full value is on the item's page.
 - Tables scroll sideways inside `.table-wrap` at narrow widths. Nothing else
   on a page scrolls sideways.
 
@@ -453,21 +470,28 @@ padding above and below each row. It stacks below 30rem.
   action.
 - Workspaces left out, workspaces with no events from the vault, and a
   partial answer are warn notices under the table.
-- Last, in every state, a muted small line: what was looked at (workspaces
-  answered of how many, the 30 days, the newest event) and what the log
-  can't show.
+- One short muted line under the heading says what it is, with "See every
+  event". The count line over the table says that anything listed may
+  break if the item changes; it stays visible.
+- Last, in every state, a closed `details.about`, "How this is worked
+  out": what was looked at (workspaces answered of how many, the 30 days,
+  the newest event) and what the log can't show.
 ### Access
 
-- The vault's Access page: heading, a Download CSV link, a muted line saying
-  principals are object IDs with portal links and names aren't looked up,
-  then one ledger table: Who (object ID in mono, linked to the portal), Type,
+- The vault's Access page: heading, a Download CSV link, a closed "How
+  this is worked out" saying principals are object IDs with portal links
+  and names aren't looked up, then one ledger table: Who (object ID in mono, linked to the portal), Type,
   Role, Comes from. Eligible is a muted badge; "Can grant itself access" is
   a warn badge. Notes on what wasn't read are warn notices under the table.
 - Access policy vaults: a sentence saying so, then a ledger table of object
   ID and what each policy allows in plain words, with a warn badge "Reads
   secret values". Then the roles that can grant access.
 - Each secret, certificate and key page ends with an Access section (`h2`)
-  using the same tables, and a link to the whole vault's Access page.
+  using the same tables: one short line ("Who can reach this secret.") and
+  a link to the whole vault's Access page, then the count. Where the
+  assignments come from, how principals are shown and what "Can grant
+  itself access" and "Eligible" mean sit in a closed "How this is worked
+  out". Badges, empty states and notes stay visible.
 - When it can't be read: an empty state with the reason and a "What to ask
   for" hint, never an empty table.
 
@@ -582,8 +606,8 @@ Read as "make a new version". The primary button is the accent, never danger.
 - On an item's page, Owner and Notify are rows in the facts list. A parsed
   address is a plain link (`mailto:`); anything else is mono text with
   "(not a plain address)" in muted small text. "None" in muted when empty.
-- Lists have an Owner column after Description, at `--text-caption`, wrapping
-  anywhere. The expiry and age pages have no Description column, but have
+- Lists have an Owner column after Description, on one line with
+  "(not a plain address)" as a muted caption suffix that doesn't wrap. The expiry and age pages have no Description column, but have
   an Owner column before Tags, styled the same (`td.owner-cell`), so
   addresses stay out of the Tags text and a link per address works. Notify
   is in their CSVs only: the pages have no room for up to five addresses.
@@ -651,11 +675,13 @@ Read as "make a new version". The primary button is the accent, never danger.
 - Kept in the browser by `static/pins.js`, never on the server. Without
   JavaScript, or when the browser refuses `localStorage`, nothing shows and
   nothing changes.
-- A small secondary **Pin** button (`button.pin-button`) sits under the
-  heading of each vault list page (secrets, certificates, keys) and each
-  secret, certificate and key page. It has `aria-pressed`, a visually hidden
-  item name, and a CSS star glyph: an outline when off, filled with an
-  accent border and tint when pinned, so state isn't colour alone.
+- A small **Pin** button (`button.pin-button`) sits in the title row of
+  each vault list page (secrets, certificates, keys) and each secret,
+  certificate and key page. It looks like a command bar button: no frame,
+  a 14px accent star and the label. It has `aria-pressed` and a visually
+  hidden item name. The star is an outline when off; pinned, it is filled
+  and the button gets the accent tint and rule, so state isn't colour
+  alone.
 - The home page and the vault list show **Pinned** and **Recently opened**
   (last 10) above everything else, each an `h2` and a plain list of resource-name
   links with the kind and vault muted after them. Only when non-empty.

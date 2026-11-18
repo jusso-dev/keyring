@@ -181,15 +181,37 @@ small, .small { font-size: var(--text-caption); line-height: var(--lh-caption); 
 
 /* Search every vault, from any page. A plain GET form. */
 .site-search {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3xs);
   margin: 0 0 0 auto;
 }
-.site-search input[type="search"] {
-  width: 18rem;
-  border-color: var(--color-chrome-muted);
+/* A search field on the chrome, as in the Azure portal: a leading icon,
+   no fill of its own, and a quiet Search button. Enter also searches. */
+.site-search-icon {
+  position: absolute;
+  left: var(--space-2xs);
+  top: 50%;
+  margin-top: -0.5rem;
+  color: var(--color-chrome-muted);
+  pointer-events: none;
 }
+.site-search input[type="search"] {
+  width: 20rem;
+  padding-left: 2rem;
+  border-color: var(--color-rule-strong);
+  background: var(--color-chrome-2);
+  color: var(--color-chrome-ink);
+}
+.site-search input[type="search"]:hover { border-color: var(--color-chrome-muted); }
+.site-search .site-search-go {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-chrome-link);
+  font-weight: 400;
+}
+.site-search .site-search-go:hover { background: var(--color-chrome-2); border-color: transparent; color: var(--color-chrome-ink); }
 
 .account {
   display: flex;
@@ -198,7 +220,21 @@ small, .small { font-size: var(--text-caption); line-height: var(--lh-caption); 
   white-space: nowrap;
 }
 .account form { margin: 0; }
-.account-name { color: var(--color-chrome-ink); }
+/* The signed-in person as a compact chip, with Sign out beside it. */
+.account-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  min-height: var(--control-h-sm);
+  padding: 0 var(--space-2xs);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: var(--control-h-sm);
+  background: var(--color-chrome-2);
+  color: var(--color-chrome-ink);
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+}
+.account-icon { flex: none; width: 0.875rem; height: 0.875rem; color: var(--color-chrome-muted); }
 
 .layout {
   display: grid;
@@ -938,8 +974,18 @@ table.ledger th.mono,
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
-td.note-cell { min-width: 12rem; max-width: 24rem; }
-td.owner-cell { min-width: 10rem; overflow-wrap: anywhere; }
+td.note-cell { min-width: 8rem; max-width: 24rem; }
+/* An owner stays on one line, "(not a plain address)" included; the table
+   scrolls inside its wrapper when it must. */
+td.owner-cell, td.owner-cell .mono { white-space: nowrap; overflow-wrap: normal; }
+/* Technical values (content type, subscription, resource group): one line,
+   cut with an ellipsis past 16rem, so rows stay about 40px. */
+td.tech { white-space: nowrap; }
+td.tech .clip { display: block; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Names in a list row stay on one line too. */
+table:not(.ledger) tbody th a.item-name { white-space: nowrap; }
+/* Tags in a list row: one line; the table scrolls in its wrapper. */
+td.tag-cell { white-space: nowrap; }
 dd.note { white-space: pre-line; }
 
 .tag {
@@ -1049,6 +1095,16 @@ section.panel h2 { margin-top: 0; }
   line-height: var(--lh-subtitle);
   font-weight: 600;
 }
+/* Rhythm: --space-sm between fields, --space-lg before a section heading. */
+.stacked label,
+.stacked .field-label { margin: var(--space-sm) 0 var(--space-3xs); }
+.field-label { font-weight: 600; }
+.stacked .field-label + .muted { margin-bottom: var(--space-2xs); }
+.stacked .field-row > div > label { margin-top: var(--space-sm); }
+.stacked textarea + p, .stacked textarea + .field-error + p { margin-top: var(--space-2xs); }
+.stacked .checkbox { margin-top: var(--space-sm); }
+.stacked .checkbox label { margin: 0; }
+.stacked .tag-rows .tag-row label { margin-top: var(--space-xs); }
 .field-help { margin: 0 0 var(--space-3xs); color: var(--color-ink-2); font-size: var(--text-caption); line-height: var(--lh-caption); }
 .field-error { margin: var(--space-3xs) 0 0; color: var(--color-danger); font-weight: 600; font-size: var(--text-caption); line-height: var(--lh-caption); }
 .field-error::before {
@@ -1169,8 +1225,8 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .side-nav a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
   .tabs a[aria-current="page"], .view-switch a[aria-current="page"] { border-bottom-color: Highlight; text-decoration: underline; }
   .card-list a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
-  .pin-button::before { forced-color-adjust: none; background: CanvasText; }
-  .pin-button[aria-pressed="false"]::before { background: Canvas; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .pin-button::before, .pin-button::after { forced-color-adjust: none; background: CanvasText; }
+  .pin-button::after { background: Canvas; }
   .pin-button[aria-pressed="true"] { border: 2px solid Highlight; }
   .menu-list { border: 1px solid CanvasText; }
 }
@@ -1188,18 +1244,42 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 /* Pinned and recently opened (static/pins.js). The Pin button's glyph is a
    CSS star: an outline when off, filled when pressed, so state isn't colour
    alone. The label stays "Pin" and aria-pressed carries the state. */
+/* It looks like a command bar button: no frame, an accent star and a label.
+   Off, the star is an outline (a smaller star in the button's own fill on
+   top of a filled one); pressed, it is filled and the button is tinted. */
 .pin-row { margin: 0 0 var(--space-2xs); }
-.pin-button::before {
+.pin-button,
+.button-secondary.pin-button {
+  --pin-fill: var(--color-paper);
+  position: relative;
+  gap: var(--space-3xs);
+  padding: 0 var(--space-2xs);
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-ink);
+  font-weight: 400;
+}
+.button-secondary.pin-button:hover { --pin-fill: var(--color-paper-2); background: var(--color-paper-2); border-color: transparent; }
+.pin-button::before,
+.pin-button::after {
   content: "";
-  display: inline-block;
-  width: 0.75rem;
-  height: 0.75rem;
-  background: currentColor;
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  background: var(--color-accent);
   clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
 }
-.pin-button { gap: var(--space-3xs); font-weight: 400; }
-.pin-button[aria-pressed="false"]::before { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
-.pin-button[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-tint); }
+.pin-button::after {
+  position: absolute;
+  left: var(--space-2xs);
+  top: 50%;
+  margin-top: -0.4375rem;
+  background: var(--pin-fill);
+  transform: scale(0.5);
+  transform-origin: 50% 58%;
+}
+.pin-button[aria-pressed="true"]::after { display: none; }
+.button-secondary.pin-button[aria-pressed="true"] { border-color: var(--color-accent-rule); background: var(--color-accent-tint); }
 .pins-box { margin-bottom: var(--space-sm); }
 .pins h2 { font-size: var(--text-body); line-height: var(--lh-body); margin: var(--space-xs) 0 var(--space-3xs); }
 .pin-list { margin: 0; padding-left: var(--space-md); }
@@ -1241,6 +1321,7 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .account-name { min-width: 0; overflow-wrap: anywhere; }
   .site-search { margin-left: 0; width: 100%; }
   .site-search input[type="search"] { width: 100%; }
+  .site-search { flex-wrap: nowrap; }
   .content { padding: var(--space-sm) var(--space-sm) var(--space-xl); }
   .filters { padding: var(--space-2xs); }
   .filters > div, .filters input, .filters select, .filters input[type="search"] { width: 100%; }

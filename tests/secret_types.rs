@@ -125,7 +125,10 @@ async fn each_type_round_trips_create_reveal_set_and_roll_back() {
         let reads = w.kv.state.value_reads().len();
         let (_, list) = w.page("/v/kv-test/secrets").await;
         assert!(
-            list.contains(&format!("<td>{}</td>", escaped(label))),
+            list.contains(&format!(
+                "<td class=\"tech\"><span class=\"clip\">{}</span></td>",
+                escaped(label)
+            )),
             "{slug}"
         );
         let (_, detail) = w.page(&format!("/v/kv-test/secrets/{name}")).await;

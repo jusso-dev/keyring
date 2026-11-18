@@ -70,9 +70,9 @@
       <td>{{ ui::status(row.enabled, row.is_expired(), row.within30(), row.within90()) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
       <td class="note-cell">{{ ui::note_cell(row.description) }}</td>
       <td class="owner-cell">{{ ui::owner_value(row.owners.owner_shown()) }}</td>
-      <td>{{ ui::expires(row.expires, row.expires_note) }}</td>
+      <td class="nowrap">{{ ui::expires(row.expires, row.expires_note) }}</td>
       <td class="mono small">{{ ui::or_none(row.thumbprint) }}</td>
-      <td>{{ ui::tags(row.tags) }}</td>
+      <td class="tag-cell">{{ ui::tags(row.tags) }}</td>
     </tr>
     {% endfor %}
   </tbody>

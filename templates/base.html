@@ -26,11 +26,12 @@
     </div>
     <form class="site-search" method="get" action="/search" role="search">
       <label for="site-search-q" class="visually-hidden">Search every vault</label>
+      {{ icons::icon("search", "site-search-icon") }}
       <input id="site-search-q" name="q" type="search" maxlength="{{ crate::routes::search::MAX_QUERY_CHARS }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <button type="submit" class="button-small">Search</button>
+      <button type="submit" class="button-small site-search-go">Search</button>
     </form>
     <div class="account">
-      <span class="account-name">{{ user.name }}</span>
+      <span class="account-name">{{ icons::icon("myaccess", "account-icon") }}<span>{{ user.name }}</span></span>
       <form method="post" action="/auth/sign-out" data-pins-clear>
         <input type="hidden" name="csrf" value="{{ user.csrf }}">
         <button type="submit" class="button-link">Sign out</button>
