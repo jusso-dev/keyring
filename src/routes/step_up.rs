@@ -1,6 +1,7 @@
 //! The step-up guard for sensitive actions. One place, so every action that
 //! needs it (reveal, private key download, rollback, purge, copy to
-//! another vault, and later PIM activation) behaves the same.
+//! another vault, sharing a secret, and later PIM activation) behaves the
+//! same.
 //!
 //! The rules are in [`crate::auth::step_up`]. When the session doesn't meet
 //! them, the action stops before anything reaches Azure, the audit event
@@ -35,6 +36,8 @@ pub(crate) fn guards(action: crate::audit::Action) -> bool {
             | Action::CertificateDownloadPrivateKey
             | Action::SecretRollback
             | Action::SecretCopyRead
+            | Action::ShareGrant
+            | Action::ShareRevoke
             | Action::SecretPurge
             | Action::CertificatePurge
             | Action::KeyPurge

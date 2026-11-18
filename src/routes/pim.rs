@@ -1030,6 +1030,8 @@ struct MyAccessPage {
     /// "Request access" links for the Key Vault roles that are neither on
     /// nor eligible here, when access requests are on (#258).
     requests: Vec<(&'static str, String)>,
+    /// `KEYRING_SHARING` is on: link to My shares.
+    sharing: bool,
 }
 
 fn ends_words(ends: Option<i64>, now: i64) -> String {
@@ -1131,6 +1133,7 @@ pub(super) async fn my_access(
         waiting: page.waiting,
         notes: page.notes,
         portal: PIM_PORTAL,
+        sharing: state.config.sharing,
     })
     .into_response())
 }

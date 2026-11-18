@@ -314,6 +314,7 @@ Go to **API permissions > Add a permission** and add these **delegated** permiss
 | Azure Service Management | `user_impersonation` | List vaults with Resource Graph as you |
 | Log Analytics API | `Data.Read` | Read Key Vault's audit logs for the audit view, as you |
 | Microsoft Graph | `openid`, `profile`, `offline_access` | Sign in, show your name, stay signed in |
+| Microsoft Graph | `User.ReadBasic.All`, `GroupMember.Read.All` | Only with `KEYRING_SHARING=true`: find people and security groups by name when sharing a secret, as you. `GroupMember.Read.All` needs admin consent |
 
 Log Analytics API is under **APIs my organization uses**; search for "Log Analytics".
 
@@ -376,7 +377,7 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_AUDIT_REQUIRED` | Optional. `true` to refuse reveals and private key downloads while the audit sink has been failing for over a minute. Off by default. Needs the audit sink |
 | `KEYRING_NOTIFY_ACS_ENDPOINT` | Optional. Email through Azure Communication Services: the Communication Services resource's endpoint, `https://<resource>.<geography>.communication.azure.com`. Needs `KEYRING_MANAGED_IDENTITY_CLIENT_ID` and `KEYRING_NOTIFY_SENDER`: email is sent only as that identity. See [Email](docs/deploy.md#email) |
 | `KEYRING_NOTIFY_SENDER` | The sender, `DoNotReply@<verified domain>`. One plain address |
-| `KEYRING_NOTIFY_TYPES` | Optional. Notices to send, separated by commas: `expiry`, `access-requests`, `watched-reads`, `destructive`, `role-use`, `health`. Default: none |
+| `KEYRING_NOTIFY_TYPES` | Optional. Notices to send, separated by commas: `expiry`, `access-requests`, `watched-reads`, `destructive`, `role-use`, `health`, `shares`. Default: none |
 | `KEYRING_NOTIFY_ADMINS` | Optional. Addresses, separated by commas, for health and fallback notices |
 | `KEYRING_NOTIFY_ALLOWED_DOMAINS` | Optional. Every recipient must be in one of these domains |
 | `KEYRING_NOTIFY_RATE_PER_HOUR` | Optional. Emails an hour to one recipient for one type, 1 to 1000. Default 20 |
@@ -399,6 +400,8 @@ Set these as environment variables. Don't commit them.
 | `KEYRING_REQUIRE_REASON` | Optional. `off` (default), `reveal` or `all`. With `reveal`, Keyring asks for a reason (5 to 200 characters) before it shows or copies a secret value or downloads a private key; with `all`, before every change too. The reason goes on the audit event. Not a hard control: the CLI needs no reason. Checked at start. See [Reasons](docs/deploy.md#a-reason-before-a-value-is-shown) |
 | `KEYRING_REASON_TICKET_PATTERN` | Optional. A regular expression a ticket reference must match as a whole, such as `(INC\|CHG)[0-9]{7}`. Shape only: no ticket system is called. Needs `KEYRING_REQUIRE_REASON`. Checked at start |
 | `KEYRING_REQUIRE_OWNER` | Optional. `true` to refuse creating or editing a secret, certificate or key without an `owner` tag, on every form that shows the Owner field, and to skip import rows without one. Off by default. Not a hard control: the Azure CLI and portal aren't limited. See [Owners](#owners) |
+| `KEYRING_SHARING` | Optional. `true` adds Share to a secret's page: a time-limited Key Vault Secrets User assignment on that one secret, made as you, for a person or security group picked by name. Off by default. Needs the two Microsoft Graph permissions above. See [Sharing a secret](docs/deploy.md#sharing-a-secret) |
+| `KEYRING_SHARE_MAX_DAYS` | Optional. The longest a share can last, in days, from 1 to 365, default 30. Checked at start |
 | `KEYRING_PASSWORD_POLICY` | Optional. Rules for a password typed into a Password secret or a Login's password field, on create and on Set a new value, and for each imported value, such as `min=14,upper,lower,digit,symbol,max-repeat=3,common`. Each part is off unless listed: `min=N` (fewest characters, 1 to 256), `upper`, `lower`, `digit`, `symbol`, `max-repeat=N` (most of one character in a row, 1 to 64) and `common` (not on Keyring's built-in list of common passwords). Unset means no policy. A Keyring control only: the CLI and portal aren't limited by it. Checked at start: an unknown or repeated part, or a number out of range, stops Keyring starting. See [Password policy](#password-policy) |
 | `KEYRING_STEP_UP_MAX_AGE` | Optional. Minutes, 1 to 720, since the person last signed in for those same actions to go ahead. Older, and Keyring asks for a fresh sign-in. For tenants without Conditional Access. Checked at start |
 | `KEYRING_TRUSTED_PROXY_HOPS` | Optional. How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address. `0` (default) ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |

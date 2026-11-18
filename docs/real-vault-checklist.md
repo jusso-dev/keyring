@@ -179,6 +179,24 @@ These need a tenant with Entra ID P2 or Governance, PIM for Azure resources, and
 | PIM: deactivate | Select **Deactivate** | "Role turned off". PIM shows it ended. Note how soon after activating PIM allows it (PIM has a minimum activation time) and the code it gives if too soon | `src/azure/pim.rs` (`deactivate`) | |
 | PIM: audit columns | With the audit sink on, activate | The `KeyringAudit_CL` row has `Role`, `RoleScope`, `RoleDuration`, `Reason` and `Ticket` | `src/audit/sink.rs` | |
 
+## Sharing a secret
+
+With `KEYRING_SHARING=true`, on a throwaway RBAC vault, signed in as someone with User Access Administrator (or Key Vault Data Access Administrator) on it, and a second test user to share with.
+
+| Check | Do this | Expected | Code | Result |
+| --- | --- | --- | --- | --- |
+| Role assignment at one secret's scope | Share a secret with the second user, then look at the secret's **Access control (IAM)** in the portal | One Key Vault Secrets User assignment on `.../vaults/<vault>/secrets/<name>`, made by you (not an app). The second user can read that secret and no other | `src/azure/share.rs` (`grant_pim`, `grant_plain`) | |
+| PIM `AdminAssign` with an end date | In a tenant with Entra ID P2, share until a date two days away | PIM accepts `AdminAssign` with `AfterDateTime` at the secret's scope. The portal's PIM view shows the assignment ending at 23:59:59 UTC on that date. Note the `status` PIM answered | `src/azure/share.rs` (`grant_pim`) | |
+| The end date ends it | Wait past the end date of the PIM share | Azure removes the assignment. The second user's read is refused | `src/azure/share.rs` | |
+| The plain fallback | In a tenant without P2, share a secret | PIM answers `AadPremiumLicenseRequired`. Keyring makes a plain assignment and says Azure won't remove it. Its description in the portal is `Shared by Keyring by <your object ID> until <DD-MM-YYYY>`. Note the exact code PIM sent | `src/azure/share.rs` (`falls_back`), `src/routes/share.rs` (`grant`) | |
+| Revoke | Revoke both kinds from the Shared with section | The plain one is deleted; the PIM one gets an `AdminRemove` that PIM accepts. Both are gone in the portal within a few minutes | `src/routes/share.rs` (`revoke`) | |
+| A 403 names who can share | As someone with only Key Vault Secrets Officer, try to share | Azure refuses, and the page names Owner, User Access Administrator and Key Vault Data Access Administrator. No Azure message is shown | `src/routes/share.rs` (`azure_refused`) | |
+| Graph search with consent | With `User.ReadBasic.All` and `GroupMember.Read.All` consented, type two letters of a colleague's name and of a security group's | Both are listed, with name, address and type. A Microsoft 365 group isn't | `src/azure/graph.rs` (`search`) | |
+| Graph search without consent | Remove consent for `GroupMember.Read.All`, then for both | First: people are listed and the picker says groups need `GroupMember.Read.All`. Then: the picker says the permissions are missing, and sharing by exact email or object ID still works. Note the AADSTS number or Graph code | `src/azure/graph.rs` (`GraphProblem`) | |
+| `$search` escaping | Search for `a"b` and `a\b` | Graph answers 200 (no syntax error), with nothing odd listed | `src/azure/graph.rs` (`escape_search`) | |
+| Guests | Share with a guest (B2B) account | The audit event's `share_principal_type` is `guest`, and the Sentinel rule `rules/shares.kql` raises an alert | `src/azure/graph.rs`, `infra/sentinel/rules/shares.kql` | |
+| The recipient's email arrives | With `shares` in `KEYRING_NOTIFY_TYPES`, share with the second user | They get one email from the sender address naming the secret, the vault, the date and you (in its own field), with a working link. You get a receipt. Neither holds the value or the reason | `src/notify/share.rs` | |
+
 ## Access requests
 
 | Check | Do this | Expected | Code | Result |

@@ -8,54 +8,66 @@
 // tests/sentinel.rs checks these columns against src/audit/sink.rs.
 let KeyringRows = datatable(MinutesAgo:int, Action:string, Outcome:string, ReasonCode:string,
     ActorObjectId:string, ActorUpn:string, ClientIp:string, UserAgent:string,
-    Vault:string, ItemKind:string, ItemName:string, KvRequestId:string)
+    Vault:string, ItemKind:string, ItemName:string, KvRequestId:string,
+    SharePrincipalId:string, SharePrincipalType:string)
 [
     // Alex: seen from 203.0.113.5 three days ago, then four reveals in the
     // last half hour, one from a new address.
-    4320, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-0",
-    90, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-1",
-    95, "secret.rollback", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-old", "kv-3",
-    30, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-10",
-    25, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "api-key", "kv-11",
-    20, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-two", "secret", "smtp", "kv-12",
-    10, "secret.reveal", "success", "", "a1", "alex@example.com", "198.51.100.7", "Firefox", "kv-one", "secret", "db-password", "kv-13",
+    4320, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-0", "", "",
+    90, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-1", "", "",
+    95, "secret.rollback", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-old", "kv-3", "", "",
+    30, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "db-password", "kv-10", "", "",
+    25, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "api-key", "kv-11", "", "",
+    20, "secret.reveal", "success", "", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-two", "secret", "smtp", "kv-12", "", "",
+    10, "secret.reveal", "success", "", "a1", "alex@example.com", "198.51.100.7", "Firefox", "kv-one", "secret", "db-password", "kv-13", "", "",
     // Blair: first time seen, one reveal. No new address alert for a
     // first-time person.
-    20, "secret.reveal", "success", "", "b2", "blair@example.com", "192.0.2.9", "Edge", "kv-one", "secret", "db-password", "kv-14",
+    20, "secret.reveal", "success", "", "b2", "blair@example.com", "192.0.2.9", "Edge", "kv-one", "secret", "db-password", "kv-14", "", "",
     // Casey: denied in three vaults, six times.
-    40, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-one", "secret", "a", "kv-20",
-    39, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-one", "secret", "b", "kv-21",
-    38, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-two", "secret", "a", "kv-22",
-    37, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-two", "secret", "b", "kv-23",
-    36, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-three", "secret", "a", "kv-24",
-    35, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-three", "secret", "b", "kv-25",
+    40, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-one", "secret", "a", "kv-20", "", "",
+    39, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-one", "secret", "b", "kv-21", "", "",
+    38, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-two", "secret", "a", "kv-22", "", "",
+    37, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-two", "secret", "b", "kv-23", "", "",
+    36, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-three", "secret", "a", "kv-24", "", "",
+    35, "secret.reveal", "denied", "ForbiddenByRbac", "c3", "casey@example.com", "192.0.2.20", "Chrome", "kv-three", "secret", "b", "kv-25", "", "",
     // Dana: denied six times, but in two vaults only.
-    40, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "a", "kv-30",
-    39, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "b", "kv-31",
-    38, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "c", "kv-32",
-    37, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "a", "kv-33",
-    36, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "b", "kv-34",
-    35, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "c", "kv-35",
+    40, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "a", "kv-30", "", "",
+    39, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "b", "kv-31", "", "",
+    38, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-one", "secret", "c", "kv-32", "", "",
+    37, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "a", "kv-33", "", "",
+    36, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "b", "kv-34", "", "",
+    35, "secret.delete", "denied", "ForbiddenByRbac", "d4", "dana@example.com", "192.0.2.30", "Chrome", "kv-two", "secret", "c", "kv-35", "", "",
     // Forged and cross-site posts from one address (five), a typed name
     // mismatch six times from another, and one forged post from a third.
-    12, "request.refused", "refused", "cross_site", "", "", "192.0.2.66", "curl", "", "", "", "",
-    11, "request.refused", "refused", "cross_site", "", "", "192.0.2.66", "curl", "", "", "", "",
-    10, "secret.purge", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "",
-    9, "secret.purge", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "",
-    8, "secret.delete", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "",
-    12, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    11, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    10, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    9, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    8, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    7, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "",
-    6, "secret.reveal", "refused", "csrf", "", "", "192.0.2.77", "curl", "kv-one", "secret", "db-password", "",
+    12, "request.refused", "refused", "cross_site", "", "", "192.0.2.66", "curl", "", "", "", "", "", "",
+    11, "request.refused", "refused", "cross_site", "", "", "192.0.2.66", "curl", "", "", "", "", "", "",
+    10, "secret.purge", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "", "", "",
+    9, "secret.purge", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "", "", "",
+    8, "secret.delete", "refused", "csrf", "", "", "192.0.2.66", "curl", "kv-one", "secret", "db-password", "", "", "",
+    12, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    11, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    10, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    9, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    8, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    7, "secret.delete", "refused", "typed_name_mismatch", "a1", "alex@example.com", "203.0.113.5", "Firefox", "kv-one", "secret", "x", "", "", "",
+    6, "secret.reveal", "refused", "csrf", "", "", "192.0.2.77", "curl", "kv-one", "secret", "db-password", "", "", "",
     // Eli: a purge, a private key download and a stand-in bulk change in
     // the last few minutes, and one reveal, which the hours rule ignores.
-    5, "secret.purge", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "old", "kv-50",
-    5, "certificate.download_private_key", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "certificate", "web", "kv-51",
-    5, "secret.bulk_update", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "many", "kv-52",
-    5, "secret.reveal", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "smtp", "kv-53",
+    5, "secret.purge", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "old", "kv-50", "", "",
+    5, "certificate.download_private_key", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "certificate", "web", "kv-51", "", "",
+    5, "secret.bulk_update", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "many", "kv-52", "", "",
+    5, "secret.reveal", "success", "", "e5", "eli@example.com", "192.0.2.50", "Safari", "kv-one", "secret", "smtp", "kv-53", "", "",
+    // Shares (#286). Fay made one share, to a guest; Gus made six in the
+    // hour, all to members; Hal had one refused and made one.
+    20, "share.grant", "success", "", "f6", "fay@example.com", "192.0.2.60", "Edge", "kv-one", "secret", "db-password", "", "p-guest", "guest",
+    30, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s1", "", "p1", "user",
+    29, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s2", "", "p2", "user",
+    28, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s3", "", "p3", "user",
+    27, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s4", "", "p4", "user",
+    26, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s5", "", "p5", "group",
+    25, "share.grant", "success", "", "g7", "gus@example.com", "192.0.2.70", "Edge", "kv-one", "secret", "s6", "", "p6", "user",
+    24, "share.grant", "refused", "share_to_self", "h8", "hal@example.com", "192.0.2.80", "Edge", "kv-one", "secret", "s7", "", "h8", "user",
+    23, "share.grant", "success", "", "h8", "hal@example.com", "192.0.2.80", "Edge", "kv-one", "secret", "s7", "", "p7", "user",
 ]
 | extend TimeGenerated = ago(MinutesAgo * 1m)
 | project-away MinutesAgo;

@@ -1,0 +1,27 @@
+{%- if let Some(sw) = shared_with %}
+<section aria-labelledby="shared-heading">
+  <h2 id="shared-heading">Shared with</h2>
+  <p>People and groups with a role on this secret on its own. Shares made in Keyring say who shared them and until when.</p>
+  {% if let Some(n) = sw.note %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endif %}
+  {% if sw.rows.is_empty() %}
+  {% if sw.note.is_none() %}<div class="empty-state"><p>Nobody has a role on this secret on its own. Access to the whole vault is listed under Access.</p></div>{% endif %}
+  {% else %}
+  {% call ui::table_wrap("shared-caption") %}
+  <table class="ledger">
+    <caption class="visually-hidden" id="shared-caption">People and groups with a role on this secret</caption>
+    <thead><tr><th scope="col">Who</th><th scope="col">Role</th><th scope="col">Shared</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+      {% for r in sw.rows %}
+      <tr>
+        <th scope="row">{{ r.name }} <span class="muted small">({{ r.kind }})</span>{% if r.name != r.principal_id %}<br><span class="mono small muted">{{ r.principal_id }}</span>{% endif %}</th>
+        <td>{{ r.role }}</td>
+        <td>{% if r.shared_by.is_empty() %}<span class="muted">Not through Keyring</span>{% else %}By {{ r.shared_by }}, until {{ r.until }}{% if r.overdue %} <span class="badge badge-error">Overdue</span>{% elif r.via_pim %} <span class="muted small">(Azure removes it)</span>{% else %} <span class="muted small">(Azure won't remove it)</span>{% endif %}{% endif %}</td>
+        <td>{% if !r.revoke_url.is_empty() %}<a class="button button-secondary" href="{{ r.revoke_url }}">Revoke</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% endif %}
+</section>
+{%- endif %}

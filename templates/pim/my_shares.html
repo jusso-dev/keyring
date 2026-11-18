@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}My shares in {{ vault }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ shell.vault_prefix() }}/my-access">Back to My access</a></p>
+<h1>My shares <span class="muted">in {{ vault }}</span></h1>
+<p>Secrets in this vault shared with you, and the ones you shared, from the role assignments in Azure. Keyring keeps no list of its own.</p>
+{% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
+<h2>Shared with me</h2>
+{% if with_me.is_empty() %}
+<div class="empty-state"><p>No secret in this vault is shared with you on its own{% if !notes.is_empty() %}, as far as Keyring could read{% endif %}.</p></div>
+{% else %}
+{% call ui::table_wrap("with-me-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="with-me-caption">Secrets shared with you</caption>
+  <thead><tr><th scope="col">Secret</th><th scope="col">Shared by</th><th scope="col">Until</th></tr></thead>
+  <tbody>
+    {% for r in with_me %}
+    <tr>
+      <th scope="row" class="item-name"><a href="{{ r.secret_url }}">{{ r.secret }}</a></th>
+      <td>{{ r.other }}</td>
+      <td>{{ r.until }}{% if r.overdue %} <span class="badge badge-error">Overdue</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+{% endif %}
+<h2>Shared by me</h2>
+{% if by_me.is_empty() %}
+<div class="empty-state"><p>You haven't shared a secret in this vault through Keyring{% if !notes.is_empty() %}, as far as Keyring could read{% endif %}.</p></div>
+{% else %}
+{% call ui::table_wrap("by-me-caption") %}
+<table class="ledger">
+  <caption class="visually-hidden" id="by-me-caption">Secrets you shared</caption>
+  <thead><tr><th scope="col">Secret</th><th scope="col">Shared with</th><th scope="col">Until</th></tr></thead>
+  <tbody>
+    {% for r in by_me %}
+    <tr>
+      <th scope="row" class="item-name"><a href="{{ r.secret_url }}">{{ r.secret }}</a></th>
+      <td>{{ r.other }}</td>
+      <td>{{ r.until }}{% if r.overdue %} <span class="badge badge-error">Overdue</span>{% elif r.via_pim %} <span class="muted small">(Azure removes it)</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+<p class="muted">To revoke one, open the secret and use Revoke under Shared with.</p>
+{% endif %}
+{% endblock %}

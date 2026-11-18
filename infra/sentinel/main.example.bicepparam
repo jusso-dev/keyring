@@ -22,6 +22,7 @@ param revealThreshold = 20
 param revealWindowMinutes = 60
 
 param enableAppAttack = false
+param enableShares = false
 
 param enableOffHours = false
 param utcOffsetMinutes = 600
