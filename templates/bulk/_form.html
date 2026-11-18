@@ -3,6 +3,7 @@
     isn't nested in the filter form and works without the script. Set
     bulk_needs (the role hint) and bulk_expiry before including. The tag
     name and value suggest from tag_suggest, the list the page read. -#}
+<details class="bulk"><summary>With selected: change many {{ bulk_plural }} at once</summary>
 <form id="bulk-form" class="filters" method="post" action="{{ shell.vault_prefix() }}{{ bulk_base }}/-/bulk" data-tag-row>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
   <div>
@@ -56,3 +57,4 @@
     <button type="submit"{{ ui::needs_attrs(bulk_needs, "bulk") }}>Review changes</button>{{ ui::needs_note(bulk_needs, "bulk") }}
   </div>
 </form>
+</details>

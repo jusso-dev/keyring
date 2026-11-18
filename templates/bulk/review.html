@@ -4,9 +4,11 @@
     changed yet. The names go back in hidden fields and are checked again. -#}
 {% block title %}Check changes to {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
-<h1>{{ change }} on {{ self.noun_for(changing.len()) }}?</h1>
-<p>Here's what will happen to each {{ kind.noun() }} you ticked. Nothing has been changed yet.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_kind(vault, kind.base()) }}{{ ui::crumb_here("Review changes") }}</ol></nav>
+<div class="title-row"><h1>{{ change }} on {{ self.noun_for(changing.len()) }}?</h1></div>
+<p class="page-desc">Here's what will happen to each {{ kind.noun() }} you ticked. Nothing has been changed yet.</p>
+</div>
 {% if disable %}
 <p class="notice notice-warn">Anything that reads a disabled {{ kind.noun() }} gets an error until it is enabled again. Nothing is deleted.</p>
 {% endif %}

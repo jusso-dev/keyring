@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
 {% block title %}{% if searched %}Search for {{ query.q.trim() }} - Keyring{% else %}Search - Keyring{% endif %}{% endblock %}
+{% block search_current %} aria-current="page"{% endblock %}
 {% block content %}
-<h1>Search</h1>
-<p>Find a secret, certificate or key in any vault you can see, by its name, a tag or its content type. Only names and properties are read, never values.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb_here("Search") }}</ol></nav>
+<div class="title-row"><h1>Search</h1></div>
+<p class="page-desc">Find a secret, certificate or key in any vault you can see, by its name, a tag or its content type. Only names and properties are read, never values.</p>
+</div>
 
 <form class="filters" method="get" action="/search" role="search">
   <div>

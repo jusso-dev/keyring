@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Create a key in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys</a></p>
-<h1>Create a key <span class="muted">in {{ vault }}</span></h1>
-<p>Key Vault makes the key and keeps the private part. The defaults suit most uses: an RSA 3072 key that can encrypt, sign and wrap other keys.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_vault(vault, "Keys", "/keys") }}{{ ui::crumb_here("Create a key") }}</ol></nav>
+<div class="title-row"><h1>Create a key <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Key Vault makes the key and keeps the private part. The defaults suit most uses: an RSA 3072 key that can encrypt, sign and wrap other keys.</p>
+</div>
 {% call ui::error_summary(errors) %}{% endcall %}
 {% if let Some(m) = azure_message %}
 <div class="notice notice-error" tabindex="-1" data-error-summary>

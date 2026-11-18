@@ -2,9 +2,12 @@
 {% import "_ui.html" as ui %}
 {% block title %}Upload a certificate to {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}/certificates">Back to certificates</a></p>
-<h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1>
-<p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, until you upload it, start again, or 10 minutes pass.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_vault(vault, "Certificates", "/certificates") }}{{ ui::crumb_here("Upload a certificate") }}</ol></nav>
+<div class="title-row"><h1>Upload a certificate <span class="muted">to {{ vault }}</span></h1></div>
+<p class="page-desc">Upload a .pfx, .p12 or .pem file. You'll see what's in it before anything is saved.</p>
+{% call ui::about() %}<p>Upload a .pfx (or .p12) file, or a .pem file holding the certificate and its private key. You'll see what's in it before anything is saved. Keyring keeps the file in memory only, until you upload it, start again, or 10 minutes pass.</p>{% endcall %}
+</div>
 
 {% call ui::error_summary(errors) %}
   <p>For safety, choose the file and type the password again.</p>

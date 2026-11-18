@@ -2,9 +2,15 @@
 {% import "_ui.html" as ui %}
 {% block title %}Keyring activity for {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Audit <span class="muted">for {{ vault }}</span></h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb("{}/audit"|format(shell.vault_prefix()), "Audit") }}{{ ui::crumb_here("Keyring activity") }}</ol></nav>
+<div class="title-row"><h1>Audit <span class="muted">for {{ vault }}</span></h1></div>
+<p class="page-desc">What people did in this vault through Keyring, including what Keyring refused before Key Vault was asked. Up to 500 of the most recent events. Times are in UTC.</p>
+{% call ui::about() %}
+<p>Read as you, from Keyring's own audit table.</p>
+{% endcall %}
+</div>
 <nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring" aria-current="page">Keyring activity</a></p></nav>
-<p>What people did in this vault through Keyring, from Keyring's own audit table, including what Keyring refused before Key Vault was asked. Read as you. Up to 500 of the most recent events. Times are in UTC.</p>
 
 {% call ui::error_summary(errors) %}{% endcall %}
 

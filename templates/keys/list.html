@@ -2,9 +2,15 @@
 {% import "_ui.html" as ui %}
 {% block title %}Keys in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1 data-pin="vault" data-pin-vault="{{ vault }}">Keys <span class="muted">in {{ vault }}</span></h1>
-<p class="actions">{{ ui::link_button(hints.needs(Action::CreateKey), "create", "{}/keys/-/new"|format(shell.vault_prefix()), "button", "Create a key") }} <a href="{{ shell.vault_prefix() }}/keys/-/deleted">Deleted keys</a></p>
-<p class="muted">Keys never leave Key Vault. Keyring only shows their public parts.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Keys") }}</ol></nav>
+<div class="title-row"><h1 data-pin="vault" data-pin-vault="{{ vault }}">Keys <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Keys never leave Key Vault. Keyring only shows their public parts.</p>
+</div>
+<div class="commandbar">
+  {{ ui::link_button(hints.needs(Action::CreateKey), "create", "{}/keys/-/new"|format(shell.vault_prefix()), "button", "Create a key") }}
+  <span class="cmd-item">{{ ui::icon("deleted") }}<a class="button cmd" href="{{ shell.vault_prefix() }}/keys/-/deleted">Deleted keys</a></span>
+</div>
 {% if total == 0 %}
 <div class="empty-state">
   <p><strong>This vault has no keys yet.</strong></p>
@@ -29,6 +35,7 @@
   </div>
   <div class="filters-submit"><button type="submit">Filter</button>{% if !filter.is_empty() %} <a href="{{ shell.vault_prefix() }}/keys">Clear</a>{% endif %}</div>
 </form>
+<p class="toolbar-meta"><strong>{{ total }} key{% if total != 1 %}s{% endif %}</strong></p>
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No keys match. Try a shorter search.</p></div>
 {% else %}

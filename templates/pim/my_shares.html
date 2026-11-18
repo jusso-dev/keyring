@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}My shares in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}/my-access">Back to My access</a></p>
-<h1>My shares <span class="muted">in {{ vault }}</span></h1>
-<p>Secrets in this vault shared with you, and the ones you shared, from the role assignments in Azure. Keyring keeps no list of its own.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_vault(vault, "My access", "/my-access") }}{{ ui::crumb_here("My shares") }}</ol></nav>
+<div class="title-row"><h1>My shares <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Secrets in this vault shared with you, and the ones you shared, from the role assignments in Azure. Keyring keeps no list of its own.</p>
+</div>
 {% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
 <h2>Shared with me</h2>
 {% if with_me.is_empty() %}

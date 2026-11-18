@@ -1,10 +1,17 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Access to {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Access <span class="muted">to {{ vault }}</span></h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Access") }}</ol></nav>
+<div class="title-row"><h1>Access <span class="muted">to {{ vault }}</span></h1></div>
+<p class="page-desc">Who can reach this vault's secrets, certificates and keys, as Azure has it set up. Only settings are read, never values.</p>
+{% call ui::about() %}
+<p>Assignments made on the subscription or resource group are included.</p>
+{% endcall %}
+</div>
+{% if access.unavailable.is_none() %}<div class="commandbar"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>{% endif %}
 <nav aria-label="Access views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/access" aria-current="page">Who has access</a> <a href="{{ review_url }}">Access review</a></p></nav>
-<p>Who can reach this vault's secrets, certificates and keys, as Azure has it set up. Assignments made on the subscription or resource group are included. Only settings are read, never values.</p>
-{% if access.unavailable.is_none() %}<p class="actions"><a href="{{ csv_url }}">Download CSV</a></p>{% endif %}
 {% let prefix = "" %}
 {% include "_access.html" %}
 {% endblock %}

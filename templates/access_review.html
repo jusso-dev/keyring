@@ -2,11 +2,17 @@
 {% import "_ui.html" as ui %}
 {% block title %}Access review of {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>Access review <span class="muted">of {{ vault }}</span></h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb(access_url, "Access") }}{{ ui::crumb_here("Access review") }}</ol></nav>
+<div class="title-row"><h1>Access review <span class="muted">of {{ vault }}</span></h1></div>
+<p class="page-desc">Every secret, certificate and key in this vault, with its owner, its usage and who has access. Download the CSV to keep a copy.</p>
+{% call ui::about() %}
+<p>Each item shows when its value last changed, who used it in the last 90 days, who has access to it and what its rotation tags say. Only names, properties, role assignments and the audit log are read, never values.</p>
+<p>Secrets and keys that belong to a certificate are listed as the certificate. Cells Keyring couldn't fill say "Not known", which isn't the same as none.</p>
+{% endcall %}
+</div>
+<div class="commandbar"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>
 <nav aria-label="Access views"><p class="view-switch"><a href="{{ access_url }}">Who has access</a> <a href="{{ shell.vault_prefix() }}/access/review" aria-current="page">Access review</a></p></nav>
-<p>Every secret, certificate and key in this vault, with its owner, when its value last changed, who used it in the last 90 days, who has access to it and what its rotation tags say. For a periodic review: download the CSV to keep a copy. Only names, properties, role assignments and the audit log are read, never values.</p>
-<p class="actions"><a href="{{ csv_url }}">Download CSV</a></p>
-<p class="muted">Secrets and keys that belong to a certificate are listed as the certificate. Cells Keyring couldn't fill say "Not known", which isn't the same as none.</p>
 
 {% if let Some(why) = report.lists_not_read %}
 <p class="notice notice-warn">Some of this vault's secrets, certificates or keys couldn't be listed: {{ why }}. Those aren't in the report.</p>

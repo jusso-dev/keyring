@@ -100,6 +100,8 @@ if (guides) {
   await page.goto(`${base}${vault}/secrets`);
   await page.check("#pick-redis-access-key");
   await page.check("#pick-smtp-relay-password");
+  // "With selected" is closed until it is needed.
+  await page.click("details.bulk > summary");
   await page.selectOption("#bulk-op", "tag_set");
   await page.fill("#bulk-tag-name", "env");
   await page.fill("#bulk-tag-value", "prod");

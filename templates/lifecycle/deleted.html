@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Deleted {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
-<h1>Deleted {{ kind.plural() }} <span class="muted">in {{ vault }}</span></h1>
-<p>Deleted {{ kind.plural() }} are kept for a while so they can be recovered. On the date shown, Key Vault deletes them permanently.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_kind(vault, kind.base()) }}{{ ui::crumb_here("Deleted") }}</ol></nav>
+<div class="title-row"><h1>Deleted {{ kind.plural() }} <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Deleted {{ kind.plural() }} are kept for a while so they can be recovered. On the date shown, Key Vault deletes them permanently.</p>
+</div>
 {% if rows.is_empty() %}
 <div class="empty-state"><p>No deleted {{ kind.plural() }} in this vault.</p></div>
 {% else %}

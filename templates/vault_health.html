@@ -2,9 +2,15 @@
 {% import "_ui.html" as ui %}
 {% block title %}Vault health - Keyring{% endblock %}
 {% block content %}
-<h1>Vault health</h1>
-<p>How each vault you can see is set up: whether it keeps audit logs, who can reach it, whether deletes can be undone, and how well its contents are looked after. Only settings, names and dates are read, never values.</p>
-<p class="muted">Each check is Pass, Warn, or Unknown when Keyring couldn't read it. Unknown is never counted as a pass.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb_here("Vault health") }}</ol></nav>
+<div class="title-row"><h1>Vault health</h1></div>
+<p class="page-desc">How each vault you can see is set up. Only settings, names and dates are read, never values.</p>
+{% call ui::about() %}
+<p>The checks cover whether each vault keeps audit logs, who can reach it, whether deletes can be undone, and how well its contents are looked after.</p>
+{% endcall %}
+</div>
+<p class="notice">Each check is Pass, Warn, or Unknown when Keyring couldn't read it. Unknown is never counted as a pass.</p>
 
 <form class="filters" method="get" action="/vault-health" role="search">
   <div>

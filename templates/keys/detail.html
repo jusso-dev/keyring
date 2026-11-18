@@ -2,33 +2,44 @@
 {% import "_ui.html" as ui %}
 {% block title %}Key {{ row.name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys">Back to keys in {{ vault }}</a></p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_vault(vault, "Keys", "/keys") }}{{ ui::crumb_here(row.name) }}</ol></nav>
+<div class="title-row">
 <h1 class="item-name" data-pin="key" data-pin-vault="{{ vault }}" data-pin-name="{{ row.name }}">{{ row.name }}</h1>
-{{ ui::note(row.description) }}
-<p>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</p>
-<div class="actions">
-  {% if !row.managed %}
-  {{ ui::link_button(hints.needs(Action::RotateKey), "rotate", "{}/keys/{}/rotate"|format(shell.vault_prefix(), row.name), "button", "Rotate now") }}
-  {{ ui::link_button(hints.needs(Action::UpdateKey), "edit", "{}/keys/{}/details"|format(shell.vault_prefix(), row.name), "button button-secondary", "Edit details") }}
-  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotation">Rotation policy</a>
-  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
-  {{ ui::link_button(hints.needs(Action::DeleteKey), "delete", "{}/keys/{}/delete"|format(shell.vault_prefix(), row.name), "button button-danger", "Delete") }}
-  {% if row.enabled %}
-  {{ ui::link_button(hints.needs(Action::UpdateKey), "disable", "{}/keys/{}/disable"|format(shell.vault_prefix(), row.name), "button button-secondary", "Disable") }}
-  {% else %}
-  <form method="post" action="{{ shell.vault_prefix() }}/keys/{{ row.name }}/enabled">
-    <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-    <input type="hidden" name="state" value="on">
-    <button type="submit" class="button-secondary"{{ ui::needs_attrs(hints.needs(Action::UpdateKey), "enable") }}>Enable</button>{{ ui::needs_note(hints.needs(Action::UpdateKey), "enable") }}
-  </form>
-  {% endif %}
-  {% else %}
-  <p class="muted">This key belongs to the certificate <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
-  <a class="button button-secondary" href="{{ shell.vault_prefix() }}/audit?item={{ row.name }}&amp;range=30d&amp;from=key">Who used it</a>
-  {% endif %}
+<div class="badges">{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</div>
 </div>
+{{ ui::note(row.description) }}
+</div>
+{% if row.managed %}
+<p class="notice">This key belongs to the certificate <a href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}">{{ row.name }}</a>. Manage it there.</p>
+{% else %}
+<div class="commandbar">
+  {{ ui::link_button(hints.needs(Action::RotateKey), "rotate", "{}/keys/{}/rotate"|format(shell.vault_prefix(), row.name), "button", "Rotate now") }}
+  {{ ui::cmd(hints.needs(Action::UpdateKey), "edit", "{}/keys/{}/details"|format(shell.vault_prefix(), row.name), "edit", "Edit details") }}
+  <span class="cmd-item">{{ ui::icon("policy") }}<a class="button cmd" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotation">Rotation policy</a></span>
+  <details class="menu">
+    <summary class="cmd">More<span class="visually-hidden"> actions for {{ row.name }}</span></summary>
+    <ul class="menu-list">
+      {% if row.enabled %}
+      {{ ui::menu_link(hints.needs(Action::UpdateKey), "disable", "{}/keys/{}/disable"|format(shell.vault_prefix(), row.name), "Disable") }}
+      {% else %}
+      <li><form method="post" action="{{ shell.vault_prefix() }}/keys/{{ row.name }}/enabled">
+        <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+        <input type="hidden" name="state" value="on">
+        <span class="needs"><button type="submit" class="menu-item"{{ ui::needs_attrs(hints.needs(Action::UpdateKey), "enable") }}>Enable</button>{{ ui::needs_note(hints.needs(Action::UpdateKey), "enable") }}</span>
+      </form></li>
+      {% endif %}
+      <li class="menu-sep" role="presentation"></li>
+      {{ ui::menu_link(hints.needs(Action::DeleteKey), "delete", "{}/keys/{}/delete"|format(shell.vault_prefix(), row.name), "Delete", true) }}
+    </ul>
+  </details>
+</div>
+{% endif %}
+{% let item_url = "{}/keys/{}"|format(shell.vault_prefix(), row.name) %}
+{{ ui::item_tabs(row.name, item_url, "{}#versions-heading"|format(item_url), "key", "Access", "overview") }}
 
-<section aria-labelledby="key-heading">
+<div class="overview">
+<section aria-labelledby="key-heading" class="card">
   <h2 id="key-heading">Current version</h2>
   <dl class="props">
     <dt>Type</dt><dd>{{ kind }}{% if hsm %} <span class="muted">(protected by a hardware security module)</span>{% endif %}</dd>
@@ -42,7 +53,7 @@
   </dl>
 </section>
 
-<section aria-labelledby="public-heading">
+<section aria-labelledby="public-heading" class="card">
   <h2 id="public-heading">Public key</h2>
   <p class="muted">Safe to share. The private key never leaves Key Vault.</p>
   {% if let Some(pem) = pem %}
@@ -54,6 +65,8 @@
   <textarea id="public-jwk" class="mono secret-value" rows="8" readonly{{ ui::ident() }}>{{ jwk }}</textarea>
   <p><button type="button" class="button-secondary" data-copy-plain="public-jwk" hidden>Copy JWK</button> <span class="muted" role="status" aria-live="polite" data-copy-plain-status></span></p>
 </section>
+
+</div>
 
 {% if rotation.is_some() || rotation_note.is_some() %}
 <section aria-labelledby="rotation-heading">
@@ -101,9 +114,9 @@
 </section>
 
 {% include "_used_by.html" %}
-<section aria-labelledby="access-heading">
+<section aria-labelledby="access-heading" id="access-and-sharing">
   <h2 id="access-heading">Access</h2>
-  <p>Who can reach this key, including role assignments on the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
+  <p class="muted">Role assignments that reach this key, from the vault, its resource group and its subscription. <a href="{{ shell.vault_prefix() }}/access">Access to the whole vault</a></p>
   {% let prefix = "item-" %}
   {% include "_access.html" %}
 </section>

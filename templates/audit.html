@@ -3,13 +3,24 @@
 {% block title %}{% if !filter.item.is_empty() %}Who used {{ filter.item }} in {{ vault }}{% else %}Audit for {{ vault }}{% endif %} - Keyring{% endblock %}
 {% block content %}
 {% if !filter.item.is_empty() %}
-<h1>Who used <span class="item-name">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p>{% if let Some(back) = back_url() %}<a href="{{ back }}">Back to {{ filter.item }}</a> | {% endif %}<a href="{{ shell.vault_prefix() }}/audit">See all events for {{ vault }}</a></p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{% if let Some(back) = back_url() %}{% if filter.from == "certificate" %}{{ ui::crumbs_vault(vault, "Certificates", "/certificates") }}{% elif filter.from == "key" %}{{ ui::crumbs_vault(vault, "Keys", "/keys") }}{% else %}{{ ui::crumbs_vault(vault, "Secrets", "/secrets") }}{% endif %}{{ ui::crumb(back, filter.item) }}{% else %}{{ ui::crumbs_vault(vault, "Audit", "/audit") }}{% endif %}{{ ui::crumb_here("Who used it") }}</ol></nav>
+<div class="title-row"><h1>Who used <span class="item-name">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Events for this item from the vault's diagnostic logs. Times are in UTC. <a href="{{ shell.vault_prefix() }}/audit">See all events for {{ vault }}</a></p>
+</div>
+{% if let Some(back) = back_url() %}{% if filter.from == "secret" %}{{ ui::item_tabs(filter.item, back, "{}/versions"|format(back), "secret", "Access and sharing", "used") }}{% else %}{{ ui::item_tabs(filter.item, back, "{}#versions-heading"|format(back), filter.from, "Access", "used") }}{% endif %}{% endif %}
 {% else %}
-<h1>Audit <span class="muted">for {{ vault }}</span></h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Audit") }}</ol></nav>
+<div class="title-row"><h1>Audit <span class="muted">for {{ vault }}</span></h1></div>
+<p class="page-desc">Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC.</p>
+</div>
+<div class="commandbar">
+  <span class="cmd-item">{{ ui::icon("audit") }}<a class="button cmd" href="/audit">Reports across every vault</a></span>
+  {% if unavailable.is_none() && errors.is_empty() %}<span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span>{% endif %}
+</div>
 {% endif %}
 {% if keyring_activity %}<nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit" aria-current="page">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring">Keyring activity</a></p></nav>{% endif %}
-<p>Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC. <a href="/audit">Reports across every vault</a></p>
 
 {% call ui::error_summary(errors) %}{% endcall %}
 
@@ -45,7 +56,7 @@
   </div>
   <div class="filters-submit">
     <button type="submit">Filter</button>
-    {% if unavailable.is_none() && errors.is_empty() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+    {% if !filter.item.is_empty() && unavailable.is_none() && errors.is_empty() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
   </div>
 </form>
 
@@ -70,6 +81,7 @@
 {% elif !rows.is_empty() %}
 {% if let Some(p) = partial %}<p class="notice notice-warn">{{ p }}</p>{% endif %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
+<p class="toolbar-meta"><strong>{{ rows.len() }} event{% if rows.len() != 1 %}s{% endif %}</strong></p>
 {% call ui::table_wrap("audit-caption") %}
 <table class="ledger">
   <caption class="visually-hidden" id="audit-caption">Audit events for {{ vault }}</caption>

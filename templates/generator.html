@@ -2,8 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Generator - Keyring{% endblock %}
 {% block content %}
-<h1>Generator</h1>
-<p>Make a strong password, a GUID or an API key. Values come from your server's secure random source, aren't stored or logged, and only appear on this page.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/", "Home") }}{{ ui::crumb_here("Generator") }}</ol></nav>
+<div class="title-row"><h1>Generator</h1></div>
+<p class="page-desc">Make a strong password, a GUID or an API key. Values come from your server's secure random source, aren't stored or logged, and only appear on this page.</p>
+</div>
 
 {% call ui::error_summary(errors) %}{% endcall %}
 
