@@ -211,8 +211,40 @@ fn tags_script_is_small_dependency_free_and_same_origin() {
     assert!(js.contains("textContent"));
 }
 
+/// static/behaviors.js, the shared interaction behaviours (menu, combobox,
+/// typeahead, focus recovery), keeps to the same rules and its own size
+/// limit. It reaches out to nothing and writes no markup.
+#[test]
+fn behaviors_script_is_small_dependency_free_and_same_origin() {
+    let js = include_str!("../static/behaviors.js");
+    assert!(js.lines().count() < 300, "keep behaviors.js small");
+    for banned in [
+        "import ",
+        "require(",
+        "eval(",
+        "new Function",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "http://",
+        "https://",
+        "localStorage",
+        "sessionStorage",
+        "fetch(",
+        "cookie",
+        "location",
+        ".href",
+        "onclick",
+        "setAttribute(\"on",
+    ] {
+        assert!(!js.contains(banned), "behaviors.js must not use {banned}");
+    }
+    assert!(js.contains("Behaviour after Vercel UI SDK, Apache-2.0"));
+}
+
 /// No other script ships: every file under static/ that ends in .js is one
-/// of the four, and each is served. share.js loads only on the Share form.
+/// of the five, and each is served. share.js loads only on the Share form.
 #[test]
 fn only_four_scripts_ship() {
     let mut js: Vec<String> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/static"))
@@ -221,5 +253,8 @@ fn only_four_scripts_ship() {
         .filter(|n| n.ends_with(".js"))
         .collect();
     js.sort();
-    assert_eq!(js, ["app.js", "pins.js", "share.js", "tags.js"]);
+    assert_eq!(
+        js,
+        ["app.js", "behaviors.js", "pins.js", "share.js", "tags.js"]
+    );
 }

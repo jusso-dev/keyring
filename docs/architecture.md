@@ -519,6 +519,16 @@ A **Pin** button under the heading of each vault list (secrets, certificates, ke
 - **Optional.** Without JavaScript, when `pins.js` fails to load, or when the browser refuses or fills `localStorage` (private modes, quota), the Pin button never appears and the pages are as they were. Every storage call is wrapped, and the whole script stops quietly on any error.
 - `pins.js` is kept under 200 lines and `app.js` under 450, both by tests.
 
+### Interaction behaviours
+
+`static/behaviors.js` is a fifth same-origin script, loaded with `defer` on every page before the others. It adds keyboard behaviour to markup that already works without it. Its model is Vercel's UI SDK (Apache-2.0), written again by hand: nothing is installed or vendored. Each behaviour attaches by a data attribute.
+
+- **Menu** (`details[data-behavior="menu"]`, the command bar's More menu): a disclosure with `aria-expanded` on the summary, arrow keys, Home, End and typeahead between items, Escape back to the summary, and a click outside or Tab away closes it.
+- **Combobox** (the share picker): `role="combobox"` on the box, `role="listbox"` and `role="option"` on the results, `aria-activedescendant` for the highlight, Enter to pick and Escape to close then clear. The result count is said in the picker's existing polite status line.
+- **Focus recovery**: removing a tag row moves focus to a neighbouring row's Remove button, or Add a tag, never to the page.
+
+`share.js` and `tags.js` use it through `window.KeyringBehaviors` when it is there, and keep their old behaviour when it isn't. Every script is held to a line limit by a test: `app.js` under 450, `behaviors.js` under 300, `pins.js` under 200, `share.js` under 160 and `tags.js` under 150.
+
 ## Vault health
 
 `/vault-health` checks how each vault the person can see is set up. One row per vault, and each check is Pass, Warn or Unknown. Unknown always has a reason and is never counted as a pass: a value Azure didn't send, a setting Keyring doesn't recognise, or a read that failed or ran out of time.
@@ -596,7 +606,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 | Cross-site request forgery | Every state-changing form has a per-session token checked in constant time, **and** a middleware refuses any non-GET request whose `Origin` (or `Referer`) isn't Keyring's own. Tested for every mutating route. The one exemption is exactly `/hooks/eventgrid`, which has no session or cookie to ride on and checks an Entra token instead. The token is bound to the vault in the address of the page the form was rendered on, and checked against the vault in the address it is posted to. A form posted to another vault's address is refused ("You switched vaults") instead of acting on that vault |
 | Open redirects after sign-in | Return paths must be local paths; absolute URLs, `//host`, backslashes and control characters fall back to `/` |
 | Forged or replayed sign-in | PKCE (S256), state and nonce; ID token signature, issuer, audience and expiry checked by `openidconnect`. Sign-in state rides in an AES-256-GCM sealed cookie bound to its name |
-| Cross-site scripting | Askama escapes all output, tag names and values in rows and datalists included (tested). CSP `default-src 'none'` with scripts, styles and fonts from this site only, no inline code, no `eval`. No script (`app.js`, `pins.js`, `tags.js`) uses `innerHTML` (tested) |
+| Cross-site scripting | Askama escapes all output, tag names and values in rows and datalists included (tested). CSP `default-src 'none'` with scripts, styles and fonts from this site only, no inline code, no `eval`. No script (`app.js`, `behaviors.js`, `pins.js`, `share.js`, `tags.js`) uses `innerHTML` (tested), and no other script ships (tested) |
 | A tampered pinned list | Stored entries are rebuilt from checked names and must match a local `/v/{vault}/...` path exactly, or are dropped, so editing `localStorage` can't make a link to another site, a `javascript:` URL or markup |
 | Item names seen on a shared browser | Pinned and recently opened names stay in the browser's `localStorage` until cleared. Sign-out clears them, and a Clear button is under the lists. Names only: no value, version or token is ever stored |
 | Clickjacking | `frame-ancestors 'none'` and `X-Frame-Options: DENY` |

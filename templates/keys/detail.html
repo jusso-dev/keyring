@@ -17,7 +17,7 @@
   {{ ui::link_button(hints.needs(Action::RotateKey), "rotate", "{}/keys/{}/rotate"|format(shell.vault_prefix(), row.name), "button", "Rotate now") }}
   {{ ui::cmd(hints.needs(Action::UpdateKey), "edit", "{}/keys/{}/details"|format(shell.vault_prefix(), row.name), "edit", "Edit details") }}
   <span class="cmd-item">{{ ui::icon("policy") }}<a class="button cmd" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}/rotation">Rotation policy</a></span>
-  <details class="menu">
+  <details class="menu" data-behavior="menu">
     <summary class="cmd">More<span class="visually-hidden"> actions for {{ row.name }}</span></summary>
     <ul class="menu-list">
       {% if row.enabled %}

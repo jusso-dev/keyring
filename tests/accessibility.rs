@@ -157,6 +157,71 @@ fn identifier_fields_keep_case(html: &str, path: &str) {
     }
 }
 
+/// The text of an element's content, tags dropped, entities left as they
+/// are. Visually hidden text counts: it is in the accessibility tree.
+fn text_of(inner: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in inner.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.trim().to_owned()
+}
+
+/// Every button, link and input has an accessible name: its text, an
+/// aria-label or aria-labelledby, a value on a submit input, or (for other
+/// inputs) a `<label for>`. Icon-only controls must carry a label. This is
+/// what an agent or a screen reader reads from the accessibility tree.
+fn controls_have_names(html: &str, path: &str) {
+    for (open, close) in [("<button", "</button>"), ("<a ", "</a>")] {
+        for (i, _) in html.match_indices(open) {
+            let rest = &html[i..];
+            let end = rest.find('>').unwrap_or(rest.len());
+            let tag = &rest[..end];
+            let inner = rest[end..]
+                .find(close)
+                .map_or("", |c| &rest[end + 1..end + c]);
+            let named = attr(tag, "aria-label").is_some_and(|v| !v.trim().is_empty())
+                || attr(tag, "aria-labelledby").is_some()
+                || !text_of(inner).is_empty();
+            assert!(named, "{path}: no accessible name: {tag}>");
+        }
+    }
+    for tag in tags(html, "<input") {
+        let kind = attr(tag, "type").unwrap_or("text");
+        let named = match kind {
+            "hidden" => true,
+            "submit" | "button" | "reset" => attr(tag, "value").is_some_and(|v| !v.is_empty()),
+            _ => {
+                attr(tag, "aria-label").is_some()
+                    || attr(tag, "aria-labelledby").is_some()
+                    || attr(tag, "id").is_some_and(|id| html.contains(&format!("for=\"{id}\"")))
+            }
+        };
+        assert!(named, "{path}: input with no accessible name: {tag}>");
+    }
+}
+
+#[test]
+fn unnamed_controls_are_caught() {
+    let ok = "<a href=\"/x\"><svg aria-hidden=\"true\"></svg><span class=\"visually-hidden\">Close</span></a><button aria-label=\"Pin\"></button><label for=\"q\">Q</label><input id=\"q\">";
+    controls_have_names(ok, "ok");
+    for bad in [
+        "<a href=\"/x\"><svg aria-hidden=\"true\"></svg></a>",
+        "<button type=\"button\"> </button>",
+        "<input id=\"q\">",
+        "<input type=\"submit\">",
+    ] {
+        let caught = std::panic::catch_unwind(|| controls_have_names(bad, "bad")).is_err();
+        assert!(caught, "should fail: {bad}");
+    }
+}
+
 fn page_basics(html: &str, path: &str) {
     describedby_targets_exist(html, path);
     labelledby_targets_exist(html, path);
@@ -186,6 +251,7 @@ fn page_basics(html: &str, path: &str) {
     );
     assert!(!html.contains('\u{2014}'), "{path}: no em dashes");
     controls_have_labels(html, path);
+    controls_have_names(html, path);
 }
 
 #[tokio::test]

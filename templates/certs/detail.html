@@ -39,7 +39,7 @@
   <span class="cmd-item">{{ ui::icon("download") }}<a class="button cmd" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/download-key">Download with private key</a></span>
   {% endif %}{% endif %}
   {{ ui::cmd(hints.needs(Action::UpdateCertificate), "edit", "{}/certificates/{}/details"|format(shell.vault_prefix(), row.name), "edit", "Edit details") }}
-  <details class="menu">
+  <details class="menu" data-behavior="menu">
     <summary class="cmd">More<span class="visually-hidden"> actions for {{ row.name }}</span></summary>
     <ul class="menu-list">
       {% if policy.is_some() %}<li><a class="menu-item" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/renewal">Change renewal</a></li>{% endif %}

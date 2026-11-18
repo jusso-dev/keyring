@@ -707,6 +707,32 @@ Read as "make a new version". The primary button is the accent, never danger.
   share past its date has the danger **Overdue** badge; Revoke is a
   secondary button that opens a typed-name confirmation.
 
+## Interaction behaviours
+
+`static/behaviors.js` adds keyboard behaviour to markup that already works
+without script. The model is Vercel's UI SDK (github.com/vercel-labs/ui,
+Apache-2.0, https://ui-sdk.dev/docs), re-implemented by hand: no npm, no
+vendored code. Each behaviour attaches by a data attribute.
+
+| Behaviour | Where | Keys | ARIA |
+| --- | --- | --- | --- |
+| Menu | `details[data-behavior="menu"]`: the More menu on secret, certificate and key pages | Enter or Space on the summary opens it and focuses the first item. Arrow Down or Up on the summary opens it at the first or last item. Arrow Up and Down, Home and End move between items, skipping disabled ones. Letters jump to the next item that starts with them. Escape closes it and returns focus to the summary. A click outside or Tab away closes it | A disclosure, not `role="menu"`: the items are links and forms, so they keep their own roles. The summary has `aria-expanded` |
+| Combobox | The share picker's "Share with" box | Arrow Down and Up open the results and move the highlight. Enter picks the highlighted one. Alt+Arrow Down opens without moving, Alt+Arrow Up closes. Escape closes the list, then a second Escape clears the box. Tab closes it | `role="combobox"`, `aria-expanded`, `aria-controls`, `aria-autocomplete="list"` and `aria-activedescendant` on the box; `role="listbox"` on the list and `role="option"` with `aria-selected` on each result. The count is said in the existing polite status line |
+| Focus recovery | Removing a tag row | Focus moves to the next row's Remove, else the one before, else Add a tag | None |
+| Tabs | The tab strip on item pages | None added: Tab moves between them | A `nav` of links with `aria-current="page"`. They are links to separate pages, so this is navigation, not an ARIA tabs widget, and arrow keys are left to the browser |
+
+- Without script, the menus are `<details>` elements, the share picker takes
+  an exact email address or object ID, and tag rows post as they are.
+- The highlighted option has a 2px accent outline and a tint, since focus
+  stays in the box.
+- The tag name and tag value pickers stay native `<datalist>` inputs: the
+  browser already gives them a combobox role, arrow keys and Escape, with
+  no script. `static/tags.js` only swaps a row's list.
+- The vault switcher in the top bar is a link to the vault list, not a
+  menu, so it needs no behaviour.
+- The revealed value's Hide already moves focus to the Hide link
+  (`static/app.js`), so it is unchanged.
+
 ## Motion
 
 Only colour changes on hover, 120ms ease-out. No transforms, no reveals.

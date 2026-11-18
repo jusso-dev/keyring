@@ -1,5 +1,5 @@
 // Hand-written stand-ins for the parts of the browser that static/app.js,
-// static/pins.js, static/tags.js and static/share.js use: a few DOM elements, a clock with timers, the clipboard and fetch.
+// static/pins.js, static/tags.js, static/share.js and static/behaviors.js use: a few DOM elements, a clock with timers, the clipboard and fetch.
 // No packages. Only as much as the script needs.
 
 import fs from "node:fs";
@@ -11,6 +11,7 @@ const SCRIPTS = {
   "pins.js": read("pins.js"),
   "tags.js": read("tags.js"),
   "share.js": read("share.js"),
+  "behaviors.js": read("behaviors.js"),
 };
 
 // localStorage. `refuse` makes every call throw, as private modes and
@@ -134,6 +135,24 @@ export class Element {
   }
   get firstChild() {
     return this.children[0] || null;
+  }
+  get previousElementSibling() {
+    if (!this.parentNode) return null;
+    const sibs = this.parentNode.children;
+    return sibs[sibs.indexOf(this) - 1] || null;
+  }
+  get disabled() {
+    return this.hasAttribute("disabled");
+  }
+  // <details>: setting `open` fires "toggle", as a browser does.
+  get open() {
+    return this.hasAttribute("open");
+  }
+  set open(v) {
+    if (v === this.open) return;
+    if (v) this.setAttribute("open", "");
+    else this.removeAttribute("open");
+    this.dispatch("toggle");
   }
   get nextElementSibling() {
     if (!this.parentNode) return null;
@@ -303,7 +322,8 @@ export function page(
     setInterval: (fn, ms) => clock.add(fn, ms, true),
     clearInterval: (id) => clock.clear(id),
   });
-  vm.runInContext(SCRIPTS[script], ctx, { filename: `static/${script}` });
+  // `script` may be a list, run in order, as the page's deferred scripts are.
+  for (const name of [].concat(script)) vm.runInContext(SCRIPTS[name], ctx, { filename: `static/${name}` });
   return { doc, win, main, body: bodyEl, clock, clipboard, assigned, fetches, h };
 }
 

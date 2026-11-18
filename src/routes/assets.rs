@@ -24,6 +24,7 @@ const APP_JS: &str = include_str!("../../static/app.js");
 const PINS_JS: &str = include_str!("../../static/pins.js");
 const TAGS_JS: &str = include_str!("../../static/tags.js");
 const SHARE_JS: &str = include_str!("../../static/share.js");
+const BEHAVIORS_JS: &str = include_str!("../../static/behaviors.js");
 
 /// Legacy font files for cached stylesheets. Latin subset only.
 const FONTS: [(&str, &[u8]); 4] = [
@@ -65,6 +66,7 @@ fn lookup(file: &str) -> Option<(&'static str, &'static str)> {
         "pins.js" => Some((PINS_JS, "text/javascript; charset=utf-8")),
         "tags.js" => Some((TAGS_JS, "text/javascript; charset=utf-8")),
         "share.js" => Some((SHARE_JS, "text/javascript; charset=utf-8")),
+        "behaviors.js" => Some((BEHAVIORS_JS, "text/javascript; charset=utf-8")),
         _ => None,
     }
 }
@@ -80,6 +82,7 @@ static APP_VERSION: LazyLock<String> = LazyLock::new(|| hash(APP_JS));
 static PINS_VERSION: LazyLock<String> = LazyLock::new(|| hash(PINS_JS));
 static TAGS_VERSION: LazyLock<String> = LazyLock::new(|| hash(TAGS_JS));
 static SHARE_VERSION: LazyLock<String> = LazyLock::new(|| hash(SHARE_JS));
+static BEHAVIORS_VERSION: LazyLock<String> = LazyLock::new(|| hash(BEHAVIORS_JS));
 
 fn version(file: &str) -> Option<&'static str> {
     match file {
@@ -88,6 +91,7 @@ fn version(file: &str) -> Option<&'static str> {
         "pins.js" => Some(PINS_VERSION.as_str()),
         "tags.js" => Some(TAGS_VERSION.as_str()),
         "share.js" => Some(SHARE_VERSION.as_str()),
+        "behaviors.js" => Some(BEHAVIORS_VERSION.as_str()),
         _ => None,
     }
 }

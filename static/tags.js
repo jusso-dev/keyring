@@ -66,7 +66,8 @@
   }
 
   // A Remove button on a row. Removing a row leaves its tag out of the
-  // post, so saving removes the tag. Focus moves to the Add button.
+  // post, so saving removes the tag. Focus moves to a neighbour's Remove
+  // (static/behaviors.js), or to the Add button.
   function removable(row, add) {
     var n = number(row);
     var button = el("button");
@@ -77,9 +78,20 @@
     hidden.className = "visually-hidden";
     button.appendChild(hidden);
     button.addEventListener("click", function () {
-      row.parentNode.removeChild(row);
-      add.hidden = false;
-      add.focus();
+      var gone = function () {
+        row.parentNode.removeChild(row);
+        add.hidden = false;
+      };
+      var B = window.KeyringBehaviors;
+      if (!B) {
+        gone();
+        add.focus();
+        return;
+      }
+      // Focus goes to the next row's Remove, else the one before, else Add.
+      var next = row.nextElementSibling, prev = row.previousElementSibling;
+      var pick = function (r) { return r && r.hasAttribute("data-tag-row") ? r.querySelector("button") : null; };
+      B.recover(row, gone, [pick(next), pick(prev), add]);
     });
     row.appendChild(button);
   }
