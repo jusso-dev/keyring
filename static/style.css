@@ -484,7 +484,8 @@ details.menu[open] > summary { background: var(--color-paper-2); }
 /* Tabs on a detail page: links to routes or anchors, the open one marked. */
 .tabs { margin: 0 0 var(--space-sm); border-bottom: 1px solid var(--color-rule); }
 .tabs ul { display: flex; flex-wrap: wrap; gap: 0 var(--space-3xs); list-style: none; margin: 0; padding: 0; }
-.tabs a {
+.tabs a,
+.tabs span[aria-current="page"] {
   display: inline-block;
   min-height: var(--control-h);
   padding: 0.375rem var(--space-xs);
@@ -495,7 +496,7 @@ details.menu[open] > summary { background: var(--color-paper-2); }
   white-space: nowrap;
 }
 .tabs a:hover { color: var(--color-ink); background: var(--color-paper-2); }
-.tabs a[aria-current="page"] { color: var(--color-ink); font-weight: 600; border-bottom-color: var(--color-accent); }
+.tabs [aria-current="page"] { color: var(--color-ink); font-weight: 600; border-bottom-color: var(--color-accent); }
 
 /* Overview: the value panel and the facts side by side on wide screens. */
 .overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); align-items: start; }
@@ -874,6 +875,8 @@ td > input[type="checkbox"] + label[class="visually-hidden"] {
   margin: 0;
   clip: auto;
   color: transparent;
+  /* Forced colours would paint the text back in. */
+  forced-color-adjust: none;
   cursor: pointer;
 }
 
@@ -981,6 +984,9 @@ td.owner-cell, td.owner-cell .mono { white-space: nowrap; overflow-wrap: normal;
 /* Technical values (content type, subscription, resource group): one line,
    cut with an ellipsis past 16rem, so rows stay about 40px. */
 td.tech { white-space: nowrap; }
+/* Where the full value is only shown here (versions, import preview), it
+   wraps instead of being cut. */
+td.mono-wrap { min-width: 10rem; overflow-wrap: anywhere; }
 td.tech .clip { display: block; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Names in a list row stay on one line too. */
 table:not(.ledger) tbody th a.item-name { white-space: nowrap; }
@@ -1223,10 +1229,8 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   /* Forced colours can flatten the accent border, so the current page
      keeps a system colour and an underline. */
   .side-nav a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
-  .tabs a[aria-current="page"], .view-switch a[aria-current="page"] { border-bottom-color: Highlight; text-decoration: underline; }
+  .tabs [aria-current="page"], .view-switch a[aria-current="page"] { border-bottom-color: Highlight; text-decoration: underline; }
   .card-list a[aria-current="page"] { border-color: Highlight; text-decoration: underline; }
-  .pin-button::before, .pin-button::after { forced-color-adjust: none; background: CanvasText; }
-  .pin-button::after { background: Canvas; }
   .pin-button[aria-pressed="true"] { border: 2px solid Highlight; }
   .menu-list { border: 1px solid CanvasText; }
 }
@@ -1280,6 +1284,11 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 }
 .pin-button[aria-pressed="true"]::after { display: none; }
 .button-secondary.pin-button[aria-pressed="true"] { border-color: var(--color-accent-rule); background: var(--color-accent-tint); }
+/* After the rules above, so these win: the stars in system colours. */
+@media (forced-colors: active) {
+  .pin-button::before { forced-color-adjust: none; background: ButtonText; }
+  .pin-button::after { forced-color-adjust: none; background: ButtonFace; }
+}
 .pins-box { margin-bottom: var(--space-sm); }
 .pins h2 { font-size: var(--text-body); line-height: var(--lh-body); margin: var(--space-xs) 0 var(--space-3xs); }
 .pin-list { margin: 0; padding-left: var(--space-md); }

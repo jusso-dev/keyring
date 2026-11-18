@@ -9,7 +9,7 @@
   <p class="muted">Who used this {{ used_by.noun }}, from Key Vault's audit log. <a href="{{ used_by.audit_url }}">See every event</a></p>
   {% if let Some(why) = used_by.unavailable %}
   <div class="empty-state">
-    <p>{{ why }} You can still go ahead.</p>
+    <p>{{ why }}{% if used_by.hint.is_empty() %} Check what uses this {{ used_by.noun }} before you change it.{% endif %} You can still go ahead.</p>
     {% if !used_by.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ used_by.hint }}</p>{% endif %}
   </div>
   {% elif used_by.callers.is_empty() %}

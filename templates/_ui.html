@@ -362,7 +362,7 @@
 <nav class="tabs" aria-label="{{ name }}"><ul>
 <li><a href="{{ item_url }}"{% if current == "overview" %} aria-current="page"{% endif %}>Overview</a></li>
 <li><a href="{{ versions_url }}"{% if current == "versions" %} aria-current="page"{% endif %}>Versions</a></li>
-<li><a href="{{ shell.vault_prefix() }}/audit?item={{ name }}&amp;range=30d&amp;from={{ used_kind }}"{% if current == "used" %} aria-current="page"{% endif %}>Who used it</a></li>
+<li>{% if current == "used" %}<span aria-current="page">Who used it</span>{% else %}<a href="{{ shell.vault_prefix() }}/audit?item={{ name }}&amp;range=30d&amp;from={{ used_kind }}">Who used it</a>{% endif %}</li>
 <li><a href="{% if current == "overview" %}{% else %}{{ item_url }}{% endif %}#access-and-sharing">{% if sharing %}Access and sharing{% else %}Access{% endif %}</a></li>
 </ul></nav>
 {%- endmacro -%}

@@ -8,9 +8,9 @@
 </div>
 {% else %}
 <details class="about"><summary>How this is worked out</summary>
-{% if access.for_item %}<p>Role assignments that reach this item come from the vault, its resource group and its subscription.</p>{% endif %}
+{% if access.for_item %}<p>Role assignments that reach this item come from the item itself, the vault, its resource group, its subscription and any management group above it.</p>{% endif %}
 <p>People, groups and apps are shown by their Entra object ID and type, with a link to them in the Azure portal. Keyring doesn't look up their names. Group members aren't listed: open the group to see them.</p>
-{% if access.rbac %}<p>"Can grant itself access" means the role doesn't reach the contents itself, but can add a role or policy that does. "Eligible" means a PIM assignment the person has to turn on first.</p>{% endif %}
+<p>"Can grant itself access" means the role doesn't reach the contents itself, but can add a role or policy that does. "Eligible" means a PIM assignment the person has to turn on first.</p>
 </details>
 {% if !access.rbac %}
 <p>This vault uses <strong>access policies</strong>, not Azure RBAC. Key Vault data roles don't apply to it. The policies decide who can read and change its contents, and anyone who can change the vault can add a policy for themselves.</p>

@@ -235,7 +235,9 @@ heights and three weights.
 - **Tabs** (`nav.tabs`, `aria-label` names the item): links in a row on a
   hairline, the open one ink, weight 600, with a 2px accent underline and
   `aria-current="page"`. Tabs that point at a section on the same page
-  are anchors.
+  are anchors. The open tab is a link, except "Who used it", which is a
+  `span` with `aria-current="page"`, so it can't drop the filters applied
+  on that page.
 
 ## Badges
 
@@ -276,10 +278,12 @@ they are names to open.
   A 2px ink rule above the header, a 1px ink rule under it, hairline rules
   between rows and hairline column rules. Times and dates don't wrap.
 - Rows stay one line, about 40px, on list pages. Names, dates, expiry,
-  owners and tags don't wrap. Technical values (content type,
-  subscription, resource group) sit in `td.tech` with a `span.clip`: one
-  line, cut with an ellipsis past 16rem. No `title` tooltips (they can't
-  be reached by touch or keyboard); the full value is on the item's page.
+  owners, subscriptions, resource groups and tags don't wrap. A content
+  type in a list whose item page shows it in full (the secrets list,
+  search) sits in `td.tech` with a `span.clip`: one line, cut with an
+  ellipsis past 16rem. Where this page is the only place it is shown
+  (versions, import preview), it wraps in full (`td.mono-wrap`). No
+  `title` tooltips: they can't be reached by touch or keyboard.
 - Tables scroll sideways inside `.table-wrap` at narrow widths. Nothing else
   on a page scrolls sideways.
 
@@ -466,7 +470,8 @@ padding above and below each row. It stacks below 30rem.
   use or certificate private-key access in place of secret reads). A log
   that can't be read, or one with no events from the vault yet, is an
   empty state that says why and "You can still go ahead", with a "What to
-  ask for" hint. It is never an error notice, because it never stops the
+  ask for" hint, or, when there is no hint, "Check what uses this ...
+  before you change it." before it. It is never an error notice, because it never stops the
   action.
 - Workspaces left out, workspaces with no events from the vault, and a
   partial answer are warn notices under the table.
@@ -489,7 +494,8 @@ padding above and below each row. It stacks below 30rem.
 - Each secret, certificate and key page ends with an Access section (`h2`)
   using the same tables: one short line ("Who can reach this secret.") and
   a link to the whole vault's Access page, then the count. Where the
-  assignments come from, how principals are shown and what "Can grant
+  assignments come from (the item, the vault, its resource group, its
+  subscription and any management group above it), how principals are shown and what "Can grant
   itself access" and "Eligible" mean sit in a closed "How this is worked
   out". Badges, empty states and notes stay visible.
 - When it can't be read: an empty state with the reason and a "What to ask
