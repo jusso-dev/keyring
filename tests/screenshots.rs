@@ -304,6 +304,40 @@ fn audit_row(ago_minutes: i64, who: &str, op: &str, item: &str, result: &str) ->
     ]
 }
 
+/// Role assignments and PIM state for the Access and My access pages of
+/// the walkthrough guides. Made-up object IDs, all zeros but the last digit.
+fn seed_access(arm: &support::ArmState) {
+    const SUB: &str = "/subscriptions/sub-a";
+    let rg = format!("{SUB}/resourceGroups/rg-{PAYMENTS}");
+    let vault = format!("{rg}/providers/Microsoft.KeyVault/vaults/{PAYMENTS}");
+    let who = |n: u32| format!("00000000-0000-0000-0000-00000000000{n}");
+    let a = |scope: &str, role: &str, n: u32, kind: &str| {
+        (scope.to_owned(), role.to_owned(), who(n), kind.to_owned())
+    };
+    let mut m = arm.authz.lock().unwrap();
+    m.assignments = vec![
+        a(SUB, support::OWNER_ROLE, 1, "User"),
+        a(&rg, support::SECRETS_USER, 2, "Group"),
+        a(&vault, support::CERT_OFFICER, 3, "ServicePrincipal"),
+        a(&vault, support::SECRETS_USER, 4, "User"),
+    ];
+    m.eligible = vec![a(&vault, support::SECRETS_USER, 5, "User")];
+    let end = chrono::Utc::now() + chrono::Duration::minutes(95);
+    m.pim.active = vec![(
+        vault.clone(),
+        support::SECRETS_USER.into(),
+        "Activated".into(),
+        Some(end.to_rfc3339()),
+    )];
+    m.pim.eligible = vec![(
+        rg,
+        support::CERT_OFFICER.into(),
+        format!(
+            "{SUB}/providers/Microsoft.Authorization/roleEligibilitySchedules/00000000-0000-0000-0000-000000000009"
+        ),
+    )];
+}
+
 #[tokio::test]
 #[ignore = "serves a demo for the README screenshots until stopped"]
 async fn serve_demo_for_screenshots() {
@@ -337,6 +371,7 @@ async fn serve_demo_for_screenshots() {
         vault_row(IDENTITY, "sub-b", "test", "australiasoutheast"),
         vault_row(PLATFORM, "sub-b", "dev", "australiaeast"),
     ];
+    seed_access(&arm.state);
     *arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
     *arm.state.audit_rows.lock().unwrap() = vec![
         audit_row(
