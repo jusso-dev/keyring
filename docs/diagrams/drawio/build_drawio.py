@@ -202,7 +202,7 @@ def page_logical():
 
     p.zone(20, 80, 230, 360, "People", "Browser only holds a session ID")
     users = p.card(32, 130, 206, 60, "users", "People", ["Staff who use Key Vault"])
-    browser = p.card(32, 220, 206, 70, "browser", "Web browser", ["HTML, CSS, three small", "same-origin scripts"])
+    browser = p.card(32, 220, 206, 70, "browser", "Web browser", ["HTML, CSS, a few small", "same-origin scripts"])
     p.box(32, 310, 206, 116, "<b>Kept in the browser</b><br>" + rows([
         "Session cookie (random ID)", "Pinned and recent names", "(localStorage, keyring.pins)", "Nothing else"]))
     p.flow(users, browser, "", PLAIN, exit=(0.5, 1), entry=(0.5, 0), width=1.5)
@@ -213,15 +213,15 @@ def page_logical():
     web = p.card(305, 130, 440, 70, "appservice", "Web server and routes",
                  ["src/routes: pages, forms, CSV, /healthz, /hooks/eventgrid"])
     p.card(305, 215, 215, 92, None, "Guards before any Azure call",
-           ["Origin, form token, typed", "name, step-up, reason, policy,", "owner rule, audit required"])
+           ["Origin, form token, typed name,", "step-up, reason, policy, owner", "rule, reveal limit, audit required"])
     auth = p.card(530, 215, 215, 92, None, "Sign-in and sessions",
                   ["src/auth: OIDC with PKCE,", "in-memory sessions, step-up,", "Event Grid token check"])
     p.card(305, 322, 215, 92, None, "Audit events",
            ["src/audit: one event per", "audited request, to stdout", "and the optional sink"])
     azc = p.card(530, 322, 215, 92, None, "Azure clients",
-                 ["src/azure: Key Vault, ARM,", "Resource Graph, Log Analytics,", "PIM. All as the person"])
+                 ["src/azure: Key Vault, ARM, PIM,", "Resource Graph, Log Analytics,", "Graph. All as the person"])
     p.card(305, 429, 215, 92, None, "Email sender",
-           ["src/notify: queue, rate limit,", "health notices, expiry", "notices from Event Grid"])
+           ["src/notify: queue, rate limit;", "health, expiry, access request,", "activity and share notices"])
     mi = p.card(530, 429, 215, 92, "mi", "Managed identity",
                 ["src/auth/assertion.rs:", "one identity, three uses"], stroke=WARN_RULE, fill=WARN_TINT)
     p.box(305, 536, 440, 200, "<b>What Keyring holds</b><br>" + rows([
@@ -243,21 +243,23 @@ def page_logical():
     p.card(1095, 230, 270, 64, "ca", "Conditional Access", ["Authentication context for step-up"])
 
     p.zone(800, 360, 580, 510, "Azure", "People's subscriptions, plus Keyring's own resource group")
-    asp = p.zone(815, 410, 550, 170, "Called as the signed-in person", "", fill=ACCENT_TINT, stroke=ACCENT_RULE)
+    asp = p.zone(815, 410, 550, 236, "Called as the signed-in person", "", fill=ACCENT_TINT, stroke=ACCENT_RULE)
     p.card(830, 440, 260, 56, "keyvault", "Azure Key Vault", ["People's vaults, data plane"])
     p.card(1095, 440, 255, 56, "arm", "Azure Resource Manager", ["Settings, roles, PIM"])
-    p.card(830, 506, 260, 56, "graph", "Azure Resource Graph", ["Vault discovery"])
-    law = p.card(1095, 506, 255, 56, "law", "Log Analytics", ["Key Vault logs, KeyringAudit_CL"])
-    asi = p.zone(815, 600, 550, 110, "Called as Keyring's managed identity", "", fill=WARN_TINT, stroke=WARN_RULE)
-    dcr = p.card(830, 630, 260, 64, "dcr", "Logs Ingestion API", ["One data collection rule"])
-    p.card(1095, 630, 255, 64, "acs", "Azure Communication Services", ["Email, one resource"])
-    p.flow(dcr, law, "rows", IDENTITY, exit=(1, 0.3), entry=(0.3, 1), points=((1110, 649), (1110, 600), (1171, 600)), width=1.5)
-    p.legend(1095, 728, LEGEND, w=270)
+    p.card(830, 506, 260, 56, "graph", "Azure Resource Graph", ["Vault discovery, vault owners"])
+    p.card(1095, 506, 255, 56, None, "Microsoft Graph", ["Sharing only: find people and", "groups, names by ID"], fs=12)
+    p.card(830, 572, 260, 56, "pim", "Share: role assignment", ["At one secret, as the sharer:", "PIM AdminAssign, or plain"], fs=12)
+    law = p.card(1095, 572, 255, 56, "law", "Log Analytics", ["Key Vault logs, KeyringAudit_CL"])
+    asi = p.zone(815, 666, 550, 110, "Called as Keyring's managed identity", "", fill=WARN_TINT, stroke=WARN_RULE)
+    dcr = p.card(830, 696, 260, 64, "dcr", "Logs Ingestion API", ["One data collection rule"])
+    p.card(1095, 696, 255, 64, "acs", "Azure Communication Services", ["Email, one resource"])
+    p.flow(dcr, law, "rows", IDENTITY, exit=(1, 0.3), entry=(0.3, 1), points=((1110, 715), (1110, 656), (1171, 656)), width=1.5)
+    p.legend(20, 630, LEGEND, w=230)
 
     p.flow(auth, entra, "OIDC, refresh, OBO", PERSON, exit=(1, 0.5), entry=(0, 0.5), points=((780, 261), (780, 162)))
-    p.flow(azc, asp, "", PERSON, exit=(1, 0.5), entry=(0, 0.35), points=((780, 368), (780, 470)))
+    p.flow(azc, asp, "", PERSON, exit=(1, 0.5), entry=(0, 0.35), points=((780, 368), (780, 493)))
     p.flow(mi, appreg, "federated credential", IDENTITY, exit=(1, 0.3), entry=(1, 0.5), points=((795, 457), (795, 318), (1374, 318), (1374, 162)))
-    p.flow(mi, asi, "audit rows, email", IDENTITY, exit=(1, 0.8), entry=(0, 0.5), points=((785, 503), (785, 655)))
+    p.flow(mi, asi, "audit rows, email", IDENTITY, exit=(1, 0.8), entry=(0, 0.5), points=((785, 503), (785, 721)))
     return p
 
 
@@ -405,48 +407,65 @@ def page_notify():
         "SecretNearExpiry", "SecretExpired", "KeyNearExpiry", "KeyExpired",
         "CertificateNearExpiry", "CertificateExpired"]))
 
-    p.zone(470, 80, 450, 690, "Keyring", "")
-    hook = p.card(485, 130, 420, 110, None, "POST /hooks/eventgrid",
+    p.zone(20, 430, 400, 350, "Raised by people's actions", "Fixed text and checked names; never a value",
+           fill=ACCENT_TINT, stroke=ACCENT_RULE)
+    req = p.card(35, 480, 370, 80, None, "Access request (access-requests)",
+                 ["POST /v/{vault}/my-access/request. To keyring-owners", "or the admins; a separate copy to the requester.",
+                  "One per person, vault and role an hour"], fs=12)
+    act = p.card(35, 572, 370, 92, None, "Activity (watched-reads, destructive, role-use)",
+                 ["A second audit observer, on successful events only.", "Watched reads: the item's notify (and owner) tags,",
+                  "4 an hour per item. Deletes, purges, bulk changes,", "role use: keyring-owners, read as the person, or admins"], fs=12)
+    shr = p.card(35, 676, 370, 90, None, "Secret shared (shares)",
+                 ["With KEYRING_SHARING=true, after share.grant.", "To the recipient's Graph mail (groups get none)",
+                  "and a receipt to the sharer"], fs=12)
+
+    p.zone(470, 80, 450, 700, "Keyring", "")
+    hook = p.card(485, 130, 410, 110, None, "POST /hooks/eventgrid",
                   ["Entra token: RS256, issuer, audience, tenant, expiry,",
                    "Event Grid's app ID, the subscriber app role, app-only.",
-                   "1 MB, 1 to 50 events, topic must be a Key Vault ID.",
-                   "120 good and 60 bad deliveries a minute. Dedupe 24 hours."])
+                   "1 MB, 1 to 50 events, topic a Key Vault ID, subscription",
+                   "in KEYRING_EVENTGRID_SUBSCRIPTIONS when set. Dedupe 24 h."])
     p.flow(sub, hook, "Entra token", INBOUND, exit=(1, 0.5), entry=(0, 0.5), points=((450, 260), (450, 185)))
-    health = p.card(485, 260, 420, 110, None, "Health notices (timer, every 30 seconds)",
+    health = p.card(485, 255, 410, 110, None, "Health notices (timer, every 30 seconds)",
                     ["Audit sink degraded for 5 minutes, and recovered.",
                      "Refusal burst: over KEYRING_NOTIFY_BURST_THRESHOLD refused",
                      "or denied events from one person or IP in 15 minutes.",
                      "Client secret expiry: 30, 14, 7 and 1 days, and passed."])
-    obs = p.card(485, 390, 420, 64, None, "Audit observer", ["Counts refused and denied events as they are written"])
+    obs = p.card(485, 380, 410, 64, None, "Audit observer", ["Counts refused and denied events as they are written"])
     p.flow(obs, health, "", PLAIN, exit=(0.5, 0), entry=(0.5, 1), width=1.5)
-    sender = p.card(485, 490, 420, 130, None, "Sender (src/notify/sender.rs)",
+    sender = p.card(485, 470, 410, 140, None, "Sender (src/notify/sender.rs)",
                     ["Strict address parsing, KEYRING_NOTIFY_ALLOWED_DOMAINS,",
-                     "KEYRING_NOTIFY_RATE_PER_HOUR per recipient per type.",
+                     "KEYRING_NOTIFY_RATE_PER_HOUR per mailbox per type.",
                      "Queue of 1,000, retries with Retry-After, one Repeatability-",
                      "Request-Id per email, given up after five minutes.",
                      "One notify.sent or notify.failed audit event per email."], stroke=WARN_RULE)
-    p.flow(hook, sender, "admins, or the header", PLAIN, exit=(0, 0.8), entry=(0, 0.5), points=((477, 218), (477, 555)))
-    p.flow(health, sender, "admins only", PLAIN, exit=(1, 0.5), entry=(1, 0.25), points=((913, 315), (913, 522)))
-    p.box(485, 640, 420, 115, "<b>What an email holds</b><br>" + rows([
+    p.flow(hook, sender, "", PLAIN, exit=(1, 0.8), entry=(1, 0.5), points=((912, 218), (912, 540)))
+    p.flow(health, sender, "", PLAIN, exit=(1, 0.5), entry=(1, 0.25), points=((903, 310), (903, 505)))
+    p.flow(req, sender, "", PLAIN, exit=(1, 0.5), entry=(0, 0.25), points=((430, 520), (430, 505)), width=1.5)
+    p.flow(act, sender, "", PLAIN, exit=(1, 0.5), entry=(0, 0.5), points=((445, 618), (445, 540)), width=1.5)
+    p.flow(shr, sender, "", PLAIN, exit=(1, 0.5), entry=(0, 0.75), points=((460, 721), (460, 575)), width=1.5)
+    p.box(485, 630, 410, 135, "<b>What an email holds</b><br>" + rows([
         "Fixed subject: [Keyring], the type, the item.",
         "Fixed text, checked names, counts, dates, reason codes,",
-        "a link built from APP_BASE_URL. Never a value, token,",
-        "private key, Azure message or a typed reason."]))
+        "links built by Keyring. Outside text cleaned, alone in a",
+        "labelled field. Never a value, token, private key, Azure",
+        "message or a typed reason (an access request quotes one",
+        "only when no mail client could turn it into a link)."]))
 
-    p.zone(950, 80, 430, 690, "Out", "", fill=WARN_TINT, stroke=WARN_RULE)
+    p.zone(950, 80, 430, 700, "Out", "", fill=WARN_TINT, stroke=WARN_RULE)
     mi = p.card(965, 130, 400, 70, "mi", "Managed identity token", ["Audience https://communication.azure.com"])
     acs = p.card(965, 230, 400, 80, "acs", "Azure Communication Services",
                  ["POST /emails:send?api-version=2025-09-01", "Custom role: Read and Write on this resource"])
     mail = p.card(965, 340, 400, 70, None, "Recipients", ["To addresses only. No cc or bcc. Tracking off"])
     p.flow(mi, acs, "", IDENTITY, exit=(0.5, 1), entry=(0.5, 0))
     p.flow(acs, mail, "", PLAIN, exit=(0.5, 1), entry=(0.5, 0))
-    p.flow(sender, acs, "", IDENTITY, exit=(1, 0.75), entry=(0, 0.5), points=((935, 587), (935, 270)))
+    p.flow(sender, acs, "", IDENTITY, exit=(1, 0.75), entry=(0, 0.5), points=((935, 575), (935, 270)))
     p.box(965, 440, 400, 150, "<b>Health of email itself</b><br>" + rows([
         "/healthz/notify: ok, degraded or off, with counts.",
         "503 while sending has failed for a minute.",
         "A failing sender is logged once per incident",
         "and never emailed about."]))
-    p.legend(965, 620, LEGEND[1:], w=400)
+    p.legend(965, 620, LEGEND, w=400)
     return p
 
 
@@ -528,15 +547,17 @@ def page_controls():
     guard = p.card(575, 215, 260, 90, None, "Form guards", ["Origin check and form token", "bound to the vault"])
     p.badge(807, 201, "C5")
     gates = p.card(305, 320, 530, 90, None, "Gates before any Azure call",
-                   ["Typed name and purge off, step-up, reason, password policy, owner rule,", "audit required, input checked against Key Vault's rules"])
+                   ["Typed name and purge off, step-up, reason, password policy, owner rule,", "reveal limit, audit required, input checked against Key Vault's rules"])
     p.badge(807, 306, "C9")
     p.badge(775, 306, "C10")
     p.badge(743, 306, "C11")
     p.badge(711, 306, "C16")
     p.badge(679, 306, "C7")
-    obo = p.card(305, 425, 260, 90, None, "Azure clients", ["Person's OBO token on every", "data call. Key Vault decides"])
+    p.badge(647, 306, "C23")
+    obo = p.card(305, 425, 260, 90, None, "Azure clients", ["Person's OBO token on every data", "call, shares included. Azure decides"])
     p.badge(537, 411, "C1")
     p.badge(505, 411, "C22")
+    p.badge(473, 411, "C26")
     http = p.card(575, 425, 260, 90, None, "Outbound HTTP client", ["rustls and ring, HTTPS only,", "no redirects, fixed hosts"])
     p.badge(807, 411, "C17")
     sec = p.card(305, 530, 260, 90, None, "Secret handling", ["Secret and AccessToken print", "[redacted], zeroised, never logged"])
@@ -546,8 +567,10 @@ def page_controls():
     p.badge(775, 516, "C13")
     hook = p.card(305, 635, 260, 90, None, "Event Grid webhook", ["Entra token checked first,", "topic check, limits, dedupe"])
     p.badge(537, 621, "C15")
-    mail = p.card(575, 635, 260, 90, None, "Email sender", ["Allow-list, rate limit,", "fixed content"])
+    mail = p.card(575, 635, 260, 90, None, "Email sender", ["Allow-list, rate limit, fixed content;", "request and activity limits"])
     p.badge(807, 621, "C14")
+    p.badge(775, 621, "C24")
+    p.badge(743, 621, "C25")
     p.card(305, 740, 530, 100, None, "Build and runtime",
            ["Distroless static image, non-root, read-only, no capabilities.",
             "forbid(unsafe_code), cargo deny and cargo audit, pinned toolchain and actions, SBOM."])
@@ -567,6 +590,8 @@ def page_controls():
     p.badge(1337, 516, "C14")
     eg = p.card(905, 630, 460, 80, "eventgrid", "Azure Event Grid", ["Secure webhook delivery with an Entra token"], stroke=DANGER_RULE)
     p.badge(1337, 616, "C15")
+    graph = p.card(905, 745, 460, 80, None, "Microsoft Graph", ["Sharing only, delegated: users and security groups by name, names by ID"])
+    p.badge(1337, 731, "C27")
 
     p.flow(browser, edge, "HTTPS", PLAIN, exit=(1, 0.5), entry=(0, 0.5), points=((275, 170), (275, 165)))
     p.flow(obo, http, "", PERSON, exit=(1, 0.5), entry=(0, 0.5), width=1.5)
@@ -575,6 +600,7 @@ def page_controls():
     p.flow(aud, dcr, "", IDENTITY, exit=(1, 0.5), entry=(0, 0.5), points=((865, 575), (865, 470)))
     p.flow(mail, acs, "", IDENTITY, exit=(1, 0.5), entry=(0, 0.5), points=((855, 680), (855, 570)))
     p.flow(eg, hook, "", INBOUND, exit=(0.5, 1), entry=(0.5, 1), points=((1135, 733), (435, 733)))
+    p.flow(http, graph, "", PERSON, exit=(1, 0.25), entry=(0, 0.5), points=((847, 447.5), (847, 785)), width=1.5)
     p.legend(20, 640, LEGEND, w=255)
     return p
 
