@@ -310,7 +310,7 @@ async fn status_cell_is_never_empty() {
     let (_, html) = w.page("/v/kv-test/certificates").await;
     let row = html.split(">no-expiry<").nth(1).unwrap();
     let cell = row
-        .split("<td>")
+        .split("<td class=\"nowrap\">")
         .nth(1)
         .unwrap()
         .split("</td>")

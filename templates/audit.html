@@ -13,7 +13,10 @@
 <div class="page-head">
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Audit") }}</ol></nav>
 <div class="title-row"><h1>Audit <span class="muted">for {{ vault }}</span></h1></div>
-<p class="page-desc">Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events. Times are in UTC.</p>
+<p class="page-desc">Who read or changed what in this vault, from its diagnostic logs. Up to 500 of the most recent events, times in UTC.</p>
+{% call ui::about() %}
+<p>Item takes an item's name. Person takes part of a sign-in name, email or object ID, such as name@example.com. The CSV has the exact Azure operation and time of each event.</p>
+{% endcall %}
 </div>
 <div class="commandbar">
   <span class="cmd-item">{{ ui::icon("audit") }}<a class="button cmd" href="/audit">Reports across every vault</a></span>
@@ -26,38 +29,22 @@
 
 <form class="filters" method="get" action="{{ shell.vault_prefix() }}/audit" role="search">
   {% if !filter.from.is_empty() %}<input type="hidden" name="from" value="{{ filter.from }}">{% endif %}
-  <div>
-    <label for="range">When</label>
-    <select id="range" name="range">
+  <div class="fpill"><label for="range">When</label><select id="range" name="range">
       {% for r in ranges %}<option value="{{ r.slug() }}"{% if *r == range %} selected{% endif %}>{{ r.label() }}</option>{% endfor %}
-    </select>
-  </div>
-  <div>
-    {% let field_name = "item" %}
-    <label for="item">Item name <span class="muted">(optional)</span></label>
-    <input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}>
-    {% include "_field_error.html" %}
-  </div>
-  <div>
-    {% let field_name = "operation" %}
-    <label for="operation">Action</label>
-    <select id="operation" name="operation"{% call ui::aria("operation") %}{% endcall %}>
-      <option value="">Any action</option>
+    </select></div>
+  <div class="fpill"><label for="item">Item</label><input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}></div>
+  <div class="fpill"><label for="operation">Action</label><select id="operation" name="operation"{% call ui::aria("operation") %}{% endcall %}>
+      <option value="">Any</option>
       {% for (op, label) in operations %}<option value="{{ op }}"{% if filter.operation == *op %} selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
-    {% include "_field_error.html" %}
-  </div>
-  <div>
-    {% let field_name = "person" %}
-    <label for="person">Person <span class="muted">(optional)</span></label>
-    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
-    <input id="person" name="person" type="text" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
-    {% include "_field_error.html" %}
-  </div>
+    </select></div>
+  <div class="fpill"><label for="person">Person</label><input id="person" name="person" type="text" class="fpill-wide" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}><span class="fpill-hint" id="person-help">name, email or ID</span></div>
   <div class="filters-submit">
-    <button type="submit">Filter</button>
-    {% if !filter.item.is_empty() && unavailable.is_none() && errors.is_empty() %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+    <button type="submit" class="button-secondary">Apply</button>
   </div>
+  {% if !filter.item.is_empty() && unavailable.is_none() && errors.is_empty() %}<div class="filters-end"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>{% endif %}
+  {% let field_name = "item" %}{% include "_field_error.html" %}
+  {% let field_name = "operation" %}{% include "_field_error.html" %}
+  {% let field_name = "person" %}{% include "_field_error.html" %}
 </form>
 
 {% if is_no_logging() %}
@@ -83,18 +70,18 @@
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 <p class="toolbar-meta"><strong>{{ rows.len() }} event{% if rows.len() != 1 %}s{% endif %}</strong></p>
 {% call ui::table_wrap("audit-caption") %}
-<table class="ledger">
+<table class="ledger one-line">
   <caption class="visually-hidden" id="audit-caption">Audit events for {{ vault }}</caption>
-  <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
+  <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>
-      <td class="small">{{ r.time }}</td>
-      <td>{{ r.who }}</td>
-      <th scope="row">{{ r.what }}{% if r.operation != r.what %}<br><span class="muted small mono">{{ r.operation }}</span>{% endif %}</th>
-      <td class="item-name">{{ ui::or_none(r.item) }}</td>
-      <td>{% call ui::audit_result(r) %}{% endcall %}</td>
-      <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
+      <td class="cell-time">{{ ui::when(r.when) }}</td>
+      <td class="cell-text cell-fluid"><span class="clip clip-lg">{{ r.who }}</span></td>
+      <th scope="row" class="cell-text cell-fluid"><span class="clip clip-md">{{ r.what }}</span>{% if r.operation != r.what %}<span class="visually-hidden"> ({{ r.operation }})</span>{% endif %}</th>
+      <td class="cell-text item-name cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
+      <td class="nowrap">{% call ui::audit_result(r) %}{% endcall %}</td>
+      <td class="mono small nowrap">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}
   </tbody>

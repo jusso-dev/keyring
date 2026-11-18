@@ -25,7 +25,7 @@ This walkthrough shows how to find out who read or changed what: a vault's event
 
    ![A vault's audit page.](../images/screenshots/audit.png)
 
-2. Narrow it with **When** (**Last hour**, **Last 24 hours**, **Last 7 days** or **Last 30 days**), **Item name**, **Action** and **Person**, then select **Filter**.
+2. Narrow it with **When** (**Last hour**, **Last 24 hours**, **Last 7 days** or **Last 30 days**), **Item**, **Action** and **Person**, then press Enter or select **Apply**.
 
 3. Select **Download CSV** for the events shown.
 
@@ -61,11 +61,11 @@ This walkthrough shows how to find out who read or changed what: a vault's event
 
 9. On a vault's audit page, select **Keyring activity** (shown only when your Keyring is set up with its own audit table).
 
-   "What people did in this vault through Keyring, from Keyring's own audit table, including what Keyring refused before Key Vault was asked." The **Result** column says **Done**, **Denied by Azure**, **Refused by Keyring** or **Failed**, with a reason code; **Why** shows the reason and ticket a person gave.
+   "What people did in this vault through Keyring, from Keyring's own audit table, including what Keyring refused before Key Vault was asked." The **Result** column says **Done**, **Denied by Azure**, **Refused by Keyring** or **Failed**, with a reason code; **Why** shows the reason a person gave (select a long one to read it all) and **Ticket** the ticket. **What** names the action, such as "Share secret", whatever the result.
 
 ### Read an audit row and check it against Key Vault's log
 
-10. On **Key Vault's log**, read a row: **When** (UTC), **Who** (sign-in name, or an app's ID), **What** (with Key Vault's operation name under it, such as `SecretGet`), **Item**, **Result** (**Allowed**, **Accepted**, **Refused**, **Failed** or **Unknown**, with Azure's status) and **From** (the caller's IP address).
+10. On **Key Vault's log**, read a row: **When** (UTC), **Who** (sign-in name, or an app's ID), **What** (Key Vault's operation in plain words, such as "Viewed secret value"; **Download CSV** gives the exact operation name, such as `SecretGet`), **Item**, **Result** (**Allowed**, **Accepted**, **Refused**, **Failed** or **Unknown**, with Azure's status) and **From** (the caller's IP address).
 
 11. To check a Keyring action against Key Vault, find the action's Keyring event (in **Keyring activity**, or Keyring's log) and note its `kv_request_id`. Key Vault records the same ID as the `CorrelationId` of its own row. Whoever runs Keyring can run the join query in `docs/deploy.md` (Example queries).
 

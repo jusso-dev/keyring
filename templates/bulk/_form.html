@@ -6,10 +6,8 @@
 <details class="bulk"><summary>With selected: change many {{ bulk_plural }} at once</summary>
 <form id="bulk-form" class="filters" method="post" action="{{ shell.vault_prefix() }}{{ bulk_base }}/-/bulk" data-tag-row>
   <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
-  <div>
-    <label for="bulk-op">With selected</label>
-    <p class="field-help" id="bulk-op-help">Tick {{ bulk_plural }} below, up to 100. You'll see every change before anything is saved.</p>
-    <select id="bulk-op" name="op" aria-describedby="bulk-op-help">
+  <p class="toolbar-note" id="bulk-op-help">Tick {{ bulk_plural }} below, up to 100. You'll see every change before anything is saved.</p>
+  <div class="fpill"><label for="bulk-op">Change</label><select id="bulk-op" name="op" aria-describedby="bulk-op-help">
       <option value="tag_set">Add or change a tag</option>
       <option value="tag_remove">Remove a tag</option>
       <option value="description_set">Set the description</option>
@@ -21,36 +19,15 @@
       {% if bulk_expiry %}<option value="expiry">Set expiry date</option>{% endif %}
       <option value="enable">Enable</option>
       <option value="disable">Disable</option>
-    </select>
-  </div>
-  <div>
-    <label for="bulk-tag-name">Tag name</label>
-    <input id="bulk-tag-name" name="tag_name" type="text" maxlength="512" list="tag-names" data-tag-name{% call ui::ident() %}{% endcall %}>
-  </div>
-  <div>
-    <label for="bulk-tag-value">Tag value (optional)</label>
-    <input id="bulk-tag-value" name="tag_value" type="text" maxlength="256" list="{{ crate::routes::tag_rows::ANY_VALUES }}" data-tag-value{% call ui::ident() %}{% endcall %}>
-  </div>
-  <div>
-    <label for="bulk-description">Description (for Set the description)</label>
-    <input id="bulk-description" name="description" type="text" maxlength="256"{% call ui::ident() %}{% endcall %}>
-  </div>
-  <div>
-    <label for="bulk-owner">Owner (for Set the owner)</label>
-    <input id="bulk-owner" name="owner" type="text" inputmode="email" maxlength="256" list="owner-options"{% call ui::ident() %}{% endcall %}>
-    <datalist id="owner-options">{% for o in tag_suggest.owners %}<option value="{{ o }}">{% endfor %}</datalist>
-  </div>
-  <div>
-    <label for="bulk-notify">Notify (for Set the notify list)</label>
-    <p class="field-help" id="bulk-notify-help">Up to {{ crate::owner::MAX_NOTIFY }} addresses, separated by commas.</p>
-    <input id="bulk-notify" name="notify" type="text" inputmode="email" maxlength="256" aria-describedby="bulk-notify-help"{% call ui::ident() %}{% endcall %}>
-  </div>
+    </select></div>
+  <div class="fpill"><label for="bulk-tag-name">Tag name</label><input id="bulk-tag-name" name="tag_name" type="text" maxlength="512" list="tag-names" data-tag-name{% call ui::ident() %}{% endcall %}></div>
+  <div class="fpill"><label for="bulk-tag-value">Tag value (optional)</label><input id="bulk-tag-value" name="tag_value" type="text" maxlength="256" list="{{ crate::routes::tag_rows::ANY_VALUES }}" data-tag-value{% call ui::ident() %}{% endcall %}></div>
+  <div class="fpill"><label for="bulk-description">Description</label><input id="bulk-description" name="description" type="text" class="fpill-wide" maxlength="256"{% call ui::ident() %}{% endcall %}></div>
+  <div class="fpill"><label for="bulk-owner">Owner</label><input id="bulk-owner" name="owner" type="text" class="fpill-wide" inputmode="email" maxlength="256" list="owner-options"{% call ui::ident() %}{% endcall %}><datalist id="owner-options">{% for o in tag_suggest.owners %}<option value="{{ o }}">{% endfor %}</datalist></div>
+  <div class="fpill"><label for="bulk-notify">Notify</label><input id="bulk-notify" name="notify" type="text" class="fpill-wide" inputmode="email" maxlength="256" aria-describedby="bulk-notify-help"{% call ui::ident() %}{% endcall %}><span class="fpill-hint" id="bulk-notify-help">up to {{ crate::owner::MAX_NOTIFY }}, commas between</span></div>
   {% if bulk_expiry %}
-  <div>
-    <label for="bulk-expires">Expiry date</label>
-    <p class="field-help" id="bulk-expires-help">Sets or changes the date. Key Vault can't remove one.</p>
-    <input id="bulk-expires" name="expires" type="date" aria-describedby="bulk-expires-help">
-  </div>
+  <div class="fpill"><label for="bulk-expires">Expiry date</label><input id="bulk-expires" name="expires" type="date" aria-describedby="bulk-expires-help"></div>
+  <p class="toolbar-note" id="bulk-expires-help">Expiry date sets or changes the date. Key Vault can't remove one.</p>
   {% endif %}
   {% call ui::tag_lists(tag_suggest) %}{% endcall %}
   <div class="filters-submit">

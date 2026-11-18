@@ -5,9 +5,12 @@
 <div class="page-head">
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb("{}/audit"|format(shell.vault_prefix()), "Audit") }}{{ ui::crumb_here("Keyring activity") }}</ol></nav>
 <div class="title-row"><h1>Audit <span class="muted">for {{ vault }}</span></h1></div>
-<p class="page-desc">What people did in this vault through Keyring, including what Keyring refused before Key Vault was asked. Up to 500 of the most recent events. Times are in UTC.</p>
+<p class="page-desc">What people did in this vault through Keyring, including what Keyring refused before Key Vault was asked. Up to 500 of the most recent events, times in UTC.</p>
 {% call ui::about() %}
 <p>Read as you, from Keyring's own audit table.</p>
+<p>What is each action in plain words. The Action filter lists each one with its code, such as <span class="mono">secret.bulk_update</span>, which is what Keyring writes to its audit table. Events with no one signed in, such as emails and Event Grid deliveries, show as Keyring, marked System.</p>
+<p>Item takes an item's name. Person takes part of a sign-in name or email, such as name@example.com, or a full object ID.</p>
+<p>Why shows the reason a person gave; a long one opens in full when you select it. Ticket is shown on its own.</p>
 {% endcall %}
 </div>
 <nav aria-label="Audit views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/audit">Key Vault's log</a> <a href="{{ shell.vault_prefix() }}/audit/keyring" aria-current="page">Keyring activity</a></p></nav>
@@ -15,37 +18,21 @@
 {% call ui::error_summary(errors) %}{% endcall %}
 
 <form class="filters" method="get" action="{{ shell.vault_prefix() }}/audit/keyring" role="search">
-  <div>
-    <label for="range">When</label>
-    <select id="range" name="range">
+  <div class="fpill"><label for="range">When</label><select id="range" name="range">
       {% for r in ranges %}<option value="{{ r.slug() }}"{% if *r == range %} selected{% endif %}>{{ r.label() }}</option>{% endfor %}
-    </select>
-  </div>
-  <div>
-    {% let field_name = "item" %}
-    <label for="item">Item name <span class="muted">(optional)</span></label>
-    <input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}>
-    {% include "_field_error.html" %}
-  </div>
-  <div>
-    {% let field_name = "action" %}
-    <label for="action">Action</label>
-    <select id="action" name="action"{% call ui::aria("action") %}{% endcall %}>
-      <option value="">Any action</option>
-      {% for a in actions %}<option value="{{ a }}"{% if filter.action == *a %} selected{% endif %}>{{ a }}</option>{% endfor %}
-    </select>
-    {% include "_field_error.html" %}
-  </div>
-  <div>
-    {% let field_name = "person" %}
-    <label for="person">Person <span class="muted">(optional)</span></label>
-    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
-    <input id="person" name="person" type="text" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
-    {% include "_field_error.html" %}
-  </div>
+    </select></div>
+  <div class="fpill"><label for="item">Item</label><input id="item" name="item" type="text" value="{{ filter.item }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("item") %}{% endcall %}></div>
+  <div class="fpill"><label for="action">Action</label><select id="action" name="action"{% call ui::aria("action") %}{% endcall %}>
+      <option value="">Any</option>
+      {% for (a, label) in actions %}<option value="{{ a }}"{% if filter.action == *a %} selected{% endif %}>{{ label }} ({{ a }})</option>{% endfor %}
+    </select></div>
+  <div class="fpill"><label for="person">Person</label><input id="person" name="person" type="text" class="fpill-wide" value="{{ filter.person }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}><span class="fpill-hint" id="person-help">Part of a sign-in name or email, or a full object ID</span></div>
   <div class="filters-submit">
-    <button type="submit">Filter</button>
+    <button type="submit" class="button-secondary">Apply</button>
   </div>
+  {% let field_name = "item" %}{% include "_field_error.html" %}
+  {% let field_name = "action" %}{% include "_field_error.html" %}
+  {% let field_name = "person" %}{% include "_field_error.html" %}
 </form>
 
 {% if no_access %}
@@ -60,19 +47,20 @@
 {% elif !rows.is_empty() %}
 {% if capped %}<p class="notice notice-warn">Showing the 500 most recent events. Narrow the filters to see older ones.</p>{% endif %}
 {% call ui::table_wrap("keyring-caption") %}
-<table class="ledger">
+<table class="ledger one-line">
   <caption class="visually-hidden" id="keyring-caption">Keyring activity for {{ vault }}</caption>
-  <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">Why</th><th scope="col">From</th></tr></thead>
+  <thead><tr><th scope="col">When (UTC)</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">Why</th><th scope="col">Ticket</th><th scope="col" class="col-p3">From</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>
-      <td class="small">{{ r.time }}</td>
-      <td>{{ r.who }}</td>
-      <th scope="row" class="mono">{{ r.action }}</th>
-      <td class="item-name">{{ ui::or_none(r.item) }}</td>
-      <td>{% if r.outcome == "success" %}<span class="result-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %}<br><span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
-      <td>{% if r.reason.is_empty() && r.ticket.is_empty() %}<span class="muted">None</span>{% else %}{{ r.reason }}{% if !r.ticket.is_empty() %}<br><span class="muted small">Ticket {{ r.ticket }}</span>{% endif %}{% endif %}</td>
-      <td class="mono small">{{ ui::or_none(r.client_ip) }}</td>
+      <td class="cell-time">{{ ui::when(r.when) }}</td>
+      <td class="cell-text cell-fluid cell-who">{{ ui::keyring_who(r) }}</td>
+      <th scope="row" class="cell-text cell-fluid"><span class="clip clip-md">{{ r.label }}</span><data class="visually-hidden" value="{{ r.action }}"> ({{ r.action }})</data></th>
+      <td class="cell-text item-name cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.item) }}</span></td>
+      <td class="nowrap">{% if r.outcome == "success" %}<span class="badge badge-ok">Done</span>{% elif r.outcome == "denied" %}<span class="badge badge-error">Denied by Azure</span>{% elif r.outcome == "refused" %}<span class="badge badge-error">Refused by Keyring</span>{% elif r.outcome == "failed" %}<span class="badge badge-muted">Failed</span>{% else %}<span class="muted">Unknown</span>{% endif %}{% if !r.reason_code.is_empty() %} <span class="muted small mono">{{ r.reason_code }}</span>{% endif %}</td>
+      <td class="cell-text cell-fluid">{% if r.reason.is_empty() %}<span class="muted">None</span>{% else %}{% call ui::clip_more(r.reason, "lg", 40, "reason") %}{% endcall %}{% endif %}</td>
+      <td class="mono small nowrap">{% if r.ticket.is_empty() %}<span class="muted">None</span>{% else %}{{ r.ticket }}{% endif %}</td>
+      <td class="mono small nowrap col-p3">{{ ui::or_none(r.client_ip) }}</td>
     </tr>
     {% endfor %}
   </tbody>

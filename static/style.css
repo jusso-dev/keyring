@@ -745,13 +745,14 @@ a.button-danger:hover {
   white-space: nowrap;
 }
 
-/* List toolbar: filters inline at 32px on one white bar, straight above
-   the table. Short help stays visible above its field. */
+/* List toolbar: one row of filter pills on a white bar, straight above
+   the table, as in the Azure portal. A pill is one bordered 32px box: the
+   label as a small prefix, then a borderless control. */
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2xs) var(--space-xs);
-  align-items: flex-end;
+  gap: var(--space-2xs);
+  align-items: center;
   margin: 0;
   padding: var(--space-2xs) var(--space-xs);
   border: 1px solid var(--color-rule);
@@ -760,23 +761,73 @@ a.button-danger:hover {
   background: var(--color-surface);
 }
 .filters + .filters, details.bulk + .filters { border-radius: 0; }
-.filters label {
-  margin: 0 0 2px;
+.fpill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--control-h);
+  padding: 0 0 0 var(--space-2xs);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.fpill:hover { background: var(--color-paper); }
+.fpill:focus-within { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.fpill > label,
+.filters .fpill > label {
+  flex: none;
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  font-weight: 400;
+  color: var(--color-ink-2);
+  white-space: nowrap;
+}
+.fpill > label::after { content: ":"; }
+.fpill input[type="text"],
+.fpill input[type="search"],
+.fpill input[type="date"],
+.fpill select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: calc(var(--control-h) - 2px);
+  padding: 0 var(--space-2xs) 0 var(--space-3xs);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-ink);
+}
+.fpill select { width: auto; max-width: 12rem; text-overflow: ellipsis; font-weight: 600; cursor: pointer; }
+/* The pill draws the ring, so the control inside doesn't draw a second. */
+.fpill input:focus-visible, .fpill select:focus-visible { outline: none; }
+.fpill input[type="text"] { width: 8rem; }
+/* After the text rule, so a wide text box keeps its width. */
+.fpill input[type="search"], .fpill input.fpill-wide { width: 12rem; }
+.fpill input.fpill-num { width: 4rem; }
+/* A hint or unit the person needs while typing, kept visible. */
+.fpill-hint {
+  flex: none;
+  padding: 0 var(--space-2xs) 0 var(--space-3xs);
   font-size: var(--text-caption);
   line-height: var(--lh-caption);
   color: var(--color-ink-2);
+  white-space: nowrap;
 }
-.filters .field-help { margin: 0 0 2px; max-width: 16rem; }
-.filters input, .filters select { width: 13rem; max-width: 100%; }
-.filters input[type="search"] { width: 16rem; }
-.filters > div { min-width: 0; max-width: 100%; position: relative; }
+/* A checkbox pill: the box first, then its label at body size. */
+.fpill-check { gap: var(--space-2xs); padding: 0 var(--space-2xs); cursor: pointer; }
+.fpill-check > label, .filters .fpill-check > label { font-size: var(--text-body); line-height: var(--lh-body); color: var(--color-ink); cursor: pointer; }
+.fpill-check > label::after { content: none; }
+.fpill-check input { width: 1rem; }
+.fpill-check .fpill-hint { white-space: normal; }
 .filters-submit { display: flex; gap: var(--space-2xs); align-items: center; }
-.filters-submit a { white-space: nowrap; }
-/* "Owned by me": a checkbox in the filter row. */
-.filters .filter-check { flex-wrap: nowrap; align-self: flex-end; min-height: var(--control-h); margin: 0; }
-.filters .filter-check label { margin: 0; font-size: var(--text-body); line-height: var(--lh-body); color: var(--color-ink); font-weight: 400; }
-.filters .filter-check input { width: 1rem; }
-.filters .field-error { font-size: var(--text-caption); line-height: var(--lh-caption); max-width: 16rem; }
+.filters-submit a { white-space: nowrap; font-size: var(--text-caption); line-height: var(--lh-caption); }
+.filters-submit .button-secondary { min-height: var(--control-h); }
+/* An error under a filter takes its own line, so the pills stay in a row. */
+.filters > .field-error { flex-basis: 100%; margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
+/* A note that must stay visible in a toolbar (the bulk change). */
+.filters > .toolbar-note { flex-basis: 100%; margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--color-ink-2); }
 .filters-end { margin-left: auto; }
 /* What sits between the toolbar and its table: the count and status links. */
 .toolbar-meta {
@@ -977,21 +1028,114 @@ table.ledger th.mono,
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
-td.note-cell { min-width: 8rem; max-width: 24rem; }
-/* An owner stays on one line, "(not a plain address)" included; the table
-   scrolls inside its wrapper when it must. */
-td.owner-cell, td.owner-cell .mono { white-space: nowrap; overflow-wrap: normal; }
-/* Technical values (content type, subscription, resource group): one line,
-   cut with an ellipsis past 16rem, so rows stay about 40px. */
-td.tech { white-space: nowrap; }
+/* One line per row, whatever the data. Free text sits in a span.clip,
+   cut with an ellipsis at its column's width (clip-sm 8rem, clip-md 12rem,
+   clip-lg 16rem). A max-width on the cell itself isn't kept by the
+   browser's table layout, so the span carries it. The whole text stays
+   in the page, so a screen reader reads it all, and the item's own page
+   shows it in full. */
+.clip {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.clip-sm { max-width: 8rem; }
+.clip-md { max-width: 12rem; }
+.clip-lg { max-width: 16rem; }
+td.note-cell, td.owner-cell, td.owner-cell .mono, td.tech, td.tag-cell { white-space: nowrap; overflow-wrap: normal; }
+td.note-cell .clip { font-size: var(--text-caption); line-height: var(--lh-caption); }
+/* A reason code after a Result badge: caption size, so the cell stays narrow. */
+td .badge + .mono.small { font-size: var(--text-caption); }
+/* A data table (table.one-line: lists, audit, expiry, age, health,
+   search, used by, access) keeps every cell on one line. Tables of
+   reasons (bulk review, import results) and values shown only on their
+   page (versions, import preview) wrap as before. */
+table.one-line tbody th, table.one-line tbody td { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+/* On a wide screen the free-text columns are fluid: they share what the
+   other columns leave and cut with an ellipsis, so the table never scrolls
+   sideways. The clip's own width is the cap. On a small screen they keep
+   their width and the table scrolls inside its wrapper instead. */
+@media (min-width: 48rem) {
+  .cell-fluid { max-width: 0; }
+  .cell-fluid .clip { max-width: min(100%, 16rem); }
+  .cell-fluid .clip-sm { max-width: min(100%, 10rem); }
+  .cell-fluid .clip-md { max-width: min(100%, 14rem); }
+  .cell-fluid .clip-lg { max-width: min(100%, 20rem); }
+  /* Each fluid column keeps enough to be read before the cut. The
+     minimum sits on the cell, so the table can't squeeze the cell below
+     what its text needs and let the text run into the next column. */
+  td.cell-fluid, th.cell-fluid { min-width: 5.5rem; }
+  td.cell-who { min-width: 9rem; }
+  td.cell-fluid:has(> .cell-more[open]) { max-width: none; }
+  .cell-fluid > .clip, .cell-fluid > a.clip,
+  .cell-fluid > .name-badge, .cell-fluid > .cell-more { max-width: 100%; }
+  .cell-fluid .clip { min-width: 0; }
+}
+/* A table with a column per check (vault health): the short headers may
+   take two lines, so the rows fit without scrolling sideways. */
+table.check-grid thead th { white-space: normal; min-width: 0; vertical-align: bottom; }
+table.check-grid th, table.check-grid td { padding-left: var(--space-2xs); padding-right: var(--space-2xs); }
+table.check-grid td.cell-fluid { min-width: 5rem; }
+/* A cell that may wrap inside a one-line table: role names and where an
+   assignment comes from, which are short phrases but can run long. */
+table.one-line tbody td.cell-wrap { white-space: normal; min-width: 8rem; }
+/* A name with a badge after it: the name gives way, the badge stays in
+   the cell. */
+.name-badge { display: inline-flex; align-items: center; gap: var(--space-3xs); max-width: 100%; min-width: 0; vertical-align: middle; }
+.name-badge > .clip { flex: 0 1 auto; min-width: 3rem; }
+.name-badge > .badge { flex: none; }
+/* A cut value that opens to the whole of it (the reason, owners, a
+   resource group): a <details> in the cell, so keyboard, pointer and
+   touch all reach it, with no script. The row grows only while open. */
+.cell-more { display: inline-block; max-width: 100%; vertical-align: middle; }
+.cell-more > summary { display: inline-flex; align-items: center; gap: var(--space-3xs); max-width: 100%; min-height: 1.5rem; cursor: pointer; list-style: none; }
+.cell-more > summary::-webkit-details-marker { display: none; }
+.cell-more > summary::after {
+  content: "";
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-right: 1.5px solid var(--color-ink-2);
+  border-bottom: 1.5px solid var(--color-ink-2);
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+.cell-more[open] > summary::after { transform: rotate(225deg); }
+.cell-more > summary:hover .clip { text-decoration: underline; }
+.cell-more > p {
+  margin: var(--space-3xs) 0 0;
+  /* Open, the whole value gets a readable measure; the row grows, and on
+     a narrow screen the table scrolls in its wrapper. */
+  width: max-content;
+  min-width: 12rem;
+  max-width: 24rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.cell-more > summary .clip { min-width: 0; flex: 0 1 auto; }
+/* A time or date: compact, tabular, one line. */
+.cell-time, td.nowrap { white-space: nowrap; }
+time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* Where the full value is only shown here (versions, import preview), it
    wraps instead of being cut. */
 td.mono-wrap { min-width: 10rem; overflow-wrap: anywhere; }
-td.tech .clip { display: block; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Names in a list row stay on one line too. */
+/* Names in a row stay on one line too. */
 table:not(.ledger) tbody th a.item-name { white-space: nowrap; }
-/* Tags in a list row: one line; the table scrolls in its wrapper. */
-td.tag-cell { white-space: nowrap; }
+tbody th .clip, tbody th.clip { font-weight: 400; }
+/* A time from a log: compact, tabular, one line. */
+time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A relative note after a date ("in 18 days") at caption size. */
+td.nowrap .muted { font-size: var(--text-caption); line-height: var(--lh-caption); }
+/* Lower-priority columns give way when the table's area is narrow:
+   content type first, then description. CSS only, no column picker. */
+.table-wrap { container-type: inline-size; }
+@container (max-width: 76rem) { .col-p4 { display: none; } }
+@container (max-width: 68.75rem) { .col-p3 { display: none; } }
+@container (max-width: 56rem) { .col-p2 { display: none; } }
 dd.note { white-space: pre-line; }
 
 .tag {
@@ -1286,13 +1430,29 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 .button-secondary.pin-button[aria-pressed="true"] { border-color: var(--color-accent-rule); background: var(--color-accent-tint); }
 /* After the rules above, so these win: the stars in system colours. */
 @media (forced-colors: active) {
+  .cell-more > summary::after { border-color: CanvasText; }
   .pin-button::before { forced-color-adjust: none; background: ButtonText; }
   .pin-button::after { forced-color-adjust: none; background: ButtonFace; }
 }
-.pins-box { margin-bottom: var(--space-sm); }
-.pins h2 { font-size: var(--text-body); line-height: var(--lh-body); margin: var(--space-xs) 0 var(--space-3xs); }
-.pin-list { margin: 0; padding-left: var(--space-md); }
-.pin-list li { margin-bottom: 2px; }
+/* One compact card under the page header: a caption heading and a
+   wrapping row of links per list, then the note with Clear. */
+.pins-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs) var(--space-md);
+  align-items: baseline;
+  margin: 0 0 var(--space-sm);
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.pins { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-2xs); align-items: baseline; min-width: 0; }
+.pins h2 { margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--color-ink-2); }
+.pin-list { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-sm); margin: 0; padding: 0; list-style: none; min-width: 0; }
+.pin-list li { margin: 0; overflow-wrap: anywhere; }
+.pin-list .muted { font-size: var(--text-caption); line-height: var(--lh-caption); }
+.pins-box > p { flex-basis: 100%; margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
 
 /* The share picker's results (static/share.js): a plain list of buttons under the box. */
 .share-results { list-style: none; margin: var(--space-3xs) 0 0; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius); background: var(--color-surface); max-width: 40rem; }
@@ -1335,8 +1495,11 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .site-search { flex-wrap: nowrap; }
   .content { padding: var(--space-sm) var(--space-sm) var(--space-xl); }
   .filters { padding: var(--space-2xs); }
-  .filters > div, .filters input, .filters select, .filters input[type="search"] { width: 100%; }
-  .filters .filter-check input { width: 1rem; }
+  .fpill { flex: 1 1 100%; }
+  .fpill input[type="text"], .fpill input[type="search"], .fpill input[type="date"], .fpill select, .fpill input.fpill-wide { flex: 1 1 auto; width: 100%; }
+  .fpill input.fpill-num { flex: 0 1 4rem; }
+  .fpill-check { flex: 0 1 auto; }
+  .fpill-check input { flex: none; width: 1rem; }
   .filters-end { margin-left: 0; }
   /* The menu drops into the flow, so it never runs off a narrow screen. */
   .menu-list { position: static; box-shadow: none; margin-top: var(--space-3xs); }

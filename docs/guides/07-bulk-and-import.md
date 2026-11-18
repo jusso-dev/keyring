@@ -21,15 +21,15 @@ This walkthrough covers two ways to change many items at once: a bulk change on 
 
 1. On **Secrets**, **Certificates** or **Keys**, tick the items you want, up to 100.
 
-2. In **With selected**, pick the change:
+2. Open **With selected** and pick the change in **Change**:
 
    | Change | Fill in |
    | --- | --- |
    | **Add or change a tag**, **Remove a tag** | **Tag name**, and **Tag value (optional)** |
-   | **Set the description**, **Remove the description** | **Description (for Set the description)** |
-   | **Set the owner**, **Remove the owner** | **Owner (for Set the owner)** |
-   | **Set the notify list**, **Remove the notify list** | **Notify (for Set the notify list)** |
-   | **Set expiry date** (secrets and keys) | **Expiry date**. "Sets or changes the date. Key Vault can't remove one." |
+   | **Set the description**, **Remove the description** | **Description** (only for setting it) |
+   | **Set the owner**, **Remove the owner** | **Owner** (only for setting it) |
+   | **Set the notify list**, **Remove the notify list** | **Notify** (only for setting it) |
+   | **Set expiry date** (secrets and keys) | **Expiry date**. "Expiry date sets or changes the date. Key Vault can't remove one." |
    | **Enable**, **Disable** | Nothing |
 
 3. Select **Review changes**.

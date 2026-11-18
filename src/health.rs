@@ -496,13 +496,15 @@ impl Row {
 
 /// CSV, one line per vault and check. Every text field is formula-guarded.
 pub(crate) fn to_csv(rows: &[Row]) -> String {
-    let mut out = String::from("Vault,Subscription,Resource group,Check,Result,Detail,Guide\r\n");
+    let mut out =
+        String::from("Vault,Subscription,Resource group,Owners,Check,Result,Detail,Guide\r\n");
     for r in rows {
         for f in &r.findings {
             let line = [
                 csv_field(&r.vault),
                 csv_field(&r.subscription),
                 csv_field(&r.resource_group),
+                csv_field(&owners_text(r)),
                 f.kind.label().to_owned(),
                 f.status.label().to_owned(),
                 csv_field(&f.detail),
@@ -519,11 +521,21 @@ pub(crate) fn to_csv(rows: &[Row]) -> String {
     out
 }
 
+/// A vault's named owners for the CSV: every entry, separated by "; ".
+fn owners_text(r: &Row) -> String {
+    r.owners
+        .entries
+        .iter()
+        .map(|e| e.text())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// A line for something the export leaves out, so it can't pass for a
 /// full report. `NOT READ` sits in the Result column.
 pub(crate) fn not_read_row(vault: &str, reason: &str) -> String {
     format!(
-        "{},,,,NOT READ,{},\r\n",
+        "{},,,,,NOT READ,{},\r\n",
         csv_field(vault),
         csv_field(reason)
     )
@@ -737,14 +749,15 @@ mod tests {
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(
             lines[0],
-            "Vault,Subscription,Resource group,Check,Result,Detail,Guide"
+            "Vault,Subscription,Resource group,Owners,Check,Result,Detail,Guide"
         );
         assert_eq!(lines.len(), 1 + Kind::ALL.len());
-        assert!(lines[1].starts_with("'=cmd,Prod,'+rg,Audit logs,Pass,,"));
+        assert!(lines[1].starts_with("'=cmd,Prod,'+rg,"), "{}", lines[1]);
+        assert!(lines[1].contains(",Audit logs,Pass,,"), "{}", lines[1]);
         let rbac = lines.iter().find(|l| l.contains(",Azure RBAC,")).unwrap();
         assert!(rbac.contains(",Warn,"));
         assert!(rbac.ends_with(Kind::Rbac.guide()));
-        assert_eq!(not_read_row("-x", "a, b"), "'-x,,,,NOT READ,\"a, b\",\r\n");
+        assert_eq!(not_read_row("-x", "a, b"), "'-x,,,,,NOT READ,\"a, b\",\r\n");
     }
 
     #[test]

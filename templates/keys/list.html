@@ -6,6 +6,10 @@
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Keys") }}</ol></nav>
 <div class="title-row"><h1 data-pin="vault" data-pin-vault="{{ vault }}">Keys <span class="muted">in {{ vault }}</span></h1></div>
 <p class="page-desc">Keys never leave Key Vault. Keyring only shows their public parts.</p>
+{% if total > 0 %}{% call ui::about() %}
+<p>Search finds part of a name, a tag or an owner. Tag takes a tag name, such as env, or name=value, such as env=prod. "Owned by me" shows the ones where you're the owner or on the notify list.</p>
+<p>Each one's tags, notify list and full description are on its own page.</p>
+{% endcall %}{% endif %}
 </div>
 <div class="commandbar">
   {{ ui::link_button(hints.needs(Action::CreateKey), "create", "{}/keys/-/new"|format(shell.vault_prefix()), "button", "Create a key") }}
@@ -18,22 +22,13 @@
 </div>
 {% else %}
 <form class="filters" method="get" action="{{ shell.vault_prefix() }}/keys" role="search" data-live-filter="key-table">
-  <div>
-    <label for="q">Search by name, tag or owner</label>
-    <input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}>
+  <div class="fpill"><label for="q">Search</label><input id="q" name="q" type="search" value="{{ filter.q }}"{% call ui::ident() %}{% endcall %}></div>
+  {% call ui::tag_filter(filter.tag, tag_options) %}{% endcall %}
+  {% call ui::mine_filter(filter.mine()) %}{% endcall %}
+  <div class="filters-submit">
+    <button type="submit" class="button-secondary">Apply</button>
+    {% if !filter.is_empty() %}<a href="{{ shell.vault_prefix() }}/keys">Clear</a>{% endif %}
   </div>
-  <div>
-    <label for="tag">Tag</label>
-    <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
-    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" list="tag-filter-options" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
-    {% call ui::filter_options(tag_options) %}{% endcall %}
-  </div>
-  <div class="checkbox filter-check">
-    <input id="mine" name="mine" type="checkbox" value="1"{% if filter.mine() %} checked{% endif %} aria-describedby="mine-help">
-    <label for="mine">Owned by me</label>
-    <p class="field-help" id="mine-help">Where you're the owner or on the notify list.</p>
-  </div>
-  <div class="filters-submit"><button type="submit">Filter</button>{% if !filter.is_empty() %} <a href="{{ shell.vault_prefix() }}/keys">Clear</a>{% endif %}</div>
 </form>
 <p class="toolbar-meta"><strong>{{ total }} key{% if total != 1 %}s{% endif %}</strong></p>
 {% if rows.is_empty() %}
@@ -42,20 +37,19 @@
 {% let bulk_needs = hints.needs(Action::UpdateKey) %}{% let bulk_expiry = true %}{% let bulk_base = "/keys" %}{% let bulk_plural = "keys" %}
 {% include "bulk/_form.html" %}
 {% call ui::table_wrap("key-table-caption") %}
-<table id="key-table">
+<table id="key-table" class="one-line">
   <caption class="visually-hidden" id="key-table-caption">Keys in {{ vault }}</caption>
-  <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col">Description</th><th scope="col">Owner</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+  <thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Name</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col" class="col-p3">Created</th><th scope="col">Expires</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr data-filter-text="{{ row.filter_text }}"{% if !row.enabled %} class="row-muted"{% endif %}>
       <td><input type="checkbox" id="pick-{{ row.name }}" name="item" value="{{ row.name }}" form="bulk-form"><label for="pick-{{ row.name }}" class="visually-hidden">Select {{ row.name }}</label></td>
-      <th scope="row"><a class="item-name" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
-      <td>{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
-      <td class="note-cell">{{ ui::note_cell(row.description) }}</td>
-      <td class="owner-cell">{{ ui::owner_value(row.owners.owner_shown()) }}</td>
-      <td class="nowrap">{{ ui::or_none(row.created) }}</td>
+      <th scope="row" class="cell-fluid"><a class="item-name clip clip-lg" href="{{ shell.vault_prefix() }}/keys/{{ row.name }}">{{ row.name }}</a></th>
+      <td class="nowrap">{{ ui::status(row.enabled, row.is_expired(), row.is_expiring(), false, false, row.managed) }}{% if !row.stale.is_empty() %} <span class="badge badge-warn">{{ row.stale }}</span>{% endif %}</td>
+      <td class="note-cell col-p2 cell-fluid">{{ ui::note_cell(row.description) }}</td>
+      <td class="owner-cell cell-fluid">{{ ui::owner_cell(row.owners.owner_shown()) }}</td>
+      <td class="nowrap col-p3">{{ ui::or_none(row.created) }}</td>
       <td class="nowrap">{{ ui::expires(row.expires, row.expires_note) }}</td>
-      <td class="tag-cell">{{ ui::tags(row.tags) }}</td>
     </tr>
     {% endfor %}
   </tbody>

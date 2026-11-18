@@ -70,7 +70,7 @@ async fn secret_create_edit_and_set_value_keep_owner_and_notify() {
     assert!(!html.contains("?tag=owner"));
     let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("<th scope=\"col\">Owner</th>"));
-    assert!(html.contains("<td class=\"owner-cell\"><a href=\"mailto:Alex@example.com\">"));
+    assert!(html.contains("<td class=\"owner-cell cell-fluid\"><span class=\"clip clip-lg\"><a href=\"mailto:Alex@example.com\">"));
     let (_, html) = w.page("/v/kv-test/secrets/db-password/edit").await;
     assert!(html.contains(
         "id=\"owner\" name=\"owner\" type=\"text\" inputmode=\"email\" value=\"Alex@example.com\""
@@ -995,12 +995,14 @@ async fn expiry_and_age_pages_show_the_owner() {
     for path in ["/expiry?show=all", "/expiry/age"] {
         let (_, html) = w.page(path).await;
         assert!(
-            html.contains("<th scope=\"col\">Owner</th><th scope=\"col\">Tags</th>"),
+            html.contains(
+                "<th scope=\"col\">Owner</th><th scope=\"col\" class=\"col-p3\">Tags</th>"
+            ),
             "{path}"
         );
         assert!(
             html.contains(
-                "<td class=\"owner-cell\"><a href=\"mailto:ops%2541@example.com\">ops%41@example.com</a></td>"
+                "<td class=\"owner-cell cell-fluid\"><span class=\"clip clip-lg\"><a href=\"mailto:ops%2541@example.com\">ops%41@example.com</a></span></td>"
             ),
             "{path}: {html}"
         );

@@ -8,23 +8,20 @@
 <p class="page-desc">How each vault you can see is set up. Only settings, names and dates are read, never values.</p>
 {% call ui::about() %}
 <p>The checks cover whether each vault keeps audit logs, who can reach it, whether deletes can be undone, and how well its contents are looked after.</p>
+<p>Pick one vault to also check certificate renewal and key rotation, which need a call per item.</p>
 {% endcall %}
 </div>
 <p class="notice">Each check is Pass, Warn, or Unknown when Keyring couldn't read it. Unknown is never counted as a pass.</p>
 
 <form class="filters" method="get" action="/vault-health" role="search">
-  <div>
-    <label for="vault">Vault</label>
-    <p class="field-help" id="vault-help">Pick one vault to also check certificate renewal and key rotation, which need a call per item.</p>
-    <select id="vault" name="vault" aria-describedby="vault-help">
-      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+  <div class="fpill"><label for="vault">Vault</label><select id="vault" name="vault" aria-describedby="vault-help">
+      <option value="">All{% if capped %} (first {{ max_vaults }}){% endif %}</option>
       {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
-    </select>
-  </div>
+    </select><span class="fpill-hint" id="vault-help">one vault adds renewal and rotation</span></div>
   <div class="filters-submit">
-    <button type="submit">Check</button>
-    <a href="{{ csv_url }}">Download CSV</a>
+    <button type="submit" class="button-secondary">Check</button>
   </div>
+  <div class="filters-end"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>
 </form>
 
 {% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
@@ -40,7 +37,7 @@
 <p>{{ rows.len() }} vault{% if rows.len() != 1 %}s{% endif %} checked: {{ warnings }} warning{% if warnings != 1 %}s{% endif %} and {{ unknowns }} check{% if unknowns != 1 %}s{% endif %} Keyring couldn't read.{% if !per_item_checks %} Certificate renewal and key rotation are checked when you pick one vault.{% endif %}</p>
 
 {% call ui::table_wrap("health-caption") %}
-<table class="ledger">
+<table class="ledger one-line check-grid">
   <caption class="visually-hidden" id="health-caption">Checks for each vault</caption>
   <thead>
     <tr>
@@ -53,7 +50,7 @@
     {% for r in rows %}
     <tr>
       <th scope="row" class="item-name">{{ r.vault }}</th>
-      <td class="owner-cell">{% call ui::owner_value(r.owners) %}{% endcall %}</td>
+      <td class="owner-cell cell-fluid">{% call ui::owner_cell(r.owners) %}{% endcall %}</td>
       {% for f in r.findings %}
       <td>{% if f.deferred %}<span class="muted">Pick this vault</span>{% else %}<span class="badge {{ f.status.css() }}">{{ f.status.label() }}</span>{% endif %}</td>
       {% endfor %}

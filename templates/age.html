@@ -14,32 +14,21 @@
 <nav aria-label="Expiry views"><p class="view-switch"><a href="/expiry">By expiry date</a> <a href="/expiry/age" aria-current="page">By time since the value changed</a></p></nav>
 
 <form class="filters" method="get" action="/expiry/age" role="search">
-  <div>
-    <label for="vault">Vault</label>
-    <select id="vault" name="vault">
-      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+  <div class="fpill"><label for="vault">Vault</label><select id="vault" name="vault">
+      <option value="">All{% if capped %} (first {{ max_vaults }}){% endif %}</option>
       {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
-    </select>
-  </div>
-  <div>
-    <label for="type">Type</label>
-    <select id="type" name="type">
+    </select></div>
+  <div class="fpill"><label for="type">Type</label><select id="type" name="type">
       <option value="">Everything</option>
       <option value="secret"{% if filter.kind == "secret" %} selected{% endif %}>Secrets</option>
       <option value="certificate"{% if filter.kind == "certificate" %} selected{% endif %}>Certificates</option>
       <option value="key"{% if filter.kind == "key" %} selected{% endif %}>Keys</option>
-    </select>
-  </div>
-  <div>
-    <label for="tag">Tag</label>
-    <p class="field-help" id="tag-help">A tag name, such as env, or name=value, such as env=prod.</p>
-    <input id="tag" name="tag" type="text" value="{{ filter.tag }}" list="tag-filter-options" aria-describedby="tag-help"{% call ui::ident() %}{% endcall %}>
-    {% call ui::filter_options(tag_options) %}{% endcall %}
-  </div>
+    </select></div>
+  {% call ui::tag_filter(filter.tag, tag_options) %}{% endcall %}
   <div class="filters-submit">
-    <button type="submit">Filter</button>
-    <a href="{{ csv_url }}">Download CSV</a>
+    <button type="submit" class="button-secondary">Apply</button>
   </div>
+  <div class="filters-end"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>
 </form>
 
 {% if capped %}<p class="notice notice-warn">You can see more than {{ max_vaults }} vaults, so this shows the first {{ max_vaults }} by name. Pick a vault to see others.</p>{% endif %}
@@ -72,18 +61,18 @@
 <section aria-labelledby="band-{{ b.band.slug() }}">
   <h2 id="band-{{ b.band.slug() }}">{{ b.band.label() }} <span class="muted">({{ b.count }})</span></h2>
   {% call ui::table_wrap("band-{}-caption"|format(b.band.slug())) %}
-  <table class="ledger">
+  <table class="ledger one-line">
     <caption class="visually-hidden" id="band-{{ b.band.slug() }}-caption">Value changed {{ b.band.label()|lower }} ago</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Value changed</th><th scope="col">Owner</th><th scope="col">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Vault</th><th scope="col">Value changed</th><th scope="col">Owner</th><th scope="col" class="col-p3">Tags</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
     <tbody>
       {% for r in b.rows %}
       <tr{% if !r.enabled %} class="row-muted"{% endif %}>
-        <th scope="row" class="item-name">{{ r.name }}{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</th>
+        <th scope="row" class="item-name cell-fluid"><span class="name-badge"><span class="clip clip-lg">{{ r.name }}</span>{% if !r.enabled %} <span class="badge badge-muted">Disabled</span>{% endif %}</span></th>
         <td>{{ r.kind.label() }}</td>
-        <td class="item-name">{{ r.vault }}</td>
+        <td class="item-name nowrap">{{ r.vault }}</td>
         <td class="nowrap">{% call ui::changed(r.changed, r.note, r.stale) %}{% endcall %}</td>
-        <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
-        <td>{{ ui::or_none(r.tags) }}</td>
+        <td class="owner-cell cell-fluid">{% call ui::owner_cell(r.owner) %}{% endcall %}</td>
+        <td class="col-p3 cell-fluid"><span class="clip clip-md">{{ ui::or_none(r.tags) }}</span></td>
         <td>
           <a class="button button-small" href="/v/{{ r.vault }}{{ r.kind.path() }}/{{ r.name }}">Open<span class="visually-hidden"> {{ r.name }} in {{ r.vault }}</span></a>
         </td>

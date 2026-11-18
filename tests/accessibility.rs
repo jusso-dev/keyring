@@ -698,11 +698,12 @@ async fn status_and_tags_look_the_same_everywhere() {
             !html.contains(">Never<") && !html.contains(">Not set<"),
             "{list}"
         );
-        assert!(
-            html.contains("<span class=\"tag\">env</span>"),
-            "{list}: no env="
-        );
         assert!(html.contains("<span class=\"muted\">None</span>"), "{list}");
+    }
+    // The lists leave tags to each item's page so rows fit at 1440px.
+    for item in ["/v/kv-test/secrets/soon-secret", "/v/kv-test/keys/soon-key"] {
+        let (_, html) = w.page(item).await;
+        assert!(html.contains("\">env</a>"), "{item}: no env=");
     }
 }
 

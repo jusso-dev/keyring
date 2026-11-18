@@ -27,6 +27,11 @@ const DEMO_CERT_PEM: &str = include_str!("fixtures/demo-cert.pem");
 const DEMO_CERT_SOON_PEM: &str = include_str!("fixtures/demo-cert-soon.pem");
 
 const PAYMENTS: &str = "kv-payments-prod";
+/// Real sign-in names and notes are long. The demo uses values as long as
+/// a real tenant's, so a row that wraps shows up in the screenshots.
+const OWNER_LONG: &str = "payments-platform-oncall@demo-enterprise.example";
+const PERSON_LONG: &str = "alexandra.taylor-whitfield@demo-enterprise.example";
+const WORKSPACE: &str = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-security/providers/Microsoft.OperationalInsights/workspaces/law-keyring-audit";
 const PLATFORM: &str = "kv-platform-dev";
 const IDENTITY: &str = "kv-identity-test";
 
@@ -62,7 +67,32 @@ fn seed_payments(kv: &KvState) {
             v.created = n - 12 * DAY;
             v.updated = n - 12 * DAY;
             v.exp = Some(n + 18 * DAY);
-            v.tags = tags(&[("owner", "payments-team"), ("rotation", "quarterly")]);
+            v.tags = tags(&[
+                ("owner", OWNER_LONG),
+                ("rotation", "quarterly"),
+                (
+                    "description",
+                    "Connection string for the nightly settlement job that reconciles card payments with the bank file. Ask payments before rotating.",
+                ),
+            ]);
+        },
+    );
+    kv.put_with(
+        "payments-gateway-settlement-reconciliation-db-password",
+        "demo-settlement-value",
+        |v| {
+            v.content_type = Some("application/vnd.demo.settlement-credentials+json".into());
+            v.created = n - 75 * DAY;
+            v.updated = n - 75 * DAY;
+            v.exp = Some(n + 52 * DAY);
+            v.tags = tags(&[
+                ("owner", "kr-e2e-colleague-1118@demo-enterprise.example"),
+                ("env", "prod"),
+                (
+                    "description",
+                    "Read by the settlement reconciliation worker in the payments AKS cluster",
+                ),
+            ]);
         },
     );
     kv.put_with("stripe-webhook-secret", "demo-whsec-0000000000", |v| {
@@ -70,7 +100,13 @@ fn seed_payments(kv: &KvState) {
         v.created = n - 400 * DAY;
         v.updated = n - 400 * DAY;
         v.exp = Some(n - 6 * DAY);
-        v.tags = tags(&[("owner", "payments-team")]);
+        v.tags = tags(&[
+            ("owner", OWNER_LONG),
+            (
+                "description",
+                "Verifies webhook calls from the card processor",
+            ),
+        ]);
     });
     kv.put_with("legacy-ftp-password", "demo-legacy-value", |v| {
         v.enabled = false;
@@ -304,6 +340,77 @@ fn audit_row(ago_minutes: i64, who: &str, op: &str, item: &str, result: &str) ->
     ]
 }
 
+/// Keyring's own events for the Keyring activity view, with a long
+/// sign-in name and events no one signed in for.
+fn keyring_rows() -> Vec<Vec<(&'static str, serde_json::Value)>> {
+    let at = |ago_minutes: i64| {
+        let t = now() - ago_minutes * 60;
+        let secs = t.rem_euclid(DAY);
+        format!(
+            "{}T{:02}:{:02}:{:02}.123Z",
+            keyring::dates::iso_date(t),
+            secs / 3600,
+            (secs % 3600) / 60,
+            secs % 60
+        )
+    };
+    let row = |ago: i64, action: &str, outcome: &str, who: &str, item: &str| {
+        let mut r = vec![
+            ("TimeGenerated", json!(at(ago))),
+            ("Vault", json!(PAYMENTS)),
+            ("Action", json!(action)),
+            ("Outcome", json!(outcome)),
+            ("ActorUpn", json!(who)),
+            ("ItemKind", json!("secret")),
+            ("ItemName", json!(item)),
+        ];
+        if !who.is_empty() {
+            r.push(("ClientIp", json!("203.0.113.24")));
+        }
+        r
+    };
+    let mut refused = row(
+        40,
+        "secret.purge",
+        "refused",
+        PERSON_LONG,
+        "old-merchant-token",
+    );
+    refused.push(("ReasonCode", json!("purge_disabled")));
+    let mut revealed = row(
+        12,
+        "secret.reveal",
+        "success",
+        PERSON_LONG,
+        "payments-gateway-settlement-reconciliation-db-password",
+    );
+    revealed.push((
+        "Reason",
+        json!("Checking the settlement job's database login after the failed nightly run"),
+    ));
+    revealed.push(("Ticket", json!("INC-20418")));
+    vec![
+        row(3, "notify.sent", "success", "", "stripe-webhook-secret"),
+        revealed,
+        row(
+            25,
+            "secret.bulk_update",
+            "success",
+            "alex.taylor@demo.example",
+            "smtp-relay-password",
+        ),
+        refused,
+        row(
+            90,
+            "share.revoke",
+            "success",
+            "alex.taylor@demo.example",
+            "db-connection-string",
+        ),
+        row(180, "notify.failed", "failed", "", "github-actions-token"),
+    ]
+}
+
 /// Role assignments and PIM state for the Access and My access pages of
 /// the walkthrough guides. Made-up object IDs, all zeros but the last digit.
 fn seed_access(arm: &support::ArmState) {
@@ -375,6 +482,13 @@ async fn serve_demo_for_screenshots() {
     *arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
     *arm.state.audit_rows.lock().unwrap() = vec![
         audit_row(
+            2,
+            PERSON_LONG,
+            "SecretGet",
+            "payments-gateway-settlement-reconciliation-db-password",
+            "OK",
+        ),
+        audit_row(
             4,
             "alex.taylor@demo.example",
             "SecretGet",
@@ -432,7 +546,10 @@ async fn serve_demo_for_screenshots() {
         ),
     ];
 
+    *arm.state.keyring_rows.lock().unwrap() = keyring_rows();
+
     let env: std::collections::HashMap<&str, String> = std::collections::HashMap::from([
+        ("KEYRING_AUDIT_WORKSPACE_ID", WORKSPACE.to_owned()),
         ("ENTRA_TENANT_ID", support::TENANT.to_owned()),
         ("ENTRA_CLIENT_ID", support::CLIENT_ID.to_owned()),
         ("ENTRA_CLIENT_SECRET", support::CLIENT_SECRET.to_owned()),

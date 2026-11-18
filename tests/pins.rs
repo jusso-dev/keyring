@@ -69,6 +69,29 @@ async fn csp_is_unchanged_and_allows_no_inline_script() {
     assert!(!home.contains("onsubmit") && !home.contains("onclick"));
 }
 
+/// The index just past the `</div>` that closes the `<div` at `start`.
+fn close_of_div(html: &str, start: usize) -> usize {
+    let mut depth = 0usize;
+    let mut i = start;
+    loop {
+        let open = html[i..].find("<div").map(|n| n + i);
+        let close = html[i..].find("</div>").map(|n| n + i).expect("closed");
+        match open {
+            Some(o) if o < close => {
+                depth += 1;
+                i = o + 4;
+            }
+            _ => {
+                depth -= 1;
+                i = close + 6;
+                if depth == 0 {
+                    return i;
+                }
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn home_and_vault_list_have_an_empty_hidden_mount() {
     let w = support::world().await;
@@ -79,10 +102,20 @@ async fn home_and_vault_list_have_an_empty_hidden_mount() {
             html.contains("<div class=\"pins-box\" data-pins hidden></div>"),
             "{path}"
         );
-        // Above everything else: straight after the heading.
-        let h1 = html.find("</h1>").unwrap();
+        // The next element after the page header, inside <main>, so it
+        // sits under the description and About and before the command bar.
+        let main = html.find("<main").unwrap();
+        let main_end = html.find("</main>").unwrap();
+        let head = html[main..].find("<div class=\"page-head\">").unwrap() + main;
+        let head_end = close_of_div(&html, head);
+        let rest = html[head_end..].trim_start();
+        assert!(
+            rest.starts_with("<div class=\"pins-box\" data-pins hidden></div>"),
+            "{path}: next after the header is {}",
+            &rest[..rest.len().min(80)]
+        );
         let mount = html.find("data-pins hidden").unwrap();
-        assert!(mount > h1 && html[h1..mount].lines().count() <= 3, "{path}");
+        assert!(main < mount && mount < main_end, "{path}: in <main>");
         // Nothing to pin until the script runs: no star in the HTML.
         assert!(!html.contains("pin-button"), "{path}");
     }

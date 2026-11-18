@@ -61,9 +61,9 @@ Keyring stores nothing of its own, so all of this lives in the item's Key Vault 
 
 ### Find things by tag and owner
 
-9. On **Secrets**, **Certificates** or **Keys**, type a tag in **Tag**, such as `env` or `env=prod`, and select **Filter**.
+9. On **Secrets**, **Certificates** or **Keys**, type a tag in **Tag**, such as `env` or `env=prod`, and press Enter or select **Apply**.
 
-10. Tick **Owned by me** and select **Filter** to see the items whose owner, or one of whose notify addresses, is the address you signed in with.
+10. Tick **Owned by me** and select **Apply** to see the items whose owner, or one of whose notify addresses, is the address you signed in with.
 
     The page's address only says `mine=1`, never your address.
 

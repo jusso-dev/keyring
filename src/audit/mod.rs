@@ -231,6 +231,70 @@ impl Action {
         }
     }
 
+    /// What the audit pages call it, in plain words. The dotted name stays
+    /// in the event, the filter's options and Log Analytics.
+    pub fn label(self) -> &'static str {
+        // What was asked for, never how it ended: a refused or failed
+        // event has the same label, and the Result column says which.
+        match self {
+            Self::SecretReveal => "Show secret value",
+            Self::SecretCreate => "Create secret",
+            Self::SecretSet => "Set new secret value",
+            Self::SecretUpdate => "Edit secret details",
+            Self::SecretEnabledSet => "Turn secret on or off",
+            Self::SecretRollback => "Roll back secret",
+            Self::SecretDelete => "Delete secret",
+            Self::SecretRecover => "Recover secret",
+            Self::SecretPurge => "Purge secret",
+            Self::SecretImport => "Import secrets",
+            Self::SecretBulkUpdate => "Bulk change secrets",
+            Self::SecretCopyRead => "Copy to another vault",
+            Self::SecretCopyWrite => "Copy from another vault",
+            Self::CertificateDownloadPrivateKey => "Download private key",
+            Self::CertificateUpload => "Upload certificate",
+            Self::CertificateCreate => "Create certificate",
+            Self::CertificatePendingCancel => "Cancel certificate request",
+            Self::CertificateRenewalSet => "Change renewal settings",
+            Self::CertificateEnabledSet => "Turn certificate on or off",
+            Self::CertificateUpdate => "Edit certificate details",
+            Self::CertificateDelete => "Delete certificate",
+            Self::CertificateRecover => "Recover certificate",
+            Self::CertificatePurge => "Purge certificate",
+            Self::CertificateBulkUpdate => "Bulk change certificates",
+            Self::KeyCreate => "Create key",
+            Self::KeyRotate => "Rotate key",
+            Self::KeyRotationPolicySet => "Change rotation policy",
+            Self::KeyEnabledSet => "Turn key on or off",
+            Self::KeyUpdate => "Edit key details",
+            Self::KeyDelete => "Delete key",
+            Self::KeyRecover => "Recover key",
+            Self::KeyPurge => "Purge key",
+            Self::KeyBulkUpdate => "Bulk change keys",
+            Self::RoleActivate => "Turn on role",
+            Self::RoleDeactivate => "Turn off role",
+            Self::AccessRequest => "Request access",
+            Self::ShareGrant => "Share secret",
+            Self::ShareRevoke => "Revoke share",
+            Self::SessionSignIn => "Sign in",
+            Self::SessionSignInFailed => "Sign in (refused)",
+            Self::SessionSignOut => "Sign out",
+            Self::SessionExpired => "Session timeout",
+            Self::RequestRefused => "Unrecognised request",
+            Self::NotifySent => "Send email",
+            Self::NotifyFailed => "Send email (not sent)",
+            Self::NotifyWebhook => "Event Grid delivery",
+        }
+    }
+
+    /// The plain label for a dotted name read back from the log, or `None`
+    /// for a name this version doesn't know.
+    pub fn label_for(name: &str) -> Option<&'static str> {
+        Self::ALL
+            .iter()
+            .find(|a| a.as_str() == name)
+            .map(|a| a.label())
+    }
+
     /// `secret`, `certificate` or `key` for actions on an item. A share is
     /// always of one secret.
     pub fn item_kind(self) -> Option<&'static str> {

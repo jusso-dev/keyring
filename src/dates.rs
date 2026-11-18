@@ -67,6 +67,64 @@ pub fn parse_iso_date(s: &str) -> Option<i64> {
     (civil_from_days(days) == (y, m, d)).then_some(days * 86_400)
 }
 
+/// A time from a log, for a table cell: `iso` for `<time datetime>`, and
+/// `short` to show, in UTC. `iso` is `None` when the text isn't a UTC time
+/// Keyring can read; the cell then shows the text as it is, with no
+/// `<time>`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LogTime {
+    /// `2026-11-18T05:22:09.123Z`, milliseconds kept when the log has them.
+    pub iso: Option<String>,
+    /// `18 Nov 2026, 05:22`, or the text as given when it couldn't be read.
+    pub short: String,
+}
+
+/// Read a Log Analytics time such as `2026-11-18T05:22:09.1234567Z`: the
+/// whole text must be `YYYY-MM-DDTHH:MM:SS`, an optional fraction, then
+/// `Z`. Anything else (an offset, trailing text, a leap second, an empty
+/// value) isn't guessed at: it comes back as text, with no ISO time.
+pub fn log_time(raw: &str) -> LogTime {
+    parse_log_time(raw).unwrap_or_else(|| LogTime {
+        iso: None,
+        short: raw.to_owned(),
+    })
+}
+
+fn parse_log_time(raw: &str) -> Option<LogTime> {
+    let body = raw.strip_suffix('Z')?;
+    let (date, clock) = body.split_once('T')?;
+    if date.len() != 10 {
+        return None;
+    }
+    let day = parse_iso_date(date)?;
+    let (hms, fraction) = match clock.split_once('.') {
+        Some((hms, f)) => (hms, Some(f)),
+        None => (clock, None),
+    };
+    let digits = |t: &str| t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit());
+    let mut parts = hms.split(':');
+    let (h, m, sec) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() || !digits(h) || !digits(m) || !digits(sec) {
+        return None;
+    }
+    let (h, m, sec): (u32, u32, u32) = (h.parse().ok()?, m.parse().ok()?, sec.parse().ok()?);
+    // No leap seconds: `<time>` can't hold one.
+    if h > 23 || m > 59 || sec > 59 {
+        return None;
+    }
+    let millis = match fraction {
+        None => String::new(),
+        Some(f) if !f.is_empty() && f.len() <= 9 && f.bytes().all(|b| b.is_ascii_digit()) => {
+            format!(".{:0<3}", &f[..f.len().min(3)])
+        }
+        Some(_) => return None,
+    };
+    Some(LogTime {
+        iso: Some(format!("{date}T{h:02}:{m:02}:{sec:02}{millis}Z")),
+        short: format!("{}, {h:02}:{m:02}", format_date(day)),
+    })
+}
+
 /// "in 3 days", "today", "5 days ago". Whole days, rounded towards now.
 pub fn relative_days(ts: i64, now: i64) -> String {
     let days = (ts - now) / 86_400;
@@ -82,6 +140,36 @@ pub fn relative_days(ts: i64, now: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_times_are_read_whole_or_not_at_all() {
+        let t = log_time("2026-11-18T05:22:09.1234567Z");
+        assert_eq!(t.iso.as_deref(), Some("2026-11-18T05:22:09.123Z"));
+        assert_eq!(t.short, "18 Nov 2026, 05:22");
+        let t = log_time("2026-11-18T05:22:09.4Z");
+        assert_eq!(t.iso.as_deref(), Some("2026-11-18T05:22:09.400Z"));
+        assert_eq!(
+            log_time("2026-11-18T05:22:09Z").iso.as_deref(),
+            Some("2026-11-18T05:22:09Z")
+        );
+        for bad in [
+            "",
+            "2026-11-18T05:22:09",
+            "2026-11-18T05:22:09garbage",
+            "2026-11-18T05:22:09+02:00",
+            "2026-11-18T05:22:09.Z",
+            "2026-11-18T05:22:09.12aZ",
+            "2026-11-18T05:22:60Z",
+            "2026-11-18T24:00:00Z",
+            "2026-02-31T05:22:09Z",
+            "2026-11-18 05:22:09Z",
+            "2026-11-18T5:22:09Z",
+        ] {
+            let t = log_time(bad);
+            assert_eq!(t.iso, None, "{bad}");
+            assert_eq!(t.short, bad);
+        }
+    }
 
     #[test]
     fn round_trips_known_dates() {
