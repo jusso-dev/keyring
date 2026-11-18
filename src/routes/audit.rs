@@ -51,6 +51,8 @@ impl AuditFilter {
 
 pub(super) struct EventRow {
     pub time: String,
+    /// The same time for the cell: short to show, ISO in `<time>`.
+    pub when: crate::dates::LogTime,
     pub who: String,
     pub what: String,
     pub operation: String,
@@ -66,6 +68,7 @@ pub(super) struct EventRow {
 impl EventRow {
     pub(super) fn from(e: &Event) -> Self {
         Self {
+            when: crate::dates::log_time(&e.time),
             time: e
                 .time
                 .replace('T', " ")

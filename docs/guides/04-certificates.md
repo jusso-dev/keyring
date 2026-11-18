@@ -26,7 +26,7 @@ This walkthrough covers certificates: create one in Key Vault, upload one you al
 
    ![The certificates list.](../images/screenshots/certificates-list.png)
 
-2. Filter with **Search by name, tag, owner or thumbprint**, **Tag**, **Show** and **Owned by me**, then select **Filter**.
+2. Filter with **Search** (a name, tag, owner or thumbprint), **Tag**, **Status** and **Owned by me**, then press Enter or select **Apply**.
 
 ### Create a certificate
 

@@ -26,7 +26,7 @@ This walkthrough covers everything you do with one secret: create it (a plain va
 
    ![The secrets list.](../images/screenshots/secrets-list.png)
 
-2. Filter with **Search by name, tag or owner**, **Tag**, **Show**, **Not changed in over** (a number of days) and **Owned by me**, then select **Filter**.
+2. Filter with **Search** (a name, tag or owner), **Tag**, **Status**, **Not changed in over** (a number of days) and **Owned by me**, then press Enter or select **Apply**.
 
 3. Select a secret's name to open it.
 

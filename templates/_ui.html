@@ -60,18 +60,48 @@
 {%- endif -%}
 {%- endmacro -%}
 
+{#- Free text in a table cell, on one line, cut with an ellipsis at the
+    column's width (sm, md or lg). The whole text stays in the page, so a
+    screen reader reads it all; the item's own page shows it in full. -#}
+{%- macro clip(text, size = "md") -%}
+<span class="clip clip-{{ size }}">{{ text }}</span>
+{%- endmacro -%}
+
+{#- A time from a log (a dates::LogTime): compact to show, the ISO time
+    in the datetime attribute. The column header names the zone. -#}
+{%- macro when(t) -%}
+<time datetime="{{ t.iso }}">{{ t.short }}</time>
+{%- endmacro -%}
+
+{#- Keyring activity's Who: the person, or "Keyring" with a muted System
+    badge when no one was signed in. -#}
+{%- macro keyring_who(r) -%}
+{%- if r.system %}Keyring <span class="badge badge-muted">System</span>{% else %}<span class="clip clip-lg">{{ r.who }}</span>{% endif -%}
+{%- endmacro -%}
+
+{#- The Tag filter as a pill: the label as a prefix, the syntax kept
+    visible after the box, and suggestions from the items read. -#}
+{%- macro tag_filter(value, options) -%}
+<div class="fpill"><label for="tag">Tag</label><input id="tag" name="tag" type="text" value="{{ value }}" list="tag-filter-options" aria-describedby="tag-help"{% call ident() %}{% endcall %}><span class="fpill-hint" id="tag-help">name or name=value</span>{% call filter_options(options) %}{% endcall %}</div>
+{%- endmacro -%}
+
+{#- "Owned by me" as a checkbox pill. Its meaning is in "About this page". -#}
+{%- macro mine_filter(checked) -%}
+<div class="fpill fpill-check"><input id="mine" name="mine" type="checkbox" value="1"{% if checked %} checked{% endif %}><label for="mine">Owned by me</label></div>
+{%- endmacro -%}
+
 {#- Tags as name=value, or a muted "None". A tag with an empty value shows
     its name only. -#}
 {%- macro tags(list) -%}
 {%- if list.is_empty() %}<span class="muted">None</span>{% else %}{% for (k, v) in list.iter() %}<span class="tag">{{ k }}{% if !v.is_empty() %}={{ v }}{% endif %}</span> {% endfor %}{% endif -%}
 {%- endmacro -%}
 
-{#- A description in a list cell: cut to one short line, with the whole
-    note as the cell's accessible text. -#}
+{#- A description in a list cell: one line, cut with an ellipsis at the
+    column's width, with the whole note as the cell's accessible text. -#}
 {%- macro note_cell(text) -%}
 {%- if text.is_empty() %}<span class="muted">None</span>
-{%- elif crate::description::is_cut(text) %}<span aria-hidden="true">{{ crate::description::short(text) }}</span><span class="visually-hidden">{{ text }}</span>
-{%- else %}{{ text }}{% endif -%}
+{%- elif crate::description::is_cut(text) %}<span class="clip clip-md" aria-hidden="true">{{ crate::description::short(text) }}</span><span class="visually-hidden">{{ text }}</span>
+{%- else %}<span class="clip clip-md">{{ text }}</span>{% endif -%}
 {%- endmacro -%}
 
 {#- A description under an item's heading, line breaks kept. Nothing when
@@ -169,6 +199,11 @@
   <p class="field-help">If you loosen the limit, give a reason. Otherwise leave it empty.</p>
   {% call reason_fields("") %}{% endcall %}
   {%- endif %}
+{%- endmacro -%}
+
+{#- An owner in a list cell: one line, cut at the column's width. -#}
+{%- macro owner_cell(d) -%}
+<span class="clip clip-lg">{% call owner_value(d) %}{% endcall %}</span>
 {%- endmacro -%}
 
 {#- An owner value on a page: each entry that parses as an address is a

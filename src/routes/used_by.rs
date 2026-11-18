@@ -32,6 +32,8 @@ pub(crate) struct CallerRow {
     pub app_id: String,
     pub object_id: String,
     pub last: String,
+    /// `last` for the cell: short to show, ISO in `<time>`.
+    pub last_when: crate::dates::LogTime,
     pub reads: u64,
     pub client_info: String,
     pub ip: String,
@@ -56,6 +58,7 @@ impl CallerRow {
             who,
             object_id: c.object_id.clone(),
             last: time(&c.last),
+            last_when: crate::dates::log_time(&c.last),
             reads: c.reads,
             client_info: c.client_info.clone(),
             ip: c.ip.clone(),

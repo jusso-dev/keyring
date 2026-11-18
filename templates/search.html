@@ -7,37 +7,26 @@
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb_here("Search") }}</ol></nav>
 <div class="title-row"><h1>Search</h1></div>
 <p class="page-desc">Find a secret, certificate or key in any vault you can see, by its name, a tag or its content type. Only names and properties are read, never values.</p>
+{% call ui::about() %}
+<p>Search for part of a name, a tag such as env=prod, or a content type, up to {{ max_query }} characters. Each row opens the item in its vault.</p>
+{% endcall %}
 </div>
 
 <form class="filters" method="get" action="/search" role="search">
-  <div>
-    <label for="q">Search for</label>
-    <p class="field-help" id="q-help">Part of a name, a tag such as env=prod, or a content type. Up to {{ max_query }} characters.</p>
-    <input id="q" name="q" type="search" value="{{ query.q }}" maxlength="{{ max_query }}" list="tag-filter-options" aria-describedby="q-help"{% call ui::ident() %}{% endcall %}>
-    {% call ui::filter_options(tag_options) %}{% endcall %}
-  </div>
-  <div>
-    <label for="vault">Vault</label>
-    <select id="vault" name="vault">
-      <option value="">All vaults{% if capped %} (first {{ max_vaults }}){% endif %}</option>
+  <div class="fpill"><label for="q">Search for</label><input id="q" name="q" type="search" class="fpill-wide" value="{{ query.q }}" maxlength="{{ max_query }}" list="tag-filter-options" aria-describedby="q-help"{% call ui::ident() %}{% endcall %}><span class="fpill-hint" id="q-help">name, env=prod or content type</span>{% call ui::filter_options(tag_options) %}{% endcall %}</div>
+  <div class="fpill"><label for="vault">Vault</label><select id="vault" name="vault">
+      <option value="">All{% if capped %} (first {{ max_vaults }}){% endif %}</option>
       {% if !query.vault.is_empty() && vault_names.is_empty() %}<option value="{{ query.vault }}" selected>{{ query.vault }}</option>{% endif %}
       {% for v in vault_names %}<option value="{{ v }}"{% if query.vault == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}
-    </select>
-  </div>
-  <div>
-    <label for="type">Type</label>
-    <select id="type" name="type">
+    </select></div>
+  <div class="fpill"><label for="type">Type</label><select id="type" name="type">
       {% for (value, label, selected) in self.kind_options() %}<option value="{{ value }}"{% if selected %} selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
-  </div>
-  <div>
-    <label for="status">Status</label>
-    <select id="status" name="status">
+    </select></div>
+  <div class="fpill"><label for="status">Status</label><select id="status" name="status">
       {% for (value, label, selected) in self.status_options() %}<option value="{{ value }}"{% if selected %} selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
-  </div>
+    </select></div>
   <div class="filters-submit">
-    <button type="submit">Search</button>
+    <button type="submit" class="button-secondary">Search</button>
   </div>
 </form>
 
@@ -69,18 +58,18 @@
   {% call ui::table_wrap("vault-{}-caption"|format(g.vault)) %}
   <table>
     <caption class="visually-hidden" id="vault-{{ g.vault }}-caption">Matches in {{ g.vault }}</caption>
-    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Description</th><th scope="col">Owner</th><th scope="col">Content type</th><th scope="col">Expires</th><th scope="col">Tags</th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col" class="col-p2">Description</th><th scope="col">Owner</th><th scope="col" class="col-p3">Content type</th><th scope="col">Expires</th><th scope="col" class="col-p3">Tags</th></tr></thead>
     <tbody>
       {% for r in g.rows %}
       <tr{% if !r.status.enabled %} class="row-muted"{% endif %}>
-        <th scope="row"><a class="item-name" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
-        <td>{{ r.kind.label() }}</td>
-        <td>{% call ui::status(r.status.enabled, r.status.expired, r.status.within30, r.status.within90, r.status.not_yet, r.status.managed) %}{% endcall %}</td>
-        <td class="note-cell">{% call ui::note_cell(r.description) %}{% endcall %}</td>
-        <td class="owner-cell">{% call ui::owner_value(r.owner) %}{% endcall %}</td>
-        <td class="tech"><span class="clip">{% call ui::or_none(r.content_type) %}{% endcall %}</span></td>
-        <td>{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
-        <td>{% call ui::tags(r.tags) %}{% endcall %}</td>
+        <th scope="row"><a class="item-name clip clip-lg" href="/v/{{ g.vault }}{{ r.kind.path() }}/{{ r.name }}">{{ r.name }}</a></th>
+        <td class="nowrap">{{ r.kind.label() }}</td>
+        <td class="nowrap">{% call ui::status(r.status.enabled, r.status.expired, r.status.within30, r.status.within90, r.status.not_yet, r.status.managed) %}{% endcall %}</td>
+        <td class="note-cell col-p2">{% call ui::note_cell(r.description) %}{% endcall %}</td>
+        <td class="owner-cell">{% call ui::owner_cell(r.owner) %}{% endcall %}</td>
+        <td class="tech col-p3"><span class="clip clip-sm">{% call ui::or_none(r.content_type) %}{% endcall %}</span></td>
+        <td class="nowrap">{% call ui::expires(r.expires, r.expires_note) %}{% endcall %}</td>
+        <td class="tag-cell col-p3"><span class="clip clip-md">{% call ui::tags(r.tags) %}{% endcall %}</span></td>
       </tr>
       {% endfor %}
     </tbody>

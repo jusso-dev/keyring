@@ -339,7 +339,7 @@ async fn vault_list_badges_vaults_without_audit_logs() {
     assert!(html.contains("<th scope=\"col\">Audit logs</th>"));
     let cell = |vault: &str| {
         let at = html
-            .find(&format!("class=\"item-name\">{vault}"))
+            .find(&format!("class=\"item-name nowrap\">{vault}"))
             .unwrap_or_else(|| panic!("{vault}"));
         let row = &html[at..at + html[at..].find("</tr>").unwrap()];
         // The eighth cell, whatever class the cells before it carry.

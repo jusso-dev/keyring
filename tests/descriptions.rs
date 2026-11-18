@@ -422,7 +422,7 @@ async fn key_create_and_edit_details() {
     let body = w.kv.state.key_creates.lock().unwrap()[0].clone();
     assert_eq!(tags_of(&body)["description"], "Signs invoices");
     let (_, html) = w.page("/v/kv-test/keys").await;
-    assert!(html.contains("<td class=\"note-cell\">Signs invoices</td>"));
+    assert!(html.contains("<td class=\"note-cell col-p2\"><span class=\"clip clip-md\">Signs invoices</span></td>"));
     let (_, html) = w.page("/v/kv-test/keys/signing/details").await;
     assert!(html.contains(">Signs invoices</textarea>"));
     assert!(html.contains("name=\"tag-value-1\" type=\"text\" value=\"prod\""));
@@ -455,7 +455,7 @@ async fn long_notes_are_cut_in_lists_with_the_whole_note_for_screen_readers() {
         v.tags.insert("description".into(), long.trim().into());
     });
     let (_, html) = w.page("/v/kv-test/secrets").await;
-    assert!(html.contains("<span aria-hidden=\"true\">word word"));
+    assert!(html.contains("<span class=\"clip clip-md\" aria-hidden=\"true\">word word"));
     assert!(html.contains("…</span><span class=\"visually-hidden\">word word"));
     assert!(html.contains(" end</span>"));
 }

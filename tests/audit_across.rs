@@ -394,7 +394,7 @@ async fn too_many_rows_are_capped_with_a_note() {
     w.arm.state.workspace_events.lock().unwrap()[0].1 = many;
     let (_, html) = w.page("/audit?report=reads").await;
     assert!(html.contains("Showing the first 500 rows"));
-    assert_eq!(html.matches("<td class=\"small nowrap\">").count(), 500);
+    assert_eq!(html.matches("<td class=\"cell-time\">").count(), 500);
     let csv = body_text(w.get("/audit.csv?report=reads").await).await;
     assert!(csv.contains("NOT READ,Only the first 500 rows are included"));
 }

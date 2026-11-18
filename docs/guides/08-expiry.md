@@ -23,7 +23,7 @@ Nothing. Both pages read names and dates only, never values.
 
    ![The expiry dashboard.](../images/screenshots/expiry.png)
 
-2. Narrow it with **Vault**, **Type** and **Tag**, then select **Filter**.
+2. Narrow it with **Vault**, **Type** and **Tag**, then press Enter or select **Apply**.
 
 3. Select **Open** on a row to go to the item. Set a new value, renew, or rotate it there.
 

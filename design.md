@@ -26,8 +26,8 @@ decoration: no illustrations, gradients, background art, charts or scores.
 - Page types:
   - **List pages** (vaults, secrets, certificates, keys, deleted): page
     header with the create action in the command bar, then a compact
-    toolbar (inline filters, a count, actions on the right), then the
-    table across the work area. No separate filter panel.
+    toolbar (one row of filter pills, a count, actions on the right), then
+    the table across the work area. No separate filter panel.
   - **Detail pages** (secret, certificate, key, deleted item): page header,
     then a tab strip (Overview, Versions, Who used it, Access and sharing)
     of links to existing routes or anchors on the page, the open one with
@@ -277,24 +277,56 @@ they are names to open.
 - **Ledger** (`table.ledger`, audit and expiry): no frame, sits on the page.
   A 2px ink rule above the header, a 1px ink rule under it, hairline rules
   between rows and hairline column rules. Times and dates don't wrap.
-- Rows stay one line, about 40px, on list pages. Names, dates, expiry,
-  owners, subscriptions, resource groups and tags don't wrap. A content
-  type in a list whose item page shows it in full (the secrets list,
-  search) sits in `td.tech` with a `span.clip`: one line, cut with an
-  ellipsis past 16rem. Where this page is the only place it is shown
-  (versions, import preview), it wraps in full (`td.mono-wrap`). No
-  `title` tooltips: they can't be reached by touch or keyboard.
-- Tables scroll sideways inside `.table-wrap` at narrow widths. Nothing else
-  on a page scrolls sideways.
+- **Every data table is one line per row**, about 40px, whatever the data.
+  Real tenants have long sign-in names (`kr-e2e-colleague-1118@yumait.au`),
+  long item names and long descriptions, so the rule is enforced by
+  classes, not by short demo data:
+  - Dates and times: `nowrap`. Log times are compact in the cell ("18 Nov
+    2026, 05:22") inside `<time datetime="2026-11-18T05:22:09Z">`, so the
+    full ISO time stays in the markup. The column header says the zone:
+    "When (UTC)", "Last (UTC)".
+  - Names, sign-in names, owners, descriptions, content types, reasons and
+    other free text sit in a `span.clip`: one line, cut with an ellipsis.
+    The width is per column: `clip-sm` 8rem (content type, IP-like
+    values), `clip-md` 12rem (descriptions, owners, items, reasons),
+    `clip-lg` 16rem (sign-in names, item names in a list). CSS cuts only
+    what is drawn: the whole text stays in the page, so a screen reader
+    reads all of it, and the item's own page shows it in full. Where a
+    page is the only place a value is shown (versions, import preview), it
+    wraps in full (`td.mono-wrap`).
+  - No `title` tooltips: they can't be reached by touch or keyboard.
+  - `tests/one_line_rows.rs` checks the main lists and both audit views
+    carry these classes on those columns.
+- **Columns fit at 1440px with no sideways scroll.** The secrets list shows
+  Name, Status, Description, Owner, Content type, Value changed and
+  Expires; certificates show Name, Status, Description, Owner, Expires and
+  Thumbprint; keys show Name, Status, Description, Owner, Created and
+  Expires. Tags are on each item's page and found with the Tag filter.
+  The stale badge sits in the Status cell. Below 1100px (`68.75rem`) the
+  lower-priority columns hide with CSS: content type first (`col-p3`),
+  then description (`col-p2`). No column picker and no script.
+- Tables scroll sideways inside `.table-wrap` only on small screens.
+  Nothing else on a page scrolls sideways.
 
 ## Toolbar (lists)
 
-- `form.toolbar` (and `form.filters`, the same thing) sits straight above
-  the table: one row of 32px controls on a white bar with a hairline
-  border. Each control has a visible caption-size label above it.
-- Filter help stays visible, in caption size between the label and the
-  field, and is tied to it with `aria-describedby`. Placeholders are never
-  used.
+- `form.filters` sits straight above the table: one row of 32px filter
+  pills on a white bar with a hairline border, as in the Azure portal.
+- A **filter pill** (`.fpill`) is one bordered 32px box: the `<label>` as
+  a caption-size ink-2 prefix ("Status"), a colon, then the borderless
+  select or input inside it ("Status: All secrets"). The whole pill takes
+  the focus ring (`:focus-within`). The label is a real `<label for>`, so
+  the control keeps its accessible name. Placeholders are never used.
+- Help that only explains goes into the page's "About this page". Two
+  hints stay visible because they change what you type or what happens:
+  the tag syntax, as a short caption suffix in the Tag pill ("name or
+  name=value", `.fpill-hint`, tied with `aria-describedby`), and the bulk
+  change's "Key Vault can't remove an expiry date" beside the date.
+  A unit ("days") is a suffix the same way.
+- "Owned by me" is a checkbox pill.
+- The last item is a compact secondary **Apply** button (Search, Check or
+  Run report where the page says so). Enter in any text box applies the
+  filters too, as a plain GET form. Clear is a text link after it.
 - A row's checkbox has its visually hidden label stretched over the cell,
   so the target is the cell, not the 16px box.
 - A count ("9 items") and the page's status links sit in `.toolbar-meta`
@@ -421,8 +453,9 @@ padding above and below each row. It stacks below 30rem.
 
 ### Audit
 
-- One ledger table. When, Who, What, Item, Result, From. Times are tabular and
-  don't wrap. Allowed and Accepted (202, queued by Key Vault) are ok-coloured
+- One ledger table. When (UTC), Who, What, Item, Result, From. Times are
+  compact, tabular and don't wrap. Every cell is one line: What shows
+  Azure's operation in plain words (the raw operation is in the CSV). Allowed and Accepted (202, queued by Key Vault) are ok-coloured
   text with a check glyph, Accepted with the status muted after it; Refused
   (401, 403) is an error badge; Failed (other 4xx, 5xx) is a muted badge;
   Unknown stays muted. One macro, `ui::audit_result`, draws the cell on every
@@ -430,11 +463,16 @@ padding above and below each row. It stacks below 30rem.
 - With `KEYRING_AUDIT_WORKSPACE_ID`, a `.view-switch` under the heading:
   "Key Vault's log" and "Keyring activity", the open one with
   `aria-current="page"`, as on the expiry views. Keyring activity is the
-  same ledger with When, Who, What (the action name in mono), Item, Result,
-  Why, From. Result: Done is ok-coloured text; "Denied by Azure" and
-  "Refused by Keyring" are error badges; Failed is a muted badge; the
-  reason code sits muted and mono under it. Why is the reason, with
-  "Ticket ..." muted under it, or muted "None".
+  same ledger with When (UTC), Who, What, Item, Result, Why, From. What is
+  the action's plain label ("Bulk change to secrets", "Email sent", "Share
+  revoked") from `Action::label` in `src/audit/mod.rs`, the one place
+  labels live; a test fails if an action has none. The dotted code
+  (`secret.bulk_update`) is in the Action filter's options and in Log
+  Analytics. An event with no person is Who "Keyring" with a muted
+  `badge-muted` "System" badge. Result: Done is an ok badge; "Denied by
+  Azure" and "Refused by Keyring" are error badges; Failed is a muted
+  badge; the reason code follows on the same line, muted and mono. Why is
+  the reason, then "Ticket ..." muted on the same line, or muted "None".
 - Across vaults (`/audit`): the fixed reports first, as a `.card-list` of
   links. The open one has `aria-current="page"`, the accent tint, an accent
   border and an underline, so it isn't colour alone. Then the same ledger
@@ -689,10 +727,13 @@ Read as "make a new version". The primary button is the accent, never danger.
   and the button gets the accent tint and rule, so state isn't colour
   alone.
 - The home page and the vault list show **Pinned** and **Recently opened**
-  (last 10) above everything else, each an `h2` and a plain list of resource-name
-  links with the kind and vault muted after them. Only when non-empty.
-- Under them a muted line says the list is kept in this browser only and is
-  cleared on sign-out, with a **Clear** text button.
+  (last 10) in one compact white card straight after the page header
+  (after the description and About, before the command bar), never above
+  the description. Each is a caption-size `h2` and a wrapping row of
+  resource-name links with the kind and vault muted after them. Only when
+  non-empty.
+- The card's last line, muted, says the list is kept in this browser only
+  and is cleared on sign-out, with a **Clear** text button.
 
 ### Share picker
 

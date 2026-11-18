@@ -27,25 +27,17 @@
 
 <form class="filters" method="get" action="/audit" role="search">
   <input type="hidden" name="report" value="{{ r.slug() }}">
-  <div>
-    <label for="range">When</label>
-    <select id="range" name="range">
+  <div class="fpill"><label for="range">When</label><select id="range" name="range">
       {% for g in ranges %}<option value="{{ g.slug() }}"{% if *g == range %} selected{% endif %}>{{ g.label() }}</option>{% endfor %}
-    </select>
-  </div>
+    </select></div>
   {% if is_person_report() %}
-  <div>
-    {% let field_name = "person" %}
-    <label for="person">Person</label>
-    <p class="field-help" id="person-help">Part of a sign-in name, email or ID, such as name@example.com.</p>
-    <input id="person" name="person" type="text" value="{{ filter.person }}" required{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}>
-    {% include "_field_error.html" %}
-  </div>
+  <div class="fpill"><label for="person">Person</label><input id="person" name="person" type="text" class="fpill-wide" value="{{ filter.person }}" required{% call ui::ident() %}{% endcall %}{% call ui::aria("person", "person-help") %}{% endcall %}><span class="fpill-hint" id="person-help">name, email or ID</span></div>
   {% endif %}
   <div class="filters-submit">
-    <button type="submit">Run report</button>
-    {% if ran %}<a href="{{ csv_url }}">Download CSV</a>{% endif %}
+    <button type="submit" class="button-secondary">Run report</button>
   </div>
+  {% if ran %}<div class="filters-end"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>{% endif %}
+  {% if is_person_report() %}{% let field_name = "person" %}{% include "_field_error.html" %}{% endif %}
 </form>
 
 {% if ran %}
@@ -83,15 +75,15 @@
 {% call ui::table_wrap("report-caption") %}
 <table class="ledger">
   <caption class="visually-hidden" id="report-caption">{{ r.title() }} across vaults</caption>
-  <thead><tr><th scope="col">Who</th><th scope="col">Vault</th><th scope="col">Refused</th><th scope="col">Latest</th><th scope="col">Actions</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
+  <thead><tr><th scope="col">Who</th><th scope="col">Vault</th><th scope="col">Refused</th><th scope="col">Latest (UTC)</th><th scope="col">Actions</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
   <tbody>
     {% for x in refusals %}
     <tr>
-      <th scope="row">{{ x.who }}</th>
-      <td class="item-name">{{ ui::or_none(x.vault) }}</td>
+      <th scope="row" class="cell-text"><span class="clip clip-lg">{{ x.who }}</span></th>
+      <td class="item-name nowrap">{{ ui::or_none(x.vault) }}</td>
       <td><span class="badge badge-error">{{ x.count }}</span></td>
-      <td class="small nowrap">{{ x.last }}</td>
-      <td class="mono small">{{ ui::or_none(x.operations) }}</td>
+      <td class="cell-time">{{ ui::when(x.last_when) }}</td>
+      <td class="mono small"><span class="clip clip-lg">{{ ui::or_none(x.operations) }}</span></td>
       <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.vault }}</span></a>{% endif %}</td>
     </tr>
     {% endfor %}
@@ -106,18 +98,18 @@
 {% call ui::table_wrap("report-caption") %}
 <table class="ledger">
   <caption class="visually-hidden" id="report-caption">{{ r.title() }} across vaults</caption>
-  <thead><tr><th scope="col">When</th><th scope="col">Vault</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
+  <thead><tr><th scope="col">When (UTC)</th><th scope="col">Vault</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Item</th><th scope="col">Result</th><th scope="col">From</th><th scope="col"><span class="visually-hidden">Detail</span></th></tr></thead>
   <tbody>
     {% for x in rows %}
     <tr>
-      <td class="small nowrap">{{ x.event.time }}</td>
-      <td class="item-name">{{ ui::or_none(x.vault) }}</td>
-      <td>{{ x.event.who }}</td>
-      <th scope="row">{{ x.event.what }}{% if x.event.operation != x.event.what %}<br><span class="muted small mono">{{ x.event.operation }}</span>{% endif %}</th>
-      <td class="item-name">{{ ui::or_none(x.event.item) }}</td>
-      <td>{% call ui::audit_result(x.event) %}{% endcall %}</td>
-      <td class="mono small">{{ ui::or_none(x.event.client_ip) }}</td>
-      <td>{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.event.item }} in {{ x.vault }}</span></a>{% endif %}</td>
+      <td class="cell-time">{{ ui::when(x.event.when) }}</td>
+      <td class="item-name nowrap">{{ ui::or_none(x.vault) }}</td>
+      <td class="cell-text"><span class="clip clip-lg">{{ x.event.who }}</span></td>
+      <th scope="row" class="cell-text"><span class="clip clip-md">{{ x.event.what }}</span>{% if x.event.operation != x.event.what %}<span class="visually-hidden"> ({{ x.event.operation }})</span>{% endif %}</th>
+      <td class="cell-text item-name"><span class="clip clip-md">{{ ui::or_none(x.event.item) }}</span></td>
+      <td class="nowrap">{% call ui::audit_result(x.event) %}{% endcall %}</td>
+      <td class="mono small nowrap">{{ ui::or_none(x.event.client_ip) }}</td>
+      <td class="nowrap">{% if !x.detail_url.is_empty() %}<a href="{{ x.detail_url }}">Vault audit<span class="visually-hidden"> for {{ x.event.item }} in {{ x.vault }}</span></a>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

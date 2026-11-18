@@ -34,7 +34,13 @@ pub(super) struct KeyringFilter {
 }
 
 pub(super) struct Row {
-    pub time: String,
+    /// The same time for the cell: short to show, ISO in `<time>`.
+    pub when: crate::dates::LogTime,
+    /// The action's plain label, or the dotted name when this version
+    /// doesn't know it.
+    pub label: String,
+    /// No person: Keyring itself (an email, a webhook, an expired session).
+    pub system: bool,
     pub who: String,
     pub action: String,
     pub item: String,
@@ -50,20 +56,16 @@ pub(super) struct Row {
 impl Row {
     fn from(e: &KeyringEvent) -> Self {
         Self {
-            time: e
-                .time
-                .replace('T', " ")
-                .trim_end_matches('Z')
-                .split('.')
-                .next()
-                .unwrap_or_default()
-                .to_owned()
-                + " UTC",
+            when: crate::dates::log_time(&e.time),
+            label: Action::label_for(&e.action)
+                .map(str::to_owned)
+                .unwrap_or_else(|| e.action.clone()),
+            system: e.actor_upn.is_empty() && e.actor_oid.is_empty(),
             who: [&e.actor_upn, &e.actor_oid]
                 .into_iter()
                 .find(|s| !s.is_empty())
                 .cloned()
-                .unwrap_or_else(|| "Nobody signed in".into()),
+                .unwrap_or_else(|| "Keyring".into()),
             action: e.action.clone(),
             item: e.item_name.clone(),
             outcome: e.outcome.clone(),
@@ -83,7 +85,8 @@ struct KeyringPage {
     filter: KeyringFilter,
     ranges: [Range; 4],
     range: Range,
-    actions: Vec<&'static str>,
+    /// Each action's code and its plain label, for the filter.
+    actions: Vec<(&'static str, &'static str)>,
     rows: Vec<Row>,
     /// The person can't read the workspace.
     no_access: bool,
@@ -118,7 +121,10 @@ pub(super) async fn page(
         filter: filter.clone(),
         ranges: Range::ALL,
         range,
-        actions: Action::ALL.iter().map(|a| a.as_str()).collect(),
+        actions: Action::ALL
+            .iter()
+            .map(|a| (a.as_str(), a.label()))
+            .collect(),
         rows: Vec::new(),
         no_access: false,
         capped: false,

@@ -355,6 +355,8 @@ pub(super) struct RefusalRow {
     pub who: String,
     pub count: u64,
     pub last: String,
+    /// `last` for the cell: short to show, ISO in `<time>`.
+    pub last_when: crate::dates::LogTime,
     pub operations: String,
     pub detail_url: String,
 }
@@ -414,6 +416,7 @@ fn refusal_rows(
                     r.who.clone()
                 },
                 count: r.count,
+                last_when: crate::dates::log_time(&r.last),
                 last: r
                     .last
                     .replace('T', " ")

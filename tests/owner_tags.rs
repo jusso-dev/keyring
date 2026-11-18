@@ -70,7 +70,7 @@ async fn secret_create_edit_and_set_value_keep_owner_and_notify() {
     assert!(!html.contains("?tag=owner"));
     let (_, html) = w.page("/v/kv-test/secrets").await;
     assert!(html.contains("<th scope=\"col\">Owner</th>"));
-    assert!(html.contains("<td class=\"owner-cell\"><a href=\"mailto:Alex@example.com\">"));
+    assert!(html.contains("<td class=\"owner-cell\"><span class=\"clip clip-lg\"><a href=\"mailto:Alex@example.com\">"));
     let (_, html) = w.page("/v/kv-test/secrets/db-password/edit").await;
     assert!(html.contains(
         "id=\"owner\" name=\"owner\" type=\"text\" inputmode=\"email\" value=\"Alex@example.com\""

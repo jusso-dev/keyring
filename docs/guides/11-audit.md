@@ -25,7 +25,7 @@ This walkthrough shows how to find out who read or changed what: a vault's event
 
    ![A vault's audit page.](../images/screenshots/audit.png)
 
-2. Narrow it with **When** (**Last hour**, **Last 24 hours**, **Last 7 days** or **Last 30 days**), **Item name**, **Action** and **Person**, then select **Filter**.
+2. Narrow it with **When** (**Last hour**, **Last 24 hours**, **Last 7 days** or **Last 30 days**), **Item**, **Action** and **Person**, then press Enter or select **Apply**.
 
 3. Select **Download CSV** for the events shown.
 

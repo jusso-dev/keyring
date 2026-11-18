@@ -51,7 +51,7 @@ Everyone who uses Keyring.
 
    ![The vault list.](../images/screenshots/vaults.png)
 
-6. Narrow the list if it is long: type in **Search by name or resource group**, pick a **Subscription**, or type a **Tag** such as `env` or `env=prod`, then select **Filter**. **Clear** removes the filters.
+6. Narrow the list if it is long: type in **Search**, pick a **Subscription**, or type a **Tag** such as `env` or `env=prod`, then press Enter or select **Apply**. **Clear** removes the filters.
 
 7. Select **Open** on the vault you want.
 

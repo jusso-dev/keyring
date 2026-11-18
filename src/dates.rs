@@ -67,6 +67,39 @@ pub fn parse_iso_date(s: &str) -> Option<i64> {
     (civil_from_days(days) == (y, m, d)).then_some(days * 86_400)
 }
 
+/// A time from a log, for a table cell: `iso` for `<time datetime>`, and
+/// `short` to show, in UTC.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LogTime {
+    /// `2026-11-18T05:22:09Z`.
+    pub iso: String,
+    /// `18 Nov 2026, 05:22`.
+    pub short: String,
+}
+
+/// Read a Log Analytics time such as `2026-11-18T05:22:09.123Z`. Text that
+/// isn't one comes back as it is, in both fields.
+pub fn log_time(raw: &str) -> LogTime {
+    let parsed = (|| {
+        let head = raw.get(..19)?;
+        let (date, clock) = head.split_once('T')?;
+        let day = parse_iso_date(date)?;
+        let mut parts = clock.splitn(3, ':');
+        let h: u32 = parts.next()?.parse().ok()?;
+        let m: u32 = parts.next()?.parse().ok()?;
+        let s: u32 = parts.next()?.parse().ok()?;
+        (h < 24 && m < 60 && s < 61).then_some(())?;
+        Some(LogTime {
+            iso: format!("{date}T{h:02}:{m:02}:{s:02}Z"),
+            short: format!("{}, {h:02}:{m:02}", format_date(day)),
+        })
+    })();
+    parsed.unwrap_or_else(|| LogTime {
+        iso: raw.to_owned(),
+        short: raw.to_owned(),
+    })
+}
+
 /// "in 3 days", "today", "5 days ago". Whole days, rounded towards now.
 pub fn relative_days(ts: i64, now: i64) -> String {
     let days = (ts - now) / 86_400;

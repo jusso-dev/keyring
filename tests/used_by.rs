@@ -77,7 +77,7 @@ fn check_secret_panel(html: &str) {
     assert!(p.contains(">App<"));
     assert!(p.contains("33333333-cccc-4ccc-8ccc-333333333333"));
     assert!(
-        p.contains("2026-11-10 10:00:00 UTC"),
+        p.contains("<time datetime=\"2026-11-10T10:00:00Z\">10 Nov 2026, 10:00</time>"),
         "latest read, plainly"
     );
     assert!(p.contains("<td>2</td>"), "alex read it twice");
@@ -489,7 +489,7 @@ async fn keys_count_cryptographic_operations() {
         assert!(p.contains("Managed identity"), "{path}");
         // Sign, wrap and decrypt: not the read of the key, not the refusal.
         assert!(p.contains("<td>3</td>"), "{path}");
-        assert!(p.contains("2026-11-09 12:00:00 UTC"), "{path}");
+        assert!(p.contains("datetime=\"2026-11-09T12:00:00Z\""), "{path}");
     }
     let q = w.arm.state.audit_queries.lock().unwrap()[0].clone();
     assert!(q.contains("'KeySign'") && q.contains("'KeyWrap'") && q.contains("'KeyDecrypt'"));

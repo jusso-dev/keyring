@@ -44,12 +44,13 @@ async fn shows_keyring_events_read_as_the_person() {
     ];
     let (status, html) = w.page("/v/kv-test/audit/keyring").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("secret.reveal"));
+    assert!(html.contains("Secret value shown"));
+    assert!(html.contains("value=\"secret.reveal\""));
     assert!(html.contains("Refused by Keyring"));
     assert!(html.contains("purge_disabled"));
     assert!(html.contains("alex@example.com"));
-    assert!(html.contains("2026-11-17 01:02:03 UTC"));
-    assert!(!html.contains("secret.delete</th>"), "another vault's row");
+    assert!(html.contains("<time datetime=\"2026-11-17T01:02:03Z\">17 Nov 2026, 01:02</time>"));
+    assert!(!html.contains(">Secret deleted</span>"), "another vault's row");
     assert!(html.contains("aria-current=\"page\">Keyring activity"));
 
     // Against the configured workspace, with the person's Log Analytics
@@ -129,7 +130,7 @@ async fn caps_at_500_rows() {
     let (_, html) = w.page("/v/kv-test/audit/keyring").await;
     assert!(html.contains("Showing the 500 most recent events"));
     assert_eq!(
-        html.matches("<th scope=\"row\" class=\"mono\">").count(),
+        html.matches("<th scope=\"row\" class=\"cell-text\">").count(),
         500
     );
 }
@@ -200,7 +201,8 @@ async fn says_when_log_analytics_returned_only_part() {
     let (status, html) = w.page("/v/kv-test/audit/keyring").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("only part of the result"));
-    assert!(html.contains("secret.reveal"));
+    assert!(html.contains("Secret value shown"));
+    assert!(html.contains("value=\"secret.reveal\""));
     *w.arm.state.keyring_partial.lock().unwrap() = false;
     let (_, html) = w.page("/v/kv-test/audit/keyring").await;
     assert!(!html.contains("only part of the result"));

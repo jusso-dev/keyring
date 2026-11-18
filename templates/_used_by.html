@@ -19,16 +19,16 @@
   {% call ui::table_wrap("used-by-caption") %}
   <table class="ledger">
     <caption class="visually-hidden" id="used-by-caption">Who used this {{ used_by.noun }} in the last 30 days</caption>
-    <thead><tr><th scope="col">Who</th><th scope="col">Kind</th><th scope="col">Object ID</th><th scope="col">Last</th><th scope="col">{{ used_by.column() }}</th><th scope="col">From</th></tr></thead>
+    <thead><tr><th scope="col">Who</th><th scope="col">Kind</th><th scope="col">Object ID</th><th scope="col">Last (UTC)</th><th scope="col">{{ used_by.column() }}</th><th scope="col">From</th></tr></thead>
     <tbody>
       {% for c in used_by.callers %}
       <tr>
-        <th scope="row" class="small">{{ c.who }}{% if !c.app_id.is_empty() %}<br><span class="muted">App <span class="mono">{{ c.app_id }}</span></span>{% endif %}</th>
+        <th scope="row" class="small nowrap"><span class="clip clip-lg">{{ c.who }}{% if !c.app_id.is_empty() %} <span class="muted">App <span class="mono">{{ c.app_id }}</span></span>{% endif %}</span></th>
         <td>{{ c.kind }}</td>
         <td class="mono small">{% call ui::or_none(c.object_id) %}{% endcall %}</td>
-        <td class="nowrap">{{ c.last }}</td>
+        <td class="cell-time">{{ ui::when(c.last_when) }}</td>
         <td>{{ c.reads }}</td>
-        <td class="small">{% if c.ip.is_empty() && c.client_info.is_empty() %}<span class="muted">None</span>{% else %}<span class="mono">{{ c.ip }}</span>{% if !c.client_info.is_empty() %}<br><span class="muted">{{ c.client_info }}</span>{% endif %}{% endif %}</td>
+        <td class="small nowrap">{% if c.ip.is_empty() && c.client_info.is_empty() %}<span class="muted">None</span>{% else %}<span class="clip clip-lg"><span class="mono">{{ c.ip }}</span>{% if !c.client_info.is_empty() %} <span class="muted">{{ c.client_info }}</span>{% endif %}</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

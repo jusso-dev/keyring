@@ -79,10 +79,23 @@ async fn home_and_vault_list_have_an_empty_hidden_mount() {
             html.contains("<div class=\"pins-box\" data-pins hidden></div>"),
             "{path}"
         );
-        // Above everything else: straight after the heading.
-        let h1 = html.find("</h1>").unwrap();
+        // Straight after the page header (heading, description and About),
+        // and before the command bar and the page's content.
+        let desc = html.find("class=\"page-desc\"").unwrap();
+        let head_end = html[desc..].find("</div>").unwrap() + desc;
         let mount = html.find("data-pins hidden").unwrap();
-        assert!(mount > h1 && html[h1..mount].lines().count() <= 3, "{path}");
+        assert!(mount > head_end, "{path}: below the description");
+        assert!(
+            html[head_end..mount].lines().count() <= 3,
+            "{path}: straight after the page header"
+        );
+        if let Some(bar) = html.find("class=\"commandbar\"") {
+            assert!(mount < bar, "{path}: above the command bar");
+        }
+        assert!(
+            html.find("<main").unwrap() < mount,
+            "{path}: in the work area"
+        );
         // Nothing to pin until the script runs: no star in the HTML.
         assert!(!html.contains("pin-button"), "{path}");
     }
