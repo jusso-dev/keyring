@@ -57,6 +57,15 @@ async fn main() -> ExitCode {
             tracing::info!(types = %types.join(","), admins = n.admins().len(), "email on: notices go through Azure Communication Services");
         }
     }
+    if state
+        .expiry_hook
+        .as_ref()
+        .is_some_and(|h| h.subscriptions.is_none())
+    {
+        tracing::warn!(
+            "expiry notices are on, but KEYRING_EVENTGRID_SUBSCRIPTIONS is unset, so an expiry event from a Key Vault in any subscription is accepted. Set it to the subscription IDs whose vaults send events"
+        );
+    }
     if state.expiry_hook.is_some()
         && state
             .notifier

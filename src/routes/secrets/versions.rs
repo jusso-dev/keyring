@@ -268,6 +268,15 @@ pub(crate) async fn rollback(
         Ok(b) => b,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &back)),
     };
+    // The value isn't shown, so a rollback is allowed whatever the reveal
+    // limit. The new version takes the current version's tags, with the
+    // stricter `keyring-reveal` of the current version, the version
+    // restored from and what was just read, so a rollback is never a way
+    // to drop the limit.
+    let tags = crate::reveal_limit::carry(
+        &crate::reveal_limit::carry(items[0].tags(), target.tags()),
+        old.item.tags(),
+    );
     // The new version takes the old value and content type. Enabled,
     // dates and tags come from the current version, so rolling back a
     // value doesn't also turn a disabled secret back on or bring back an
@@ -282,13 +291,14 @@ pub(crate) async fn rollback(
             not_before: current.not_before,
             ..Default::default()
         },
-        tags: items[0].tags.clone(),
+        tags: (items[0].tags.is_some() || !tags.is_empty()).then_some(tags),
     };
     match secrets.set(&name, &body).await {
         Ok(new) => {
             // The version restored from. The new version is in Key
             // Vault's own log, joined by kv_request_id.
             crate::audit::note_version(target.version());
+            crate::notify::activity::note_read(items[0].tags.as_ref());
             let short: String = target.version().chars().take(8).collect();
             let mut res = Redirect::to(&back).into_response();
             let new_short: String = new.version().chars().take(8).collect();

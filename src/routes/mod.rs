@@ -1,6 +1,7 @@
 //! HTTP routes.
 
 mod access;
+pub(crate) mod access_request;
 mod access_review;
 mod age;
 pub mod assets;
@@ -33,6 +34,7 @@ pub(crate) mod paging;
 pub(crate) mod pim;
 pub(crate) mod reason;
 mod rejection;
+pub(crate) mod reveal_limit;
 pub mod search;
 mod secrets;
 pub(crate) mod shell;
@@ -350,6 +352,10 @@ fn vault_routes() -> Router<AppState> {
             "/my-access/deactivate",
             audited(Action::RoleDeactivate, pim::deactivate),
         )
+        .route(
+            "/my-access/request",
+            get(access_request::form).merge(audited(Action::AccessRequest, access_request::send)),
+        )
         // A change to a vault drops the list search keeps for it.
         .route_layer(middleware::from_fn(every_vault::forget_on_change))
 }
@@ -392,6 +398,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route_layer(middleware::from_fn(rejection::layer))
         // For the reason gate and the reason fields on forms.
         .route_layer(axum::Extension(state.config.clone()))
+        // For the reason gate's reveal limit check.
+        .route_layer(axum::Extension(state.clone()))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,

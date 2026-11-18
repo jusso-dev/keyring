@@ -405,6 +405,13 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 - The activation form follows the other forms: back link, heading with the role muted, one sentence on what turning it on means, a warn notice when PIM needs approval (with approvers as PIM names them), the error summary, then How long (a select up to PIM's maximum), Why you need it (with the note not to type secrets or personal details), Ticket system and Ticket number, each marked optional unless PIM asks for it.
 - The result is a narrow panel: "Role turned on" with Try again, "Waiting for approval" with a link to PIM in the portal, or "PIM didn't turn the role on" with ARM's code under "Details:".
 - My access: heading, one sentence, warn notices for anything not read, then ledger tables, "On now" (Role with an ok badge "Activated", Comes from, Time left, a secondary Deactivate button), "Starting later" only when there is one (Role, Comes from, When it starts and ends, no button), "Eligible" (Role, Comes from, Eligible until, Activate, or a muted badge "On now", "Waiting for approval" or "Eligible from" a date) and "Waiting for approval" only when there is one (Role, Comes from, a muted badge). Empty states say what isn't there.
+### Request access
+
+- On the 403 page, only when no PIM Activate is offered: one sentence saying the person can ask the vault's owners and that Keyring can't grant access itself, and a primary "Request access" button. Nothing else on the page changes.
+- The form follows the activation form: back link, heading "Request access" with the role muted, one sentence on who gets it, the error summary, then "For" (two radios, this item or the whole vault, only when the page was an item's), "Why you need it" with the note not to type secrets, and "Ticket" marked optional. Primary "Send request" and Cancel.
+- The answer is a narrow panel "Sent to the vault's owners", the same for every accepted request, with Back and My access. A repeat within the hour gets a narrow panel "You've already asked". Neither names the owners.
+- My access: a "Request access" heading, one sentence, and a list of "Request {role}" links, only when there is a role to request.
+
 ### Reason (KEYRING_REQUIRE_REASON)
 
 - When a reason is asked for, the reveal form and each confirmation page get
@@ -496,6 +503,35 @@ Read as "make a new version". The primary button is the accent, never danger.
   above the table saying where the tag is set. Vault health has a "Named
   owners" column after the vault name, and an **Owners** check like the
   others.
+
+### Reveal limit (the `keyring-reveal` tag)
+
+- A **Reveal limit** select after Owner and Notify on a secret's create,
+  Set a new value and Edit details forms, and on a certificate's Edit
+  details. Never on keys. Options: No limit, Copy only, No reveal (the
+  certificate's Copy only says it blocks the private key download). Help
+  says what each does, that it is a tag, that the CLI and portal aren't
+  limited, and that loosening it asks you to confirm it's you.
+- A value set elsewhere adds a first option, "Keep as set elsewhere
+  (treated as no reveal)", selected, and a second help line in ink-2
+  quoting the tag as set. Same pattern as an odd owner.
+- With `KEYRING_REQUIRE_REASON=reveal`, the Reason fields sit under the
+  select, with a line saying they are only needed when loosening.
+- The secret's page: `none` replaces the Show value form with a plain
+  notice (no colour) saying why and what to use instead; Copy to another
+  vault is left out. `copy-only` keeps the form, with a muted line above
+  it and the button reading **Copy value**. Versions follow the same.
+  A Reveal limit row sits in the facts list.
+- The reveal page under `copy-only`: a notice under the Value heading
+  saying the value isn't shown and is still sent to the browser; only the
+  Copy buttons, the countdown and Hide show. No textarea, no Show for
+  longer. Driven by markup only: the value is in hidden inputs the existing
+  script already reads.
+- A refused reveal, copy or download is the standard problem page,
+  heading "Not shown in Keyring", with a Details line saying it is a
+  Keyring control.
+- A certificate with any limit: no **Download with private key** button,
+  and a plain notice above the actions. Public downloads stay.
 
 ### Tags (rows, suggestions, links)
 

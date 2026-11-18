@@ -4,11 +4,11 @@
 
 # Keyring
 
-Keyring is a self-hosted secrets console for teams whose secrets, certificates and keys live in Azure Key Vault. People sign in with Entra ID and act as themselves, so Key Vault's own RBAC decides what each person can see and change. Every action leaves an audit trail, which Keyring can send to Log Analytics, with Microsoft Sentinel content to watch it. Approval goes through Privileged Identity Management (PIM): Keyring can ask PIM to turn on an eligible role from the page that refused you. Key Vault's expiry events reach people through Event Grid, and Keyring can email them, and its own health notices, through Azure Communication Services. Keyring stores nothing: values, notes and owners stay in Key Vault. If you can't do it in the portal, you can't do it in Keyring.
+Keyring is a self-hosted secrets console for teams whose secrets, certificates and keys live in Azure Key Vault. People sign in with Entra ID and act as themselves, so Key Vault's own RBAC decides what each person can see and change. Every action leaves an audit trail, which Keyring can send to Log Analytics, with Microsoft Sentinel content to watch it. Approval goes through Privileged Identity Management (PIM): Keyring can ask PIM to turn on an eligible role from the page that refused you. Where PIM isn't available, Keyring can email an access request to the vault's owners, who grant it in Azure. Key Vault's expiry events reach people through Event Grid, and Keyring can email them through Azure Communication Services, along with notices when a watched item is read, something is deleted or changed in bulk, a PIM role is used, or Keyring itself needs attention. Keyring stores nothing: values, notes and owners stay in Key Vault. If you can't do it in the portal, you can't do it in Keyring.
 
 Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
 
-> **Status.** Built and tested against mock Azure services: every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault, Log Analytics, audit ingestion and email endpoints. The Key Vault REST calls have been run against real vaults, by hand and with an opt-in test. On 17-11-2026 a person signed in to a local Keyring, in a real browser, against a real tenant, and used secrets, keys, certificates, the expiry, age, health, search and audit pages, and sign-out. That run found two problems ([#250](https://github.com/jusso-dev/keyring/issues/250), [#251](https://github.com/jusso-dev/keyring/issues/251)), both fixed. Not yet confirmed on a real tenant: sign-in in a production deployment, PIM (the test tenant had no PIM licence), Conditional Access step-up, the Azure deployments, the Sentinel content, the audit sink, email through ACS and the Event Grid webhook. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists each check and what has been confirmed. Work is tracked in [issues](https://github.com/jusso-dev/keyring/issues).
+> **Status.** Built and tested against mock Azure services: every test in this repository runs against mock Entra ID, Resource Graph, ARM, Key Vault, Log Analytics, audit ingestion and email endpoints. The Key Vault REST calls have been run against real vaults, by hand and with an opt-in test. On 17-11-2026 a person signed in to a local Keyring, in a real browser, against a real tenant, and used secrets, keys, certificates, the expiry, age, health, search and audit pages, and sign-out. That run found two problems ([#250](https://github.com/jusso-dev/keyring/issues/250), [#251](https://github.com/jusso-dev/keyring/issues/251)), both fixed. Everything added since that run (access requests, activity emails, reveal limits, the access review, the webhook's subscription allow-list and sharing) is tested against mocks only. Not yet confirmed on a real tenant: sign-in in a production deployment, PIM (the test tenant had no PIM licence), Conditional Access step-up, the Azure deployments, the Sentinel content, the audit sink, email through ACS, the Event Grid webhook, and the features just named. [docs/real-vault-checklist.md](docs/real-vault-checklist.md) lists each check and what has been confirmed. Work is tracked in [issues](https://github.com/jusso-dev/keyring/issues).
 
 ## What it does
 
@@ -38,6 +38,9 @@ These are Keyring controls. Key Vault doesn't know about them, and the Azure CLI
 - **No reveal while the audit sink fails**, with `KEYRING_AUDIT_REQUIRED` ([Audit sink](docs/deploy.md#audit-sink)).
 - **Typed names** before a delete, and purge off unless an admin turns it on ([Threat model](docs/architecture.md#threats-and-what-stops-them)).
 - **PIM**: when Key Vault refuses you and you're eligible for the role it needs, turn it on from that page. PIM decides and its approvers approve; Keyring never grants a role. **My access** lists your roles on a vault, with time left ([PIM activation](docs/architecture.md#pim-activation), [Give people access](#5-give-people-access-to-vaults)).
+- **Request access**: where PIM isn't available, the same page offers **Request access**, which emails the vault's owners with your reason. Keyring keeps no request and grants nothing: the owners grant it in Azure ([Access requests](docs/deploy.md#access-requests)).
+- **Reveal limits**: a `keyring-reveal` tag of `copy-only` (copy without showing) or `none` (no reveal, copy or private key download in Keyring) on a sensitive secret or certificate ([Reveal limits](#reveal-limits)).
+- **Share a secret** (off by default, `KEYRING_SHARING`): give a person or security group Key Vault Secrets User on one secret until a date, as a real Azure role assignment made as you. Without PIM, Azure doesn't end it on the date ([Sharing a secret](#sharing-a-secret)).
 - **Permission hints**: buttons your roles don't allow stay visible but disabled, with the role to ask for. Only a hint: Key Vault still decides ([Permission hints](docs/architecture.md#permission-hints)).
 
 ### Audit and compliance
@@ -55,13 +58,15 @@ These are Keyring controls. Key Vault doesn't know about them, and the Azure CLI
 - **Expiry dashboard** across vaults, grouped by how soon, with CSV export ([Expiry dashboard](docs/architecture.md#expiry-dashboard)).
 - **Age view**: every item by how long since its value last changed, with a "Not changed in over a year" badge ([Age view](docs/architecture.md#age-view)).
 - **Rotation status** of secrets, read from tags your rotation job writes. Keyring doesn't rotate secrets itself ([docs/rotation.md](docs/rotation.md)).
-- **Change many at once**: tags, description, owner, enabled and (for secrets and keys) expiry on up to 100 ticked items, after a page that shows each change ([Secrets](docs/architecture.md#secrets)).
+- **Change many at once**: tags, description, owner, notify list, enabled and (for secrets and keys) expiry on up to 100 ticked items, after a page that shows each change ([Secrets](docs/architecture.md#secrets)).
 - **Import** many secrets from a `.env` or CSV file, after a preview of names, never values. There is no export ([Secrets](docs/architecture.md#secrets)).
 - **Copy a secret to another vault** without showing its value ([Secrets](docs/architecture.md#secrets)).
 
 ### Notifications
 
 - **Expiry emails**: Key Vault's near-expiry and expired events, delivered by Event Grid to an Azure Monitor action group, or to Keyring, which emails them through Azure Communication Services ([docs/alerts.md](docs/alerts.md#expiry-emails-from-keyring)).
+- **Activity emails**: a watched item read (to its `notify` addresses, and optionally its owner), a delete, purge or bulk change, and a PIM role turned on or off (to the vault's owners). Never a value or a reason ([Activity emails](docs/deploy.md#activity-emails)).
+- **Access request and share emails**: a request to the vault's owners, and a note to the person a secret is shared with ([Email](docs/deploy.md#email)).
 - **Health emails** to the admins: the audit sink failing and recovering, a burst of refused requests, and Keyring's own client secret near expiry ([Health notices](docs/deploy.md#health-notices)).
 - **Access alerts** run by Azure Monitor: a watched secret read, a purge, or one caller refused again and again ([Access alerts](docs/alerts.md#access-alerts)).
 
@@ -79,12 +84,13 @@ Keyring is a console over Key Vault, not a second vault. This table says, for ea
 | --- | --- | --- |
 | Storing secrets, certificates and keys, with versions, soft delete and encryption | Key Vault | Keyring stores nothing. It reads and writes Key Vault as the signed-in person |
 | Who may read or change what | Key Vault | Entra RBAC or access policies on the vault. Keyring shows who has access and which role a button needs |
-| Approval before access | Azure (PIM, Event Grid) | PIM, with its own approvers. Keyring sends your activation request to PIM as you and shows the answer; it never grants a role |
-| Reveal controls | Keyring | Hidden until asked for, hidden again after 30 seconds, clipboard cleared, optional step-up and reasons. Keyring controls only: the CLI and portal aren't limited |
+| Approval before access | Azure (PIM, Event Grid) | PIM, with its own approvers. Keyring sends your activation request to PIM as you and shows the answer; it never grants a role. Without PIM, access requests by email, which Keyring sends but never grants |
+| Reveal controls | Keyring | Hidden until asked for, hidden again after 30 seconds, clipboard cleared, optional step-up and reasons, per-item reveal limits. Keyring controls only: the CLI and portal aren't limited |
 | Password rules and an owner on every item | Keyring | `KEYRING_PASSWORD_POLICY` and `KEYRING_REQUIRE_OWNER`. Keyring rules only, as above |
 | Audit trail | Key Vault and Keyring | Key Vault's diagnostic logs record every call. Keyring adds its own event for each action, with the reason given |
 | SIEM | Keyring | Sentinel content for Keyring's audit table, run by Sentinel in your workspace |
-| Access review and reports | Keyring | Per-vault access review and reports across vaults, as pages and CSV |
+| Access review and reports | Keyring | A per-vault access review (owner, last change, who used it in 90 days, who has access, rotation status per item) and reports across vaults, as pages and CSV |
+| Sharing one secret for a set time | Keyring and Azure (PIM) | Off by default. A Key Vault Secrets User assignment on the one secret, made as the sharer. With PIM, Azure ends it on the date; without PIM, it stays until someone revokes it. No one-time links |
 | Expiry warnings | Azure (PIM, Event Grid) and Keyring | Key Vault raises the events and Event Grid delivers them. Keyring shows the dashboard and can send the emails |
 | Rotating keys and renewing certificates | Key Vault | Key Vault's rotation policy and certificate renewal. Keyring sets both |
 | Rotating a secret on the system it belongs to | Not covered | Keyring shows what your rotation job's tags say. See [docs/rotation.md](docs/rotation.md) for Azure's own pattern |
@@ -106,6 +112,14 @@ Keyring is for people. Apps, services and pipelines should read Key Vault direct
 - **CI tasks.** Azure Pipelines has a Key Vault task, and GitHub Actions can sign in to Azure with OpenID Connect, with no stored secret, then read Key Vault ([Azure Pipelines](https://learn.microsoft.com/azure/devops/pipelines/tasks/reference/azure-key-vault-v2), [GitHub Actions](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect)).
 
 **Why Keyring adds no API of its own.** Key Vault's REST API already is that API, with RBAC, throttling and its own audit log. A Keyring API would need either an identity of its own with access to vaults, or tokens that outlive a person's session. Keyring has neither, on purpose: every call it makes to a vault is made as the signed-in person. Apps that call Key Vault as themselves also show up by name in its audit log, which is what **Used by** and the access review read.
+
+## Documentation
+
+- [Documentation site](https://jusso-dev.github.io/keyring/): these docs as a website.
+- [Design document](docs/Keyring-Design-Document.pdf): the solution design, as a PDF.
+- [Walkthrough guides](docs/guides/00-about.md): each page, step by step, for people using Keyring.
+- [Administrator SOPs](docs/admin/admin-sops.md): procedures for the people who run Keyring.
+- [docs/architecture.md](docs/architecture.md) and [docs/deploy.md](docs/deploy.md): how Keyring works and how to deploy it.
 
 ## Screenshots
 
@@ -241,8 +255,28 @@ Keyring stores nothing, so the few things it keeps about an item live in the ite
 | `notify` | secret, certificate, key | Up to 5 more email addresses to tell about the item, separated by commas, within the tag's 256 characters. Set with the Notify field |
 | `keyring-owners` | vault (an Azure resource tag, not a Key Vault tag) | The vault's owners: email addresses separated by commas. Keyring reads it from Resource Graph and never changes it. Set it in the vault's **Tags** blade in the Azure portal, or with `az tag update --resource-id <vault ID> --operation merge --tags keyring-owners=ops@example.com` |
 | `rotation`, `rotation-last`, `rotation-status` | secret | What the last rotation did, written by your rotation job and read by Keyring ([docs/rotation.md](docs/rotation.md)) |
+| `keyring-reveal` | secret, certificate | A reveal limit: `copy-only` or `none`. Set with the Reveal limit control on a secret's forms or a certificate's Edit details. See [Reveal limits](#reveal-limits) |
 
 Addresses in these tags are personal data that anyone who can read the item's tags (or the vault's) can already see. Keyring shows them, a plain address as a `mailto:` link, but never logs them, puts them in an audit event or a flash message, or builds one of its own URLs (a query string, redirect, filter suggestion or pager link) with an address in it. Each must be one plain address, such as `alex@example.com`, and in `KEYRING_NOTIFY_ALLOWED_DOMAINS` when that is set. A value set in the portal or the CLI that isn't is shown as it is, with a note, and kept unless you change that field.
+
+### Reveal limits
+
+A `keyring-reveal` tag on a sensitive secret or certificate limits what Keyring does with its value:
+
+| Value | Secret | Certificate |
+| --- | --- | --- |
+| `copy-only` | No Show value: **Copy value** puts it on your clipboard without showing it on screen, and Keyring tries to clear the clipboard after 30 seconds (a browser can refuse, for example in a background tab). It keeps the value off a screen someone else can see (over a shoulder, a shared or recorded screen); it doesn't stop the signed-in person, who can paste it. Copy to another vault still works, and the copy keeps the limit | The private key can't be downloaded (a file has no clipboard to clear), the same as `none` |
+| `none` | Keyring refuses to show it, copy it, or copy it to another vault, and says to use the app's own identity or the Azure CLI | The private key can't be downloaded. The public certificate can |
+| anything else, or the name in another case | Treated as `none`, shown as it is with a note, and kept until someone changes it. An unknown value never means "no limit" | Same |
+
+What it is and isn't:
+
+- **A Keyring control, like step-up.** Key Vault doesn't know about it. The Azure CLI, the portal and the SDKs aren't limited by it, and anyone who can change the item's tags can change it there.
+- **`copy-only` keeps the value off the screen, not out of the browser.** To copy, the value has to reach your browser. It is in the page as a hidden form field, never shown, selectable or read out by a screen reader, and the page says so.
+- **Every check is on the server**, on each path that could show or carry the value: reveal of any version (the current version's limit or the asked-for version's, whichever is stricter), copy to another vault, private key download, rollback, Set a new value, Edit details, import and the bulk change. A limit is checked before the value is read, and again on what Key Vault sends back, so a tag added in between still stops it. It is checked before step-up or a reason is asked for.
+- **Nothing in Keyring drops it by accident.** Rollback, Set a new value, import over an existing secret, certificate upload over an existing certificate and copy to another vault (whatever is ticked) all carry the stricter limit onto the new version. Tag rows, the bulk change and import files refuse the tag name.
+- **Loosening it is gated and audited.** Through Keyring, the limit is changed only with its own control. Loosening it (`none` to `copy-only` or no limit, `copy-only` to no limit) needs the same step-up and reason as a reveal; strengthening it needs nothing extra. The audit event says it changed, from what to what (`reveal_limit_from`, `reveal_limit_to`: `unset`, `copy-only`, `none` or `other`). A refusal is an audit event with `reason_code` `reveal_limited`, and isn't a read.
+- Keys have no value to show, so the control isn't on keys.
 
 ### Owners
 
@@ -262,6 +296,21 @@ With `KEYRING_REQUIRE_OWNER=true`, Keyring refuses to save an item without an `o
 | Rotate a key, roll back a secret, enable, disable, renew a certificate | Not checked: they keep the item's tags as they are, and no form shows the owner |
 
 Like the password policy, it is a Keyring rule: Key Vault doesn't know about it, and the Azure CLI and portal aren't limited by it. The emails that use these tags (access requests and activity) check `KEYRING_NOTIFY_ALLOWED_DOMAINS` again when they send.
+
+## Sharing a secret
+
+Off by default. With `KEYRING_SHARING=true`, a secret's page has **Share**: pick a person or security group by name and an end date (at most `KEYRING_SHARE_MAX_DAYS`, default 30), and Keyring gives them **Key Vault Secrets User** on that one secret. Plainly:
+
+- **A share is a real Azure role assignment, made as you**, with your own token. Only someone Azure already lets assign roles on the secret (Owner, User Access Administrator or Key Vault Data Access Administrator) can share. Keyring's managed identity takes no part, and Keyring keeps no list of shares: the **Shared with** section, **My shares** and **Revoke** read Azure each time.
+- **With PIM** (Entra ID P2), the share is a PIM assignment with an end date, and Azure removes it at the end of that day.
+- **Without PIM licensing**, it is a plain role assignment, and **Azure doesn't remove it on the end date**. Keyring marks it **Overdue** on the secret's page and in the access review, with Revoke, but doesn't remove it itself.
+- **A PIM setting that refuses the request refuses the share.** Keyring doesn't fall back to a plain assignment, which would have no end date and step round the setting.
+- **No one-time links.** A share gives access through Key Vault's RBAC, and the person reads the secret as themselves, in Keyring, the portal or the CLI.
+- Refused before anything changes in Azure: a certificate's backing secret, a secret with a `keyring-reveal` tag, a share with yourself, and vaults that use access policies. Sharing asks for step-up and a reason as a reveal does, when those are set up.
+- With `shares` in `KEYRING_NOTIFY_TYPES`, the person shared with and the sharer get an email, never with the value.
+
+It needs two delegated Microsoft Graph permissions, `User.ReadBasic.All` and `GroupMember.Read.All` (step 4), only when sharing is on. Details in [deploy.md](docs/deploy.md#sharing-a-secret).
+
 ## How access works
 
 ```
@@ -274,9 +323,9 @@ Browser ──OIDC──> Keyring ──on-behalf-of──> Entra ID ──token
 
 Exactly who makes each call:
 
-- **As you (on-behalf-of):** everything that reads or changes Key Vault, Resource Graph, ARM or Log Analytics data on your behalf.
-- **As Keyring's managed identity:** proving to Entra that it is the Keyring app, in place of a client secret (the federated credential, [step 2](#2-choose-how-keyring-proves-it-is-this-app)), and writing rows to the audit sink (Keyring's own audit events, sent to a Log Analytics table, [docs/deploy.md](docs/deploy.md#audit-sink)). Nothing else, and never a client secret or a second identity for these.
-- **The identity's roles:** reading Keyring's own config secrets, and Monitoring Metrics Publisher on the one audit data collection rule. No role on any vault, and no read access to any workspace.
+- **As you (on-behalf-of):** everything that reads or changes Key Vault, Resource Graph, ARM or Log Analytics data on your behalf. With sharing on, also Microsoft Graph, to find people and groups by name, and the share's role assignment itself.
+- **As Keyring's managed identity:** proving to Entra that it is the Keyring app, in place of a client secret (the federated credential, [step 2](#2-choose-how-keyring-proves-it-is-this-app)), writing rows to the audit sink (Keyring's own audit events, sent to a Log Analytics table, [docs/deploy.md](docs/deploy.md#audit-sink)), and sending email through Azure Communication Services ([Email](docs/deploy.md#email)). Nothing else, and never a client secret or a second identity for these.
+- **The identity's roles:** reading Keyring's own config secrets, Monitoring Metrics Publisher on the one audit data collection rule, and, with email on, a custom role holding only `Microsoft.Communication/CommunicationServices/Read` and `/Write` on the one Communication Services resource in Keyring's own resource group. Azure has no narrower permission that can send: Write also lets the identity change that resource's settings, but it can't read or regenerate its keys. No role on any vault, and no read access to any workspace.
 
 That's why Keyring uses OIDC and not SAML. A SAML assertion can't be exchanged for a downstream token.
 
@@ -366,6 +415,7 @@ Go to **API permissions > Add a permission** and add these **delegated** permiss
 | Azure Service Management | `user_impersonation` | List vaults with Resource Graph as you |
 | Log Analytics API | `Data.Read` | Read Key Vault's audit logs for the audit view, as you |
 | Microsoft Graph | `openid`, `profile`, `offline_access` | Sign in, show your name, stay signed in |
+| Microsoft Graph | `User.ReadBasic.All`, `GroupMember.Read.All` | Only with `KEYRING_SHARING=true`: find people and security groups by name when sharing a secret, as you. `GroupMember.Read.All` needs admin consent. Leave both out if sharing is off |
 
 Log Analytics API is under **APIs my organization uses**; search for "Log Analytics".
 
@@ -407,6 +457,8 @@ Role changes can take a few minutes to apply.
 
 **PIM.** If your organisation uses Privileged Identity Management for Azure resources and you're eligible for the role a "You don't have access" page names, the page offers **Activate** beside "What to ask for". You pick how long (up to what PIM allows), give a reason and a ticket if PIM asks for them, and Keyring sends the request to PIM as you. PIM decides: it may turn the role on, wait for an approver, or ask you to sign in again with a stronger method. **My access** under each vault lists your Key Vault roles there, eligible and on, with time left and **Deactivate**. Keyring keeps nothing: it reads all of this from Azure each time, and needs no new permission. Without PIM, or without an eligible role, the 403 page is as it was.
 
+**Request access.** Where PIM isn't available (it needs Entra ID P2) and email is on with `access-requests`, the same page offers **Request access** instead: pick this item or the whole vault, give a reason and an optional ticket, and Keyring emails the vault's owners (its `keyring-owners` tag, or Keyring's admins when it names nobody) with a copy to you. Keyring can't grant access itself and keeps no request: the email links to the vault's Access control page in the Azure portal. One request per role and vault an hour. **My access** lists the same for each Key Vault role you don't have.
+
 Buttons your roles don't allow stay visible but are disabled, with the role from this table beside them. Keyring reads your permissions from Azure for this and keeps them for five minutes, so a new role may take that long to show. It's only a hint: Key Vault still decides, and if Keyring can't read your permissions, or the vault uses access policies, every button stays enabled.
 
 ## Configuration
@@ -440,6 +492,8 @@ Each of these is a Keyring control. Key Vault doesn't know about it, and the Azu
 | `KEYRING_PASSWORD_POLICY` | Unset (no policy) | Rules for a password typed into a Password secret or a Login's password field, on create and on Set a new value, and for each imported value, such as `min=14,upper,lower,digit,symbol,max-repeat=3,common`. Each part is off unless listed: `min=N` (fewest characters, 1 to 256), `upper`, `lower`, `digit`, `symbol`, `max-repeat=N` (most of one character in a row, 1 to 64) and `common` (not on Keyring's built-in list of common passwords). An unknown or repeated part, or a number out of range, stops Keyring starting. See [Password policy](#password-policy) |
 | `KEYRING_REQUIRE_OWNER` | `false` | `true` to refuse creating or editing a secret, certificate or key without an `owner` tag, on every form that shows the Owner field, and to skip import rows without one. See [Owners](#owners) |
 | `KEYRING_ALLOW_PURGE` | `false` | `true` to allow permanent deletes |
+| `KEYRING_SHARING` | `false` | `true` adds **Share** to a secret's page: a time-limited Key Vault Secrets User assignment on that one secret, made as the person sharing, for a person or security group picked by name. Needs the two Microsoft Graph permissions in step 4. See [Sharing a secret](#sharing-a-secret) |
+| `KEYRING_SHARE_MAX_DAYS` | `30` | The longest a share can last, in days, 1 to 365 |
 
 ### Audit
 
@@ -459,13 +513,15 @@ All optional. Email is off unless `KEYRING_NOTIFY_ACS_ENDPOINT` is set, and ever
 | --- | --- | --- |
 | `KEYRING_NOTIFY_ACS_ENDPOINT` | Unset (no email) | The Communication Services resource's endpoint, `https://<resource>.<geography>.communication.azure.com`. Needs `KEYRING_MANAGED_IDENTITY_CLIENT_ID` and `KEYRING_NOTIFY_SENDER`: email is sent only as that identity |
 | `KEYRING_NOTIFY_SENDER` | Required with the endpoint | The sender, `DoNotReply@<verified domain>`. One plain address |
-| `KEYRING_NOTIFY_TYPES` | None | Notices to send, separated by commas. Accepted: `expiry`, `access-requests`, `watched-reads`, `destructive`, `role-use`, `health`. Today only `expiry` and `health` send anything |
+| `KEYRING_NOTIFY_TYPES` | None | Notices to send, separated by commas. Accepted: `expiry`, `access-requests`, `watched-reads`, `destructive`, `role-use`, `health`, `shares`. See [Email](docs/deploy.md#email) for what each sends |
 | `KEYRING_NOTIFY_ADMINS` | None | Up to 20 addresses, separated by commas, for health and fallback notices |
 | `KEYRING_NOTIFY_ALLOWED_DOMAINS` | Any domain | Every recipient must be in one of these domains |
 | `KEYRING_NOTIFY_RATE_PER_HOUR` | `20` | Emails an hour to one recipient for one type, 1 to 1000 |
 | `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | `false` | `true` to put recipients' addresses on audit events |
+| `KEYRING_NOTIFY_OWNER_ON_READ` | `false` | `true` to send watched-read emails to the item's `owner` as well as its `notify` addresses. Set `KEYRING_NOTIFY_ALLOWED_DOMAINS` before turning `watched-reads` on. See [Activity emails](docs/deploy.md#activity-emails) |
 | `KEYRING_NOTIFY_BURST_THRESHOLD` | `20` | With `health` on: more than this many refused or denied requests from one person or address in 15 minutes emails the admins, 1 to 1000. See [Health notices](docs/deploy.md#health-notices) |
 | `KEYRING_EVENTGRID_AUDIENCE` | `api://<client ID>` | With `expiry` in `KEYRING_NOTIFY_TYPES` only. The `aud` Event Grid's token must have on `/hooks/eventgrid`. See [Expiry emails from Keyring](docs/alerts.md#expiry-emails-from-keyring) |
+| `KEYRING_EVENTGRID_SUBSCRIPTIONS` | Unset (any subscription) | Recommended with `expiry` in `KEYRING_NOTIFY_TYPES`. Subscription IDs, separated by commas (at most 50), whose Key Vaults may send expiry events. An event from any other subscription refuses the delivery. See [Which subscriptions may send](docs/alerts.md#which-subscriptions-may-send) |
 
 ### Running
 

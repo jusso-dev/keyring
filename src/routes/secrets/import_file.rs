@@ -229,6 +229,9 @@ fn parse_tags(raw: &str) -> Result<BTreeMap<String, String>, String> {
         if crate::description::is_reserved(k) {
             return Err("Put the description in the description column, not in tags.".into());
         }
+        if crate::reveal_limit::is_tag(k) {
+            return Err("A file can't set the keyring-reveal tag. Set the reveal limit on each secret after the import.".into());
+        }
         if crate::owner::is_reserved(k) {
             return Err(
                 "Put the owner and notify addresses in the owner and notify columns, not in tags."

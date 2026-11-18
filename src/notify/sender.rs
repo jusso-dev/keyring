@@ -298,6 +298,12 @@ impl Notifier {
         self.settings.types.contains(&kind)
     }
 
+    /// True when `KEYRING_NOTIFY_ALLOWED_DOMAINS` is set, so every
+    /// recipient is in a domain the operator chose.
+    pub fn restricts_domains(&self) -> bool {
+        self.settings.allowed_domains.is_some()
+    }
+
     /// `KEYRING_NOTIFY_ADMINS`, for health and fallback notices.
     pub fn admins(&self) -> &[Address] {
         &self.settings.admins
@@ -424,6 +430,11 @@ impl Notifier {
         }
         self.wake.notify_one();
         Enqueued::Queued { recipients }
+    }
+
+    /// True when `KEYRING_NOTIFY_ALLOWED_DOMAINS` lets mail go to `a`.
+    pub fn allows(&self, a: &Address) -> bool {
+        self.allowed(a)
     }
 
     fn allowed(&self, a: &Address) -> bool {

@@ -49,6 +49,8 @@ pub(crate) struct FormView {
     pub description: String,
     /// The `owner` and `notify` tags, as typed or as they are.
     pub owners: crate::owner::Fields,
+    /// The reveal limit control (`keyring-reveal`).
+    pub reveal: crate::reveal_limit::Field,
     pub enabled: bool,
     /// The version the edit form was opened on, and its `updated` time.
     pub version: String,
@@ -70,6 +72,7 @@ impl FormView {
             tags: TagField::posted(&f.tag_rows, current),
             description: f.description.clone(),
             owners: crate::owner::Fields::posted(f.owners(), current),
+            reveal: crate::reveal_limit::Field::posted(f.reveal.as_deref(), current),
             enabled: f.enabled.is_some(),
             version: f.version.clone(),
             updated: f.updated.clone(),
@@ -102,6 +105,7 @@ impl FormView {
                 .unwrap_or_default()
                 .to_owned(),
             owners: crate::owner::Fields::of(item.tags()),
+            reveal: crate::reveal_limit::Field::of(item.tags()),
             enabled: a.is_enabled(),
             version: item.version().to_owned(),
             updated: updated_stamp(item),
@@ -540,6 +544,32 @@ pub(crate) async fn set_value(
             ));
         }
     };
+    let form_url = vault_path(&vault, &format!("/secrets/{name}/value"));
+    let empty = BTreeMap::new();
+    let (shell, errors) = crate::routes::reveal_limit::loosening(
+        &state,
+        &session,
+        shell,
+        crate::audit::Action::SecretSet,
+        item.tags(),
+        body.tags.as_ref().unwrap_or(&empty),
+        &f.reason,
+        &f.ticket,
+        &form_url,
+    )?;
+    if !errors.is_empty() {
+        let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+        return Ok(form_page(
+            shell,
+            vault,
+            Mode::NewValue,
+            FormView::from_form(&f, item.tags())
+                .typed_as(&item)
+                .suggesting(suggest),
+            errors,
+            None,
+        ));
+    }
     match api(&state, &session, &vault).set(&name, &body).await {
         Ok(_) => Ok(saved(
             &state,
@@ -613,6 +643,31 @@ pub(crate) async fn update(
             ));
         }
     };
+    let form_url = vault_path(&vault, &format!("/secrets/{}/edit", item.name()));
+    let (shell, errors) = crate::routes::reveal_limit::loosening(
+        &state,
+        &session,
+        shell,
+        crate::audit::Action::SecretUpdate,
+        item.tags(),
+        body.tags.as_ref().unwrap_or(item.tags()),
+        &f.reason,
+        &f.ticket,
+        &form_url,
+    )?;
+    if !errors.is_empty() {
+        let suggest = tag_rows::for_vault(&state, &session, &vault).await;
+        return Ok(form_page(
+            shell,
+            vault,
+            Mode::Properties,
+            FormView::from_form(&f, item.tags())
+                .typed_as(&item)
+                .suggesting(suggest),
+            errors,
+            None,
+        ));
+    }
     update_current(&state, &session, shell, &vault, &item, &body).await?;
     let name = item.name();
     Ok(saved(

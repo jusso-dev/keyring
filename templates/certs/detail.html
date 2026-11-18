@@ -25,10 +25,13 @@
 <p class="notice notice-warn">{{ note }}</p>
 {% endif %}
 
+{% if row.limit != crate::reveal_limit::Limit::Open %}
+<p class="notice" data-reveal-limit>This certificate's private key is set not to be downloaded in Keyring, by its <span class="mono">keyring-reveal</span> tag. The public certificate can still be downloaded. Apps should read the certificate with their own identity. This is a Keyring control: the Azure CLI and portal aren't limited by it.</p>
+{% endif %}
 <div class="actions">
   <a class="button" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/cer">Download .cer</a>
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/cer?format=pem">Download PEM (public)</a>
-  {% if let Some(pol) = policy %}{% if pol.exportable %}
+  {% if let Some(pol) = policy %}{% if pol.exportable && row.limit == crate::reveal_limit::Limit::Open %}
   <a class="button button-secondary" href="{{ shell.vault_prefix() }}/certificates/{{ row.name }}/download-key">Download with private key</a>
   {% endif %}{% endif %}
   {{ ui::link_button(hints.needs(Action::UpdateCertificate), "edit", "{}/certificates/{}/details"|format(shell.vault_prefix(), row.name), "button button-secondary", "Edit details") }}

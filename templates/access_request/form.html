@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Request {{ role_name }} - Keyring{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ back }}">Back</a></p>
+<h1>Request access <span class="muted">{{ role_name }}</span></h1>
+<p>Keyring emails your request to the owners of {{ vault }}, as named in the vault's <span class="mono">keyring-owners</span> tag, or to Keyring's admins when it names nobody. You get a copy. Keyring can't grant access itself and keeps no request: an owner grants the role in the Azure portal.</p>
+{% call ui::error_summary(errors) %}{% endcall %}
+<form method="post" action="{{ shell.vault_prefix() }}/my-access/request" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="role" value="{{ role }}">
+  <input type="hidden" name="back" value="{{ back }}">
+  {%- if let Some((kind, name)) = item %}
+  <input type="hidden" name="kind" value="{{ kind }}">
+  <input type="hidden" name="name" value="{{ name }}">
+  <fieldset>
+    <legend>For</legend>
+    <div class="checkbox"><input id="scope-item" name="scope" type="radio" value="item"{% if !whole_vault %} checked{% endif %}><label for="scope-item">Only the {{ kind }} {{ name }}</label></div>
+    <div class="checkbox"><input id="scope-vault" name="scope" type="radio" value="vault"{% if whole_vault %} checked{% endif %}><label for="scope-vault">The whole vault {{ vault }}</label></div>
+  </fieldset>
+  {%- else %}
+  <input type="hidden" name="scope" value="vault">
+  <p>For the whole vault {{ vault }}.</p>
+  {%- endif %}
+  {% let field_name = "reason" %}
+  <label for="reason">Why you need it</label>
+  <p class="field-help" id="reason-help">5 to 200 characters. Keyring writes it to its audit log with your name. The email shows it only when it has no web or email address in it. Don't type secrets or personal details.</p>
+  <textarea id="reason" name="reason" rows="2" maxlength="200"{% call ui::aria("reason", "reason-help") %}{% endcall %}>{{ reason }}</textarea>
+  {% include "_field_error.html" %}
+  {% let field_name = "ticket" %}
+  <label for="ticket">Ticket <span class="muted">(optional)</span></label>
+  <p class="field-help" id="ticket-help">{% if shell.ticket_pattern().is_empty() %}A change or incident ticket, up to 64 characters with no spaces.{% else %}A change or incident ticket matching <span class="mono">{{ shell.ticket_pattern() }}</span>.{% endif %}</p>
+  <input id="ticket" name="ticket" type="text" maxlength="64" value="{{ ticket }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("ticket", "ticket-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+  <div class="actions"><button type="submit">Send request</button><a href="{{ back }}">Cancel</a></div>
+</form>
+{% endblock %}
