@@ -18,6 +18,13 @@ use crate::routes::error::{PageError, Problem};
 use crate::routes::flash::{self, Flash};
 use crate::routes::shell::Shell;
 
+/// The claims request sent when Entra refused an on-behalf-of exchange for
+/// want of MFA and didn't send its own challenge: an access token whose
+/// `amr` includes `mfa`. Sent with `prompt=login`, so Entra can't reuse a
+/// password-only single sign-on session.
+pub(crate) const MFA_CLAIMS: &str =
+    r#"{"access_token":{"amr":{"essential":true,"values":["mfa"]}}}"#;
+
 /// How long someone has to finish signing in at Entra.
 const LOGIN_COOKIE_SECS: u64 = 10 * 60;
 
@@ -108,11 +115,15 @@ pub(super) async fn start(
     Query(q): Query<StartQuery>,
 ) -> Response {
     let return_to = return_to::sanitise(q.return_to.as_deref());
-    // A claims challenge from this browser's current session, if any. It
-    // comes from Entra, never from the request.
-    let challenge = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
-        .and_then(|id| state.sessions.get(id))
-        .and_then(|s| s.claims_challenge());
+    // From this browser's current session, if any: a claims challenge from
+    // Entra, and whether an exchange was refused for want of MFA. Both are
+    // set by the token broker, never from the request.
+    let current = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
+        .and_then(|id| state.sessions.get(id));
+    // One record, read once, so the challenge and the MFA ask always come
+    // from the same refusal.
+    let recovery = current.and_then(|s| s.recovery()).unwrap_or_default();
+    let (challenge, mfa_needed) = (recovery.claims, recovery.mfa);
     let unsaved = q.reason.as_deref() == Some(REASON_UNSAVED);
     // A step-up sign-in before a sensitive action. What it asks for comes
     // from Keyring's settings, never from the request.
@@ -121,14 +132,27 @@ pub(super) async fn start(
         .then_some(StepUpAsk {
             max_age: policy.max_age,
         });
+    // Step-up is left as it was. Otherwise, if Entra wanted MFA, ask for a
+    // fresh sign-in, with Entra's own challenge when it sent one and an
+    // explicit MFA request when it didn't (#294).
+    let mfa = step_up.is_none() && mfa_needed;
+    if mfa {
+        // Whether Entra sent a challenge, never the challenge itself.
+        tracing::info!(
+            entra_challenge = challenge.is_some(),
+            "asking Entra for MFA on the next sign-in"
+        );
+    }
     let claims = if step_up.is_some() {
         policy.claims(challenge.as_deref())
+    } else if mfa {
+        Some(challenge.unwrap_or_else(|| MFA_CLAIMS.to_owned()))
     } else {
         challenge
     };
     match state
         .oidc
-        .begin_with(return_to.clone(), unsaved, claims, step_up)
+        .begin_with(return_to.clone(), unsaved, claims, step_up, mfa)
         .await
     {
         Ok((url, pending)) => {
@@ -198,12 +222,13 @@ pub(super) async fn callback(
             codes: Vec::new(),
         }),
         (Ok(p), None, Some(code)) => {
-            let (return_to, unsaved, step_up) = (p.return_to.clone(), p.unsaved, p.step_up);
+            let (return_to, unsaved, step_up, mfa) =
+                (p.return_to.clone(), p.unsaved, p.step_up, p.mfa);
             state
                 .oidc
                 .finish(p, code)
                 .await
-                .map(|ok| (ok, return_to, unsaved, step_up))
+                .map(|ok| (ok, return_to, unsaved, step_up, mfa))
         }
         (Ok(_), None, None) => Err(SignInError::Stale("no code returned".into())),
     };
@@ -215,7 +240,7 @@ pub(super) async fn callback(
         // A step-up that came back without what was asked for. Refused,
         // and the old session kept as it was. The page links back to the
         // confirmation step, not to sign-in, so it can't loop.
-        Ok(((user, _, facts), return_to, _, true))
+        Ok(((user, _, facts), return_to, _, true, _))
             if state
                 .config
                 .step_up
@@ -228,7 +253,7 @@ pub(super) async fn callback(
             crate::audit::refuse(crate::audit::Refusal::StepUpNotMet);
             step_up_not_met(&return_to)
         }
-        Ok(((user, tokens, facts), return_to, unsaved, _)) => {
+        Ok(((user, tokens, facts), return_to, unsaved, _, mfa)) => {
             let session_name = state.cookies.name(SESSION_COOKIE);
             // Fresh ID every sign-in, and drop any old session.
             if let Some(old) = cookies::get(&headers, &session_name) {
@@ -237,6 +262,10 @@ pub(super) async fn callback(
             let id = state.sessions.create(user, tokens);
             if let Some(s) = state.sessions.get(&id) {
                 s.set_sign_in_facts(facts);
+                // From the sealed login cookie: this sign-in asked for MFA.
+                if mfa {
+                    s.set_mfa_asked();
+                }
                 crate::audit::note_session(&s);
             }
             crate::audit::set_action(crate::audit::Action::SessionSignIn);
