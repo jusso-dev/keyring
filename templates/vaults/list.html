@@ -2,9 +2,21 @@
 {% import "_ui.html" as ui %}
 {% block title %}Vaults - Keyring{% endblock %}
 {% block content %}
-<h1>Vaults</h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/", "Home") }}{{ ui::crumb_here("Vaults") }}</ol></nav>
+<div class="title-row"><h1>Vaults</h1></div>
 {#- Pinned and recently opened, filled in by static/pins.js. -#}
 <div class="pins-box" data-pins hidden></div>
+<p class="page-desc">Key vaults your account can see in Azure. Open one to work with its secrets, certificates and keys.</p>
+{% if total > 0 %}{% call ui::about() %}
+<p>Seeing a vault here doesn't always mean you can open its secrets.</p>
+<p>Owners come from each vault's <span class="mono">keyring-owners</span> tag, which you set in the Azure portal or with <span class="mono">az tag update</span>. Keyring doesn't change vault tags.</p>
+{% endcall %}{% endif %}
+</div>
+<div class="commandbar">
+  <span class="cmd-item">{{ ui::icon("health") }}<a class="button cmd" href="/vault-health">Vault health</a></span>
+  <span class="cmd-item">{{ ui::icon("expiry") }}<a class="button cmd" href="/expiry">Expiry</a></span>
+</div>
 {% if total == 0 %}
 <div class="empty-state">
   <p><strong>You can't see any vaults yet.</strong></p>
@@ -12,10 +24,7 @@
   <p class="hint"><strong>What to ask for:</strong> ask your admin for the Reader role where your team's vaults live, plus a Key Vault role (such as Key Vault Secrets User) on the vaults you need.</p>
 </div>
 {% else %}
-<p class="muted">You can see {{ total }} vault{% if total != 1 %}s{% endif %}. Seeing a vault here doesn't always mean you can open its secrets.</p>
-<p class="muted">With audit logs off, nothing records who read or changed what, and Keyring's audit view has nothing to show. <a href="/vault-health">Vault health</a> checks this and more for every vault.</p>
-<p class="muted">Owners come from each vault's <span class="mono">keyring-owners</span> tag, which you set in the Azure portal or with <span class="mono">az tag update</span>. Keyring doesn't change vault tags.</p>
-
+<p class="notice">With audit logs off, nothing records who read or changed what, and Keyring's audit view has nothing to show. <a href="/vault-health">Vault health</a> checks this and more for every vault.</p>
 <form class="filters" method="get" action="/vaults" role="search" data-live-filter="vault-table">
   <div>
     <label for="q">Search by name or resource group</label>
@@ -41,6 +50,7 @@
     {% if !filter.is_empty() %}<a href="/vaults">Clear</a>{% endif %}
   </div>
 </form>
+<p class="toolbar-meta"><strong>You can see {{ total }} vault{% if total != 1 %}s{% endif %}</strong></p>
 
 {% if vaults.is_empty() %}
 <div class="empty-state">
@@ -68,9 +78,9 @@
     {% for (v, audit) in vaults %}
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="item-name">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
-      <td>{{ ui::or_none(v.subscription_name) }}</td>
-      <td>{{ ui::or_none(v.resource_group) }}</td>
-      <td>{{ ui::or_none(v.location) }}</td>
+      <td class="nowrap">{{ ui::or_none(v.subscription_name) }}</td>
+      <td class="nowrap">{{ ui::or_none(v.resource_group) }}</td>
+      <td class="nowrap">{{ ui::or_none(v.location) }}</td>
       <td class="owner-cell">{{ ui::owner_value(crate::owner::vault_display(v.tags)) }}</td>
       <td>{% if v.rbac %}Azure RBAC{% else %}Access policies{% endif %}</td>
       <td>{% if v.soft_delete %}On{% else %}<span class="badge badge-warn">Off</span>{% endif %}</td>

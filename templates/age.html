@@ -2,10 +2,16 @@
 {% import "_ui.html" as ui %}
 {% block title %}Age - Keyring{% endblock %}
 {% block content %}
-<h1>Age</h1>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb("/expiry", "Expiry") }}{{ ui::crumb_here("Age") }}</ol></nav>
+<div class="title-row"><h1>Age</h1></div>
+<p class="page-desc">Secrets, certificates and keys across your vaults, by how long since their value last changed. Only names and dates are read, never values.</p>
+{% call ui::about() %}
+<p>The value last changed when the current version was made.</p>
+<p>Secrets and keys that belong to a certificate change with it, so only the certificate is listed, by its own current version.</p>
+{% endcall %}
+</div>
 <nav aria-label="Expiry views"><p class="view-switch"><a href="/expiry">By expiry date</a> <a href="/expiry/age" aria-current="page">By time since the value changed</a></p></nav>
-<p>Secrets, certificates and keys across your vaults, by how long since their value last changed. That is when the current version was made. Only names and dates are read, never values.</p>
-<p class="muted">Secrets and keys that belong to a certificate change with it, so only the certificate is listed, by its own current version.</p>
 
 <form class="filters" method="get" action="/expiry/age" role="search">
   <div>

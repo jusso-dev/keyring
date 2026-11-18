@@ -4,9 +4,11 @@
     description and tags only. -#}
 {% block title %}Edit {{ kind.noun() }} {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ kind.item_url(vault, name) }}">Back to {{ name }}</a></p>
-<h1>Edit <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p>Changes the description, owner, notify list and tags of the current version. Nothing else about the {{ kind.noun() }} changes, and no new version is made.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_kind(vault, kind.base()) }}{{ ui::crumb(kind.item_url(vault, name), name) }}{{ ui::crumb_here("Edit details") }}</ol></nav>
+<div class="title-row"><h1>Edit <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Changes the description, owner, notify list and tags of the current version. Nothing else about the {{ kind.noun() }} changes, and no new version is made.</p>
+</div>
 {% call ui::error_summary(errors) %}{% endcall %}
 {% call ui::optional_note() %}{% endcall %}
 <form method="post" action="{{ shell.vault_prefix() }}{{ kind.base() }}/{{ name }}/details" class="stacked" novalidate>

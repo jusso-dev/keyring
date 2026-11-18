@@ -2,8 +2,14 @@
 {% import "_ui.html" as ui %}
 {% block title %}{% if let Some(r) = report %}{{ r.title() }} across vaults{% else %}Audit across vaults{% endif %} - Keyring{% endblock %}
 {% block content %}
-<h1>Audit <span class="muted">across vaults</span></h1>
-<p>Fixed reports over every vault you can see, from their diagnostic logs in Log Analytics, read as you. Up to 500 rows. Times are in UTC. To see one vault's events with your own filters, open its audit page from a row or <a href="/vaults">from your vaults</a>.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb_here("Audit across vaults") }}</ol></nav>
+<div class="title-row"><h1>Audit <span class="muted">across vaults</span></h1></div>
+<p class="page-desc">Fixed reports over every vault you can see, from their diagnostic logs. Up to 500 rows. Times are in UTC.</p>
+{% call ui::about() %}
+<p>Logs are read from Log Analytics, as you. To see one vault's events with your own filters, open its audit page from a row or <a href="/vaults">from your vaults</a>.</p>
+{% endcall %}
+</div>
 
 <nav aria-label="Reports">
 <ul class="card-list">

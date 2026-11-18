@@ -214,11 +214,12 @@ async fn item_history_links_back_to_the_item() {
     let (_, html) = w
         .page("/v/kv-test/audit?item=db-password&range=30d&from=secret")
         .await;
-    assert!(html.contains("href=\"/v/kv-test/secrets/db-password\">Back to db-password</a>"));
+    // The breadcrumb leads back to the item.
+    assert!(html.contains("<li><a href=\"/v/kv-test/secrets/db-password\">db-password</a></li>"));
     let (_, html) = w
         .page("/v/kv-test/audit?item=db-password&range=30d&from=bogus")
         .await;
-    assert!(!html.contains("Back to db-password"));
+    assert!(!html.contains("href=\"/v/kv-test/secrets/db-password\""));
 }
 
 fn two_workspaces() -> serde_json::Value {

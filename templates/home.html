@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Keyring</h1>
+<div class="page-head">
+<div class="title-row"><h1>Keyring</h1></div>
 {#- Pinned and recently opened, filled in by static/pins.js. -#}
 <div class="pins-box" data-pins hidden></div>
-<p class="lead">Find a vault, look up a secret, add a certificate or rotate a key, in plain English.</p>
-<p>Everything you do here happens as you. If you can't do it in the Azure portal, you can't do it here.</p>
+<p class="page-desc">Find a vault, look up a secret, add a certificate or rotate a key, in plain English. Everything you do here happens as you. If you can't do it in the Azure portal, you can't do it here.</p>
+</div>
 {% if allow_purge %}
 <p class="notice notice-warn">Permanent deletes are turned on for this Keyring.</p>
 {% endif %}

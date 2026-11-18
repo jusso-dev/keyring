@@ -11,16 +11,34 @@ decoration: no illustrations, gradients, background art, charts or scores.
 
 ## Genre and structure
 
-- Genre: modern-minimal (an app, not marketing).
-- Macrostructure: Workbench, as an app shell. A thin top bar, a section nav on
-  the left, and one work area. Every page uses the same shell.
+- Genre: enterprise console (an app, not marketing). It follows Fluent 2 and
+  the Azure portal, so Keyring sits comfortably beside the portal and the
+  Entra admin centre. The owner asked for this on 18 November 2026, after
+  comparing Keyring with backup and secrets-management consoles.
+- Macrostructure: Workbench, as an app shell. A 48px top bar, a grouped
+  section nav with icons on the left, and one work area up to 80rem wide.
+  Every page uses the same shell.
+- Every page opens with the same **page header**: a breadcrumb, a title row
+  (h1 and status badges), one short description line, then a command bar.
+  Longer explanations sit in a closed "About this page" `<details>` under
+  the description, or in field help. Safety and consequence messages stay
+  visible where they are.
 - Page types:
-  - **List pages** (vaults, secrets, certificates, keys, deleted): heading,
-    one action row, a summary line, filters, then a framed table.
-  - **Detail pages** (secret, certificate, key, deleted item): back link, native-font
-    heading, status badges, action row, then fact lists and tables.
+  - **List pages** (vaults, secrets, certificates, keys, deleted): page
+    header with the create action in the command bar, then a compact
+    toolbar (inline filters, a count, actions on the right), then the
+    table across the work area. No separate filter panel.
+  - **Detail pages** (secret, certificate, key, deleted item): page header,
+    then a tab strip (Overview, Versions, Who used it, Access and sharing)
+    of links to existing routes or anchors on the page, the open one with
+    `aria-current="page"`. Overview shows the value panel and the
+    properties side by side on wide screens, as compact fact lists.
   - **Form pages** (create, edit, upload, renewal, rotation policy,
-    generator): a single column of fields, 40rem wide at most.
+    generator): fields grouped under small section headings (Basics,
+    Value, Expiry, Ownership and notes, Tags, Advanced), 40rem wide at
+    most. One rhythm: `--space-sm` (16px) above each field's label,
+    `--space-lg` (32px) above each section heading. A field label that
+    isn't a `<label>` (such as "Type of secret") is `p.field-label`.
   - **Decision pages** (confirm, disable, rotate, rollback, upload preview,
     sign-in, signed out, errors): one narrow panel that ends in its action.
   - **Ledger pages** (audit, expiry, vault health, access): the table is the page.
@@ -50,6 +68,7 @@ uses. Hex is what they render as.
 | `--color-accent-ink` | `oklch(100% 0 0)` | `#ffffff` | Text on accent and danger fills |
 | `--color-focus` | `oklch(40% 0.07 215)` | `#02515f` | Focus ring on light surfaces |
 | `--color-chrome` | `oklch(26% 0.02 250)` | `#1d252d` | Top bar |
+| `--color-chrome-2` | `oklch(32% 0.02 250)` | `#2b343d` | The vault switcher chip in the top bar |
 | `--color-chrome-ink` | `oklch(97% 0.004 250)` | `#f3f5f8` | Top bar text |
 | `--color-chrome-muted` | `oklch(78% 0.015 250)` | `#b0b8c1` | Top bar labels |
 | `--color-chrome-link` | `oklch(84% 0.06 210)` | `#9dd6e0` | Top bar links |
@@ -58,10 +77,10 @@ uses. Hex is what they render as.
 | `--color-warn` / `-tint` / `-rule` | `oklch(47% 0.1 65)` / `oklch(96.5% 0.03 85)` / `oklch(80% 0.08 75)` | `#804d0c` / `#fdf2dd` / `#dcb783` | Expiring within 90 days, cautions |
 | `--color-danger` / `-tint` / `-rule` | `oklch(50% 0.17 25)` / `oklch(96.5% 0.012 25)` / `oklch(80% 0.07 25)` | `#b02a2d` / `#fcf1ef` / `#e8ada7` | Expired, under 30 days, refused, errors |
 | `--color-danger-strong` | `oklch(43% 0.15 25)` | `#901e21` | Hover on danger fills |
-| `--color-shadow` | `oklch(25% 0.018 255 / 0.12)` | ink at 12% | The idle notice's shadow, the only shadow |
+| `--color-shadow` | `oklch(25% 0.018 255 / 0.12)` | ink at 12% | The idle notice's and the More menu's shadow, the only shadows |
 
-Accent footprint: the primary button, links, the current nav item and the
-focus ring. Nothing is flooded with it.
+Accent footprint: the primary button, links, the current nav item, the open
+tab's underline, toolbar icons and the focus ring. Nothing is flooded with it.
 
 ### Contrast (WCAG 2 ratio, computed from the OKLCH values)
 
@@ -97,6 +116,13 @@ Text needs 4.5:1. Control borders, glyphs and focus rings need 3:1.
 | chrome-ink | chrome | 14.23 | Top bar text |
 | chrome-muted | chrome | 7.76 | Top bar labels |
 | chrome-link | chrome | 9.69 | Top bar links |
+| chrome-ink / chrome-muted / chrome-link | chrome-2 | 11.61 / 6.34 / 7.91 | Vault switcher name, label and link |
+| rule-strong | chrome | 3.63 | Vault switcher border (3:1) |
+| chrome-muted | chrome-2 | 6.34 | Search icon and account icon (3:1) |
+| accent | paper / paper-2 | 6.19 / 5.73 | Pin star (3:1) |
+| ink-2 | paper | 6.64 | Column headers on the paper header row, nav group labels |
+| ink | paper-2 | 13.83 | Info notice, toolbar button hover, More menu hover |
+| danger | surface | 6.55 | Delete in the More menu |
 | rule-strong | surface | 4.28 | Input and secondary button borders (3:1) |
 | rule-strong | paper | 3.99 | Same, on the page (3:1) |
 | rule-strong | paper-2 | 3.70 | Value well border (3:1) |
@@ -112,60 +138,113 @@ the controls carry the meaning, so it has no contrast need.
 
 ## Typography
 
-Use the operating system's native fonts. The owner requested this on
-17 November 2026 to replace the stylised Plex typography.
+One ramp, from Fluent 2's web type ramp. The owner asked for it on 18
+November 2026: the earlier scale mixed 13, 14, 16 and 24px text on six line
+heights and three weights.
 
-- `--font-body`: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`.
-  Used for the interface, including headings, labels and controls.
-- `--font-mono`: `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`.
+- `--font-body`: `"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif`.
+  System fonts only: Segoe UI on Windows, the platform face elsewhere. The
+  UI loads no font files.
+- `--font-mono`: `ui-monospace, "Cascadia Mono", Consolas, SFMono-Regular, Menlo, monospace`.
   Only for technical data: version IDs, thumbprints, tags, operations, IP
-  addresses and secret values. Resource names use the normal UI font in
-  headings, navigation, tables and recent items.
-- The UI loads no font files. Rendering follows the user's operating system.
+  addresses and secret values. Resource names use the UI font.
 - Nothing in Keyring is set in italic.
-- Validation messages use the UI font; only their technical codes use mono.
-- Form inputs use 1rem text. Technical-value inputs retain the mono font;
-  mobile search and filter fields also stay at 1rem to avoid focus zoom.
+
+| Token | Size / line | Use |
+| --- | --- | --- |
+| `--text-caption` / `--lh-caption` | 12px / 16px | Column headers, badges, field help, breadcrumb, nav group labels, filter labels |
+| `--text-body` / `--lh-body` | 14px / 20px | Body text, controls, table cells, labels, fact lists |
+| `--text-mono` / `--lh-mono` | 13px / 20px | Technical values (fixed, never relative to its parent) |
+| `--text-subtitle` / `--lh-subtitle` | 16px / 22px | h2, section titles; editable text on small screens |
+| `--text-title` / `--lh-title` | 20px / 28px | h1 on every page |
+| `--text-large` / `--lh-large` | 24px / 32px | The expiry and age count figures only |
+
+- Weights: 400 and 600 only. `strong`, `b`, `th` and labels are 600.
+- No em-relative font sizes. Every text element uses one of the tokens.
+- Headings are weight 600, no negative tracking. h3 uses the body size.
+- Column headers: `--text-caption`, weight 600, ink-2, sentence case (no
+  uppercase, no extra tracking).
 - Numbers line up: `font-variant-numeric: tabular-nums` on tables, fact lists,
   badges, tiles, the pager and the countdown.
-- Scale: `--text-xs` 0.75rem (column headers, badges), `--text-sm` 0.875rem
-  (help, tags, small cells), `--text-base` 1rem (body), `--text-md` 1.125rem
-  (h2), `--text-lg` 1.5rem (h1), `--text-xl` 1.75rem (tile figures).
-- Headings are roman, weight 600 (h1 and h2), tracking -0.01em, line
-  height 1.25. Never italic. Long names wrap anywhere.
-- Column headers: `--text-xs`, uppercase, 0.06em tracking, weight 600, ink-2.
+- Small screens (below 48rem): inputs, selects and textareas use
+  `--text-subtitle`, so mobile browsers don't zoom on focus.
 
 ## Space, size and shape
 
-- Spacing: `--space-3xs` 0.25rem, `--space-2xs` 0.5rem, `--space-xs` 0.75rem,
-  `--space-sm` 1rem, `--space-md` 1.5rem, `--space-lg` 2rem, `--space-xl`
-  3rem. Multiples of 4 px only.
-- Control height `--control-h` 2.5rem (40 px) for inputs, selects and buttons
-  side by side. Small buttons `--control-h-sm` 2rem.
-- Radius: `--radius` 6px (controls, panels, tables), `--radius-sm` 4px
+- Spacing on a 4px grid: `--space-3xs` 4px, `--space-2xs` 8px, `--space-xs`
+  12px, `--space-sm` 16px, `--space-md` 24px, `--space-lg` 32px, `--space-xl` 48px.
+- Controls `--control-h` 32px (inputs, selects, buttons). Small controls
+  `--control-h-sm` 24px (row actions, the Pin button, toolbar extras). Every
+  target is at least 24 by 24px.
+- Table rows about 40px: cell padding 8px by 12px, `tbody tr` 40px high.
+- Panels: 16px padding (20px on decision panels).
+- Radius: `--radius` 4px (controls, panels, tables), `--radius-sm` 2px
   (badges, tags).
-- Top bar `--bar-height` 3rem. Section nav 12rem. Work area 72rem at most.
+- Top bar `--bar-height` 48px. Section nav 12rem. Work area 80rem at most.
 - Measure: running text 70ch at most. Forms 40rem.
 
 ## Shell
 
-- **Top bar**: dark chrome, one line on desktop. Wordmark (an inline SVG key
-  ring, hidden from assistive tech, and "Keyring"), the current vault as a
-  small "Vault" label with the name in the UI font and a "Change vault" link, a
-  search box (a plain GET form to `/search`, with a small Search button and a
-  visually hidden label), and the signed-in person with "Sign out" at the
-  right. It wraps on small screens, where the search box takes its own row.
-- **Section nav**: 12rem on the paper colour with a hairline on its right. The
-  current section has the accent tint, a 3px accent bar and weight 600. Below
-  48rem it becomes a wrapping row with an underline for the current section.
+- **Top bar** (48px, dark chrome): the mark and "Keyring", then the vault
+  switcher (a "Vault" label, the vault name and "Change vault", or "Choose
+  a vault"), the global search, and the signed-in person with "Sign out"
+  at the right. Below 48rem it wraps and search takes its own row.
+- **Search** is a plain GET form to `/search` with a visually hidden
+  label, styled like the Azure portal's: a 20rem field on chrome-2 with a
+  rule-strong border, chrome-ink text and a leading 16px search icon in
+  chrome-muted (inline SVG, `aria-hidden`). The Search button is quiet:
+  no fill or border, chrome-link text, chrome-2 on hover. Enter also
+  searches.
+- **Account** is a compact chip: 24px high, caption size, a person icon,
+  chrome-2 fill, a rule-strong border and fully rounded ends. "Sign out"
+  stays a text link beside it.
+- **Section nav** (12rem, paper, hairline right): items in groups, each
+  group with a caption label.
+  - Vault: Secrets, Certificates, Keys
+  - Across vaults: Vaults, Expiry, Vault health, Search
+  - Governance: Audit, Access, My access
+  - Tools: Generator
+  Each item has a hand-drawn 16px inline SVG icon (`aria-hidden`, drawn in
+  `currentColor`), placed beside the link inside the item so the link's
+  text is just its label. The current item has the accent tint, a 3px accent
+  bar on the left and weight 600. Below 48rem the groups become wrapping
+  rows, labels hidden, with an underline for the current item.
 - **Work area**: paper background. Panels and tables sit on white.
+
+## Page header
+
+- **Breadcrumb**: `nav.breadcrumb` with `aria-label="Breadcrumb"`, an `ol` of
+  links at `--text-caption` (each at least 24px wide) separated by a CSS chevron, the last item a
+  `span` with `aria-current="page"`. Item pages: Vaults > vault > Secrets >
+  name. It replaces every "Back to" link.
+- **Title row**: the h1 (`--text-title`), then status badges, then the Pin
+  button when the script adds it, styled as a command bar button.
+- **Description**: one line, `p.page-desc`, ink-2. An item's own
+  description (`.item-note`) takes its place on detail pages.
+- **About this page**: `details.about`, closed, a summary with an info
+  glyph, holding the rest of the page's explanation.
+- **Command bar** (`div.commandbar`): the primary action as a filled
+  button, other common actions as subtle toolbar buttons (`a.cmd`,
+  `button.cmd`: no border, a 16px icon and a label, paper-2 on hover), and
+  the rarely used or destructive ones (Delete, Disable, Copy to another
+  vault, deleted items and similar) in a **More** menu: `details.menu` with
+  a `summary` button and a list under it, aligned to the summary's right
+  edge so it opens towards the page. It sits under the idle sign-out
+  notice. No script: Enter or Space opens
+  it, Tab moves through it. Destructive items are danger-coloured text.
+- **Tabs** (`nav.tabs`, `aria-label` names the item): links in a row on a
+  hairline, the open one ink, weight 600, with a 2px accent underline and
+  `aria-current="page"`. Tabs that point at a section on the same page
+  are anchors. The open tab is a link, except "Who used it", which is a
+  `span` with `aria-current="page"`, so it can't drop the filters applied
+  on that page.
 
 ## Badges
 
 One size, one shape, one vocabulary.
 
-- Size: `--text-xs`, weight 600, height 1.375rem, padding 0 0.5rem, radius 4px,
-  1px border in the tone's rule colour, tabular figures.
+- Size: 20px high, `--text-caption` (12/16), weight 600, padding 0 6px,
+  radius 2px, 1px border in the tone's rule colour, tabular figures.
 - Every badge has a text label **and** a CSS-drawn glyph before it, so colour
   is never the only signal. The glyph is a `::before` box with no text, so
   screen readers read only the label.
@@ -186,40 +265,72 @@ like a status.
 
 ## Tables
 
-All tables follow the ledger rules: hairline row rules, small uppercase
-column headers, tabular figures, rows at least 3rem tall, and names in the UI font.
+All tables follow the ledger rules: hairline row rules, sentence-case
+column headers at `--text-caption` weight 600 in ink-2, tabular figures,
+rows about 40px tall (8px by 12px cell padding), and names in the UI font.
+Links in cells aren't underlined until hover or focus: the column says
+they are names to open.
 
-- **Framed** (default): white table with a 1px rule border and 6px radius.
-  Header row ruled off with `--color-rule-strong`. Rows tint paper-2 on hover.
+- **Framed** (default): white table with a 1px rule border and 4px radius.
+  Header row on paper with a rule-strong line under it. Rows tint paper on
+  hover. The table fills the work area.
 - **Ledger** (`table.ledger`, audit and expiry): no frame, sits on the page.
   A 2px ink rule above the header, a 1px ink rule under it, hairline rules
   between rows and hairline column rules. Times and dates don't wrap.
+- Rows stay one line, about 40px, on list pages. Names, dates, expiry,
+  owners, subscriptions, resource groups and tags don't wrap. A content
+  type in a list whose item page shows it in full (the secrets list,
+  search) sits in `td.tech` with a `span.clip`: one line, cut with an
+  ellipsis past 16rem. Where this page is the only place it is shown
+  (versions, import preview), it wraps in full (`td.mono-wrap`). No
+  `title` tooltips: they can't be reached by touch or keyboard.
 - Tables scroll sideways inside `.table-wrap` at narrow widths. Nothing else
   on a page scrolls sideways.
 
+## Toolbar (lists)
+
+- `form.toolbar` (and `form.filters`, the same thing) sits straight above
+  the table: one row of 32px controls on a white bar with a hairline
+  border. Each control has a visible caption-size label above it.
+- Filter help stays visible, in caption size between the label and the
+  field, and is tied to it with `aria-describedby`. Placeholders are never
+  used.
+- A row's checkbox has its visually hidden label stretched over the cell,
+  so the target is the cell, not the 16px box.
+- A count ("9 items") and the page's status links sit in `.toolbar-meta`
+  under the toolbar, at caption size.
+- "With selected" (bulk changes) is a second toolbar, closed by default in
+  a `details.bulk`, so the table stays near the top of the page.
+
 ## Facts
 
-`dl.props` is a two-column fact list with a hairline above each row, labels in
-ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
+`dl.props` is a compact two-column fact list: labels in ink-2 at body size,
+a 12rem label column, values in ink, a hairline between rows and 6px of
+padding above and below each row. It stacks below 30rem.
 
 ## Buttons and links
 
-- Primary (`button`, `.button`): accent fill, white text, 6px radius, 40px
-  tall, weight 600. Hover: accent-strong.
+- Primary (`button`, `.button`): accent fill, white text, 4px radius, 32px
+  tall, 0 12px padding, `--text-body` weight 600. Hover: accent-strong.
 - Secondary (`.button-secondary`): white, ink text, rule-strong border. Hover:
   paper-2.
+- Small (`.button-small`): 24px tall, 0 8px padding, body size.
+- Toolbar (`.cmd`): no border or fill, ink text, a 16px accent icon, paper-2
+  on hover. Used in command bars only.
 - Danger link (`a.button-danger`, the Delete that opens a confirm page):
   outlined, danger text and border on white.
 - Danger action (`button.button-danger`, the final confirm): danger fill.
-- Text links: accent, underlined, 1px from the baseline.
+- Text links: accent, underlined, 2px from the baseline, in running text.
 - Disabled controls: native `disabled`, 0.55 opacity and a not-allowed cursor.
 - Button labels never wrap.
 
 ## Notices and empty states
 
-- Notice: tone tint, 1px tone rule, 6px radius, a glyph in the left padding
-  (ok: circle, warn: triangle, error: diamond). Never a thick side stripe.
-- Hint ("What to ask for"): paper-2 inset block with a 6px radius.
+- Notice: a Fluent message bar. Tone tint, 1px tone rule, 4px radius, a
+  16px glyph in the left padding (info: ring, ok: circle, warn: triangle,
+  error: diamond), body text, 8px by 12px padding. One line where the
+  words allow. Never a thick side stripe.
+- Hint ("What to ask for"): paper-2 inset block with a 4px radius.
 - Empty state: white panel, hairline border, ink text.
 
 ## Patterns
@@ -227,7 +338,7 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 ### Reveal (secret value and generator)
 
 - The value sits in a bordered mono well: paper-2, 1px rule-strong border,
-  6px radius, mono at 1rem.
+  4px radius, mono at `--text-mono`.
 - Copy, Show for longer and Hide sit in one row under it.
 - The copy status shows as a neutral chip once it has words, so "Copied" is a
   clear label beside the buttons.
@@ -359,25 +470,34 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
   use or certificate private-key access in place of secret reads). A log
   that can't be read, or one with no events from the vault yet, is an
   empty state that says why and "You can still go ahead", with a "What to
-  ask for" hint. It is never an error notice, because it never stops the
+  ask for" hint, or, when there is no hint, "Check what uses this ...
+  before you change it." before it. It is never an error notice, because it never stops the
   action.
 - Workspaces left out, workspaces with no events from the vault, and a
   partial answer are warn notices under the table.
-- Last, in every state, a muted small line: what was looked at (workspaces
-  answered of how many, the 30 days, the newest event) and what the log
-  can't show.
+- One short muted line under the heading says what it is, with "See every
+  event". The count line over the table says that anything listed may
+  break if the item changes; it stays visible.
+- Last, in every state, a closed `details.about`, "How this is worked
+  out": what was looked at (workspaces answered of how many, the 30 days,
+  the newest event) and what the log can't show.
 ### Access
 
-- The vault's Access page: heading, a Download CSV link, a muted line saying
-  principals are object IDs with portal links and names aren't looked up,
-  then one ledger table: Who (object ID in mono, linked to the portal), Type,
+- The vault's Access page: heading, a Download CSV link, a closed "How
+  this is worked out" saying principals are object IDs with portal links
+  and names aren't looked up, then one ledger table: Who (object ID in mono, linked to the portal), Type,
   Role, Comes from. Eligible is a muted badge; "Can grant itself access" is
   a warn badge. Notes on what wasn't read are warn notices under the table.
 - Access policy vaults: a sentence saying so, then a ledger table of object
   ID and what each policy allows in plain words, with a warn badge "Reads
   secret values". Then the roles that can grant access.
 - Each secret, certificate and key page ends with an Access section (`h2`)
-  using the same tables, and a link to the whole vault's Access page.
+  using the same tables: one short line ("Who can reach this secret.") and
+  a link to the whole vault's Access page, then the count. Where the
+  assignments come from (the item, the vault, its resource group, its
+  subscription and any management group above it), how principals are shown and what "Can grant
+  itself access" and "Eligible" mean sit in a closed "How this is worked
+  out". Badges, empty states and notes stay visible.
 - When it can't be read: an empty state with the reason and a "What to ask
   for" hint, never an empty table.
 
@@ -402,13 +522,13 @@ ink-2 at `--text-sm`, and values in ink. It stacks below 30rem.
 ### PIM activation
 
 - On the 403 page, under "What to ask for": one sentence saying the person is eligible, and a primary "Activate {role}" button. Nothing else on the page changes.
-- The activation form follows the other forms: back link, heading with the role muted, one sentence on what turning it on means, a warn notice when PIM needs approval (with approvers as PIM names them), the error summary, then How long (a select up to PIM's maximum), Why you need it (with the note not to type secrets or personal details), Ticket system and Ticket number, each marked optional unless PIM asks for it.
+- The activation form follows the other forms: breadcrumb, heading with the role muted, one sentence on what turning it on means, a warn notice when PIM needs approval (with approvers as PIM names them), the error summary, then How long (a select up to PIM's maximum), Why you need it (with the note not to type secrets or personal details), Ticket system and Ticket number, each marked optional unless PIM asks for it.
 - The result is a narrow panel: "Role turned on" with Try again, "Waiting for approval" with a link to PIM in the portal, or "PIM didn't turn the role on" with ARM's code under "Details:".
 - My access: heading, one sentence, warn notices for anything not read, then ledger tables, "On now" (Role with an ok badge "Activated", Comes from, Time left, a secondary Deactivate button), "Starting later" only when there is one (Role, Comes from, When it starts and ends, no button), "Eligible" (Role, Comes from, Eligible until, Activate, or a muted badge "On now", "Waiting for approval" or "Eligible from" a date) and "Waiting for approval" only when there is one (Role, Comes from, a muted badge). Empty states say what isn't there.
 ### Request access
 
 - On the 403 page, only when no PIM Activate is offered: one sentence saying the person can ask the vault's owners and that Keyring can't grant access itself, and a primary "Request access" button. Nothing else on the page changes.
-- The form follows the activation form: back link, heading "Request access" with the role muted, one sentence on who gets it, the error summary, then "For" (two radios, this item or the whole vault, only when the page was an item's), "Why you need it" with the note not to type secrets, and "Ticket" marked optional. Primary "Send request" and Cancel.
+- The form follows the activation form: breadcrumb, heading "Request access" with the role muted, one sentence on who gets it, the error summary, then "For" (two radios, this item or the whole vault, only when the page was an item's), "Why you need it" with the note not to type secrets, and "Ticket" marked optional. Primary "Send request" and Cancel.
 - The answer is a narrow panel "Sent to the vault's owners", the same for every accepted request, with Back and My access. A repeat within the hour gets a narrow panel "You've already asked". Neither names the owners.
 - My access: a "Request access" heading, one sentence, and a list of "Request {role}" links, only when there is a role to request.
 
@@ -472,7 +592,7 @@ Read as "make a new version". The primary button is the accent, never danger.
   description and the tag rows, nothing else.
 - Detail pages show the description under the heading in ink-2, line
   breaks kept (`.item-note`). No label, no box.
-- Lists have a Description column after Status, at `--text-sm`, cut to 80
+- Lists have a Description column after Status, at `--text-caption`, cut to 80
   characters on one line with an ellipsis; the whole note is the cell's
   visually hidden text. "None" in muted when empty, like other cells.
 - The tag rows and tag lists never show `description`, `owner` or `notify`.
@@ -492,8 +612,8 @@ Read as "make a new version". The primary button is the accent, never danger.
 - On an item's page, Owner and Notify are rows in the facts list. A parsed
   address is a plain link (`mailto:`); anything else is mono text with
   "(not a plain address)" in muted small text. "None" in muted when empty.
-- Lists have an Owner column after Description, at `--text-sm`, wrapping
-  anywhere. The expiry and age pages have no Description column, but have
+- Lists have an Owner column after Description, on one line with
+  "(not a plain address)" as a muted caption suffix that doesn't wrap. The expiry and age pages have no Description column, but have
   an Owner column before Tags, styled the same (`td.owner-cell`), so
   addresses stay out of the Tags text and a link per address works. Notify
   is in their CSVs only: the pages have no room for up to five addresses.
@@ -561,11 +681,13 @@ Read as "make a new version". The primary button is the accent, never danger.
 - Kept in the browser by `static/pins.js`, never on the server. Without
   JavaScript, or when the browser refuses `localStorage`, nothing shows and
   nothing changes.
-- A small secondary **Pin** button (`button.pin-button`) sits under the
-  heading of each vault list page (secrets, certificates, keys) and each
-  secret, certificate and key page. It has `aria-pressed`, a visually hidden
-  item name, and a CSS star glyph: an outline when off, filled with an
-  accent border and tint when pinned, so state isn't colour alone.
+- A small **Pin** button (`button.pin-button`) sits in the title row of
+  each vault list page (secrets, certificates, keys) and each secret,
+  certificate and key page. It looks like a command bar button: no frame,
+  a 14px accent star and the label. It has `aria-pressed` and a visually
+  hidden item name. The star is an outline when off; pinned, it is filled
+  and the button gets the accent tint and rule, so state isn't colour
+  alone.
 - The home page and the vault list show **Pinned** and **Recently opened**
   (last 10) above everything else, each an `h2` and a plain list of resource-name
   links with the kind and vault muted after them. Only when non-empty.
@@ -585,6 +707,32 @@ Read as "make a new version". The primary button is the accent, never danger.
   share past its date has the danger **Overdue** badge; Revoke is a
   secondary button that opens a typed-name confirmation.
 
+## Interaction behaviours
+
+`static/behaviors.js` adds keyboard behaviour to markup that already works
+without script. The model is Vercel's UI SDK (github.com/vercel-labs/ui,
+Apache-2.0, https://ui-sdk.dev/docs), re-implemented by hand: no npm, no
+vendored code. Each behaviour attaches by a data attribute.
+
+| Behaviour | Where | Keys | ARIA |
+| --- | --- | --- | --- |
+| Menu | `details[data-behavior="menu"]`: the More menu on secret, certificate and key pages | Enter or Space on the summary opens it and focuses the first item. Arrow Down or Up on the summary opens it at the first or last item. Arrow Up and Down, Home and End move between items, skipping disabled ones. Letters jump to the next item that starts with them. Escape closes it and returns focus to the summary. A click outside or Tab away closes it | A disclosure, not `role="menu"`: the items are links and forms, so they keep their own roles. The summary has `aria-expanded` |
+| Combobox | The share picker's "Share with" box | Arrow Down and Up open the results and move the highlight. Enter picks the highlighted one. Alt+Arrow Down opens without moving, Alt+Arrow Up closes. Escape closes the list, then a second Escape clears the box. Tab closes it | `role="combobox"`, `aria-expanded`, `aria-controls`, `aria-autocomplete="list"` and `aria-activedescendant` on the box; `role="listbox"` on the list and `role="option"` with `aria-selected` on each result. The count is said in the existing polite status line |
+| Focus recovery | Removing a tag row | Focus moves to the next row's Remove, else the one before, else Add a tag | None |
+| Tabs | The tab strip on item pages | None added: Tab moves between them | A `nav` of links with `aria-current="page"`. They are links to separate pages, so this is navigation, not an ARIA tabs widget, and arrow keys are left to the browser |
+
+- Without script, the menus are `<details>` elements, the share picker takes
+  an exact email address or object ID, and tag rows post as they are.
+- The highlighted option has a 2px accent outline and a tint, since focus
+  stays in the box.
+- The tag name and tag value pickers stay native `<datalist>` inputs: the
+  browser already gives them a combobox role, arrow keys and Escape, with
+  no script. `static/tags.js` only swaps a row's list.
+- The vault switcher in the top bar is a link to the vault list, not a
+  menu, so it needs no behaviour.
+- The revealed value's Hide already moves focus to the Hide link
+  (`static/app.js`), so it is unchanged.
+
 ## Motion
 
 Only colour changes on hover, 120ms ease-out. No transforms, no reveals.
@@ -599,8 +747,12 @@ transitions off.
 - Reflow at 320 CSS px. Grid tracks use `minmax(0, ...)`. `overflow-x: clip`
   on `html` and `body` as a backstop; tables scroll inside their wrapper.
 - `forced-colors: active`: badges, tags and buttons get a `CanvasText` border,
-  glyphs are drawn in `CanvasText`, and the current nav item keeps
-  `Highlight` and an underline.
+  glyphs are drawn in `CanvasText`, and the current nav item, open tab and
+  open view keep `Highlight` and an underline.
+- The breadcrumb is a `nav` with `aria-label="Breadcrumb"`; its last item
+  carries `aria-current="page"`. One h1 per page; headings in order.
+- Targets are at least 24 by 24px. Menus are `<details>`, so they open with
+  Enter or Space and need no script.
 - `@media print` hides `[data-secret-value]`.
 - No inline styles, no `<style>` blocks, no fonts from other sites, no images or data: URIs. Icons
   are inline `<svg>` with `aria-hidden="true"` or CSS glyphs.
@@ -630,10 +782,18 @@ they are.
   --color-accent-rule: oklch(80% 0.05 215);
   --color-accent-ink: oklch(100% 0 0);
   --color-focus: oklch(40% 0.07 215);
-  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --color-chrome-2: oklch(32% 0.02 250);
+  --font-body: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, SFMono-Regular, Menlo, monospace;
+  --text-caption: 0.75rem; --lh-caption: 1rem;
+  --text-body: 0.875rem; --lh-body: 1.25rem;
+  --text-mono: 0.8125rem; --lh-mono: 1.25rem;
+  --text-subtitle: 1rem; --lh-subtitle: 1.375rem;
+  --text-title: 1.25rem; --lh-title: 1.75rem;
+  --text-large: 1.5rem; --lh-large: 2rem;
   --space-3xs: 0.25rem; --space-2xs: 0.5rem; --space-xs: 0.75rem;
   --space-sm: 1rem; --space-md: 1.5rem; --space-lg: 2rem; --space-xl: 3rem;
-  --radius: 6px; --radius-sm: 4px;
+  --control-h: 2rem; --control-h-sm: 1.5rem;
+  --radius: 4px; --radius-sm: 2px;
 }
 ```

@@ -7,7 +7,11 @@
   {% if !u.hint.is_empty() %}<p class="hint"><strong>What to ask for:</strong> {{ u.hint }}</p>{% endif %}
 </div>
 {% else %}
-<p class="muted">People, groups and apps are shown by their Entra object ID and type, with a link to them in the Azure portal. Keyring doesn't look up their names. Group members aren't listed: open the group to see them.</p>
+<details class="about"><summary>How this is worked out</summary>
+{% if access.for_item %}<p>Role assignments that reach this item come from the item itself, the vault, its resource group, its subscription and any management group above it.</p>{% endif %}
+<p>People, groups and apps are shown by their Entra object ID and type, with a link to them in the Azure portal. Keyring doesn't look up their names. Group members aren't listed: open the group to see them.</p>
+<p>"Can grant itself access" means the role doesn't reach the contents itself, but can add a role or policy that does. "Eligible" means a PIM assignment the person has to turn on first.</p>
+</details>
 {% if !access.rbac %}
 <p>This vault uses <strong>access policies</strong>, not Azure RBAC. Key Vault data roles don't apply to it. The policies decide who can read and change its contents, and anyone who can change the vault can add a policy for themselves.</p>
 {% if access.for_item %}<p class="muted">Access policies apply to the whole vault, not one item. These are the ones that cover this kind of item.</p>{% endif %}
@@ -41,7 +45,7 @@
 {% if access.entries.is_empty() %}
 <div class="empty-state"><p>{% if access.rbac %}No role assignment that reaches {% if access.for_item %}this item{% else %}this vault{% endif %} gives access to its contents or can grant it.{% else %}None found.{% endif %}</p></div>
 {% else %}
-<p class="muted">{{ access.entries.len() }} assignment{% if access.entries.len() != 1 %}s{% endif %}{% if access.groups() > 0 %}, {{ access.groups() }} of them to groups{% endif %}. "Can grant itself access" means the role doesn't reach the contents itself, but can add a role or policy that does. "Eligible" means a PIM assignment the person has to turn on first.</p>
+<p class="muted">{{ access.entries.len() }} assignment{% if access.entries.len() != 1 %}s{% endif %}{% if access.groups() > 0 %}, {{ access.groups() }} of them to groups{% endif %}.</p>
 {% call ui::table_wrap(prefix ~ "access-caption") %}
 <table class="ledger">
   <caption class="visually-hidden" id="{{ prefix }}access-caption">Role assignments that reach {% if access.for_item %}this item{% else %}this vault{% endif %}</caption>

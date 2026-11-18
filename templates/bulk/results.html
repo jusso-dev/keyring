@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Bulk change results for {{ kind.plural() }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}{{ kind.base() }}">Back to {{ kind.plural() }}</a></p>
-<h1>Changed {% if changed == 1 %}1 {{ kind.noun() }}{% else %}{{ changed }} {{ kind.plural() }}{% endif %} <span class="muted">in {{ vault }}</span></h1>
-<p>{{ change }}.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_kind(vault, kind.base()) }}{{ ui::crumb_here("Results") }}</ol></nav>
+<div class="title-row"><h1>Changed {% if changed == 1 %}1 {{ kind.noun() }}{% else %}{{ changed }} {{ kind.plural() }}{% endif %} <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">{{ change }}.</p>
+</div>
 {% if not_changed == 0 %}
 <p class="notice notice-ok">Every {{ kind.noun() }} was changed.</p>
 {% else %}

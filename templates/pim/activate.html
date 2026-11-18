@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Activate {{ ready.role_name }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ back }}">Back</a></p>
-<h1>Activate <span class="muted">{{ ready.role_name }}</span></h1>
-<p>You're eligible for this role on {{ scope_words() }} through Privileged Identity Management (PIM). Turning it on gives you its access for the time you pick, then PIM turns it off again.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb(back, "Back") }}{{ ui::crumb_here("Activate") }}</ol></nav>
+<div class="title-row"><h1>Activate <span class="muted">{{ ready.role_name }}</span></h1></div>
+<p class="page-desc">You're eligible for this role on {{ scope_words() }} through Privileged Identity Management (PIM). Turning it on gives you its access for the time you pick, then PIM turns it off again.</p>
+</div>
 {% if let Some(p) = ready.policy %}{% if p.approval %}
 <div class="notice notice-warn"><p>PIM needs someone to approve this before it's turned on.{% if !p.approvers.is_empty() %} Approvers: {% for (d, t) in p.approvers %}{{ d }}{% if !t.is_empty() %} ({{ t }}){% endif %}{% if !loop.last %}, {% endif %}{% endfor %}.{% endif %}</p></div>
 {% endif %}{% else %}

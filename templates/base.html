@@ -1,3 +1,4 @@
+{%- import "_ui.html" as icons -%}
 <!doctype html>
 <html lang="en-AU">
 <head>
@@ -5,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Keyring{% endblock %}</title>
   <link rel="stylesheet" href="{{ crate::routes::assets::url("style.css") }}">
+  <script src="{{ crate::routes::assets::url("behaviors.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("app.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("pins.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("tags.js") }}" defer></script>
@@ -15,9 +17,9 @@
   <header class="site-header">
     <a class="brand" href="/"><svg class="brand-mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="6.5" cy="10" r="4.25" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.75 10H18M14.5 10v3M17 10v2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Keyring</a>
     {% if let Some(user) = shell.user %}
-    <div class="vault-picker">
+    <div class="vault-picker">{{ icons::icon("vaults", "icon") }}
       {% if let Some(vault) = shell.vault %}
-      <span class="muted">Vault:</span> <strong>{{ vault.name }}</strong>
+      <span class="muted">Vault</span> <strong>{{ vault.name }}</strong>
       <a href="/vaults">Change vault</a>
       {% else %}
       <a href="/vaults">Choose a vault</a>
@@ -25,11 +27,12 @@
     </div>
     <form class="site-search" method="get" action="/search" role="search">
       <label for="site-search-q" class="visually-hidden">Search every vault</label>
+      {{ icons::icon("search", "site-search-icon") }}
       <input id="site-search-q" name="q" type="search" maxlength="{{ crate::routes::search::MAX_QUERY_CHARS }}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <button type="submit" class="button-small">Search</button>
+      <button type="submit" class="button-small site-search-go">Search</button>
     </form>
     <div class="account">
-      <span class="account-name">{{ user.name }}</span>
+      <span class="account-name">{{ icons::icon("myaccess", "account-icon") }}<span>{{ user.name }}</span></span>
       <form method="post" action="/auth/sign-out" data-pins-clear>
         <input type="hidden" name="csrf" value="{{ user.csrf }}">
         <button type="submit" class="button-link">Sign out</button>
@@ -39,12 +42,39 @@
   </header>
   <div class="layout{% if shell.user.is_none() %} layout-plain{% endif %}">
     {% if shell.user.is_some() %}
+    {%- let sec = crate::routes::shell::Section::Vaults %}
     <nav class="side-nav" aria-label="Sections">
-      <ul>
-        {% for s in crate::routes::shell::Section::NAV %}
-        <li><a href="{{ shell.nav_path(s) }}"{% if shell.is_current(s) %} aria-current="page"{% endif %}>{{ s.label() }}</a></li>
-        {% endfor %}
-      </ul>
+      <div class="nav-group">
+        <p class="nav-label" id="nav-vault">Vault</p>
+        <ul aria-labelledby="nav-vault">
+          {{ icons::nav_item(crate::routes::shell::Section::Secrets, "secrets") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Certificates, "certificates") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Keys, "keys") }}
+        </ul>
+      </div>
+      <div class="nav-group">
+        <p class="nav-label" id="nav-across">Across vaults</p>
+        <ul aria-labelledby="nav-across">
+          {{ icons::nav_item(sec, "vaults") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Expiry, "expiry") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Health, "health") }}
+          <li>{{ icons::icon("search", "nav-icon") }}<a href="/search"{% block search_current %}{% endblock %}>Search</a></li>
+        </ul>
+      </div>
+      <div class="nav-group">
+        <p class="nav-label" id="nav-governance">Governance</p>
+        <ul aria-labelledby="nav-governance">
+          {{ icons::nav_item(crate::routes::shell::Section::Audit, "audit") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Access, "access") }}
+          {{ icons::nav_item(crate::routes::shell::Section::MyAccess, "myaccess") }}
+        </ul>
+      </div>
+      <div class="nav-group">
+        <p class="nav-label" id="nav-tools">Tools</p>
+        <ul aria-labelledby="nav-tools">
+          {{ icons::nav_item(crate::routes::shell::Section::Generator, "generator") }}
+        </ul>
+      </div>
     </nav>
     {% endif %}
     <main id="main" class="content">

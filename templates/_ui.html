@@ -278,3 +278,96 @@
 {%- if !ticket_error.is_empty() %}<p class="field-error" id="ticket{{ id }}-error">{{ ticket_error }}</p>{% endif %}
 {%- endif %}
 {%- endmacro -%}
+
+
+{#- Hand-drawn 16px icons, inline so the CSP needs no image source. Each
+    is hidden from assistive tech: the text beside it carries the meaning. -#}
+{%- macro icon(name, class = "icon") -%}
+<svg class="{{ class }}" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+{%- if name == "secrets" %}<rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2M8 10v1.5"/>
+{%- elif name == "certificates" %}<path d="M3 2.5h7l3 3v8H3z"/><path d="M10 2.5v3h3M5.5 8h5M5.5 10.5h3"/>
+{%- elif name == "keys" %}<circle cx="5" cy="8" r="2.75"/><path d="M7.75 8H14M11.5 8v2.25M13.5 8v1.75"/>
+{%- elif name == "vaults" %}<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><circle cx="8" cy="8" r="2.5"/><path d="M8 5.5v1M8 9.5v1M5.5 8h1M9.5 8h1M4 13.5v1M12 13.5v1"/>
+{%- elif name == "expiry" %}<circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3l2 1.5M6.5 1.5h3"/>
+{%- elif name == "health" %}<path d="M8 2l5.5 2v4c0 3-2.5 5.25-5.5 6-3-.75-5.5-3-5.5-6V4z"/><path d="M5.5 8l1.75 1.75L10.5 6.5"/>
+{%- elif name == "search" %}<circle cx="7" cy="7" r="4.25"/><path d="M10.25 10.25L14 14"/>
+{%- elif name == "audit" %}<path d="M4 2.5h8v11H4z"/><path d="M6 5.5h4M6 8h4M6 10.5h2.5"/>
+{%- elif name == "access" %}<circle cx="6" cy="5.5" r="2.25"/><path d="M2 13.5c0-2.5 1.75-4 4-4s4 1.5 4 4M10.5 3.5a2.25 2.25 0 0 1 0 4.25M12 9.75c1.25.5 2 1.75 2 3.75"/>
+{%- elif name == "myaccess" %}<circle cx="8" cy="5.5" r="2.75"/><path d="M3 14c0-3 2.25-4.75 5-4.75S13 11 13 14"/>
+{%- elif name == "generator" %}<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><circle cx="5.75" cy="5.75" r=".6" fill="currentColor"/><circle cx="10.25" cy="10.25" r=".6" fill="currentColor"/><circle cx="8" cy="8" r=".6" fill="currentColor"/>
+{%- elif name == "add" %}<path d="M8 3v10M3 8h10"/>
+{%- elif name == "edit" %}<path d="M10.5 2.5l3 3L6 13H3v-3z"/><path d="M9 4l3 3"/>
+{%- elif name == "versions" %}<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.5H5M8 5v3l2 1.25"/>
+{%- elif name == "share" %}<circle cx="4" cy="8" r="1.75"/><circle cx="12" cy="4" r="1.75"/><circle cx="12" cy="12" r="1.75"/><path d="M5.6 7.2l4.8-2.4M5.6 8.8l4.8 2.4"/>
+{%- elif name == "activity" %}<path d="M1.5 8h3l2-4.5 3 9 2-4.5h3"/>
+{%- elif name == "download" %}<path d="M8 2.5v8M4.75 7.25L8 10.5l3.25-3.25M2.5 13.5h11"/>
+{%- elif name == "upload" %}<path d="M8 10.5v-8M4.75 5.75L8 2.5l3.25 3.25M2.5 13.5h11"/>
+{%- elif name == "rotate" %}<path d="M13.5 8A5.5 5.5 0 1 1 12 4.2"/><path d="M13.5 2v3h-3"/>
+{%- elif name == "policy" %}<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/><circle cx="5.5" cy="4" r="1.25" fill="currentColor"/><circle cx="10.5" cy="8" r="1.25" fill="currentColor"/><circle cx="7" cy="12" r="1.25" fill="currentColor"/>
+{%- elif name == "deleted" %}<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.75 9h5.5l.75-9"/>
+{%- elif name == "copy" %}<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M3.5 10.5h-1v-8h8v1"/>
+{%- elif name == "csv" %}<path d="M3 2.5h7l3 3v8H3z"/><path d="M8 7v4.5M6 9.75l2 1.75 2-1.75"/>
+{%- elif name == "refresh" %}<path d="M13.5 8A5.5 5.5 0 1 1 12 4.2"/><path d="M13.5 2v3h-3"/>
+{%- else %}<circle cx="8" cy="8" r="5"/>
+{%- endif %}</svg>
+{%- endmacro -%}
+
+{#- One nav item: the icon beside the link, so the link's text is its label
+    alone. `s` is a shell::Section. -#}
+{%- macro nav_item(s, name) -%}
+<li>{{ icon(name, "nav-icon") }}<a href="{{ shell.nav_path(s) }}"{% if shell.is_current(s) %} aria-current="page"{% endif %}>{{ s.label() }}</a></li>
+{%- endmacro -%}
+
+{#- The page header's breadcrumb pieces, inside
+    <nav class="breadcrumb" aria-label="Breadcrumb"><ol>...</ol></nav>.
+    The last item is crumb_here, which carries aria-current. -#}
+{%- macro crumb(href, label) -%}
+<li><a href="{{ href }}">{{ label }}</a></li>
+{%- endmacro -%}
+
+{%- macro crumb_here(label) -%}
+<li><span aria-current="page">{{ label }}</span></li>
+{%- endmacro -%}
+
+{#- Vaults, then the vault, then one of its sections as a link. -#}
+{%- macro crumbs_vault(vault_name, section, path) -%}
+<li><a href="/vaults">Vaults</a></li><li><a href="/v/{{ vault_name }}/secrets" class="item-name">{{ vault_name }}</a></li>{% if !section.is_empty() %}<li><a href="/v/{{ vault_name }}{{ path }}">{{ section }}</a></li>{% endif %}
+{%- endmacro -%}
+
+{#- The rest of a page's explanation, closed under its one-line
+    description. -#}
+{%- macro about(label = "About this page") -%}
+<details class="about"><summary>{{ label }}</summary>
+{{- caller() -}}
+</details>
+{%- endmacro -%}
+
+{#- A toolbar button in a command bar: an icon and a label, the label a
+    link (or the disabled button with the role it needs). -#}
+{%- macro cmd(needs, id, href, icon_name, label) -%}
+<span class="cmd-item">{{ icon(icon_name) }}{{ link_button(needs, id, href, "button cmd", label) }}</span>
+{%- endmacro -%}
+
+{#- An item in a More menu, as a link or a disabled button. -#}
+{%- macro menu_link(needs, id, href, label, danger = false) -%}
+<li>{% if danger %}{{ link_button(needs, id, href, "menu-item danger", label) }}{% else %}{{ link_button(needs, id, href, "menu-item", label) }}{% endif %}</li>
+{%- endmacro -%}
+
+{#- The tab strip on an item's page. Each tab is a link to a page that
+    already exists, or an anchor on the item's own page. `current` is
+    "overview", "versions" or "used"; `used_kind` is the audit page's
+    `from` (secret, certificate or key). `sharing` is true when the page
+    shows a Shared with section beside Access. -#}
+{%- macro item_tabs(name, item_url, versions_url, used_kind, sharing, current) -%}
+<nav class="tabs" aria-label="{{ name }}"><ul>
+<li><a href="{{ item_url }}"{% if current == "overview" %} aria-current="page"{% endif %}>Overview</a></li>
+<li><a href="{{ versions_url }}"{% if current == "versions" %} aria-current="page"{% endif %}>Versions</a></li>
+<li>{% if current == "used" %}<span aria-current="page">Who used it</span>{% else %}<a href="{{ shell.vault_prefix() }}/audit?item={{ name }}&amp;range=30d&amp;from={{ used_kind }}">Who used it</a>{% endif %}</li>
+<li><a href="{% if current == "overview" %}{% else %}{{ item_url }}{% endif %}#access-and-sharing">{% if sharing %}Access and sharing{% else %}Access{% endif %}</a></li>
+</ul></nav>
+{%- endmacro -%}
+
+{#- Vaults, the vault, then Secrets, Certificates or Keys by its path. -#}
+{%- macro crumbs_kind(vault_name, path) -%}
+{%- if path == "/certificates" %}{{ crumbs_vault(vault_name, "Certificates", path) }}{% elif path == "/keys" %}{{ crumbs_vault(vault_name, "Keys", path) }}{% else %}{{ crumbs_vault(vault_name, "Secrets", path) }}{% endif -%}
+{%- endmacro -%}

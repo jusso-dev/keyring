@@ -2,9 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}Rotation policy for key {{ name }} in {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<p class="back-link"><a href="{{ shell.vault_prefix() }}/keys/{{ name }}">Back to {{ name }}</a></p>
-<h1>Rotation policy for <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1>
-<p>Key Vault can make new versions on a schedule. Every field is optional: leave one blank to turn that part off.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumbs_vault(vault, "Keys", "/keys") }}{{ ui::crumb("{}/keys/{}"|format(shell.vault_prefix(), name), name) }}{{ ui::crumb_here("Rotation policy") }}</ol></nav>
+<div class="title-row"><h1>Rotation policy for <span class="item-name">{{ name }}</span> <span class="muted">in {{ vault }}</span></h1></div>
+<p class="page-desc">Key Vault can make new versions on a schedule. Every field is optional: leave one blank to turn that part off.</p>
+</div>
 {% call ui::error_summary(errors) %}{% endcall %}
 {% if let Some(m) = azure_message %}
 <div class="notice notice-error" tabindex="-1" data-error-summary>

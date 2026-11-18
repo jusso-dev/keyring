@@ -672,3 +672,5 @@ Keyring learned from these projects. It doesn't copy their code.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+NOTICE: `static/behaviors.js` follows the interaction behaviours of Vercel's UI SDK (https://github.com/vercel-labs/ui), Apache License 2.0. It is written again by hand; no UI SDK code is included.

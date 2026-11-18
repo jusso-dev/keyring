@@ -2,8 +2,11 @@
 {% import "_ui.html" as ui %}
 {% block title %}My access to {{ vault }} - Keyring{% endblock %}
 {% block content %}
-<h1>My access <span class="muted">to {{ vault }}</span></h1>
-<p>Your own Key Vault roles that reach this vault: the ones on now, and the ones you can turn on through Privileged Identity Management (PIM). Read from Azure each time; Keyring keeps nothing.</p>
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("My access") }}</ol></nav>
+<div class="title-row"><h1>My access <span class="muted">to {{ vault }}</span></h1></div>
+<p class="page-desc">Your own Key Vault roles that reach this vault: the ones on now, and the ones you can turn on through Privileged Identity Management (PIM). Read from Azure each time; Keyring keeps nothing.</p>
+</div>
 {% if sharing %}<p><a href="{{ shell.vault_prefix() }}/my-access/shares">My shares</a>: secrets shared with you, and the ones you shared.</p>{% endif %}
 {% for n in notes %}<div class="notice notice-warn"><p>{{ n }}</p></div>{% endfor %}
 <h2>On now</h2>

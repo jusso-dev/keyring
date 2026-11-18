@@ -2,7 +2,8 @@
 // form only: as you type a name it asks Keyring's own same-origin endpoint
 // (which asks Microsoft Graph as you) and lists people and security groups.
 // Results are written with textContent only. Without it the form still
-// takes an exact email address or object ID.
+// takes an exact email address or object ID. With static/behaviors.js the
+// box is a combobox: arrow keys move through the results, Enter picks one.
 // tests/js/share.test.mjs runs it in Node against stub DOM objects.
 "use strict";
 
@@ -45,12 +46,15 @@
     }
     var timer = null;
     var asked = 0;
+    var B = window.KeyringBehaviors;
+    var combo = B ? B.combobox(input, list, { choose: function (b) { b.click(); }, clear: function () { hidden.value = ""; clear(); status.textContent = ""; } }) : null;
 
     function clear() {
       while (list.firstChild) {
         list.removeChild(list.firstChild);
       }
       list.hidden = true;
+      if (combo) combo.close();
     }
 
     function choose(r) {
@@ -63,10 +67,17 @@
 
     function show(results) {
       clear();
-      results.forEach(function (r) {
+      results.forEach(function (r, i) {
         var li = document.createElement("li");
         var b = document.createElement("button");
         b.type = "button";
+        if (combo) {
+          // An option of the listbox: the input keeps focus, so no tab stop.
+          li.setAttribute("role", "presentation");
+          b.setAttribute("role", "option");
+          b.setAttribute("id", "share-option-" + i);
+          b.setAttribute("tabindex", "-1");
+        }
         b.className = "button-link";
         b.textContent = (r.name || r.id) + " (" + r.type + ")";
         var detail = document.createElement("span");
@@ -80,6 +91,7 @@
         list.appendChild(li);
       });
       list.hidden = results.length === 0;
+      if (combo) combo.refresh();
     }
 
     function search(q) {
