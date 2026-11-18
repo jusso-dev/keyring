@@ -490,7 +490,9 @@ padding above and below each row. It stacks below 30rem.
   Analytics. An event with no person is Who "Keyring" with a muted
   `badge-muted` "System" badge. Result: Done is an ok badge; "Denied by
   Azure" and "Refused by Keyring" are error badges; Failed is a muted
-  badge; the reason code follows on the same line, muted and mono. Why is
+  badge. What shows the label in full, never cut, since labels are short.
+  When Keyring refused, Why starts with the reason code in mono (so Result
+  stays one narrow badge), then the reason. Why is
   the reason in full when short, otherwise a `details.cell-more` that opens
   to all of it; Ticket is its own column, so a long reason never hides it.
   Muted "None" when either is empty. The event is the only place these

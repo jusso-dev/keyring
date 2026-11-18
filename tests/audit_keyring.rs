@@ -45,7 +45,10 @@ fn rows_of(html: &str) -> &str {
 fn assert_row_and_option(html: &str, a: keyring::audit::Action) {
     let rows = rows_of(html);
     assert!(
-        rows.contains(&format!(">{}</span>", a.label())),
+        rows.contains(&format!(
+            "<th scope=\"row\" class=\"cell-text\">{}<data",
+            a.label()
+        )),
         "no {a} row"
     );
     let select = &html[html.find("<select id=\"action\"").unwrap()..];
@@ -156,7 +159,7 @@ async fn caps_at_500_rows() {
     let (_, html) = w.page("/v/kv-test/audit/keyring").await;
     assert!(html.contains("Showing the 500 most recent events"));
     assert_eq!(
-        html.matches("<th scope=\"row\" class=\"cell-text cell-fluid\">")
+        html.matches("<th scope=\"row\" class=\"cell-text\">")
             .count(),
         500
     );
