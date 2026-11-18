@@ -10,7 +10,7 @@
 <p>Assignments made on the subscription or resource group are included.</p>
 {% endcall %}
 </div>
-{% if access.unavailable.is_none() %}<div class="commandbar"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>{% endif %}
+{% if access.unavailable.is_none() && !(access.assignments_unavailable.is_some() && access.policies.is_empty()) %}<div class="commandbar"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>{% endif %}
 <nav aria-label="Access views"><p class="view-switch"><a href="{{ shell.vault_prefix() }}/access" aria-current="page">Who has access</a> <a href="{{ review_url }}">Access review</a></p></nav>
 {% let prefix = "" %}
 {% include "_access.html" %}

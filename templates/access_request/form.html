@@ -5,8 +5,8 @@
 <div class="page-head">
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb(back, "Back") }}{{ ui::crumb_here("Request access") }}</ol></nav>
 <div class="title-row"><h1>Request access <span class="muted">{{ role_name }}</span></h1></div>
-<p class="page-desc">Ask the vault's owners for a role.</p>
-{% call ui::about() %}<p>Keyring emails your request to the owners of {{ vault }}, as named in the vault's <span class="mono">keyring-owners</span> tag, or to Keyring's admins when it names nobody. You get a copy. Keyring can't grant access itself and keeps no request: an owner grants the role in the Azure portal.</p>{% endcall %}
+<p class="page-desc">Keyring emails your request to the owners of {{ vault }}, as named in the vault's <span class="mono">keyring-owners</span> tag, or to Keyring's admins when it names nobody. You get a copy.</p>
+{% call ui::about() %}<p>Keyring can't grant access itself and keeps no request: an owner grants the role in the Azure portal.</p>{% endcall %}
 </div>
 {% call ui::error_summary(errors) %}{% endcall %}
 <form method="post" action="{{ shell.vault_prefix() }}/my-access/request" class="stacked" novalidate>

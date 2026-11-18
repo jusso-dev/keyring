@@ -36,7 +36,7 @@
 </div>
 {% endif %}
 {% let item_url = "{}/keys/{}"|format(shell.vault_prefix(), row.name) %}
-{{ ui::item_tabs(row.name, item_url, "{}#versions-heading"|format(item_url), "key", "Access", "overview") }}
+{{ ui::item_tabs(row.name, item_url, "{}#versions-heading"|format(item_url), "key", false, "overview") }}
 
 <div class="overview">
 <section aria-labelledby="key-heading" class="card">

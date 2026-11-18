@@ -202,7 +202,7 @@ heights and three weights.
 ## Page header
 
 - **Breadcrumb**: `nav.breadcrumb` with `aria-label="Breadcrumb"`, an `ol` of
-  links at `--text-caption` separated by a CSS chevron, the last item a
+  links at `--text-caption` (each at least 24px wide) separated by a CSS chevron, the last item a
   `span` with `aria-current="page"`. Item pages: Vaults > vault > Secrets >
   name. It replaces every "Back to" link.
 - **Title row**: the h1 (`--text-title`), then status badges, then the Pin
@@ -216,7 +216,9 @@ heights and three weights.
   `button.cmd`: no border, a 16px icon and a label, paper-2 on hover), and
   the rarely used or destructive ones (Delete, Disable, Copy to another
   vault, deleted items and similar) in a **More** menu: `details.menu` with
-  a `summary` button and a list under it. No script: Enter or Space opens
+  a `summary` button and a list under it, aligned to the summary's right
+  edge so it opens towards the page. It sits under the idle sign-out
+  notice. No script: Enter or Space opens
   it, Tab moves through it. Destructive items are danger-coloured text.
 - **Tabs** (`nav.tabs`, `aria-label` names the item): links in a row on a
   hairline, the open one ink, weight 600, with a 2px accent underline and
@@ -269,9 +271,11 @@ they are names to open.
 - `form.toolbar` (and `form.filters`, the same thing) sits straight above
   the table: one row of 32px controls on a white bar with a hairline
   border. Each control has a visible caption-size label above it.
-- Filter help moves to the field's `aria-describedby` text in caption size
-  under the toolbar row only where it adds something (such as the tag
-  syntax); placeholders are never used.
+- Filter help stays visible, in caption size between the label and the
+  field, and is tied to it with `aria-describedby`. Placeholders are never
+  used.
+- A row's checkbox has its visually hidden label stretched over the cell,
+  so the target is the cell, not the 16px box.
 - A count ("9 items") and the page's status links sit in `.toolbar-meta`
   under the toolbar, at caption size.
 - "With selected" (bulk changes) is a second toolbar, closed by default in

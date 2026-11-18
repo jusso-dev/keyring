@@ -284,7 +284,7 @@ small, .small { font-size: var(--text-caption); line-height: var(--lh-caption); 
   border-right: 1px solid currentColor;
   transform: rotate(45deg);
 }
-.breadcrumb a { color: var(--color-accent); text-decoration: none; display: inline-block; padding: var(--space-3xs) 0; }
+.breadcrumb a { color: var(--color-accent); text-decoration: none; display: inline-block; min-width: 1.5rem; padding: var(--space-3xs) 0; }
 .breadcrumb a:hover { text-decoration: underline; }
 .breadcrumb [aria-current="page"] { color: var(--color-ink); }
 
@@ -402,8 +402,9 @@ details.menu > summary::after {
 details.menu[open] > summary { background: var(--color-paper-2); }
 .menu-list {
   position: absolute;
-  left: 0;
   top: calc(100% + var(--space-3xs));
+  right: 0;
+  left: auto;
   z-index: 6;
   min-width: 14rem;
   margin: 0;
@@ -708,7 +709,7 @@ a.button-danger:hover {
 }
 
 /* List toolbar: filters inline at 32px on one white bar, straight above
-   the table. Help text is read with its field; the page's About says it. */
+   the table. Short help stays visible above its field. */
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -728,15 +729,7 @@ a.button-danger:hover {
   line-height: var(--lh-caption);
   color: var(--color-ink-2);
 }
-.filters .field-help {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
+.filters .field-help { margin: 0 0 2px; max-width: 16rem; }
 .filters input, .filters select { width: 13rem; max-width: 100%; }
 .filters input[type="search"] { width: 16rem; }
 .filters > div { min-width: 0; max-width: 100%; position: relative; }
@@ -834,7 +827,19 @@ tbody th a, td a.item-name { text-decoration: none; }
 tbody th a:hover, td a.item-name:hover { text-decoration: underline; }
 tbody tr:hover > * { background: var(--color-paper); }
 td form { margin: 0; }
-td input[type="checkbox"] { display: block; }
+td input[type="checkbox"] { display: block; position: relative; z-index: 1; }
+/* A row's checkbox: its hidden label covers the whole cell, so the target
+   is the cell (at least 24 by 24px), not the 16px box. */
+td:has(> input[type="checkbox"] + label.visually-hidden) { position: relative; min-width: 2.5rem; }
+td > input[type="checkbox"] + label[class="visually-hidden"] {
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  clip: auto;
+  color: transparent;
+  cursor: pointer;
+}
 
 /* Ledger tables (audit, expiry): no frame, a heavy rule over the heads,
    hairline rows and columns. Dates and times don't wrap. */
@@ -1206,16 +1211,10 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 .share-results .button-link { display: block; width: 100%; text-align: left; padding: var(--space-2xs) var(--space-xs); white-space: normal; }
 
 /* The idle sign-out notice stays in view while the page scrolls. */
-.idle-status { position: sticky; top: 0; z-index: 5; }
+.idle-status { position: sticky; top: 0; z-index: 7; }
 .idle-notice { margin-bottom: var(--space-sm); box-shadow: 0 2px 8px var(--color-shadow); }
 .idle-notice p { margin: 0 0 var(--space-2xs); }
 
-/* A revealed value never goes to paper or a saved PDF. */
-@media print {
-  [data-secret-value] { visibility: hidden; }
-  .site-header, .side-nav, .skip-link, .commandbar, .tabs { display: none; }
-  .layout { display: block; }
-}
 
 /* A typed secret's fields on the reveal page: one per row, each with its own Copy. */
 .reveal-field { margin-bottom: var(--space-sm); }
@@ -1227,7 +1226,7 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 /* Small screens. Last, so it overrides the rules above. */
 @media (max-width: 48rem) {
   /* Keep editable text readable and avoid focus zoom on mobile browsers. */
-  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: var(--text-subtitle); line-height: var(--lh-subtitle); }
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea, textarea.mono:not([readonly]) { font-size: var(--text-subtitle); line-height: var(--lh-subtitle); }
   .layout { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .side-nav { border-right: none; border-bottom: 1px solid var(--color-rule); padding: var(--space-3xs) var(--space-2xs); display: flex; flex-wrap: wrap; gap: 0 var(--space-2xs); }
   .nav-group + .nav-group { margin-top: 0; }
@@ -1238,7 +1237,8 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
   .side-nav a { border-left: none; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 3px solid transparent; padding: var(--space-3xs) var(--space-2xs); }
   .side-nav a[aria-current="page"] { border-bottom-color: var(--color-accent); }
   .site-header { flex-wrap: wrap; padding: var(--space-2xs) var(--space-sm); }
-  .account { margin-left: 0; }
+  .account { margin-left: 0; flex-wrap: wrap; white-space: normal; min-width: 0; max-width: 100%; }
+  .account-name { min-width: 0; overflow-wrap: anywhere; }
   .site-search { margin-left: 0; width: 100%; }
   .site-search input[type="search"] { width: 100%; }
   .content { padding: var(--space-sm) var(--space-sm) var(--space-xl); }
@@ -1254,3 +1254,11 @@ section[aria-labelledby^="group-"] h2 { font-variant-numeric: tabular-nums; }
 /* Inside a menu, the focus ring sits within the item, so the menu's edge
    doesn't clip it. */
 .menu-list :focus-visible { outline-offset: -2px; }
+
+/* A revealed value never goes to paper or a saved PDF. Last, so the
+   small-screen layout never shows the nav on a narrow printed page. */
+@media print {
+  [data-secret-value] { visibility: hidden; }
+  .site-header, .side-nav, .skip-link, .commandbar, .tabs { display: none; }
+  .layout { display: block; }
+}

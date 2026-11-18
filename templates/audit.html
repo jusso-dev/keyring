@@ -8,7 +8,7 @@
 <div class="title-row"><h1>Who used <span class="item-name">{{ filter.item }}</span> <span class="muted">in {{ vault }}</span></h1></div>
 <p class="page-desc">Events for this item from the vault's diagnostic logs. Times are in UTC. <a href="{{ shell.vault_prefix() }}/audit">See all events for {{ vault }}</a></p>
 </div>
-{% if let Some(back) = back_url() %}{% if filter.from == "secret" %}{{ ui::item_tabs(filter.item, back, "{}/versions"|format(back), "secret", "Access and sharing", "used") }}{% else %}{{ ui::item_tabs(filter.item, back, "{}#versions-heading"|format(back), filter.from, "Access", "used") }}{% endif %}{% endif %}
+{% if let Some(back) = back_url() %}{% if filter.from == "secret" %}{{ ui::item_tabs(filter.item, back, "{}/versions"|format(back), "secret", true, "used") }}{% else %}{{ ui::item_tabs(filter.item, back, "{}#versions-heading"|format(back), filter.from, false, "used") }}{% endif %}{% endif %}
 {% else %}
 <div class="page-head">
 <nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}<li><a href="{{ shell.vault_prefix() }}/secrets" class="item-name">{{ vault }}</a></li>{{ ui::crumb_here("Audit") }}</ol></nav>

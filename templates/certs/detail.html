@@ -58,7 +58,7 @@
   </details>
 </div>
 {% let item_url = "{}/certificates/{}"|format(shell.vault_prefix(), row.name) %}
-{{ ui::item_tabs(row.name, item_url, "{}#versions-heading"|format(item_url), "certificate", "Access", "overview") }}
+{{ ui::item_tabs(row.name, item_url, "{}#versions-heading"|format(item_url), "certificate", false, "overview") }}
 
 <div class="overview">
 <section aria-labelledby="cert-heading" class="card">
