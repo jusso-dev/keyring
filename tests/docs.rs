@@ -440,3 +440,44 @@ fn the_eventgrid_subscription_list_is_in_the_docs() {
         "KEYRING_EVENTGRID_SUBSCRIPTIONS=",
     );
 }
+
+/// The design document's settings appendix lists every `KEYRING_*` setting
+/// the code reads (#268). The names are every `"KEYRING_..."` string in
+/// `src/config.rs` outside its tests, which covers both `get("KEYRING_...")`
+/// and the named constants such as `IDENTITY_VAR`.
+#[test]
+fn design_document_lists_every_keyring_setting() {
+    const CONFIG: &str = include_str!("../src/config.rs");
+    const APPENDICES: &str = include_str!("../docs/design/12-appendices.md");
+    let code = CONFIG.split("#[cfg(test)]").next().unwrap_or_default();
+    let mut names: Vec<&str> = code
+        .match_indices("\"KEYRING_")
+        .filter_map(|(i, _)| {
+            let rest = &code[i + 1..];
+            let end =
+                rest.find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))?;
+            (rest[end..].starts_with('"')).then_some(&rest[..end])
+        })
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    assert!(
+        names.len() >= 30,
+        "found only {} KEYRING_ settings in src/config.rs; has the way it reads them changed?",
+        names.len()
+    );
+    let start = APPENDICES
+        .find("## Appendix A: Settings")
+        .expect("12-appendices.md has an Appendix A: Settings");
+    let end = APPENDICES[start..]
+        .find("## Appendix B")
+        .map_or(APPENDICES.len(), |e| start + e);
+    let appendix = &APPENDICES[start..end];
+    for name in names {
+        has(
+            appendix,
+            "docs/design/12-appendices.md, Appendix A",
+            &format!("| `{name}` |"),
+        );
+    }
+}
