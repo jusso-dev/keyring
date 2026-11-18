@@ -261,6 +261,8 @@ pub(crate) fn check(
             Some((name_id, DESCRIPTION_IS_A_FIELD.to_owned()))
         } else if !unchanged && owner::is_reserved(name) {
             Some((name_id, OWNER_IS_A_FIELD.to_owned()))
+        } else if crate::reveal_limit::is_tag(name) {
+            Some((name_id, crate::reveal_limit::IS_A_FIELD.to_owned()))
         } else if breaks(name) {
             Some((
                 name_id,

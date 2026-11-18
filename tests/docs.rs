@@ -401,3 +401,36 @@ fn bold_names_in_the_walkthroughs_are_on_a_page() {
         );
     }
 }
+
+#[test]
+fn the_eventgrid_subscription_list_is_in_the_docs() {
+    use keyring::notify::expiry::BadDelivery;
+    let setting = "`KEYRING_EVENTGRID_SUBSCRIPTIONS`";
+    let alerts = include_str!("../docs/alerts.md");
+    for (name, doc) in [
+        ("README.md", README),
+        ("deploy.md", DEPLOY),
+        ("architecture.md", ARCHITECTURE),
+        ("alerts.md", alerts),
+        ("real-vault-checklist.md", CHECKLIST),
+    ] {
+        has(doc, name, setting);
+    }
+    let code = format!("`{}`", BadDelivery::SubscriptionNotAllowed.as_str());
+    for (name, doc) in [("deploy.md", DEPLOY), ("alerts.md", alerts)] {
+        has(doc, name, &code);
+    }
+    has(
+        alerts,
+        "alerts.md",
+        &format!(
+            "At most {} IDs",
+            keyring::config::MAX_EVENTGRID_SUBSCRIPTIONS
+        ),
+    );
+    has(
+        include_str!("../.env.example"),
+        ".env.example",
+        "KEYRING_EVENTGRID_SUBSCRIPTIONS=",
+    );
+}

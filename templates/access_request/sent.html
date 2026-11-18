@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Sent to the vault's owners - Keyring{% endblock %}
+{% block content %}
+<div class="panel narrow">
+  <h1>Sent to the vault's owners</h1>
+  <p>Your request for <strong>{{ role_name }}</strong> was sent to the vault's owners, and you'll get a copy. Keyring can't grant access itself and keeps no request: an owner grants the role in the Azure portal, and Key Vault can take a few minutes to see it.</p>
+  <p><a class="button" href="{{ back }}">Back</a> <a href="{{ shell.vault_prefix() }}/my-access">My access</a></p>
+</div>
+{% endblock %}

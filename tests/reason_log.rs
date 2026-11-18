@@ -122,10 +122,22 @@ async fn reasons_are_logged_escaped_in_both_formats() {
     assert!(!t.contains(SECRET));
 
     // --- Refused: no reason ----------------------------------------------
-    let kv = w.kv.state.log.lock().unwrap().len();
+    // The reveal limit is read from the versions list (properties only)
+    // before the reason is asked for. Nothing else: no value is read and
+    // nothing is written.
+    let calls = |w: &support::World| {
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| !(l.starts_with("GET ") && l.ends_with("/versions")))
+            .count()
+    };
+    let kv = calls(&w);
     let res = w.post("/v/kv-test/secrets/db-password/reveal", &[]).await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    assert_eq!(w.kv.state.log.lock().unwrap().len(), kv);
+    assert_eq!(calls(&w), kv);
     let j = json.take();
     let ev: Value = j
         .lines()

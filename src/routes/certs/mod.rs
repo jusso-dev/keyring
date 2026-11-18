@@ -75,6 +75,9 @@ pub(super) struct CertRow {
     pub description: String,
     /// The `owner` and `notify` tags.
     pub owners: crate::owner::OfItem,
+    /// The `keyring-reveal` limit: any limit refuses the private key
+    /// download.
+    pub limit: crate::reveal_limit::Limit,
     /// The tags the tag filter and search box match: every tag but the
     /// description, `owner` and `notify` included.
     pub filter_tags: Vec<(String, String)>,
@@ -117,6 +120,7 @@ impl CertRow {
             tags,
             description,
             owners,
+            limit: crate::reveal_limit::of(item.tags()),
             filter_tags,
             filter_text,
         }

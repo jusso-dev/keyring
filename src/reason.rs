@@ -89,7 +89,8 @@ impl TicketPattern {
         &self.source
     }
 
-    fn matches(&self, ticket: &str) -> bool {
+    /// True when `ticket` matches the whole pattern.
+    pub fn matches(&self, ticket: &str) -> bool {
         self.re.is_match(ticket)
     }
 }
@@ -129,6 +130,30 @@ impl ReasonPolicy {
                 }
                 t
             }
+        };
+        match reason {
+            Some(reason) if !problems.ticket => Ok(Given { reason, ticket }),
+            _ => Err(problems),
+        }
+    }
+}
+
+impl ReasonPolicy {
+    /// Check an access request's reason and optional ticket (#258): the
+    /// reason as [`ReasonPolicy::check`] does, and a ticket, when one is
+    /// given, cleaned the same way and matched against the pattern when
+    /// one is set. An empty ticket is fine.
+    pub fn check_request(&self, reason: &str, ticket: &str) -> Result<Given, Problems> {
+        let mut problems = Problems::default();
+        let reason = clean_reason(reason);
+        problems.reason = reason.is_none();
+        let ticket = if ticket.trim().is_empty() {
+            None
+        } else {
+            let t =
+                clean_ticket(ticket).filter(|t| self.ticket.as_ref().is_none_or(|p| p.matches(t)));
+            problems.ticket = t.is_none();
+            t
         };
         match reason {
             Some(reason) if !problems.ticket => Ok(Given { reason, ticket }),

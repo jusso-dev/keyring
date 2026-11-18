@@ -257,6 +257,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/generator".into(),
         "/v/kv-test/audit".into(),
         "/v/kv-test/access".into(),
+        "/v/kv-test/access/review".into(),
         "/audit".into(),
         "/audit?report=reads".into(),
         "/audit?report=refused".into(),
@@ -725,4 +726,51 @@ async fn bulk_change_pages_have_labels_and_one_heading() {
     let html = support::body_text(w.post("/v/kv-test/secrets/-/bulk/apply", &run).await).await;
     page_basics(&html, "bulk results");
     assert!(html.contains("Changed 2 secrets"), "{html}");
+}
+
+#[tokio::test]
+async fn access_review_states_keep_the_table_rules() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![support::vault_row("kv-test", "sub-a", true)];
+    w.kv.state.put("db-password", "x");
+    w.kv.state.add_key_with("app-key", "RSA", |_| {});
+    let path = "/v/kv-test/access/review";
+    // Nothing known: no diagnostic setting readable, no role assignments.
+    *w.arm.state.diagnostics.lock().unwrap() = None;
+    w.arm.state.authz.lock().unwrap().assignments_forbidden = true;
+    let (_, html) = w.page(path).await;
+    page_basics(&html, path);
+    assert!(html.contains(">Not known<"));
+    assert!(html.contains("<caption class=\"visually-hidden\" id=\"review-caption\">"));
+    assert!(html.contains(
+        "<th scope=\"row\" class=\"item-name\"><a href=\"/v/kv-test/secrets/db-password\">"
+    ));
+    assert_eq!(html.matches("<th scope=\"col\">").count(), 9);
+    // Callers and item access shown.
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::settings_to("logs", true));
+    *w.arm.state.workspace_events.lock().unwrap() = vec![(
+        "/workspaces/logs".into(),
+        vec![support::RawEvent::new(
+            "kv-test",
+            "2026-11-10T10:00:00Z",
+            "alex@example.com",
+            "SecretGet",
+            "db-password",
+            200,
+        )],
+    )];
+    {
+        let mut m = w.arm.state.authz.lock().unwrap();
+        m.assignments_forbidden = false;
+        m.assignments = vec![(
+            "/subscriptions/sub-a/resourceGroups/rg-kv-test/providers/Microsoft.KeyVault/vaults/kv-test/secrets/db-password".into(),
+            support::SECRETS_USER.into(),
+            "dddddddd-0000-0000-0000-000000000004".into(),
+            "User".into(),
+        )];
+    }
+    let (_, html) = w.page(path).await;
+    page_basics(&html, path);
+    assert!(html.contains("alex@example.com"));
+    assert!(html.contains("in the Azure portal</span>"));
 }

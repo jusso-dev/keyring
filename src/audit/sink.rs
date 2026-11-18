@@ -147,6 +147,8 @@ pub const COLUMNS: &[Column] = &[
     col("NotifyRecipientCount", "int", "notify_recipient_count"),
     col("NotifyRecipients", "string", "notify_recipients"),
     col("NotifyEventCount", "int", "notify_event_count"),
+    col("RevealLimitFrom", "string", "reveal_limit_from"),
+    col("RevealLimitTo", "string", "reveal_limit_to"),
     col("WriterIdentityClientId", "string", WRITER),
     col("KeyringInstance", "string", "instance"),
     col("KeyringVersion", "string", "keyring_version"),
@@ -182,6 +184,8 @@ fn value(ev: &AuditEvent, field: &str, writer: &str) -> Option<Value> {
         "notify_recipient_count" => ev.notify_recipient_count.map(Value::from),
         "notify_recipients" => s(&ev.notify_recipients),
         "notify_event_count" => ev.notify_event_count.map(Value::from),
+        "reveal_limit_from" => ev.reveal_limit_from.map(Value::from),
+        "reveal_limit_to" => ev.reveal_limit_to.map(Value::from),
         "instance" => Some(instance().into()),
         "keyring_version" => Some(KEYRING_VERSION.into()),
         WRITER => Some(writer.into()),
@@ -622,6 +626,8 @@ mod tests {
         ev.notify_type = Some("expiry");
         ev.notify_recipient_count = Some(1);
         ev.notify_event_count = Some(2);
+        ev.reveal_limit_from = Some("unset");
+        ev.reveal_limit_to = Some("none");
         ev
     }
 
