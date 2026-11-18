@@ -53,6 +53,11 @@ pub struct PendingLogin {
     /// sending the person back to try again (which would loop).
     #[serde(default)]
     pub step_up: bool,
+    /// Started to ask Entra for MFA after an on-behalf-of exchange was
+    /// refused for want of it. The session this sign-in creates remembers
+    /// that, so a second refusal shows a page instead of looping.
+    #[serde(default)]
+    pub mfa: bool,
 }
 
 /// Written by hand so state, nonce and the PKCE verifier never print.
@@ -303,18 +308,22 @@ impl Oidc {
         unsaved: bool,
         claims: Option<String>,
     ) -> Result<(String, PendingLogin), SignInError> {
-        self.begin_with(return_to, unsaved, claims, None).await
+        self.begin_with(return_to, unsaved, claims, None, false)
+            .await
     }
 
     /// [`Self::begin`], for a step-up when `step_up` is set. With a maximum
     /// age in it, Entra is asked for a fresh sign-in (`prompt=login` and
-    /// `max_age`).
+    /// `max_age`). With `mfa` set, Entra is asked for a fresh sign-in
+    /// (`prompt=login`) so it can't reuse a password-only session; the
+    /// caller passes the MFA claims request in `claims`.
     pub async fn begin_with(
         &self,
         return_to: String,
         unsaved: bool,
         claims: Option<String>,
         step_up: Option<StepUpAsk>,
+        mfa: bool,
     ) -> Result<(String, PendingLogin), SignInError> {
         let metadata = self.metadata().await?;
         let client = self.client(&metadata)?;
@@ -334,10 +343,13 @@ impl Oidc {
         if let Some(c) = claims {
             request = request.add_extra_param("claims", c);
         }
-        if let Some(max_age) = step_up.and_then(|s| s.max_age) {
+        let max_age = step_up.and_then(|s| s.max_age);
+        if let Some(max_age) = max_age {
             request = request
                 .add_prompt(CoreAuthPrompt::Login)
                 .set_max_age(max_age);
+        } else if mfa {
+            request = request.add_prompt(CoreAuthPrompt::Login);
         }
         let (url, state, nonce) = request.url();
         Ok((
@@ -349,6 +361,7 @@ impl Oidc {
                 return_to,
                 unsaved,
                 step_up: step_up.is_some(),
+                mfa,
             },
         ))
     }
@@ -552,6 +565,7 @@ mod tests {
             return_to: "/secrets".into(),
             unsaved: false,
             step_up: false,
+            mfa: false,
         };
         let out = format!("{p:?}");
         for hidden in ["state-value", "nonce-value", "verifier-value"] {

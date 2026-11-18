@@ -282,6 +282,22 @@ impl Problem {
                 "Your organisation wants you to sign in again before carrying on, for example to check a second factor.",
             )
             .with_next(NextStep::SignIn("/".into())),
+            // Asked for MFA and still refused: another "Sign in again"
+            // would only loop.
+            TokenError::MfaStillNeeded { code } => Self::new(
+                StatusCode::FORBIDDEN,
+                "Entra ID keeps asking for a stronger sign-in",
+                "Keyring asked Microsoft for multi-factor authentication when you signed in, but Entra ID still won't let Keyring reach Azure for you. Signing in again here won't change that.",
+            )
+            .with_hint(format!(
+                "Sign in to the Azure portal (portal.azure.com) once with multi-factor authentication, then come back. If that doesn't help, ask your admin to check the Conditional Access policy for Azure management. Entra ID gave the code {code}."
+            ))
+            // A fixed link home: `returning_to` would turn `Home` into
+            // "Try again" on the page that just failed.
+            .with_next(NextStep::Go {
+                url: "/".into(),
+                label: "Back to home",
+            }),
             TokenError::ConsentNeeded => Self::new(
                 StatusCode::FORBIDDEN,
                 "Your organisation needs to approve Keyring",
@@ -723,6 +739,7 @@ mod tests {
             Problem::vault_changed("kv-prod"),
             Problem::from_token(&TokenError::SignInAgain),
             Problem::from_token(&TokenError::ConsentNeeded),
+            Problem::from_token(&TokenError::MfaStillNeeded { code: "x".into() }),
             Problem::from_token(&TokenError::Refused { code: "x".into() }),
             Problem::from_token(&TokenError::Unreachable("x".into())),
         ];
