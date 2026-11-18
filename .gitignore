@@ -7,3 +7,8 @@
 # Filled-in Bicep parameters hold tenant IDs, names and addresses.
 *.bicepparam
 !*.example.bicepparam
+
+# The docs site in website/: never commit its packages or build output.
+website/node_modules
+website/build
+website/.docusaurus

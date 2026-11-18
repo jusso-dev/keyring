@@ -39,6 +39,7 @@ Keyring is Rust so the dependency tree stays small and auditable. Next.js and th
 Rules for the codebase:
 
 - No npm, no Node toolchain, no bundler, no CDN scripts, no Tailwind.
+- The documentation site is the one exception, and it isn't part of the product. It lives in `website/` with its own `package.json` and lock file, is built by its own workflow (`.github/workflows/docs.yml`) and published to GitHub Pages. Nothing outside `website/` uses it, `.dockerignore` keeps it out of the image, and Cargo and the Rust CI never run Node.
 - Server-rendered HTML first. JavaScript is an optional extra, hand-written and served from the same origin under a strict CSP.
 - No `unsafe` code in the crate (`forbid` lint).
 
