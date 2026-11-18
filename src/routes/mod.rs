@@ -34,6 +34,7 @@ pub(crate) mod paging;
 pub(crate) mod pim;
 pub(crate) mod reason;
 mod rejection;
+pub(crate) mod reveal_limit;
 pub mod search;
 mod secrets;
 pub(crate) mod shell;
@@ -397,6 +398,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route_layer(middleware::from_fn(rejection::layer))
         // For the reason gate and the reason fields on forms.
         .route_layer(axum::Extension(state.config.clone()))
+        // For the reason gate's reveal limit check.
+        .route_layer(axum::Extension(state.clone()))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::require_session,

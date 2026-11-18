@@ -302,6 +302,9 @@ pub enum Refusal {
     /// `KEYRING_REQUIRE_OWNER` is on and the item would have been saved
     /// without an `owner` tag. Says nothing about the addresses.
     OwnerRequired,
+    /// The item's `keyring-reveal` tag says Keyring mustn't show, copy or
+    /// export its value. Says nothing about the value.
+    RevealLimited,
     /// The person asked for the same role on the same vault within the
     /// hour (`access.request`). Nothing was sent.
     RateLimited,
@@ -309,7 +312,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 17] = [
+    pub const ALL: [Refusal; 18] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -326,6 +329,7 @@ impl Refusal {
         Self::ReasonRequired,
         Self::PasswordPolicy,
         Self::OwnerRequired,
+        Self::RevealLimited,
         Self::RateLimited,
     ];
 
@@ -347,6 +351,7 @@ impl Refusal {
             Self::ReasonRequired => "reason_required",
             Self::PasswordPolicy => "password_policy",
             Self::OwnerRequired => "owner_required",
+            Self::RevealLimited => "reveal_limited",
             Self::RateLimited => "rate_limited",
         }
     }
@@ -400,6 +405,10 @@ pub struct AuditEvent {
     /// How many events an Event Grid delivery held (`notify.webhook`
     /// only), when it could be read.
     pub notify_event_count: Option<u64>,
+    /// A reveal limit changed (`keyring-reveal`): what it was and what it
+    /// became, each `unset`, `copy-only`, `none` or `other`.
+    pub reveal_limit_from: Option<&'static str>,
+    pub reveal_limit_to: Option<&'static str>,
 }
 
 impl AuditEvent {
@@ -431,6 +440,8 @@ impl AuditEvent {
             notify_recipient_count: None,
             notify_recipients: None,
             notify_event_count: None,
+            reveal_limit_from: None,
+            reveal_limit_to: None,
         }
     }
 
@@ -571,6 +582,8 @@ fn record_with(
         notify_recipient_count = ev.notify_recipient_count,
         notify_recipients = opt(&ev.notify_recipients),
         notify_event_count = ev.notify_event_count,
+        reveal_limit_from = ev.reveal_limit_from.map(tracing::field::display),
+        reveal_limit_to = ev.reveal_limit_to.map(tracing::field::display),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         // Last, so in the text format nothing typed can come before a
@@ -622,6 +635,8 @@ struct Draft {
     role_duration: Option<String>,
     notify_type: Option<&'static str>,
     notify_event_count: Option<u64>,
+    reveal_limit_from: Option<&'static str>,
+    reveal_limit_to: Option<&'static str>,
     /// Watches the request's events, when the health watcher is on.
     observer: Option<Arc<dyn Observe>>,
     /// The verified session, for observers only. Never on the event.
@@ -740,6 +755,15 @@ pub fn note_vault(vault: &str) {
 /// The item acted on. Must already be a checked item name.
 pub fn note_item(name: &str) {
     note(|d| d.item_name = Some(name.to_owned()));
+}
+
+/// A reveal limit changed, from one fixed word to another
+/// ([`crate::reveal_limit::word`]).
+pub fn note_reveal_limit(from: &'static str, to: &'static str) {
+    note(|d| {
+        d.reveal_limit_from = Some(from);
+        d.reveal_limit_to = Some(to);
+    });
 }
 
 /// The item version read or restored. Must already be checked.
@@ -1060,6 +1084,8 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.role_duration = d.role_duration;
     ev.notify_type = d.notify_type;
     ev.notify_event_count = d.notify_event_count;
+    ev.reveal_limit_from = d.reveal_limit_from;
+    ev.reveal_limit_to = d.reveal_limit_to;
     Some(ev)
 }
 

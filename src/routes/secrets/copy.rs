@@ -117,10 +117,12 @@ impl CopyPage {
 }
 
 /// What the review found at the target name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AtTarget {
     New,
-    Exists,
+    /// An existing secret, with its current version's tags: a reveal limit
+    /// there is carried onto the new version.
+    Exists(std::collections::BTreeMap<String, String>),
     Deleted,
     /// A certificate's backing secret: never written over.
     Managed,
@@ -145,11 +147,27 @@ struct ReviewPage {
     expiry_dropped: bool,
     /// `KEYRING_REQUIRE_OWNER` is on and the copy would have no owner.
     owner_missing: bool,
+    /// The source's reveal limit. `none` refuses the copy.
+    limit: crate::reveal_limit::Limit,
+    /// The limit the copy will carry: the source's or the target's,
+    /// whichever is stricter, whatever is ticked.
+    carried: crate::reveal_limit::Limit,
 }
 
 impl ReviewPage {
     fn can_copy(&self) -> bool {
-        !matches!(self.at_target, AtTarget::Deleted | AtTarget::Managed) && !self.owner_missing
+        !matches!(self.at_target, AtTarget::Deleted | AtTarget::Managed)
+            && !self.owner_missing
+            && !self.limit.refuses_reveal()
+    }
+
+    /// The copy's `keyring-reveal`, said on the review.
+    fn limit_word(&self) -> &'static str {
+        match self.carried {
+            crate::reveal_limit::Limit::Open => "",
+            crate::reveal_limit::Limit::CopyOnly => "copy only",
+            crate::reveal_limit::Limit::NoReveal => "no reveal",
+        }
     }
 }
 
@@ -165,6 +183,25 @@ const OWNER_MISSING: &str = "Keyring is set to need an owner on every secret it 
 
 fn form_path(vault: &str, name: &str) -> String {
     vault_path(vault, &format!("/secrets/{name}/copy"))
+}
+
+/// Refuse before step-up when the source's reveal limit is `none`. From
+/// the versions list, never a value.
+async fn limit_first(
+    state: &AppState,
+    session: &CurrentSession,
+    shell: Shell,
+    vault: &str,
+    name: &str,
+) -> Result<Shell, Halt> {
+    let path = vault_path(vault, &format!("/secrets/{name}"));
+    match crate::routes::reveal_limit::of_secret(&api(state, session, vault), name, None).await {
+        Ok((l, _)) if l.refuses_reveal() => Err(crate::routes::reveal_limit::refused(
+            shell, vault, "secret", &path,
+        )),
+        Ok(_) => Ok(shell),
+        Err(err) => Err(azure_problem(shell, &err, Need::ReadSecrets, &path)),
+    }
 }
 
 /// Step-up before the review and the copy. Comes back to the form, whose
@@ -289,6 +326,7 @@ async fn page_inner(
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
     let (shell, _) = source_item(&state, &session, shell, &vault, &name).await?;
+    let shell = limit_first(&state, &session, shell, &vault, &name).await?;
     let back = form_path(&vault, &name);
     let (shell, vaults) = visible_vaults(&state, &session, shell, &back).await?;
     Ok(no_store(
@@ -339,7 +377,7 @@ async fn look_at_target(state: &AppState, session: &CurrentSession, t: &Target) 
     let target = api(state, session, &t.vault);
     match target.versions(&t.name).await {
         Ok(v) if v.first().is_some_and(|i| i.managed.unwrap_or(false)) => AtTarget::Managed,
-        Ok(v) if !v.is_empty() => AtTarget::Exists,
+        Ok(v) if !v.is_empty() => AtTarget::Exists(v[0].tags().clone()),
         Ok(_) => match target.get_deleted(&t.name).await {
             Ok(_) => AtTarget::Deleted,
             Err(AzureError::Status { status: 404, .. }) => AtTarget::New,
@@ -358,6 +396,7 @@ async fn review_inner(
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
+    let shell = limit_first(&state, &session, shell, &vault, &name).await?;
     let shell = copy_step_up(&state, &session, shell, &vault, &name)?;
     let (shell, item) = source_item(&state, &session, shell, &vault, &name).await?;
     let back = form_path(&vault, &name);
@@ -368,7 +407,14 @@ async fn review_inner(
     };
     let at_target = look_at_target(&state, &session, &target).await;
     let a = &item.attributes;
+    let limit = crate::reveal_limit::of(item.tags());
+    let carried = match &at_target {
+        AtTarget::Exists(t) => limit.max(crate::reveal_limit::of(t)),
+        _ => limit,
+    };
     let page = ReviewPage {
+        limit,
+        carried,
         bring: Bring::from_form(&f),
         content_type: item.content_type.clone().unwrap_or_default(),
         tag_count: item.tags().len(),
@@ -408,8 +454,23 @@ fn refused(
 
 /// The body for the target: the value always, the rest as asked. A passed
 /// expiry isn't brought: a copy that had already expired couldn't be used.
-fn body_for(item: &SecretItem, value: crate::secret::Secret, bring: Bring) -> SetSecret {
+/// The reveal limit always goes, ticked or not: the source's, or the
+/// target's current one (`target_tags`) when that is stricter, so no
+/// option makes a copy with a weaker `keyring-reveal` than either.
+fn body_for(
+    item: &SecretItem,
+    value: crate::secret::Secret,
+    bring: Bring,
+    target_tags: &std::collections::BTreeMap<String, String>,
+) -> SetSecret {
     let a = &item.attributes;
+    let base = if bring.tags {
+        item.tags().clone()
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    let tags =
+        crate::reveal_limit::carry(&crate::reveal_limit::carry(&base, item.tags()), target_tags);
     SetSecret {
         value,
         content_type: if bring.content_type {
@@ -429,11 +490,7 @@ fn body_for(item: &SecretItem, value: crate::secret::Secret, bring: Bring) -> Se
             },
             ..Default::default()
         },
-        tags: if bring.tags && !item.tags().is_empty() {
-            item.tags.clone()
-        } else {
-            None
-        },
+        tags: (!tags.is_empty()).then_some(tags),
     }
 }
 
@@ -511,6 +568,7 @@ async fn apply_inner(
     let (name, shell) = checked_name(&name, shell)?;
     let shell = crate::routes::vault_ctx::check_csrf(&session, &vault, &f.csrf, shell)?;
     let shell = crate::routes::audit_gate::require_audit(&state, shell)?;
+    let shell = limit_first(&state, &session, shell, &vault, &name).await?;
     let shell = copy_step_up(&state, &session, shell, &vault, &name)?;
     let back = form_path(&vault, &name);
 
@@ -550,6 +608,15 @@ async fn apply_inner(
     // KEYRING_REQUIRE_OWNER on, it must bring an owner: refused before the
     // value is read.
     let (shell, item) = source_item(&state, &session, shell, &vault, &name).await?;
+    let source_path = vault_path(&vault, &format!("/secrets/{name}"));
+    if crate::reveal_limit::of(item.tags()).refuses_reveal() {
+        return Err(crate::routes::reveal_limit::refused(
+            shell,
+            &vault,
+            "secret",
+            &source_path,
+        ));
+    }
     if owner_missing(&item, Bring::from_form(&f), state.config.require_owner) {
         crate::audit::refuse(Refusal::OwnerRequired);
         return Err(no_store(
@@ -569,7 +636,12 @@ async fn apply_inner(
 
     // The target name: stop before reading anything if it's a deleted
     // secret or a certificate's. If Keyring can't look, the write decides.
-    match look_at_target(&state, &session, &target).await {
+    let at_target = look_at_target(&state, &session, &target).await;
+    let target_tags = match &at_target {
+        AtTarget::Exists(t) => t.clone(),
+        _ => std::collections::BTreeMap::new(),
+    };
+    match at_target {
         AtTarget::Deleted => {
             return Err(refused(
                 shell,
@@ -594,11 +666,24 @@ async fn apply_inner(
                 &back,
             ));
         }
-        AtTarget::New | AtTarget::Exists | AtTarget::Unknown => {}
+        // Keyring can't see whether the target has a reveal limit of its
+        // own, so a copy could write a version without it. Refused.
+        AtTarget::Unknown => {
+            return Err(refused(
+                shell,
+                StatusCode::CONFLICT,
+                "Keyring couldn't check the target",
+                format!(
+                    "Keyring couldn't read {} in {}, so it can't tell whether a copy would keep that secret's reveal limit. Check you can read secrets there, then try again. Nothing was copied.",
+                    target.name, target.vault
+                ),
+                &back,
+            ));
+        }
+        AtTarget::New | AtTarget::Exists(_) => {}
     }
 
     // The read, as the person. On failure nothing is written.
-    let source_path = vault_path(&vault, &format!("/secrets/{name}"));
     let bundle = match api(&state, &session, &vault).get_value(&name, None).await {
         Ok(b) => b,
         Err(err) => return Err(azure_problem(shell, &err, Need::ReadSecrets, &source_path)),
@@ -608,7 +693,17 @@ async fn apply_inner(
     // Checked again on what was read, in case it changed since the
     // properties were read. The value is dropped unused.
     if bundle.item.managed.unwrap_or(false) {
+        drop(bundle);
         return Err(managed_problem(shell, &vault, &name));
+    }
+    if crate::reveal_limit::of(bundle.item.tags()).refuses_reveal() {
+        drop(bundle);
+        return Err(crate::routes::reveal_limit::refused_after_read(
+            shell,
+            &vault,
+            "secret",
+            &source_path,
+        ));
     }
     if owner_missing(
         &bundle.item,
@@ -627,7 +722,12 @@ async fn apply_inner(
         )
         .into());
     }
-    let body = body_for(&bundle.item, bundle.value, Bring::from_form(&f));
+    // The limit carried is the stricter of what was just read and what the
+    // properties said, so a tag removed in between doesn't loosen the copy.
+    let source_tags = crate::reveal_limit::carry(bundle.item.tags(), item.tags());
+    let mut source = bundle.item.clone();
+    source.tags = Some(source_tags);
+    let body = body_for(&source, bundle.value, Bring::from_form(&f), &target_tags);
 
     // The write, as the person, with its own audit event on the target.
     // The target's kept list is dropped, as `forget_on_change` does for
@@ -792,7 +892,8 @@ mod tests {
             content_type: Some("text/plain".into()),
             managed: None,
         };
-        let all = body_for(&item, crate::secret::Secret::new("v"), Bring::ALL);
+        let nt = std::collections::BTreeMap::new();
+        let all = body_for(&item, crate::secret::Secret::new("v"), Bring::ALL, &nt);
         assert_eq!(all.content_type.as_deref(), Some("text/plain"));
         assert_eq!(all.attributes.enabled, Some(true));
         assert_eq!(all.attributes.not_before, Some(100));
@@ -803,7 +904,7 @@ mod tests {
             dates: false,
             enabled: false,
         };
-        let bare = body_for(&item, crate::secret::Secret::new("v"), none);
+        let bare = body_for(&item, crate::secret::Secret::new("v"), none, &nt);
         assert_eq!(bare.content_type, None);
         assert_eq!(bare.attributes.enabled, Some(false));
         assert_eq!(bare.attributes.not_before, None);
@@ -812,7 +913,55 @@ mod tests {
         // A passed expiry isn't brought.
         let mut old = item.clone();
         old.attributes.expires = Some(1);
-        let b = body_for(&old, crate::secret::Secret::new("v"), Bring::ALL);
+        let b = body_for(&old, crate::secret::Secret::new("v"), Bring::ALL, &nt);
         assert_eq!(b.attributes.expires, None);
+    }
+
+    #[test]
+    fn no_option_weakens_the_reveal_limit() {
+        let lim = |v: &str| -> std::collections::BTreeMap<String, String> {
+            [("keyring-reveal".to_owned(), v.to_owned())].into()
+        };
+        let mut item = SecretItem {
+            id: "https://kv/secrets/db/v1".into(),
+            attributes: Attributes::default(),
+            tags: Some(lim("copy-only")),
+            content_type: None,
+            managed: None,
+        };
+        let nt = std::collections::BTreeMap::new();
+        for tags in [false, true] {
+            for ct in [false, true] {
+                let bring = Bring {
+                    content_type: ct,
+                    tags,
+                    dates: tags,
+                    enabled: ct,
+                };
+                let b = body_for(&item, crate::secret::Secret::new("v"), bring, &nt);
+                let t = b.tags.unwrap_or_default();
+                assert_eq!(
+                    crate::reveal_limit::of(&t),
+                    crate::reveal_limit::Limit::CopyOnly
+                );
+                // A stricter target keeps its own.
+                let b = body_for(&item, crate::secret::Secret::new("v"), bring, &lim("none"));
+                let t = b.tags.unwrap_or_default();
+                assert_eq!(
+                    crate::reveal_limit::of(&t),
+                    crate::reveal_limit::Limit::NoReveal
+                );
+            }
+        }
+        // An unknown value is carried exactly.
+        item.tags = Some([("Keyring-Reveal".to_owned(), "maybe".to_owned())].into());
+        let none = Bring {
+            content_type: false,
+            tags: false,
+            dates: false,
+            enabled: false,
+        };
+        let b = body_for(&item, crate::secret::Secret::new("v"), none, &nt);
+        assert_eq!(b.tags.unwrap()["Keyring-Reveal"], "maybe");
     }
 }

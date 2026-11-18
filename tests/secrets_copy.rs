@@ -22,8 +22,19 @@ struct Two {
 }
 
 impl Two {
+    /// Key Vault calls other than the source's versions list, which the
+    /// reveal limit check reads (properties only) before step-up and the
+    /// reason.
     fn kv_calls(&self) -> usize {
-        self.source.log.lock().unwrap().len() + self.target.log.lock().unwrap().len()
+        let not_list = |l: &&String| !(l.starts_with("GET ") && l.ends_with("/versions"));
+        self.source
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(not_list)
+            .count()
+            + self.target.log.lock().unwrap().len()
     }
 
     fn value_reads(&self) -> usize {

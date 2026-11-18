@@ -504,6 +504,35 @@ Read as "make a new version". The primary button is the accent, never danger.
   owners" column after the vault name, and an **Owners** check like the
   others.
 
+### Reveal limit (the `keyring-reveal` tag)
+
+- A **Reveal limit** select after Owner and Notify on a secret's create,
+  Set a new value and Edit details forms, and on a certificate's Edit
+  details. Never on keys. Options: No limit, Copy only, No reveal (the
+  certificate's Copy only says it blocks the private key download). Help
+  says what each does, that it is a tag, that the CLI and portal aren't
+  limited, and that loosening it asks you to confirm it's you.
+- A value set elsewhere adds a first option, "Keep as set elsewhere
+  (treated as no reveal)", selected, and a second help line in ink-2
+  quoting the tag as set. Same pattern as an odd owner.
+- With `KEYRING_REQUIRE_REASON=reveal`, the Reason fields sit under the
+  select, with a line saying they are only needed when loosening.
+- The secret's page: `none` replaces the Show value form with a plain
+  notice (no colour) saying why and what to use instead; Copy to another
+  vault is left out. `copy-only` keeps the form, with a muted line above
+  it and the button reading **Copy value**. Versions follow the same.
+  A Reveal limit row sits in the facts list.
+- The reveal page under `copy-only`: a notice under the Value heading
+  saying the value isn't shown and is still sent to the browser; only the
+  Copy buttons, the countdown and Hide show. No textarea, no Show for
+  longer. Driven by markup only: the value is in hidden inputs the existing
+  script already reads.
+- A refused reveal, copy or download is the standard problem page,
+  heading "Not shown in Keyring", with a Details line saying it is a
+  Keyring control.
+- A certificate with any limit: no **Download with private key** button,
+  and a plain notice above the actions. Public downloads stay.
+
 ### Tags (rows, suggestions, links)
 
 - On every form that sets tags, a `fieldset.tag-rows` with the legend

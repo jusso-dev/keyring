@@ -18,6 +18,7 @@ pub mod owner;
 pub mod password_policy;
 pub(crate) mod pkcs12;
 pub mod reason;
+pub mod reveal_limit;
 pub(crate) mod rotation;
 pub mod routes;
 pub mod secret;
