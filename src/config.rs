@@ -65,6 +65,12 @@ pub struct Config {
     /// `KEYRING_REQUIRE_OWNER`: an item created or edited through a form
     /// that shows the owner field must have an `owner` tag. Off by default.
     pub require_owner: bool,
+    /// `KEYRING_SHARING`: Share on a secret's page, a time-limited Key
+    /// Vault Secrets User assignment made as the person sharing. Off by
+    /// default; when off, every sharing route answers "not found".
+    pub sharing: bool,
+    /// `KEYRING_SHARE_MAX_DAYS`: the longest a share can last, in days.
+    pub share_max_days: u32,
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
@@ -72,6 +78,9 @@ pub struct Config {
     pub management_url: String,
     /// Log Analytics query API base URL. Only changed by tests.
     pub loganalytics_url: String,
+    /// Microsoft Graph base URL, for the share picker. Only changed by
+    /// tests.
+    pub graph_url: String,
     /// Replaces the audit sink's ingestion endpoint. Only set by tests, to
     /// point at a mock.
     pub audit_ingestion_test_url: Option<String>,
@@ -386,6 +395,10 @@ impl Config {
             &get("KEYRING_TEST_LOGANALYTICS_URL")
                 .unwrap_or_else(|| DEFAULT_LOGANALYTICS_URL.into()),
         )?;
+        let graph_url = checked_origin(
+            "KEYRING_TEST_GRAPH_URL",
+            &get("KEYRING_TEST_GRAPH_URL").unwrap_or_else(|| DEFAULT_GRAPH_URL.into()),
+        )?;
         let audit_ingestion_test_url = get("KEYRING_TEST_AUDIT_INGESTION_URL")
             .map(|v| checked_origin("KEYRING_TEST_AUDIT_INGESTION_URL", &v))
             .transpose()?;
@@ -458,6 +471,25 @@ impl Config {
             })?,
         };
 
+        let sharing = match get("KEYRING_SHARING").as_deref() {
+            None => false,
+            Some(v) => parse_bool(v).ok_or_else(|| ConfigError::Invalid {
+                name: "KEYRING_SHARING",
+                reason: "use true or false".into(),
+            })?,
+        };
+        let share_max_days = match get("KEYRING_SHARE_MAX_DAYS") {
+            None => DEFAULT_SHARE_MAX_DAYS,
+            Some(v) => v
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (1..=MAX_SHARE_MAX_DAYS).contains(d))
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_SHARE_MAX_DAYS",
+                    reason: format!("use a whole number of days from 1 to {MAX_SHARE_MAX_DAYS}"),
+                })?,
+        };
+
         let stale_after_days = match get("KEYRING_STALE_AFTER_DAYS") {
             None => DEFAULT_STALE_AFTER_DAYS,
             Some(v) => v
@@ -476,6 +508,9 @@ impl Config {
             reason,
             password_policy,
             require_owner,
+            sharing,
+            share_max_days,
+            graph_url,
             log_format,
             trusted_proxy_hops,
             loganalytics_url,
@@ -517,6 +552,9 @@ impl Config {
         if self.loganalytics_url != DEFAULT_LOGANALYTICS_URL {
             out.push("KEYRING_TEST_LOGANALYTICS_URL");
         }
+        if self.graph_url != DEFAULT_GRAPH_URL {
+            out.push("KEYRING_TEST_GRAPH_URL");
+        }
         if self.keyvault_test_base.is_some() {
             out.push("KEYRING_TEST_KEYVAULT_URL");
         }
@@ -540,6 +578,7 @@ impl Config {
         self.authority_host.starts_with("https://")
             && self.management_url.starts_with("https://")
             && self.loganalytics_url.starts_with("https://")
+            && self.graph_url.starts_with("https://")
             && self
                 .keyvault_test_base
                 .as_deref()
@@ -986,6 +1025,14 @@ pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
 
 /// Default Azure Resource Manager endpoint.
 pub const DEFAULT_MANAGEMENT_URL: &str = "https://management.azure.com";
+
+/// Microsoft Graph, for the share picker's names.
+pub const DEFAULT_GRAPH_URL: &str = "https://graph.microsoft.com";
+
+/// `KEYRING_SHARE_MAX_DAYS` when not set.
+pub const DEFAULT_SHARE_MAX_DAYS: u32 = 30;
+/// The most `KEYRING_SHARE_MAX_DAYS` takes.
+pub const MAX_SHARE_MAX_DAYS: u32 = 365;
 
 /// Default Entra ID sign-in host.
 pub const DEFAULT_AUTHORITY_HOST: &str = "https://login.microsoftonline.com";
@@ -1463,6 +1510,26 @@ pub(crate) mod tests {
                 reason: "use true or false".into(),
             }
         );
+    }
+
+    #[test]
+    fn parses_sharing() {
+        let mut env = sample_env();
+        let c = load(&env).unwrap();
+        assert!(!c.sharing, "off by default");
+        assert_eq!(c.share_max_days, DEFAULT_SHARE_MAX_DAYS);
+        env.insert("KEYRING_SHARING", "true".into());
+        env.insert("KEYRING_SHARE_MAX_DAYS", "365".into());
+        let c = load(&env).unwrap();
+        assert!(c.sharing);
+        assert_eq!(c.share_max_days, 365);
+        for bad in ["0", "366", "7.5", "-1", "week"] {
+            env.insert("KEYRING_SHARE_MAX_DAYS", bad.into());
+            assert!(load(&env).is_err(), "{bad}");
+        }
+        env.insert("KEYRING_SHARE_MAX_DAYS", "30".into());
+        env.insert("KEYRING_SHARING", "sometimes".into());
+        assert!(load(&env).is_err());
     }
 
     #[test]

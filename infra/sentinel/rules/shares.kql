@@ -1,0 +1,17 @@
+// Secrets shared through Keyring (#286) that need a look: a share to a
+// guest account, or more than shareThreshold shares by one person in the
+// window. Rows can arrive late, so the rule looks back window + delay, and
+// only alerts when a row counted arrived in the last window.
+// Set by main.bicep: window, delay, shareThreshold
+KeyringAudit_CL
+| where TimeGenerated > ago(window + delay)
+| where Action == "share.grant" and Outcome == "success"
+| extend PrincipalType = tostring(column_ifexists("SharePrincipalType", "")),
+    PrincipalId = tostring(column_ifexists("SharePrincipalId", ""))
+| summarize Shares = count(), Guests = countif(PrincipalType == "guest"),
+    Recipients = make_set(PrincipalId, 20), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
+    ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),
+    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated),
+    LastArrived = max(coalesce(ingestion_time(), TimeGenerated))
+    by ActorObjectId
+| where (Guests > 0 or Shares > shareThreshold) and LastArrived > ago(window)

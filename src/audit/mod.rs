@@ -103,6 +103,12 @@ pub enum Action {
     RoleActivate,
     /// A PIM activated role turned off (`SelfDeactivate`) from Keyring.
     RoleDeactivate,
+    /// A secret shared with a person or group (#286): a time-limited Key
+    /// Vault Secrets User assignment on the secret, made as the sharer.
+    /// A share Keyring refuses is this action with outcome `refused`.
+    ShareGrant,
+    /// A share Keyring made, removed from the secret's page.
+    ShareRevoke,
     SessionSignIn,
     SessionSignInFailed,
     SessionSignOut,
@@ -122,7 +128,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 43] = [
+    pub const ALL: [Action; 45] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -158,6 +164,8 @@ impl Action {
         Self::KeyBulkUpdate,
         Self::RoleActivate,
         Self::RoleDeactivate,
+        Self::ShareGrant,
+        Self::ShareRevoke,
         Self::SessionSignIn,
         Self::SessionSignInFailed,
         Self::SessionSignOut,
@@ -205,6 +213,8 @@ impl Action {
             Self::KeyBulkUpdate => "key.bulk_update",
             Self::RoleActivate => "role.activate",
             Self::RoleDeactivate => "role.deactivate",
+            Self::ShareGrant => "share.grant",
+            Self::ShareRevoke => "share.revoke",
             Self::SessionSignIn => "session.sign_in",
             Self::SessionSignInFailed => "session.sign_in_failed",
             Self::SessionSignOut => "session.sign_out",
@@ -216,9 +226,13 @@ impl Action {
         }
     }
 
-    /// `secret`, `certificate` or `key` for actions on an item.
+    /// `secret`, `certificate` or `key` for actions on an item. A share is
+    /// always of one secret.
     pub fn item_kind(self) -> Option<&'static str> {
         let name = self.as_str();
+        if name.starts_with("share.") {
+            return Some("secret");
+        }
         ["secret", "certificate", "key"]
             .into_iter()
             .find(|k| name.strip_prefix(k).is_some_and(|r| r.starts_with('.')))
@@ -297,11 +311,22 @@ pub enum Refusal {
     /// `KEYRING_REQUIRE_OWNER` is on and the item would have been saved
     /// without an `owner` tag. Says nothing about the addresses.
     OwnerRequired,
+    /// A share to the person sharing.
+    ShareToSelf,
+    /// A share's end date was in the past, or past
+    /// `KEYRING_SHARE_MAX_DAYS`.
+    ShareDate,
+    /// A share to something that isn't a user or a security group Graph
+    /// found in the sharer's tenant.
+    SharePrincipal,
+    /// A share of a secret Keyring won't share: one with a reveal limit
+    /// (`keyring-reveal`), or in a vault that uses access policies.
+    ShareNotAllowed,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 16] = [
+    pub const ALL: [Refusal; 20] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -318,6 +343,10 @@ impl Refusal {
         Self::ReasonRequired,
         Self::PasswordPolicy,
         Self::OwnerRequired,
+        Self::ShareToSelf,
+        Self::ShareDate,
+        Self::SharePrincipal,
+        Self::ShareNotAllowed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -338,6 +367,10 @@ impl Refusal {
             Self::ReasonRequired => "reason_required",
             Self::PasswordPolicy => "password_policy",
             Self::OwnerRequired => "owner_required",
+            Self::ShareToSelf => "share_to_self",
+            Self::ShareDate => "share_date",
+            Self::SharePrincipal => "share_principal",
+            Self::ShareNotAllowed => "share_not_allowed",
         }
     }
 }
@@ -390,6 +423,16 @@ pub struct AuditEvent {
     /// How many events an Event Grid delivery held (`notify.webhook`
     /// only), when it could be read.
     pub notify_event_count: Option<u64>,
+    /// The object ID a secret was shared with or revoked from (`share.*`
+    /// only), checked to be a GUID.
+    pub share_principal_id: Option<String>,
+    /// `user`, `guest` or `group` (`share.*` only).
+    pub share_principal_type: Option<&'static str>,
+    /// The share's end date, `YYYY-MM-DD` UTC (`share.grant` only).
+    pub share_until: Option<String>,
+    /// How the share was made: `pim` (Azure removes it at the end date) or
+    /// `plain` (a role assignment that stays until removed).
+    pub share_path: Option<&'static str>,
 }
 
 impl AuditEvent {
@@ -421,6 +464,10 @@ impl AuditEvent {
             notify_recipient_count: None,
             notify_recipients: None,
             notify_event_count: None,
+            share_principal_id: None,
+            share_principal_type: None,
+            share_until: None,
+            share_path: None,
         }
     }
 
@@ -513,6 +560,10 @@ pub fn record_to(ev: AuditEvent, sink: Option<&sink::AuditSink>, observer: Optio
         notify_recipient_count = ev.notify_recipient_count,
         notify_recipients = opt(&ev.notify_recipients),
         notify_event_count = ev.notify_event_count,
+        share_principal_id = opt(&ev.share_principal_id),
+        share_principal_type = ev.share_principal_type.map(tracing::field::display),
+        share_until = opt(&ev.share_until),
+        share_path = ev.share_path.map(tracing::field::display),
         keyring_version = tracing::field::display(KEYRING_VERSION),
         instance = tracing::field::display(instance()),
         // Last, so in the text format nothing typed can come before a
@@ -559,6 +610,10 @@ struct Draft {
     role_duration: Option<String>,
     notify_type: Option<&'static str>,
     notify_event_count: Option<u64>,
+    share_principal_id: Option<String>,
+    share_principal_type: Option<&'static str>,
+    share_until: Option<String>,
+    share_path: Option<&'static str>,
     /// Watches the request's events, when the health watcher is on.
     observer: Option<Arc<dyn Observe>>,
 }
@@ -683,6 +738,33 @@ pub fn note_role_request(
         d.role_duration = duration.map(str::to_owned);
         d.reason = reason.map(str::to_owned);
         d.ticket = ticket.map(str::to_owned);
+    });
+}
+
+/// A share (#286): the role, the secret's scope, the principal, and for a
+/// grant the end date and how it was made. All must already be checked:
+/// the scope built by `crate::azure::share::secret_scope`, the principal
+/// ID a GUID, the date `YYYY-MM-DD`.
+pub fn note_share(
+    scope: &str,
+    principal_id: &str,
+    principal_type: Option<&'static str>,
+    until: Option<&str>,
+    path: Option<&'static str>,
+) {
+    note(|d| {
+        d.role = Some(crate::azure::share::SECRETS_USER.to_owned());
+        d.role_scope = Some(scope.to_owned());
+        d.share_principal_id = Some(principal_id.to_owned());
+        if principal_type.is_some() {
+            d.share_principal_type = principal_type;
+        }
+        if until.is_some() {
+            d.share_until = until.map(str::to_owned);
+        }
+        if path.is_some() {
+            d.share_path = path;
+        }
     });
 }
 
@@ -942,6 +1024,10 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.role_duration = d.role_duration;
     ev.notify_type = d.notify_type;
     ev.notify_event_count = d.notify_event_count;
+    ev.share_principal_id = d.share_principal_id;
+    ev.share_principal_type = d.share_principal_type;
+    ev.share_until = d.share_until;
+    ev.share_path = d.share_path;
     Some(ev)
 }
 
@@ -1058,6 +1144,8 @@ mod tests {
         );
         assert_eq!(Action::KeyRotationPolicySet.item_kind(), Some("key"));
         assert_eq!(Action::SessionSignOut.item_kind(), None);
+        assert_eq!(Action::ShareGrant.item_kind(), Some("secret"));
+        assert_eq!(Action::ShareRevoke.item_kind(), Some("secret"));
         assert_eq!(Action::RequestRefused.item_kind(), None);
     }
 

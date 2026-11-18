@@ -26,6 +26,7 @@ pub mod expiry;
 pub mod health;
 pub mod rate;
 pub mod sender;
+pub mod share;
 
 use std::fmt;
 
@@ -62,17 +63,21 @@ pub enum NotifyType {
     RoleUse,
     /// Keyring's own health, sent to `KEYRING_NOTIFY_ADMINS`.
     Health,
+    /// A secret shared through Keyring (#286): to the person it was shared
+    /// with, and a receipt to the person who shared it.
+    Shares,
 }
 
 impl NotifyType {
     /// Every type, in the order the docs list them.
-    pub const ALL: [NotifyType; 6] = [
+    pub const ALL: [NotifyType; 7] = [
         Self::Expiry,
         Self::AccessRequests,
         Self::WatchedReads,
         Self::Destructive,
         Self::RoleUse,
         Self::Health,
+        Self::Shares,
     ];
 
     /// The name `KEYRING_NOTIFY_TYPES` uses, also written on audit events.
@@ -84,6 +89,7 @@ impl NotifyType {
             Self::Destructive => "destructive",
             Self::RoleUse => "role-use",
             Self::Health => "health",
+            Self::Shares => "shares",
         }
     }
 
@@ -96,6 +102,7 @@ impl NotifyType {
             Self::Destructive => "Delete or bulk change",
             Self::RoleUse => "Role use",
             Self::Health => "Health",
+            Self::Shares => "Secret shared",
         }
     }
 
@@ -607,7 +614,8 @@ mod tests {
                 "watched-reads",
                 "destructive",
                 "role-use",
-                "health"
+                "health",
+                "shares"
             ]
         );
         assert_eq!(

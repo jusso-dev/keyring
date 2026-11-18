@@ -218,7 +218,8 @@ impl Capture {
 }
 
 async fn seeded(extra: &[(&'static str, &'static str)]) -> support::World {
-    let mut env = vec![("KEYRING_ALLOW_PURGE", "true")];
+    // Sharing on, so its audited routes are covered too.
+    let mut env = vec![("KEYRING_ALLOW_PURGE", "true"), ("KEYRING_SHARING", "true")];
     env.extend_from_slice(extra);
     let w = support::world_with(&env).await;
     let s = &w.kv.state;
@@ -325,6 +326,10 @@ const SCHEMA_V1_ADDED: &[&str] = &[
     "role",
     "role_duration",
     "role_scope",
+    "share_path",
+    "share_principal_id",
+    "share_principal_type",
+    "share_until",
 ];
 
 /// Every field a version 1 event can have, sorted.
@@ -536,6 +541,10 @@ async fn audited_routes_write_exactly_one_event() {
         ev.notify_recipient_count = Some(2);
         ev.notify_recipients = Some("a@example.com,b@example.com".into());
         ev.notify_event_count = Some(3);
+        ev.share_principal_id = Some("aaaaaaaa-0000-0000-0000-000000000002".into());
+        ev.share_principal_type = Some("user");
+        ev.share_until = Some("2026-11-25".into());
+        ev.share_path = Some("pim");
         record(ev.clone(), None);
         let raw = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert_eq!(raw.lines().count(), 1, "one line, newline escaped: {raw}");

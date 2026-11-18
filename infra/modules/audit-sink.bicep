@@ -66,6 +66,10 @@ var streamColumns = [
   { name: 'NotifyRecipientCount', type: 'int' }
   { name: 'NotifyRecipients', type: 'string' }
   { name: 'NotifyEventCount', type: 'int' }
+  { name: 'SharePrincipalId', type: 'string' }
+  { name: 'SharePrincipalType', type: 'string' }
+  { name: 'ShareUntil', type: 'string' }
+  { name: 'SharePath', type: 'string' }
   { name: 'WriterIdentityClientId', type: 'string' }
   { name: 'KeyringInstance', type: 'string' }
   { name: 'KeyringVersion', type: 'string' }

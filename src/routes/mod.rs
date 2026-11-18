@@ -35,6 +35,7 @@ pub(crate) mod reason;
 mod rejection;
 pub mod search;
 mod secrets;
+pub(crate) mod share;
 pub(crate) mod shell;
 pub(crate) mod step_up;
 pub(crate) mod tag_rows;
@@ -176,6 +177,24 @@ fn vault_routes() -> Router<AppState> {
             get(secrets::copy::page).merge(audited(Action::SecretCopyRead, secrets::copy::apply)),
         )
         .route("/secrets/{name}/copy/review", get(secrets::copy::review))
+        // Sharing (#286). Every sharing route answers "not found" unless
+        // KEYRING_SHARING=true, before the reason gate or the handler.
+        .route(
+            "/secrets/{name}/share",
+            get(share::form)
+                .merge(audited(Action::ShareGrant, share::grant))
+                .route_layer(middleware::from_fn(share::require_on)),
+        )
+        .route(
+            "/secrets/{name}/share/revoke",
+            get(share::revoke_form)
+                .merge(audited(Action::ShareRevoke, share::revoke))
+                .route_layer(middleware::from_fn(share::require_on)),
+        )
+        .route(
+            "/share/people",
+            get(share::people).route_layer(middleware::from_fn(share::require_on)),
+        )
         .route(
             "/secrets/{name}/reveal",
             audited(Action::SecretReveal, secrets::reveal::reveal),
@@ -342,6 +361,10 @@ fn vault_routes() -> Router<AppState> {
         .route("/access/review", get(access_review::page))
         .route("/access/review.csv", get(access_review::csv))
         .route("/my-access", get(pim::my_access))
+        .route(
+            "/my-access/shares",
+            get(share::my_shares).route_layer(middleware::from_fn(share::require_on)),
+        )
         .route(
             "/my-access/activate",
             get(pim::activate_form).merge(audited(Action::RoleActivate, pim::activate)),
