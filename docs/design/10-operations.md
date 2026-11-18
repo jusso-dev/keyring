@@ -30,7 +30,7 @@ Without a workspace, App Service's file log is the only record of who revealed w
 
 - **Expiry alerts** (`infra/alerts/main.bicep`): Event Grid to an action group, or to Keyring's webhook which emails through ACS.
 - **Access alerts** (`infra/alerts/access.bicep`): watched secret reads, purges and repeated refusals, as Azure Monitor log search rules on the vault's workspace. Logs arrive 5 to 15 minutes late.
-- **Sentinel** (`infra/sentinel`): the ASIM parser `vimAuditEventKeyring`, analytic rules (many reveals by one person, reveal from a new address, one person denied in several vaults, sensitive action outside working hours, forged or cross-site requests, no audit events while Key Vault saw Keyring, SecretGet with no audit event), hunting queries for each audit report and a workbook. Every rule is created off and turned on by its own parameter. Rows can arrive late; each rule looks back `ingestionDelayMinutes` further than it runs.
+- **Sentinel** (`infra/sentinel`): the ASIM parser `vimAuditEventKeyring`, analytic rules (many reveals by one person, reveal from a new address, one person denied in several vaults, sensitive action outside working hours, forged or cross-site requests, no audit events while Key Vault saw Keyring, SecretGet with no audit event, and a share to a guest or more than `shareThreshold` shares by one person), hunting queries for each audit report and a workbook. Every rule is created off and turned on by its own parameter. Rows can arrive late; each rule looks back `ingestionDelayMinutes` further than it runs.
 
 ## Notification health
 

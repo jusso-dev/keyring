@@ -36,7 +36,7 @@ Both run the same image on port 3000 with `/healthz` probes. The image is used b
 
 ## Settings
 
-Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Template parameters map to settings: `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops` (default `1`), `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `passwordPolicy`, `requireOwner`, `staleAfterDays`, `allowPurge`, `auditWorkspaceId`, `auditRequired`, `notifyTypes`, `notifyAdmins`, `notifyAllowedDomains` and `useFederatedCredential`. Appendix A lists every setting the code reads. Secrets are set after deployment with `az keyvault secret set`, never in a template, parameter file or deployment history, and filled-in parameter files are kept out of git.
+Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Template parameters map to settings: `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops` (default `1`), `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `passwordPolicy`, `requireOwner`, `staleAfterDays`, `allowPurge`, `auditWorkspaceId`, `auditRequired`, `notifyTypes`, `notifyAdmins`, `notifyAllowedDomains`, `eventGridSubscriptions` (default the deployment's own subscription, set as `KEYRING_EVENTGRID_SUBSCRIPTIONS` when `expiry` is in `notifyTypes`) and `useFederatedCredential`. The templates have no parameter for `KEYRING_NOTIFY_OWNER_ON_READ`, `KEYRING_SHARING` or `KEYRING_SHARE_MAX_DAYS`; a deployment that wants them needs them added to the template, since a setting added by hand is removed by the next deployment. Sharing also needs the two delegated Graph permissions consented on the app registration (section 7.2). Appendix A lists every setting the code reads. Secrets are set after deployment with `az keyvault secret set`, never in a template, parameter file or deployment history, and filled-in parameter files are kept out of git.
 
 ## Alerts and Sentinel content
 
@@ -44,7 +44,7 @@ Both templates list every app setting, so a setting added by hand in the portal 
 |---|---|---|---|
 | Expiry alerts | `infra/alerts/main.bicep` | Key Vault's near-expiry and expired events, to an action group or (`notifyVia = 'keyring'`) to `/hooks/eventgrid` | Event Grid |
 | Access alerts | `infra/alerts/access.bicep` | Log search alert rules on the vault's workspace: a read of a watched secret, any purge, more than N refusals from one caller in 15 minutes | Each rule's own system-assigned identity with Log Analytics Reader; never used by Keyring |
-| Sentinel content | `infra/sentinel/main.bicep` | ASIM Audit Event parsers (`vimAuditEventKeyring`, `ASimAuditEventKeyring`), seven analytic rules each created turned off, six hunting queries, a workbook, all over `KeyringAudit_CL` | Sentinel |
+| Sentinel content | `infra/sentinel/main.bicep` | ASIM Audit Event parsers (`vimAuditEventKeyring`, `ASimAuditEventKeyring`), eight analytic rules each created turned off (the eighth, `enableShares`, flags a share to a guest or a burst of shares), six hunting queries, a workbook, all over `KeyringAudit_CL` | Sentinel |
 
 Two Sentinel rules compare Keyring's table with Key Vault's log and need Keyring's outbound addresses as a parameter; without it they aren't created. The "SecretGet with no audit event" rule should stay off until the real-tenant row confirming that Key Vault records `x-ms-client-request-id` as `CorrelationId` passes.
 
