@@ -22,6 +22,7 @@
 //!   `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`, which puts them on audit events
 //!   (and so in the audit log line).
 
+pub mod activity;
 pub mod expiry;
 pub mod health;
 pub mod rate;

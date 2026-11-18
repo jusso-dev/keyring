@@ -888,6 +888,11 @@ async fn values_never_reach_the_logs() {
             // For the webhook's email. No allow-list, so its
             // `keyring-notify` header is ignored.
             ("KEYRING_NOTIFY_ADMINS", "hookadmin@example.com".to_owned()),
+            // Only the support events' subscription may send.
+            (
+                "KEYRING_EVENTGRID_SUBSCRIPTIONS",
+                "00000000-0000-0000-0000-000000000000".to_owned(),
+            ),
             ("KEYRING_REQUIRE_REASON", "reveal".to_owned()),
             ("KEYRING_TEST_NOTIFY_ACS_URL", acs.url()),
         ],
@@ -1127,6 +1132,25 @@ async fn values_never_reach_the_logs() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        // A Key Vault in a subscription that isn't listed: refused, and
+        // its subscription ID, resource group and vault reach no line and
+        // no email.
+        let mut unlisted = ev.clone();
+        unlisted["data"]["VaultName"] = serde_json::json!("kv-subleak");
+        unlisted["topic"] = serde_json::json!(
+            "/subscriptions/5ab1eaed-0bad-4bad-8bad-5ec0ffee5ab1/resourceGroups/SUBRGLEAK/providers/Microsoft.KeyVault/vaults/kv-subleak"
+        );
+        let res = we
+            .app
+            .clone()
+            .oneshot(hook(
+                &webhook_token,
+                serde_json::json!([unlisted]).to_string(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         // A flood of bad tokens: two above already counted, three more
         // under the unauthenticated counter of 5, then 95 answered 429
         // with no audit event and no line of their own.
@@ -1180,6 +1204,9 @@ async fn values_never_reach_the_logs() {
             "BADTOKENLEAK",
             "TOPICLEAK",
             "FLOODLEAK",
+            "5ab1eaed",
+            "SUBRGLEAK",
+            "subleak",
             webhook_token.as_str(),
             eg::EVENT_GRID_APP,
         ] {
@@ -1268,6 +1295,163 @@ async fn values_never_reach_the_logs() {
             "{leak} reached a health email:\n{hbodies}"
         );
     }
+
+    // Activity emails (#259): every trigger, with canaries in the reason,
+    // the ticket, the PIM justification, the description and a tag value.
+    // None may reach an email body, and no address may reach a log line.
+    let acs2 = support::acs::start().await;
+    let mi2 = support::start_identity().await;
+    let wa = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", mi2.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_TYPES",
+                "watched-reads,destructive,role-use".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_ADMINS", "actadmin@example.com".to_owned()),
+            ("KEYRING_NOTIFY_OWNER_ON_READ", "true".to_owned()),
+            ("KEYRING_REQUIRE_REASON", "all".to_owned()),
+            ("KEYRING_REASON_TICKET_PATTERN", "[A-Z]+-[0-9]+".to_owned()),
+            ("KEYRING_ALLOW_PURGE", "true".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", acs2.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.backoff_first = std::time::Duration::from_millis(10);
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    {
+        let mut row = support::vault_row("kv-test", "sub-a", true);
+        row["tags"]["keyring-owners"] = serde_json::json!("actowner@example.com");
+        *wa.arm.state.vaults.lock().unwrap() = vec![row];
+        let mut m = wa.arm.state.authz.lock().unwrap();
+        let rg = "/subscriptions/sub-a/resourceGroups/rg-kv-test";
+        let sched = "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/b1477448-2cc6-4ceb-93b4-54a202a89413";
+        m.pim.eligible = vec![(rg.into(), support::SECRETS_USER.into(), sched.into())];
+        m.pim.policies.insert(
+            support::SECRETS_USER.into(),
+            support::pim_rules("PT8H", true, true, false),
+        );
+    }
+    let tagged = |name: &str| {
+        let first = wa.kv.state.put_with(name, VALUE, |v| {
+            v.tags
+                .insert("notify".into(), "actwatch@example.com".into());
+            v.tags
+                .insert("owner".into(), "actitemowner@example.com".into());
+            v.tags.insert("description".into(), "DESCLEAK note".into());
+            v.tags.insert("env".into(), "TAGVALUELEAK".into());
+        });
+        let _ = wa.kv.state.put_with(name, VALUE, |v| {
+            v.tags
+                .insert("notify".into(), "actwatch@example.com".into());
+            v.tags.insert("description".into(), "DESCLEAK note".into());
+            v.tags.insert("env".into(), "TAGVALUELEAK".into());
+        });
+        first
+    };
+    let why = [
+        ("reason", "REASONACTLEAK checking https://evil.example/"),
+        ("ticket", "INC-4242"),
+    ];
+    let first = tagged("act-one");
+    for (path, extra) in [
+        ("/v/kv-test/secrets/act-one/reveal", vec![]),
+        (
+            "/v/kv-test/secrets/act-one/rollback",
+            vec![("version", first.as_str())],
+        ),
+        (
+            "/v/kv-test/secrets/act-one/delete",
+            vec![("confirm_name", "act-one")],
+        ),
+    ] {
+        let mut f = why.to_vec();
+        f.extend(extra);
+        let res = wa.post(path, &f).await;
+        assert!(
+            res.status().is_success() || res.status().is_redirection(),
+            "{path}"
+        );
+        let _ = support::body_text(res).await;
+    }
+    tagged("act-two");
+    let mut f = why.to_vec();
+    f.extend([
+        ("item", "act-two"),
+        ("op", "tag_set"),
+        ("tag_name", "rota"),
+        ("tag_value", "BULKTAGLEAK"),
+    ]);
+    let res = wa.post("/v/kv-test/secrets/-/bulk/apply", &f).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let res = wa
+        .post(
+            "/v/kv-test/my-access/activate",
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", "/subscriptions/sub-a/resourceGroups/rg-kv-test"),
+                (
+                    "schedule",
+                    "/subscriptions/sub-a/providers/Microsoft.Authorization/roleEligibilitySchedules/b1477448-2cc6-4ceb-93b4-54a202a89413",
+                ),
+                ("back", "/v/kv-test/secrets"),
+                ("minutes", "60"),
+                ("justification", "JUSTIFYACTLEAK https://evil.example/"),
+                ("ticket_system", "TKTSYSLEAK"),
+                ("ticket_number", "TKTNUMLEAK"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let _ = support::body_text(res).await;
+    let start = std::time::Instant::now();
+    while acs2.state.attempts().len() < 5 {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "activity emails: {}",
+            acs2.state.attempts().len()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let abodies = acs2.state.all_bodies();
+    assert!(abodies.contains("Ticket: INC-4242"), "{abodies}");
+    for leak in [
+        "Sup3r-S3cret",
+        "REASONACTLEAK",
+        "JUSTIFYACTLEAK",
+        "TKTSYSLEAK",
+        "TKTNUMLEAK",
+        "DESCLEAK",
+        "TAGVALUELEAK",
+        "BULKTAGLEAK",
+        "evil.example",
+        "user-api-token",
+        support::MI_ACS_TOKEN,
+    ] {
+        assert!(
+            !abodies.contains(leak),
+            "{leak} reached an activity email:\n{abodies}"
+        );
+    }
+    drop(mi2);
 
     // Sharing (#286): a picker search, a grant through PIM, one that falls
     // back to a plain assignment, a refused one, a revoke, and the emails.
@@ -1407,7 +1591,15 @@ async fn values_never_reach_the_logs() {
     );
     assert!(!logs.contains("Imp0rtLeak"), "import value leaked:\n{logs}");
     assert!(!logs.contains("NOTELEAK"), "a description leaked:\n{logs}");
-    for leak in ["ownerleak", "notifyleak", "OWNERLEAK"] {
+    for leak in [
+        "ownerleak",
+        "notifyleak",
+        "OWNERLEAK",
+        "actwatch@",
+        "actitemowner@",
+        "actowner@",
+        "actadmin@",
+    ] {
         assert!(!logs.contains(leak), "an address leaked ({leak}):\n{logs}");
     }
     assert!(
@@ -1650,6 +1842,9 @@ async fn values_never_reach_the_logs() {
         "BADTOKENLEAK",
         "TOPICLEAK",
         "FLOODLEAK",
+        "5ab1eaed",
+        "SUBRGLEAK",
+        "subleak",
         "FORGEDLINE",
         "FORGEDLINE subject",
         "hookadmin@",
@@ -1666,9 +1861,9 @@ async fn values_never_reach_the_logs() {
         .filter(|l| l.contains("action=notify.webhook"))
         .collect();
     // Good, handshake, bad token, other app, bad event, two bad topics,
-    // three of the flood under the counter and one in the next window:
-    // the 95 over the counter wrote nothing.
-    assert_eq!(hook_events.len(), 11, "bounded: {hook_events:#?}");
+    // an unlisted subscription, three of the flood under the counter and
+    // one in the next window: the 95 over the counter wrote nothing.
+    assert_eq!(hook_events.len(), 12, "bounded: {hook_events:#?}");
     assert_eq!(
         hook_events
             .iter()
@@ -1687,10 +1882,16 @@ async fn values_never_reach_the_logs() {
         logs.lines()
             .filter(|l| l.contains("eventgrid: delivery"))
             .count(),
-        11,
+        12,
         "one line per audited request, none for the dropped"
     );
-    for code in ["token_caller", "token_malformed", "bad_event", "bad_topic"] {
+    for code in [
+        "token_caller",
+        "token_malformed",
+        "bad_event",
+        "bad_topic",
+        "subscription_not_allowed",
+    ] {
         assert!(
             hook_events
                 .iter()

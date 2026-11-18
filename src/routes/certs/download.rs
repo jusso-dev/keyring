@@ -279,6 +279,7 @@ pub(crate) async fn pfx(
     }
     // The backing secret URL comes from Key Vault; only use it if it's
     // exactly this certificate's secret on this vault.
+    crate::notify::activity::note_read(bundle.tags.as_ref());
     let sid = bundle.sid.unwrap_or_default();
     let vault_url = state.config.vault_url(&vault);
     if !is_backing_secret(&vault_url, &name, &sid) {

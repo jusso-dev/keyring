@@ -201,7 +201,7 @@ pub(crate) fn is_offered_role(role: &str) -> bool {
 }
 
 /// The name of an offered role, as its 403 page writes it.
-fn offered_name(role: &str) -> Option<&'static str> {
+pub(crate) fn offered_name(role: &str) -> Option<&'static str> {
     OFFERED_NEEDS
         .iter()
         .find(|n| role_for(**n).is_some_and(|g| g.eq_ignore_ascii_case(role)))

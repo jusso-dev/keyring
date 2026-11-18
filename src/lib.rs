@@ -38,6 +38,7 @@ use crate::auth::oidc::Oidc;
 use crate::auth::session::SessionStore;
 use crate::azure::{AzureClient, TokenBroker};
 use crate::config::Config;
+use crate::notify::activity::{self as activity_notify, ActivityWatch};
 use crate::notify::expiry::ExpiryHook;
 use crate::notify::health::{self as health_notify, HealthWatch, SystemClock};
 use crate::notify::sender::{self as notify_sender, Notifier};
@@ -70,6 +71,10 @@ pub struct AppState {
     /// `health` in `KEYRING_NOTIFY_TYPES`. Watches audit events as they
     /// are recorded. Its timer is started by `main`.
     pub health: Option<Arc<HealthWatch>>,
+    /// Emails about watched reads, deletes and bulk changes, and role use,
+    /// with any of those types on. Watches audit events as they are
+    /// recorded.
+    pub activity: Option<Arc<ActivityWatch>>,
 }
 
 impl AppState {
@@ -139,6 +144,7 @@ impl AppState {
             .map(|n| {
                 Arc::new(ExpiryHook::new(
                     config.eventgrid_expect(),
+                    n.eventgrid_subscriptions.clone(),
                     n.hook_tuning,
                     config.base_url.clone(),
                 ))
@@ -157,6 +163,32 @@ impl AppState {
             )),
             _ => None,
         };
+        let azure = AzureClient::new(http, broker);
+        let activity = match (&notifier, &config.notify) {
+            (Some(n), Some(c))
+                if [
+                    notify::NotifyType::WatchedReads,
+                    notify::NotifyType::Destructive,
+                    notify::NotifyType::RoleUse,
+                ]
+                .into_iter()
+                .any(|t| n.is_on(t)) =>
+            {
+                Some(ActivityWatch::new(
+                    activity_notify::Settings {
+                        base_url: config.base_url.clone(),
+                        management_url: config.management_url.clone(),
+                        owner_on_read: c.owner_on_read,
+                        ticket: config.reason.ticket.clone(),
+                        keyring_view: config.audit_workspace_id.is_some(),
+                    },
+                    Arc::new(SystemClock),
+                    n.clone(),
+                    azure.clone(),
+                ))
+            }
+            _ => None,
+        };
         let sessions = Arc::new(SessionStore::new(&config.session_secret));
         if let Some(sink) = &audit_sink {
             sessions.set_audit_sink(sink.clone());
@@ -164,11 +196,12 @@ impl AppState {
         Ok(Self {
             expiry_hook,
             health,
+            activity,
             notifier,
             audit_sink,
             sessions,
             oidc: Arc::new(oidc),
-            azure: AzureClient::new(http, broker),
+            azure,
             fanout: azure::fanout::Limits::STANDARD,
             sealer: Arc::new(Sealer::new(&config.session_secret, "login")),
             flash_sealer: Arc::new(Sealer::new(&config.session_secret, "flash")),
@@ -183,7 +216,18 @@ impl AppState {
 impl AppState {
     /// What watches each request's audit events, if anything does.
     pub fn audit_observer(&self) -> Option<Arc<dyn audit::Observe>> {
-        self.health.clone().map(|h| h as Arc<dyn audit::Observe>)
+        let mut all: Vec<Arc<dyn audit::Observe>> = Vec::new();
+        if let Some(h) = &self.health {
+            all.push(h.clone());
+        }
+        if let Some(a) = &self.activity {
+            all.push(Arc::new(notify::activity::Observer(a.clone())));
+        }
+        match all.len() {
+            0 => None,
+            1 => all.pop(),
+            _ => Some(Arc::new(audit::Fanout(all))),
+        }
     }
 
     /// The on-behalf-of token broker.

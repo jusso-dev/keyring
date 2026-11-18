@@ -91,6 +91,7 @@ Keyring never reads the vault for this, and its managed identity has no vault ac
 
 - Email on in Keyring ([deploy.md, Email](deploy.md#email)) with `expiry` in `KEYRING_NOTIFY_TYPES`. Without it, `/hooks/eventgrid` answers 404.
 - Keyring reachable from Event Grid over HTTPS at its public address. A Keyring that only takes private traffic can't receive these events.
+- `KEYRING_EVENTGRID_SUBSCRIPTIONS` holding the vault's subscription ID (see [Which subscriptions may send](#which-subscriptions-may-send)). The host templates set it to Keyring's own subscription; a vault in another subscription needs its ID added.
 - The one-off Entra steps below, done once per tenant.
 
 ### One-off Entra steps
@@ -170,9 +171,15 @@ Every delivery, before anything in its body is read:
 
 A 401 has no body. The log and the audit event get only a fixed code such as `token_audience`, never the token, its claims, the body or a header.
 
-Then the delivery. It must be a JSON array of 1 to 50 events in the Event Grid schema, each one of the six expiry events with a vault and name that pass Key Vault's naming rules, an object type that matches, a 32-digit version and a numeric `EXP`. Its `topic` must be the Key Vault it names: `/subscriptions/<GUID>/resourceGroups/<name>/providers/Microsoft.KeyVault/vaults/<VaultName>`, compared in any case, with no extra or empty segments. Event Grid stamps `topic` itself on a Key Vault system topic's events, and a publisher can't write it; an event sent through a custom topic carries the custom topic's own ID and is refused (`bad_topic`). One bad event refuses the whole delivery with 400 and sends nothing, so a delivery is never half sent. Event Grid doesn't retry a 400; it dead-letters it if you gave a container. Nothing else from an event, such as its `subject`, `topic` or `Id` URL, ever reaches an email or a log line.
+Then the delivery. It must be a JSON array of 1 to 50 events in the Event Grid schema, each one of the six expiry events with a vault and name that pass Key Vault's naming rules, an object type that matches, a 32-digit version and a numeric `EXP`. Its `topic` must be the Key Vault it names: `/subscriptions/<GUID>/resourceGroups/<name>/providers/Microsoft.KeyVault/vaults/<VaultName>`, compared in any case, with no extra or empty segments. Event Grid stamps `topic` itself on a Key Vault system topic's events, and a publisher can't write it; an event sent through a custom topic carries the custom topic's own ID and is refused (`bad_topic`). With `KEYRING_EVENTGRID_SUBSCRIPTIONS` set, the `<GUID>` in `topic` must also be one of its subscription IDs, compared in any case, or the delivery is refused (`subscription_not_allowed`). A `topic` that isn't a Key Vault ID is `bad_topic` whatever the list says. One bad event refuses the whole delivery with 400 and sends nothing, so a delivery is never half sent. Event Grid doesn't retry a 400; it dead-letters it if you gave a container. Nothing else from an event, such as its `subject`, `topic` or `Id` URL, ever reaches an email or a log line.
 
 The subscription's validation handshake is answered only with a valid token, and Keyring echoes the validation code only if it is 1 to 64 letters, digits and hyphens.
+
+### Which subscriptions may send
+
+Set `KEYRING_EVENTGRID_SUBSCRIPTIONS` to the subscription IDs, separated by commas, whose Key Vaults send expiry events to Keyring. Without it, a Key Vault in any subscription in any tenant can send events through a subscription made by someone holding the role above, and Keyring warns about that at start. An empty value is the same as unset. With it, an event from a vault in another subscription refuses the whole delivery with 400 and `subscription_not_allowed`, and nothing from its `topic` is logged or emailed.
+
+The host templates (`infra/app-service` and `infra/container-apps`) set it from `eventGridSubscriptions`, which defaults to the subscription Keyring is deployed in, when `expiry` is in `notifyTypes`. A vault in another subscription needs that subscription's ID added. At most 50 IDs; an entry that isn't a GUID, an empty entry (such as a trailing comma) or more than 50 stops Keyring at start, naming the setting.
 
 ### Who gets the email
 
@@ -190,7 +197,7 @@ Keyring remembers each item, version and event type it has sent for 24 hours, in
 | Answer | When | Event Grid |
 | --- | --- | --- |
 | 200 | Every event queued, already sent, or with no allowed recipient | Done |
-| 400 | Anything malformed, or an event whose `topic` isn't its Key Vault | Dead-letters it, if a container is set |
+| 400 | Anything malformed, an event whose `topic` isn't its Key Vault, or a vault in a subscription not in `KEYRING_EVENTGRID_SUBSCRIPTIONS` | Dead-letters it, if a container is set |
 | 401 | A token check failed | Not retried for a webhook: dead-letters it if a container is set, otherwise drops it. So a wrong audience or a missing role loses events until it is fixed |
 | 404 | Email off, or `expiry` not in `KEYRING_NOTIFY_TYPES` | Retries, then dead-letters |
 | 429 | Over the 120 a minute for good tokens, or over the 60 a minute for bad ones | Retries later |
@@ -202,6 +209,7 @@ Each request that reaches the token check writes one `notify.webhook` audit even
 
 - **Every delivery is refused with `token_audience`.** If Keyring's app registration issues v2 access tokens (`requestedAccessTokenVersion` 2 in its manifest), `aud` is the client ID GUID, not `api://<client ID>`, so the default audience refuses every delivery. Set `KEYRING_EVENTGRID_AUDIENCE` to the client ID, or leave the registration on v1 tokens. The real-tenant checklist has a row to note which form arrives.
 - **Deliveries refused with `bad_topic`.** The subscription isn't on the vault's own Key Vault system topic. Make it with `infra/alerts/main.bicep`, which uses the vault's system topic.
+- **Deliveries refused with `subscription_not_allowed`.** The vault is in a subscription that isn't in `KEYRING_EVENTGRID_SUBSCRIPTIONS`. Add that subscription's ID to the setting (or to the host template's `eventGridSubscriptions`) and restart Keyring. Event Grid doesn't retry a 400, so events refused before the change are in the dead-letter container, if you set one.
 - **`recipient_rate_limited` with 503.** Every recipient had `KEYRING_NOTIFY_RATE_PER_HOUR` emails in the last hour. Event Grid retries; raise the setting if many items expire together.
 
 ### Set it up
