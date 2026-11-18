@@ -468,7 +468,11 @@ fn sink_columns_match_the_bicep_and_the_schema() {
     // The table is the stream with `time` as TimeGenerated.
     assert!(bicep.contains("[{ name: 'TimeGenerated', type: 'datetime' }]"));
     assert!(bicep.contains("filter(streamColumns, c => c.name != 'time')"));
-    assert!(bicep.contains("source | extend TimeGenerated = todatetime(time) | project-away time"));
+    // `time` is a reserved word in the transform language, so it must be
+    // bracketed: Azure refused the unbracketed rule on 18-11-2026.
+    assert!(bicep.contains(
+        r"source | extend TimeGenerated = todatetime([\'time\']) | project-away [\'time\']"
+    ));
     let time = COLUMNS.iter().find(|c| c.field == "time").unwrap();
     assert_eq!((time.name, time.stream), ("TimeGenerated", "time"));
     for c in COLUMNS.iter().filter(|c| c.field != "time") {

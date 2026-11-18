@@ -112,6 +112,14 @@ param passwordPolicy string = ''
 @description('Refuse to create or edit a secret, certificate or key without an owner tag, and skip import rows without one. A Keyring control only: the CLI and portal aren\'t limited by it (see README.md, "Owners").')
 param requireOwner bool = false
 
+@description('Turn on Share on a secret\'s page: a time-limited Key Vault Secrets User assignment on that one secret, made as the person sharing (KEYRING_SHARING). Needs the two Microsoft Graph permissions in the README\'s app registration step 4.')
+param sharing bool = false
+
+@description('The longest a share may last, in days, 1 to 365 (KEYRING_SHARE_MAX_DAYS). 0 keeps Keyring\'s default of 30.')
+@minValue(0)
+@maxValue(365)
+param shareMaxDays int = 0
+
 @description('How many proxies in front of Keyring add to X-Forwarded-For, so audit events record the browser\'s address. 1 for this template\'s front end. 0 records the front end\'s own address. A wrong value lets a client choose the address recorded (see docs/deploy.md, "Client address").')
 @minValue(0)
 @maxValue(8)
@@ -156,6 +164,9 @@ param notifyAllowedDomains string = ''
 
 @description('With expiry in notifyTypes: the subscription IDs, separated by commas, whose Key Vaults may send expiry events to Keyring (KEYRING_EVENTGRID_SUBSCRIPTIONS). Defaults to this deployment\'s subscription; add the ID of any other subscription a watched vault is in. Empty accepts any subscription, which Keyring warns about at start-up.')
 param eventGridSubscriptions string = subscription().subscriptionId
+
+@description('With expiry in notifyTypes: the aud Event Grid\'s token must carry (KEYRING_EVENTGRID_AUDIENCE). Leave empty for api://<client ID>. Set it to the client ID when the app registration issues v2 access tokens (requestedAccessTokenVersion 2), since aud is then the bare client ID. Use the same value as entraAudience in infra/alerts.')
+param eventGridAudience string = ''
 
 param tags object = {}
 
@@ -246,7 +257,10 @@ var notifySettings = useNotify
       // Keyring refuses the list without expiry in the types.
       empty(eventGridSubscriptions) || !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry')
         ? []
-        : [{ name: 'KEYRING_EVENTGRID_SUBSCRIPTIONS', value: eventGridSubscriptions }]
+        : [{ name: 'KEYRING_EVENTGRID_SUBSCRIPTIONS', value: eventGridSubscriptions }],
+      empty(eventGridAudience) || !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry')
+        ? []
+        : [{ name: 'KEYRING_EVENTGRID_AUDIENCE', value: eventGridAudience }]
     )
   : []
 
@@ -337,6 +351,8 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         empty(reasonTicketPattern) ? [] : [{ name: 'KEYRING_REASON_TICKET_PATTERN', value: reasonTicketPattern }],
         empty(passwordPolicy) ? [] : [{ name: 'KEYRING_PASSWORD_POLICY', value: passwordPolicy }],
         requireOwner ? [{ name: 'KEYRING_REQUIRE_OWNER', value: 'true' }] : [],
+        sharing ? [{ name: 'KEYRING_SHARING', value: 'true' }] : [],
+        shareMaxDays == 0 ? [] : [{ name: 'KEYRING_SHARE_MAX_DAYS', value: string(shareMaxDays) }],
         auditSettings,
         notifySettings
       )

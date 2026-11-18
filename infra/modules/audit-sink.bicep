@@ -130,7 +130,7 @@ resource rule 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
         streams: [streamName]
         destinations: ['workspace']
         // The table has TimeGenerated, not time, so time is dropped after.
-        transformKql: 'source | extend TimeGenerated = todatetime(time) | project-away time'
+        transformKql: 'source | extend TimeGenerated = todatetime([\'time\']) | project-away [\'time\']'
         outputStream: streamName
       }
     ]
