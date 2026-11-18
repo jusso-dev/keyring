@@ -432,6 +432,11 @@ impl Notifier {
         Enqueued::Queued { recipients }
     }
 
+    /// True when `KEYRING_NOTIFY_ALLOWED_DOMAINS` lets mail go to `a`.
+    pub fn allows(&self, a: &Address) -> bool {
+        self.allowed(a)
+    }
+
     fn allowed(&self, a: &Address) -> bool {
         match &self.settings.allowed_domains {
             None => true,

@@ -103,6 +103,9 @@ pub enum Action {
     RoleActivate,
     /// A PIM activated role turned off (`SelfDeactivate`) from Keyring.
     RoleDeactivate,
+    /// A person refused by Key Vault asked the vault's owners for a role
+    /// (#258). Keyring emails them and grants nothing.
+    AccessRequest,
     SessionSignIn,
     SessionSignInFailed,
     SessionSignOut,
@@ -122,7 +125,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 43] = [
+    pub const ALL: [Action; 44] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -158,6 +161,7 @@ impl Action {
         Self::KeyBulkUpdate,
         Self::RoleActivate,
         Self::RoleDeactivate,
+        Self::AccessRequest,
         Self::SessionSignIn,
         Self::SessionSignInFailed,
         Self::SessionSignOut,
@@ -205,6 +209,7 @@ impl Action {
             Self::KeyBulkUpdate => "key.bulk_update",
             Self::RoleActivate => "role.activate",
             Self::RoleDeactivate => "role.deactivate",
+            Self::AccessRequest => "access.request",
             Self::SessionSignIn => "session.sign_in",
             Self::SessionSignInFailed => "session.sign_in_failed",
             Self::SessionSignOut => "session.sign_out",
@@ -297,11 +302,14 @@ pub enum Refusal {
     /// `KEYRING_REQUIRE_OWNER` is on and the item would have been saved
     /// without an `owner` tag. Says nothing about the addresses.
     OwnerRequired,
+    /// The person asked for the same role on the same vault within the
+    /// hour (`access.request`). Nothing was sent.
+    RateLimited,
 }
 
 impl Refusal {
     /// Every refusal, for tests and docs.
-    pub const ALL: [Refusal; 16] = [
+    pub const ALL: [Refusal; 17] = [
         Self::Csrf,
         Self::CrossSite,
         Self::TypedNameMismatch,
@@ -318,6 +326,7 @@ impl Refusal {
         Self::ReasonRequired,
         Self::PasswordPolicy,
         Self::OwnerRequired,
+        Self::RateLimited,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -338,6 +347,7 @@ impl Refusal {
             Self::ReasonRequired => "reason_required",
             Self::PasswordPolicy => "password_policy",
             Self::OwnerRequired => "owner_required",
+            Self::RateLimited => "rate_limited",
         }
     }
 }
@@ -600,6 +610,9 @@ struct Draft {
     user_agent: Option<String>,
     vault: Option<String>,
     item_name: Option<String>,
+    /// The item's kind, for an action that isn't on one kind of item
+    /// (`access.request`).
+    item_kind: Option<&'static str>,
     item_version: Option<String>,
     kv_request_id: Option<String>,
     reason: Option<String>,
@@ -756,6 +769,27 @@ pub fn note_role_request(
         d.role_duration = duration.map(str::to_owned);
         d.reason = reason.map(str::to_owned);
         d.ticket = ticket.map(str::to_owned);
+    });
+}
+
+/// An access request (`access.request`): the role GUID, the ARM scope
+/// asked for when the vault's resource ID was read, the item's kind when
+/// the request is for one item, and the reason and ticket, already checked
+/// by [`crate::reason`].
+pub fn note_access_request(
+    role: &str,
+    scope: Option<&str>,
+    item_kind: Option<&'static str>,
+    given: Option<&crate::reason::Given>,
+) {
+    note(|d| {
+        d.role = Some(role.to_owned());
+        d.role_scope = scope.map(str::to_owned);
+        d.item_kind = item_kind;
+        if let Some(g) = given {
+            d.reason = Some(g.reason.clone());
+            d.ticket.clone_from(&g.ticket);
+        }
     });
 }
 
@@ -1014,6 +1048,9 @@ fn finish(d: Draft, status: axum::http::StatusCode) -> Option<AuditEvent> {
     ev.user_agent = d.user_agent;
     ev.vault = d.vault;
     ev.item_name = d.item_name;
+    if d.item_kind.is_some() {
+        ev.item_kind = d.item_kind;
+    }
     ev.item_version = d.item_version;
     ev.kv_request_id = d.kv_request_id;
     ev.reason = d.reason;

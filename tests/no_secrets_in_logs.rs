@@ -1453,6 +1453,125 @@ async fn values_never_reach_the_logs() {
     }
     drop(mi2);
 
+    // Access requests (#258): canaries in the reason, the ticket and the
+    // form body. A linkable reason and ticket never reach the email; a
+    // plain one does. Neither reaches a log line except the request's own
+    // audit event. Nothing else typed reaches either.
+    let aacs = support::acs::start().await;
+    let ami = support::start_identity().await;
+    let wa = support::world_configured(
+        vec![
+            (
+                "KEYRING_MANAGED_IDENTITY_CLIENT_ID",
+                support::IDENTITY_CLIENT_ID.to_owned(),
+            ),
+            ("IDENTITY_ENDPOINT", ami.endpoint()),
+            ("IDENTITY_HEADER", support::IDENTITY_HEADER.to_owned()),
+            (
+                "KEYRING_NOTIFY_ACS_ENDPOINT",
+                "https://keyring-mail.australia.communication.azure.com".to_owned(),
+            ),
+            (
+                "KEYRING_NOTIFY_SENDER",
+                "DoNotReply@mail.example.com".to_owned(),
+            ),
+            ("KEYRING_NOTIFY_TYPES", "access-requests".to_owned()),
+            ("KEYRING_NOTIFY_ADMINS", "ops@example.com".to_owned()),
+            ("KEYRING_TEST_NOTIFY_ACS_URL", aacs.url()),
+        ],
+        |c| {
+            let t = &mut c.notify.as_mut().unwrap().tuning;
+            t.poll_wait_default = std::time::Duration::from_millis(10);
+            t.poll_wait_max = std::time::Duration::from_millis(20);
+        },
+    )
+    .await;
+    {
+        let mut row = support::vault_row("kv-test", "00000000-0000-0000-0000-00000000000a", true);
+        row["tags"] = serde_json::json!({"keyring-owners": "reqowner@example.com"});
+        *wa.arm.state.vaults.lock().unwrap() = vec![row];
+    }
+    wa.kv.state.put("db-password", VALUE);
+    for (role, reason, ticket) in [
+        (
+            support::SECRETS_USER,
+            "REQLINKLEAK see https://evil.example/login now",
+            "REQTICKLEAK.evil.example",
+        ),
+        (
+            support::CERT_OFFICER,
+            "REQPLAINREASON needed for the release",
+            "REQPLAINTICKET-7",
+        ),
+    ] {
+        let res = wa
+            .post(
+                "/v/kv-test/my-access/request",
+                &[
+                    ("role", role),
+                    ("scope", "item"),
+                    ("kind", "secret"),
+                    ("name", "db-password"),
+                    ("back", "/v/kv-test/secrets/db-password"),
+                    ("reason", reason),
+                    ("ticket", ticket),
+                    ("extra", "REQBODYLEAK attacker@evil.example"),
+                    ("to", "REQTOLEAK@evil.example"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let _ = support::body_text(res).await;
+    }
+    // A repeat within the hour: refused, nothing more sent.
+    let res = wa
+        .post(
+            "/v/kv-test/my-access/request",
+            &[
+                ("role", support::SECRETS_USER),
+                ("scope", "vault"),
+                ("reason", "REQREPEAT asking again"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    let _ = support::body_text(res).await;
+    {
+        let start = std::time::Instant::now();
+        while aacs.state.attempts().len() < 2 {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "two access request emails"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+    let abodies = aacs.state.all_bodies();
+    assert!(
+        abodies.contains("REQPLAINREASON needed for the release"),
+        "{abodies}"
+    );
+    assert!(abodies.contains("REQPLAINTICKET-7"), "{abodies}");
+    assert!(abodies.contains("reqowner@example.com"));
+    for leak in [
+        "REQLINKLEAK",
+        "REQTICKLEAK",
+        "evil.example",
+        "REQBODYLEAK",
+        "REQTOLEAK",
+        "Sup3r-S3cret",
+        support::MI_ACS_TOKEN,
+        support::IDENTITY_HEADER,
+        "user-api-token",
+        wa.cookie.as_str(),
+        wa.csrf.as_str(),
+    ] {
+        assert!(
+            !abodies.contains(leak),
+            "{leak} reached an access request email:\n{abodies}"
+        );
+    }
+
     // A crafted sign-in error can't add a line to the log.
     let res = w
         .get("/auth/callback?error=x%0AFORGEDLINE%20secret%20purged&state=x")
@@ -1654,6 +1773,50 @@ async fn values_never_reach_the_logs() {
     for line in logs.lines().filter(|l| l.contains("health:")) {
         assert!(!line.contains("alex@example.com"), "{line}");
         assert!(!line.contains("ops@example.com"), "{line}");
+    }
+
+    // Access requests: the reason and ticket only on the request's own
+    // audit event; nothing else typed and no address anywhere.
+    for leak in ["REQBODYLEAK", "REQTOLEAK", "reqowner@", "attacker@"] {
+        assert!(!logs.contains(leak), "{leak} leaked into logs:\n{logs}");
+    }
+    // One event per request: two sent, one refused for the hour.
+    let req_events: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("kind=audit") && l.contains("action=access.request"))
+        .collect();
+    assert_eq!(req_events.len(), 3, "{req_events:#?}");
+    assert_eq!(
+        req_events
+            .iter()
+            .filter(|l| l.contains("outcome=success")
+                && l.contains("role_scope=/subscriptions/00000000-0000-0000-0000-00000000000a/")
+                && l.contains("item_kind=secret")
+                && l.contains("item_name=db-password"))
+            .count(),
+        2,
+        "{req_events:#?}"
+    );
+    assert!(
+        req_events
+            .iter()
+            .any(|l| l.contains("outcome=refused") && l.contains("reason_code=rate_limited")),
+        "{req_events:#?}"
+    );
+    for canary in [
+        "REQLINKLEAK",
+        "REQTICKLEAK",
+        "REQPLAINREASON",
+        "REQPLAINTICKET",
+        "REQREPEAT",
+    ] {
+        assert!(logs.contains(canary), "{canary} is on its audit event");
+        for line in logs.lines().filter(|l| l.contains(canary)) {
+            assert!(
+                line.contains("kind=audit") && line.contains("action=access.request"),
+                "{line}"
+            );
+        }
     }
 
     // Email: no address, Azure message, ACS token or body in any line,

@@ -111,17 +111,34 @@ pub(super) async fn offer_layer(
     };
     let abort = task.abort_handle();
     let found = match tokio::time::timeout(LOOKUP_TIMEOUT, task).await {
-        Ok(Ok(Some(e))) => e,
-        Ok(_) => return res,
+        Ok(Ok(Some(e))) => Some(e),
+        Ok(_) => None,
         Err(_) => {
             abort.abort();
-            tracing::info!("PIM eligibility lookup timed out; 403 page left as it is");
-            return res;
+            tracing::info!("PIM eligibility lookup timed out; no Activate offered");
+            None
         }
     };
     let back = match &pending.problem.next {
         NextStep::Retry(p) => p.clone(),
         _ => vault_path(&vault, "/secrets"),
+    };
+    let Some(found) = found else {
+        // No PIM offer: "Request access", when access requests are on.
+        // Otherwise the page is exactly as it was.
+        if !crate::routes::access_request::is_on(&state) {
+            return res;
+        }
+        let mut page = *pending;
+        page.problem.request = Some(Offer {
+            role: need.role(),
+            url: crate::routes::access_request::request_url(
+                &vault,
+                role,
+                &safe_back(&vault, Some(&back)),
+            ),
+        });
+        return page.into_response();
     };
     let mut page = *pending;
     page.problem.offer = Some(Offer {
@@ -209,7 +226,7 @@ pub(crate) fn offered_name(role: &str) -> Option<&'static str> {
 }
 
 /// Every need a 403 page can name a role for.
-const OFFERED_NEEDS: [Need; 7] = [
+pub(crate) const OFFERED_NEEDS: [Need; 7] = [
     Need::ReadSecrets,
     Need::ManageSecrets,
     Need::ReadCertificates,
@@ -278,7 +295,7 @@ pub(crate) fn activate_url(vault: &str, role: &str, shown: Option<&Shown>, back:
 
 /// `back` if it is a local path under this vault, else the vault's My
 /// access page.
-fn safe_back(vault: &str, back: Option<&str>) -> String {
+pub(crate) fn safe_back(vault: &str, back: Option<&str>) -> String {
     let b = return_to::sanitise(back);
     if b.starts_with(&vault_path(vault, "/")) {
         b
@@ -1010,6 +1027,9 @@ struct MyAccessPage {
     waiting: Vec<Row>,
     notes: Vec<String>,
     portal: &'static str,
+    /// "Request access" links for the Key Vault roles that are neither on
+    /// nor eligible here, when access requests are on (#258).
+    requests: Vec<(&'static str, String)>,
 }
 
 fn ends_words(ends: Option<i64>, now: i64) -> String {
@@ -1080,7 +1100,29 @@ pub(super) async fn my_access(
             ..Mine::default()
         },
     };
+    let requests = if crate::routes::access_request::is_on(&state) {
+        let back = vault_path(&vault, "/my-access");
+        crate::routes::access_request::roles()
+            .into_iter()
+            .filter(|(g, _)| {
+                !page
+                    .active
+                    .iter()
+                    .chain(&page.eligible)
+                    .any(|r| r.role.eq_ignore_ascii_case(g))
+            })
+            .map(|(g, name)| {
+                (
+                    name,
+                    crate::routes::access_request::request_url(&vault, g, &back),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(render(&MyAccessPage {
+        requests,
         shell,
         vault,
         active: page.active,
