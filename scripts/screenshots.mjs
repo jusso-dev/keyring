@@ -5,6 +5,8 @@
 //
 // scripts/screenshots.sh runs this with a pinned Playwright from npx, so
 // the repo needs no package.json. Pictures go to docs/images/screenshots/.
+// With KEYRING_SHOTS=guides it takes only the walkthrough guides' pictures,
+// into docs/images/guides/, and leaves the README's alone.
 
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync } from "node:fs";
@@ -25,7 +27,8 @@ function loadPlaywright() {
 const { chromium } = loadPlaywright();
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const out = join(root, "docs", "images", "screenshots");
+const guides = process.env.KEYRING_SHOTS === "guides";
+const out = join(root, "docs", "images", guides ? "guides" : "screenshots");
 mkdirSync(out, { recursive: true });
 
 const port = process.env.KEYRING_DEMO_PORT || "3999";
@@ -80,6 +83,35 @@ async function visit(page, path, name, maxHeight) {
 
 const desktop = await context(1280, 800);
 const page = await desktop.newPage();
+
+// The walkthrough guides: one picture of the main page of each, where the
+// README's own pictures don't already show it.
+if (guides) {
+  await visit(page, "/search?q=payments", "01-search", 900);
+  await visit(page, `${vault}/secrets/-/new?type=login`, "02-create-login");
+  await visit(page, `${vault}/secrets/jwt-signing-config/edit`, "03-edit-details");
+  await visit(
+    page,
+    `${vault}/secrets/db-connection-string/copy/review?to_vault=kv-platform-dev&to_name=db-connection-string&content_type=on&tags=on&dates=on&enabled=on`,
+    "06-copy-review",
+    900,
+  );
+  // Tick two secrets, then Review changes: the check before a bulk change.
+  await page.goto(`${base}${vault}/secrets`);
+  await page.check("#pick-redis-access-key");
+  await page.check("#pick-smtp-relay-password");
+  await page.selectOption("#bulk-op", "tag_set");
+  await page.fill("#bulk-tag-name", "env");
+  await page.fill("#bulk-tag-value", "prod");
+  await page.getByRole("button", { name: "Review changes" }).click();
+  await page.waitForLoadState("networkidle");
+  await shot(page, "07-bulk-review", 900);
+  await visit(page, `${vault}/access`, "10-access", 900);
+  await visit(page, `${vault}/my-access`, "10-my-access", 900);
+  await desktop.close();
+  await browser.close();
+  process.exit(0);
+}
 
 await visit(page, "/", "home", 900);
 await visit(page, "/vaults", "vaults", 900);
