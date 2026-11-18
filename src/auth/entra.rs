@@ -53,7 +53,12 @@ pub const MFA_CODES: [u64; 4] = [50076, 50078, 50079, 50158];
 
 /// True if Entra's error numbers say the sign-in needs MFA.
 pub fn needs_mfa(codes: &[u64]) -> bool {
-    codes.iter().any(|c| MFA_CODES.contains(c))
+    mfa_code(codes).is_some()
+}
+
+/// The first of Entra's error numbers that says the sign-in needs MFA.
+pub fn mfa_code(codes: &[u64]) -> Option<u64> {
+    codes.iter().copied().find(|c| MFA_CODES.contains(c))
 }
 
 /// Entra error numbers for a Conditional Access policy the sign-in didn't
@@ -91,7 +96,7 @@ pub fn classify(error: &str, codes: &[u64]) -> EntraAdvice {
 }
 
 /// `invalid_grant (AADSTS50013)`, or just the error when there's no number.
-pub fn describe_code(error: &str, codes: &[u64]) -> String {
+fn describe_code(error: &str, codes: &[u64]) -> String {
     match codes.first() {
         Some(n) => format!("{error} (AADSTS{n})"),
         None => error.to_owned(),
@@ -181,6 +186,8 @@ mod tests {
         assert!(needs_mfa(&[50076]));
         assert!(!needs_mfa(&[70008]));
         assert!(!needs_mfa(&[]));
+        assert_eq!(mfa_code(&[70008, 50076]), Some(50076));
+        assert_eq!(mfa_code(&[70008]), None);
     }
 
     #[test]

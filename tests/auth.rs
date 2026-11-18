@@ -839,7 +839,16 @@ impl Harness {
 
     /// Open a page that needs an Azure token, with Entra refusing it.
     async fn refused(&self, session: &str, error: &'static str) -> (StatusCode, String) {
-        *self.idp.state.grant_error.lock().unwrap() = Some((error, 50076));
+        self.refused_with(session, error, 50076).await
+    }
+
+    async fn refused_with(
+        &self,
+        session: &str,
+        error: &'static str,
+        code: u64,
+    ) -> (StatusCode, String) {
+        *self.idp.state.grant_error.lock().unwrap() = Some((error, code));
         let res = self.get("/vaults", &[session.to_owned()]).await;
         (res.status(), body(res).await)
     }
@@ -888,6 +897,55 @@ async fn a_second_mfa_refusal_shows_a_page_instead_of_looping() {
     assert!(html.contains("AADSTS50076"), "{html}");
     assert!(html.contains("Azure portal"), "{html}");
     assert!(!html.contains("Sign in again"), "{html}");
+    // A fixed link home, not "Try again" on the page that just failed.
+    assert!(
+        html.contains(r#"<a class="button" href="/">Back to home</a>"#),
+        "{html}"
+    );
+    assert!(!html.contains("Try again"), "{html}");
+}
+
+#[tokio::test]
+async fn an_mfa_refusal_without_claims_drops_an_older_challenge() {
+    let h = Harness::new().await;
+    let (session, _) = h.sign_in("/").await;
+    // A Conditional Access refusal that carries a challenge (the mock sends
+    // one with interaction_required) ...
+    h.refused_with(&session, "interaction_required", 53003)
+        .await;
+    let (url, _) = h.start_from(&session).await;
+    assert!(query(&url, "claims").unwrap().contains("capolids"));
+    // ... then an MFA refusal with none. The next sign-in asks for MFA,
+    // not for the older refusal's policy.
+    let (status, _) = h.refused(&session, "invalid_grant").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (url, _) = h.start_from(&session).await;
+    assert_eq!(query(&url, "claims").as_deref(), Some(MFA_ASK));
+    assert_eq!(query(&url, "prompt").as_deref(), Some("login"));
+}
+
+#[tokio::test]
+async fn the_loop_guard_ends_once_an_exchange_works() {
+    let h = Harness::new().await;
+    // Short-lived tokens, so every page exchanges again.
+    *h.idp.state.grant_expires_in.lock().unwrap() = 60;
+    let (session, _) = h.sign_in("/").await;
+    h.refused(&session, "invalid_grant").await;
+    let (url, login) = h.start_from(&session).await;
+    let session = h.finish(&url, login).await;
+    // The MFA sign-in worked: an exchange succeeds.
+    *h.idp.state.grant_error.lock().unwrap() = None;
+    let before = h.idp.state.token_requests.lock().unwrap().len();
+    h.get("/vaults", std::slice::from_ref(&session)).await;
+    assert!(h.idp.state.token_requests.lock().unwrap().len() > before);
+    // A later, separate MFA refusal gets Sign in again with the MFA ask,
+    // not the dead-end page.
+    let (status, html) = h.refused(&session, "invalid_grant").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(html.contains("Please sign in again"), "{html}");
+    let (url, _) = h.start_from(&session).await;
+    assert_eq!(query(&url, "claims").as_deref(), Some(MFA_ASK));
+    assert_eq!(query(&url, "prompt").as_deref(), Some("login"));
 }
 
 #[tokio::test]

@@ -158,10 +158,12 @@ impl ExpiryEventType {
     }
 
     /// The email's headline. `passed` is whether the item's expiry time
-    /// has already gone by: a NearExpiry event can arrive after that (#292),
-    /// and the headline must agree with the body.
+    /// has already gone by. The tense comes from that alone, whatever the
+    /// event type, so the headline always agrees with the body (#292): a
+    /// NearExpiry event can arrive after expiry, and an Expired one a
+    /// moment before by Keyring's clock.
     fn heading(self, passed: bool) -> &'static str {
-        match (self.kind(), passed || self.expired()) {
+        match (self.kind(), passed) {
             (ItemKind::Secret, false) => "A secret expires soon",
             (ItemKind::Secret, true) => "A secret has expired",
             (ItemKind::Certificate, false) => "A certificate expires soon",
@@ -1014,13 +1016,22 @@ mod tests {
             assert!(b.contains("A secret has expired"), "{b}");
             assert!(!b.contains("expires soon"), "{b}");
         }
-        // Before EXP it still says soon; an Expired event always says expired.
+        // Before EXP it still says soon.
         let n = ExpiryNotice::new(&e, e.expires - 86_400, "https://k");
         assert_eq!(n.heading, "A secret expires soon");
+        // The tense follows EXP alone, for both event types.
         for t in ExpiryEventType::ALL {
-            let early = t.heading(false);
-            assert_eq!(early.ends_with("has expired"), t.expired(), "{t:?}");
+            assert!(t.heading(false).ends_with("expires soon"), "{t:?}");
             assert!(t.heading(true).ends_with("has expired"), "{t:?}");
         }
+        let expired = ExpiryEvent {
+            event_type: ExpiryEventType::SecretExpired,
+            ..e.clone()
+        };
+        let n = ExpiryNotice::new(&expired, expired.expires - 1, "https://k");
+        assert_eq!(n.heading, "A secret expires soon");
+        assert!(n.line.contains("expires on"), "{}", n.line);
+        let n = ExpiryNotice::new(&expired, expired.expires, "https://k");
+        assert_eq!(n.heading, "A secret has expired");
     }
 }

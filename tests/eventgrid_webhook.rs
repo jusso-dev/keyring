@@ -333,15 +333,22 @@ async fn v1_and_v2_tokens_are_both_taken() {
 async fn each_of_the_six_events_is_emailed_with_no_value() {
     let r = rig().await;
     let token = good_token(&r);
+    // NearExpiry events ahead of EXP, Expired ones after it, as Key Vault
+    // sends them. The headline's tense follows EXP (#292).
     let exp = soon();
+    let past = eg::now() - 10 * 86_400 - 3600;
     let events: Vec<Value> = SIX
         .iter()
-        .map(|(t, o)| eg::event(t, o, "db-password", exp))
+        .map(|(t, o)| {
+            let at = if t.ends_with("Expired") { past } else { exp };
+            eg::event(t, o, "db-password", at)
+        })
         .collect();
     let (s, _) = send(&r, Some(&token), &Value::Array(events), &[]).await;
     assert_eq!(s, StatusCode::OK);
     until("six emails", || r.acs.state.attempts().len() == 6).await;
     let date = keyring::dates::format_date(exp);
+    let past_date = keyring::dates::format_date(past);
     let mut subjects: Vec<String> = Vec::new();
     for a in r.acs.state.attempts() {
         let to = &a.body["recipients"]["to"];
@@ -349,13 +356,13 @@ async fn each_of_the_six_events_is_emailed_with_no_value() {
         let subject = a.body["content"]["subject"].as_str().unwrap().to_owned();
         let text = a.body["content"]["plainText"].as_str().unwrap();
         let html = a.body["content"]["html"].as_str().unwrap();
+        let line = if text.lines().next().unwrap().ends_with("has expired") {
+            format!("db-password in kv-test expired on {past_date} (10 days ago).")
+        } else {
+            format!("db-password in kv-test expires on {date} (in 10 days).")
+        };
         for b in [text, html] {
-            assert!(
-                b.contains(&format!(
-                    "db-password in kv-test expires on {date} (in 10 days)."
-                )),
-                "{b}"
-            );
+            assert!(b.contains(&line), "{b}");
             assert!(b.contains("http://localhost:3000/expiry"), "{b}");
             assert!(b.contains("http://localhost:3000/v/kv-test/"), "{b}");
             assert!(b.contains(eg::VERSION));

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::Deserialize;
 
 use crate::auth::assertion::Credential;
-use crate::auth::entra::{EntraAdvice, classify, describe_code, needs_mfa};
+use crate::auth::entra::{EntraAdvice, classify, mfa_code, needs_mfa};
 use crate::auth::session::{Session, UserTokens};
 use crate::config::Config;
 use crate::http::HttpError;
@@ -256,8 +256,10 @@ fn token_error(failure: &TokenFailure, mfa_asked: bool) -> TokenError {
     let error = crate::auth::oidc::safe_code(&failure.error);
     match classify(&error, &failure.error_codes) {
         EntraAdvice::SignInAgain if mfa_asked && needs_mfa(&failure.error_codes) => {
+            // The number that matched, not just the first one Entra sent.
+            let n = mfa_code(&failure.error_codes).unwrap_or_default();
             TokenError::MfaStillNeeded {
-                code: describe_code(&error, &failure.error_codes),
+                code: format!("{error} (AADSTS{n})"),
             }
         }
         EntraAdvice::SignInAgain => TokenError::SignInAgain,
@@ -326,6 +328,9 @@ impl TokenBroker {
         cache.set_failure(resource, result.as_ref().err());
         let token = result?;
         cache.put(resource, token.clone());
+        // The loop guard covers only the sign-in that asked for MFA. Once
+        // an exchange works, a later MFA refusal is a new one.
+        session.clear_mfa_asked();
         Ok(token)
     }
 
@@ -431,16 +436,13 @@ impl TokenBroker {
         }
         match serde_json::from_slice::<TokenFailure>(&body) {
             Ok(f) => {
-                if let Some(c) = f.claims.as_deref() {
-                    session.set_claims_challenge(c);
-                }
                 let err = token_error(&f, session.mfa_asked());
-                // Entra wants MFA. The next sign-in asks for it, with
-                // Entra's own challenge if it sent one (see
-                // `routes::auth::start`).
-                if err == TokenError::SignInAgain && needs_mfa(&f.error_codes) {
-                    session.set_mfa_needed();
-                }
+                // What the next sign-in asks for, from this refusal alone:
+                // Entra's challenge if it sent one, and MFA if it wants it
+                // (see `routes::auth::start`). Replaces any older record,
+                // so a challenge from another refusal is never reused.
+                let mfa = err == TokenError::SignInAgain && needs_mfa(&f.error_codes);
+                session.set_recovery(f.claims.as_deref(), mfa);
                 // Only codes, and whether a claims challenge came back, are
                 // logged. Never the challenge itself or the description.
                 tracing::warn!(
@@ -544,6 +546,13 @@ mod tests {
         // The same refusal after a sign-in that asked for MFA.
         assert_eq!(
             token_error(&failure("invalid_grant", &[50076]), true),
+            TokenError::MfaStillNeeded {
+                code: "invalid_grant (AADSTS50076)".into()
+            }
+        );
+        // The page names the number that matched, not the first one.
+        assert_eq!(
+            token_error(&failure("invalid_grant", &[70008, 50076]), true),
             TokenError::MfaStillNeeded {
                 code: "invalid_grant (AADSTS50076)".into()
             }

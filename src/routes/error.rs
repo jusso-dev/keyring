@@ -292,7 +292,12 @@ impl Problem {
             .with_hint(format!(
                 "Sign in to the Azure portal (portal.azure.com) once with multi-factor authentication, then come back. If that doesn't help, ask your admin to check the Conditional Access policy for Azure management. Entra ID gave the code {code}."
             ))
-            .with_next(NextStep::Home),
+            // A fixed link home: `returning_to` would turn `Home` into
+            // "Try again" on the page that just failed.
+            .with_next(NextStep::Go {
+                url: "/".into(),
+                label: "Back to home",
+            }),
             TokenError::ConsentNeeded => Self::new(
                 StatusCode::FORBIDDEN,
                 "Your organisation needs to approve Keyring",

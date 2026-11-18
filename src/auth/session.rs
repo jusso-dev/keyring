@@ -192,6 +192,22 @@ pub struct UserTokens {
 }
 
 /// One signed-in session.
+/// What the next sign-in asks Entra for after a refusal (#294).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SignInRecovery {
+    /// Entra's claims challenge from the refusal, a checked JSON object.
+    pub claims: Option<String>,
+    /// The refusal said the sign-in needs MFA
+    /// ([`crate::auth::entra::MFA_CODES`]).
+    pub mfa: bool,
+}
+
+/// A claims challenge Keyring will keep: a JSON object up to 4 KB.
+fn valid_claims(claims: &str) -> bool {
+    claims.len() <= 4096
+        && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(claims).is_ok()
+}
+
 pub struct Session {
     pub user: User,
     /// A keyed hash of the session ID, written on Keyring's audit events so
@@ -206,16 +222,16 @@ pub struct Session {
     /// Vault picked in the header. Lives only as long as the session.
     selected_vault: Mutex<Option<String>>,
     selected_vault_id: Mutex<Option<String>>,
-    /// A conditional access challenge from a failed on-behalf-of exchange,
-    /// sent with the next sign-in so Entra asks for what's missing.
-    claims_challenge: Mutex<Option<String>>,
-    /// An on-behalf-of exchange was refused because the sign-in needs MFA
-    /// (see [`crate::auth::entra::MFA_CODES`]). The next sign-in asks for
-    /// MFA and a fresh sign-in. Only the token broker sets it.
-    mfa_needed: std::sync::atomic::AtomicBool,
-    /// This session came from a sign-in that asked Entra for MFA. Set by the
-    /// sign-in callback from the sealed login cookie, never from the
-    /// request. A second MFA refusal then shows a page instead of looping.
+    /// What the next sign-in must ask Entra for, from the latest refused
+    /// token request (or a PIM refusal). One record, replaced whole, so a
+    /// challenge from one refusal is never sent for another, and
+    /// `/auth/start` reads both parts at once. See [`SignInRecovery`].
+    recovery: Mutex<Option<SignInRecovery>>,
+    /// This session came from a sign-in that asked Entra for MFA, and no
+    /// on-behalf-of exchange has worked since. Set by the sign-in callback
+    /// from the sealed login cookie, never from the request; cleared by the
+    /// first exchange that works. While set, an MFA refusal shows a page
+    /// instead of looping.
     mfa_asked: std::sync::atomic::AtomicBool,
     /// `acrs` and `auth_time` from the verified ID token, for step-up. See
     /// [`crate::auth::step_up`].
@@ -255,29 +271,30 @@ impl Session {
         lock(&self.selected_vault_id).clone()
     }
 
-    /// Remember a claims challenge. Only JSON objects up to 4 KB are kept.
+    /// Replace the sign-in recovery record with what one refusal said:
+    /// Entra's claims challenge, if any, and whether it wants MFA. A
+    /// challenge that isn't a JSON object up to 4 KB counts as none. With
+    /// neither, the record is cleared.
+    pub fn set_recovery(&self, claims: Option<&str>, mfa: bool) {
+        let claims = claims.filter(|c| valid_claims(c)).map(str::to_owned);
+        *lock(&self.recovery) = (claims.is_some() || mfa).then_some(SignInRecovery { claims, mfa });
+    }
+
+    /// The sign-in recovery record, read as one value.
+    pub fn recovery(&self) -> Option<SignInRecovery> {
+        lock(&self.recovery).clone()
+    }
+
+    /// Remember a claims challenge with no MFA ask (PIM's). One that isn't
+    /// a JSON object up to 4 KB is ignored, and the record kept as it was.
     pub fn set_claims_challenge(&self, claims: &str) {
-        let ok = claims.len() <= 4096
-            && serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(claims).is_ok();
-        if ok {
-            *lock(&self.claims_challenge) = Some(claims.to_owned());
+        if valid_claims(claims) {
+            self.set_recovery(Some(claims), false);
         }
     }
 
     pub fn claims_challenge(&self) -> Option<String> {
-        lock(&self.claims_challenge).clone()
-    }
-
-    /// Note that Entra wants MFA before it will exchange this session's
-    /// token. See [`Session::mfa_needed`].
-    pub fn set_mfa_needed(&self) {
-        self.mfa_needed
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// True once an exchange was refused because the sign-in needs MFA.
-    pub fn mfa_needed(&self) -> bool {
-        self.mfa_needed.load(std::sync::atomic::Ordering::Relaxed)
+        self.recovery().and_then(|r| r.claims)
     }
 
     /// Note that this session's sign-in asked Entra for MFA. Called by the
@@ -287,7 +304,15 @@ impl Session {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// True if this session's sign-in already asked Entra for MFA.
+    /// An exchange worked: the MFA sign-in did its job, so a later MFA
+    /// refusal is a new one and gets "Sign in again" with the MFA ask.
+    pub fn clear_mfa_asked(&self) {
+        self.mfa_asked
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// True if this session's sign-in asked Entra for MFA and no exchange
+    /// has worked since.
     pub fn mfa_asked(&self) -> bool {
         self.mfa_asked.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -733,8 +758,7 @@ impl SessionStore {
             azure_tokens: TokenCache::default(),
             selected_vault: Mutex::new(None),
             selected_vault_id: Mutex::new(None),
-            claims_challenge: Mutex::new(None),
-            mfa_needed: std::sync::atomic::AtomicBool::new(false),
+            recovery: Mutex::new(None),
             mfa_asked: std::sync::atomic::AtomicBool::new(false),
             sign_in: Mutex::new(SignInFacts::default()),
             pending_upload: Mutex::new(None),

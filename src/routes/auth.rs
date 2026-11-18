@@ -120,8 +120,10 @@ pub(super) async fn start(
     // set by the token broker, never from the request.
     let current = cookies::get(&headers, &state.cookies.name(SESSION_COOKIE))
         .and_then(|id| state.sessions.get(id));
-    let challenge = current.as_ref().and_then(|s| s.claims_challenge());
-    let mfa_needed = current.as_ref().is_some_and(|s| s.mfa_needed());
+    // One record, read once, so the challenge and the MFA ask always come
+    // from the same refusal.
+    let recovery = current.and_then(|s| s.recovery()).unwrap_or_default();
+    let (challenge, mfa_needed) = (recovery.claims, recovery.mfa);
     let unsaved = q.reason.as_deref() == Some(REASON_UNSAVED);
     // A step-up sign-in before a sensitive action. What it asks for comes
     // from Keyring's settings, never from the request.
