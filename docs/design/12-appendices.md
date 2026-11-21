@@ -65,7 +65,7 @@ From `Action::ALL` and `Refusal::ALL` in `src/audit/mod.rs`. `tests/docs.rs` alr
 ::: compact
 | Area | Actions |
 |---|---|
-| Secrets | `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `secret.import` (one per request and one per secret), `secret.bulk_update` (one per request and one per item), `secret.copy.read` (source), `secret.copy.write` (target) |
+| Secrets | `secret.reveal`, `secret.create`, `secret.set`, `secret.update`, `secret.enabled.set`, `secret.rollback`, `secret.delete`, `secret.recover`, `secret.purge`, `secret.import` (one per request and one per secret), `secret.bulk_update` (one per request and one per item), `secret.copy.read` (source), `secret.copy.write` (target), `secret.multi_env_set` (one per request, plus one `secret.create` or `secret.set` per vault written) |
 | Certificates | `certificate.download_private_key`, `certificate.upload`, `certificate.create`, `certificate.pending.cancel`, `certificate.renewal.set`, `certificate.enabled.set`, `certificate.update`, `certificate.delete`, `certificate.recover`, `certificate.purge`, `certificate.bulk_update` |
 | Keys | `key.create`, `key.rotate`, `key.rotation_policy.set`, `key.enabled.set`, `key.update`, `key.delete`, `key.recover`, `key.purge`, `key.bulk_update` |
 | PIM and access | `role.activate`, `role.deactivate`, `access.request` (a person asked the vault's owners for a role; one per request whatever the outcome) |
@@ -183,7 +183,9 @@ From the templates. `<name>` is the `name` parameter; examples use `keyring`.
 |---|---|---|
 | Sign in, signed out | `/auth/sign-in`, `/auth/signed-out` | No session needed |
 | Home | `/` | Pinned and recently opened |
-| Vaults | `/vaults` | Every vault the person can see |
+| Vaults | `/vaults` | Every vault the person can see, with environment badges |
+| Environments | `/environments`, `/environments.csv` | Cross-environment secret parity matrix, drift notes, missing-secret actions and CSV export (never reads values) |
+| Set across environments | `/environments/set` | Create or update one secret across up to 8 environment vaults with distinct per-environment values and duplicate-value guard |
 | Secrets list, detail, versions | `/v/{vault}/secrets`, `/v/{vault}/secrets/{name}` | Reveal (or Copy only, under a reveal limit), copy, edit, reveal limit, set value, roll back, disable, delete, copy to another vault, Share |
 | Create or import secrets | `/v/{vault}/secrets/-/new`, import from the list | Typed secrets; preview before import |
 | Certificates list and detail | `/v/{vault}/certificates`, `/v/{vault}/certificates/{name}` | Create, upload with preview, renewal, downloads, Edit details |

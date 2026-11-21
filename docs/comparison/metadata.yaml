@@ -1,0 +1,35 @@
+title: "Keyring: Enterprise Comparison and Migration Guide"
+running-title: "Keyring Enterprise Comparison and Migration Guide"
+kicker: "Enterprise Comparison & Migration Guide"
+cover-title: "Keyring"
+cover-name: "Enterprise Comparison and Migration Guide"
+cover-sub: "Moving teams off Delinea Secret Server and standalone vaults onto Azure Key Vault"
+cover-note: "Draft for review. Honest technical comparison; verify licensing and platform terms with each vendor."
+version: "1.0"
+date: "21-11-2026"
+status: "Draft for review"
+lang: en-AU
+toc-title: Contents
+control: |
+  ## Document control
+
+  | Item | Value |
+  |---|---|
+  | Document | Keyring Enterprise Comparison and Migration Guide |
+  | Version | 1.0 |
+  | Date | 21-11-2026 |
+  | Status | Draft for review |
+  | Owner | Keyring maintainer (to be confirmed) |
+  | Audience | CISOs, enterprise architects, security leads, platform owners, procurement and FinOps teams |
+  | Source | `docs/comparison/` in the `jusso-dev/keyring` repository; rebuilt with `tools/docs/build-doc.sh docs/comparison Keyring-Enterprise-Comparison` |
+  | Related | Solution Design Document (`docs/Keyring-Design-Document.pdf`); Security Architecture and Controls (`docs/Keyring-Security.pdf`); Deployment Guide (`docs/Keyring-Deployment-Guide.pdf`); Administrator SOPs (`docs/Keyring-Admin-SOPs.pdf`) |
+
+  ## Version history
+
+  | Version | Date | Author | Change |
+  |---|---|---|---|
+  | 1.0 | 21-11-2026 | Keyring maintainers | First edition: full comparison against Delinea Secret Server, CyberArk, HashiCorp Vault, 1Password/Bitwarden, Infisical/Doppler and the Azure portal; TCO model; Australian ISM/PSPF and Essential Eight alignment; five-phase migration playbook |
+
+  ## Scope and honesty note
+
+  This document compares Keyring (paired with Azure Key Vault, Microsoft Entra ID, Entra PIM, Azure Monitor and Microsoft Sentinel) against commercial and open-source secrets tools. Every Keyring capability named here is built and tested in this repository. Where another tool does something Keyring does not do (such as RDP/SSH session recording, network device password rotation, browser autofill or non-Azure dynamic secrets), this guide states that plainly rather than stretching Keyring's scope.

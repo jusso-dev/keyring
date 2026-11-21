@@ -1,6 +1,6 @@
 # Logical architecture
 
-Keyring is one stateless web app between people's browsers and Azure. Figure 1, on the next page, shows every part and every call. The browser talks only to Keyring; Keyring calls Entra ID and Azure (and, with sharing on, Microsoft Graph) as the person; its managed identity is used only for the federated credential, audit rows and email; and Event Grid is the one caller that arrives without a session.
+Keyring is one stateless web app between people's browsers and Azure. Figure 2, on the next page, shows every internal component and every call. The browser talks only to Keyring; Keyring calls Entra ID and Azure (and, with sharing on, Microsoft Graph) as the person; its managed identity is used only for the federated credential, audit rows and email; and Event Grid is the one caller that arrives without a session.
 
 ::: wide
 ![Logical architecture. The browser talks only to Keyring. Keyring calls Entra ID and Azure as the person, and uses its managed identity only for the federated credential, audit rows and email. Event Grid is the one inbound caller without a session.](../diagrams/drawio/export/01-logical-architecture.png)

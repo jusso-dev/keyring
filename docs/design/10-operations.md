@@ -32,6 +32,109 @@ Without a workspace, App Service's file log is the only record of who revealed w
 - **Access alerts** (`infra/alerts/access.bicep`): watched secret reads, purges and repeated refusals, as Azure Monitor log search rules on the vault's workspace. Logs arrive 5 to 15 minutes late.
 - **Sentinel** (`infra/sentinel`): the ASIM parser `vimAuditEventKeyring`, analytic rules (many reveals by one person, reveal from a new address, one person denied in several vaults, sensitive action outside working hours, forged or cross-site requests, no audit events while Key Vault saw Keyring, SecretGet with no audit event, and a share to a guest or more than `shareThreshold` shares by one person), hunting queries for each audit report and a workbook. Every rule is created off and turned on by its own parameter. Rows can arrive late; each rule looks back `ingestionDelayMinutes` further than it runs.
 
+## SOC logging, correlation and detection guidance
+
+To give a Security Operations Centre (SOC) high-value, low-noise telemetry without risking credential exposure, deploy Keyring with structured JSON stdout (`KEYRING_LOG_FORMAT=json`), the Azure Monitor Logs Ingestion audit sink (`KeyringAudit_CL`), fail-closed reveal gating (`KEYRING_AUDIT_REQUIRED=true`), and Microsoft Sentinel (`infra/sentinel/main.bicep`).
+
+::: wide
+![SOC logging, correlation and Sentinel telemetry pipeline. Four correlated telemetry streams converge in Log Analytics and Microsoft Sentinel with strict TRACE-tested redaction and three deterministic join keys (KvRequestId, ActorObjectId and SessionRef).](../diagrams/drawio/export/07-soc-logging-telemetry.png)
+:::
+
+### Recommended SOC logging configuration
+
+| Setting | Production value | Why the SOC needs it |
+|---|---|---|
+| `KEYRING_LOG_FORMAT` | `json` | Machine-parseable JSON Lines on stdout for fallback forensics if the DCR is unreachable |
+| `KEYRING_LOG_LEVEL` | `info` | Captures every request summary and every audit event without noisy debug chatter; audit events still write at every level |
+| `KEYRING_TRUSTED_PROXY_HOPS` | Exact proxy hop count (for example `1` behind Front Door / Application Gateway) | Preserves the true browser `ClientIp` in `KeyringAudit_CL` so `reveal-new-ip` and `app-attack` detections fire accurately |
+| `KEYRING_AUDIT_INGESTION_ENDPOINT`, `KEYRING_AUDIT_DCR_ID`, `KEYRING_AUDIT_STREAM` | Configured via `infra/modules/audit-sink.bicep` | Streams all 47 audit actions directly into typed `KeyringAudit_CL` columns via Managed Identity |
+| `KEYRING_AUDIT_REQUIRED` | `true` | Fails closed on secret reveals, copies, shares and private key downloads if the audit sink is degraded for more than 60 seconds |
+| `KEYRING_REQUIRE_REASON` | `reveal` (or `all` for strict change control) | Records free-text justification (`Reason`) and validated ticket (`Ticket`) on every sensitive audit row |
+| `KEYRING_REASON_TICKET_PATTERN` | Organisation regex (for example `^(CHG\|INC)[0-9]{6,8}$`) | Enables automated Sentinel correlation against ITSM change/incident records |
+| `KEYRING_NOTIFY_AUDIT_RECIPIENTS` | `false` (default) unless SOC explicitly requires recipient emails | Keeps personal email addresses out of audit logs unless required by policy |
+
+### Four telemetry streams and retention tiers
+
+| Stream | Azure table | What it adds for the SOC | Recommended retention |
+|---|---|---|---|
+| **A. Keyring Audit Events** | `KeyringAudit_CL` | Browser `ClientIp`, `UserAgent`, `SessionRef`, `Reason`, `Ticket`, pre-Azure refusals (`csrf`, `step_up_required`, `password_policy`, `reveal_limit`, `duplicate_value`), `secret.multi_env_set` and per-vault outcomes | 180–365 days interactive (Analytics tier), 2–7 years archive |
+| **B. Key Vault Audit Logs** | `AZKVAuditLogs` (preferred) or `AzureDiagnostics` | Ground-truth data-plane log covering Keyring, Azure Portal, CLI, SDKs and workload identities to detect Keyring bypass | 180-365 days interactive, 2-7 years archive |
+| **C. Entra ID Sign-In & PIM Logs** | `SigninLogs`, `AuditLogs` | MFA method, Conditional Access `acrs` step-up grant/deny, device compliance, risk level and PIM elevation approval chain | 90–180 days interactive |
+| **D. Keyring Runtime & Health** | `ContainerAppConsoleLogs` / `AppServiceConsoleLogs` + `/healthz/audit` | HTTP request timings/status codes (no query strings), fallback JSON audit lines, sink queue drops and 503 health probe alerts | 30–90 days interactive |
+
+### Three deterministic SOC join keys
+
+1. **End-to-end call correlation (`KvRequestId == CorrelationId`)**: Joins Keyring's browser context (`ClientIp`, `UserAgent`, `Reason`, `Ticket`, `SessionRef`) to Azure Key Vault's `AZKVAuditLogs` row for the exact REST call.
+2. **Identity and Conditional Access posture (`ActorObjectId == UserId`)**: Joins `KeyringAudit_CL` to Entra `SigninLogs` and `AuditLogs` to verify whether MFA, step-up authentication context, or PIM elevation preceded a sensitive action.
+3. **Cookie-free session reconstruction (`SessionRef`)**: Reconstructs an entire user session across vaults and environments using an HMAC-SHA256 digest derived from `SESSION_SECRET`, without ever logging a session cookie.
+
+### High-value SOC detection and triage matrix
+
+| Detection / Signal | Source rule or query | MITRE ATT&CK | Recommended SOC triage |
+|---|---|---|---|
+| High-volume secret reveals (`>= 20` in 60 min) | `infra/sentinel/rules/many-reveals.kql` | T1555 (Credentials from Password Stores) | Pivot on `SessionRef`, verify `Ticket` and `SigninLogs` device/IP; revoke Entra refresh tokens if unauthorised |
+| Reveal from a previously unseen IP | `infra/sentinel/rules/reveal-new-ip.kql` | T1078 (Valid Accounts) | Compare `ClientIp` geolocation/ASN with `SigninLogs`; check for token or cookie theft |
+| Denied probing across 3+ vaults | `infra/sentinel/rules/denied-probing.kql` | T1087 / T1069 (Account & Permission Discovery) | Check whether a compromised account is enumerating vaults outside its normal workload group |
+| Off-hours purge, private key download or bulk change | `infra/sentinel/rules/off-hours.kql` | T1485 (Data Destruction) | Confirm approved emergency `Ticket` in `KeyringAudit_CL`; validate vault purge protection |
+| Forged CSRF or cross-site POST burst | `infra/sentinel/rules/app-attack.kql` | T1190 (Exploit Public-Facing Application) | Inspect `ClientIp` and `UserAgent`; block source at WAF / Front Door if external |
+| Secret shared with guest or share burst | `infra/sentinel/rules/shares.kql` | T1098 (Account Manipulation) | Confirm business need with vault owners; revoke share in Keyring or Entra RBAC if unapproved |
+| Audit sink gap while Key Vault sees Keyring | `infra/sentinel/rules/audit-gap.kql` | T1562 (Impair Defenses) | Check `/healthz/audit`, Managed Identity `Monitoring Metrics Publisher` role and DCR endpoint reachability |
+| Key Vault `SecretGet` from Keyring with no `KeyringAudit_CL` row | `infra/sentinel/rules/unmatched-secret-get.kql` | T1555 / T1562 | Investigate possible audit sink bypass or misconfigured `keyringOutboundIps` after confirming `CorrelationId` join on tenant |
+| Multi-environment partial write or production change | Custom KQL on `Action == "secret.multi_env_set"` | T1098 / Change Governance | Verify `Ticket`, check which vaults succeeded vs `denied` (`partly_written`), and confirm no unintended production overwrite |
+
+### Ready-to-run SOC hunting queries
+
+**Reconstruct a suspicious session across all vaults and environments:**
+
+```kusto
+KeyringAudit_CL
+| where TimeGenerated > ago(24h) and SessionRef == "<session-ref>"
+| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName,
+          ClientIp, Reason, Ticket, KvRequestId
+| order by TimeGenerated asc
+```
+
+**Audit multi-environment secret writes and partial RBAC failures:**
+
+```kusto
+let MultiRequests =
+    KeyringAudit_CL
+    | where TimeGenerated > ago(7d) and Action == "secret.multi_env_set"
+    | project RequestTime=TimeGenerated, ActorUpn, SessionRef, ItemName,
+              RequestOutcome=Outcome, RequestReasonCode=ReasonCode, Ticket;
+KeyringAudit_CL
+| where TimeGenerated > ago(7d) and Action in ("secret.create", "secret.set")
+| join kind=inner MultiRequests on ActorUpn, SessionRef, ItemName
+| where TimeGenerated between ((RequestTime - 2m) .. (RequestTime + 2m))
+| project TimeGenerated, ActorUpn, SessionRef, ItemName, Vault, Action,
+          VaultOutcome=Outcome, VaultReasonCode=ReasonCode, RequestOutcome, Ticket, KvRequestId
+| order by TimeGenerated desc
+```
+
+**Correlate Keyring reveals with the preceding Entra ID sign-in risk and MFA posture:**
+
+```kusto
+KeyringAudit_CL
+| where TimeGenerated > ago(24h) and Action in ("secret.reveal", "certificate.download_private_key")
+| project RevealTime=TimeGenerated, ActorObjectId, ActorUpn, Vault, ItemName,
+          ClientIp, Reason, Ticket, KvRequestId
+| join kind=leftouter (
+    SigninLogs
+    | where TimeGenerated > ago(36h)
+    | project SignInTime=TimeGenerated, UserId, SignInIp=IPAddress,
+              ConditionalAccessStatus, RiskLevelAggregated, AuthenticationRequirement
+) on $left.ActorObjectId == $right.UserId
+| where isnull(SignInTime) or SignInTime <= RevealTime
+| summarize arg_max(SignInTime, SignInIp, ConditionalAccessStatus,
+                    RiskLevelAggregated, AuthenticationRequirement)
+  by RevealTime, ActorObjectId, ActorUpn, Vault, ItemName, ClientIp, Reason, Ticket, KvRequestId
+| order by RevealTime desc
+```
+
+### Hard redaction guarantee for SOC reviewers
+
+Keyring is tested on every pull request at `TRACE` log level in both text and JSON formats (`tests/no_secrets_in_logs.rs`) to prove that secret values, typed secret fields, PFX passwords, Entra OBO/refresh/MI tokens, session cookies, CSRF tokens, URL query strings, secret descriptions, owner/notify email addresses (unless `KEYRING_NOTIFY_AUDIT_RECIPIENTS=true`), and raw Azure error text **never** enter stdout, `KeyringAudit_CL`, or outbound ACS emails. SOC teams can ingest 100% of `KeyringAudit_CL` into a shared security workspace without creating a secondary secret store.
+
 ## Notification health
 
 With `health` in `KEYRING_NOTIFY_TYPES`, Keyring emails `KEYRING_NOTIFY_ADMINS` (and nobody else) when:

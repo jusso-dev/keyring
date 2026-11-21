@@ -53,7 +53,10 @@ const NOT_CARRIED: [&str; 3] = ["csrf", "reason", "ticket"];
 /// sent back to the form instead. Decided by action, not field name, so a
 /// new field can't slip through.
 fn holds_secret_material(action: Action) -> bool {
-    matches!(action, Action::SecretCreate | Action::SecretSet)
+    matches!(
+        action,
+        Action::SecretCreate | Action::SecretSet | Action::SecretMultiEnvSet
+    )
 }
 
 #[derive(Template)]
@@ -139,9 +142,11 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
 
     // The checks that come first. If any would refuse, let the handler
     // do it, with its own page and reason code.
-    let csrf_ok = session
-        .0
-        .csrf_matches_vault(field("csrf").unwrap_or_default(), &target.vault);
+    let csrf_val = field("csrf").unwrap_or_default();
+    let csrf_ok = match &target.vault {
+        Some(v) => session.0.csrf_matches_vault(csrf_val, v),
+        None => session.0.csrf_matches_any(csrf_val),
+    };
     let step_up_ok = !crate::routes::step_up::guards(action)
         || config
             .step_up
@@ -153,24 +158,25 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
     // properties only, never a value.
     if csrf_ok
         && crate::reason::is_reveal(action)
-        && let (Some(state), Some(name)) = (
+        && let (Some(state), Some(vault), Some(name)) = (
             parts.extensions.get::<crate::AppState>().cloned(),
+            target.vault.as_deref(),
             target.name.clone(),
         )
     {
         let shell = Shell::from_request_parts(&mut parts, &())
             .await
             .unwrap_or_default()
-            .for_vault(&target.vault, &session)
+            .for_vault(vault, &session)
             .at(target.section);
-        crate::audit::note_vault(&target.vault);
+        crate::audit::note_vault(vault);
         crate::audit::note_item(&name);
         if let Some(res) = crate::routes::reveal_limit::refuse_early(
             &state,
             &session,
             shell,
             action,
-            &target.vault,
+            vault,
             &name,
             field("version").unwrap_or_default(),
         )
@@ -188,15 +194,19 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
             Ok(given) => crate::audit::note_reason(&given),
             Err(problems) => {
                 crate::audit::refuse(Refusal::ReasonRequired);
-                crate::audit::note_vault(&target.vault);
+                if let Some(v) = &target.vault {
+                    crate::audit::note_vault(v);
+                }
                 if let Some(name) = &target.name {
                     crate::audit::note_item(name);
                 }
-                let shell = Shell::from_request_parts(&mut parts, &())
+                let base_shell = Shell::from_request_parts(&mut parts, &())
                     .await
-                    .unwrap_or_default()
-                    .for_vault(&target.vault, &session)
-                    .at(target.section);
+                    .unwrap_or_default();
+                let shell = match &target.vault {
+                    Some(v) => base_shell.for_vault(v, &session).at(target.section),
+                    None => base_shell.at(target.section),
+                };
                 return ask(
                     shell,
                     action,
@@ -340,7 +350,7 @@ fn words(action: Action) -> (&'static str, &'static str, &'static str) {
 /// The vault and item a request acts on, from the route's decoded
 /// parameters and the action.
 struct Target {
-    vault: String,
+    vault: Option<String>,
     /// `secrets`, `certificates` or `keys`.
     kind: &'static str,
     section: Section,
@@ -350,12 +360,22 @@ struct Target {
 }
 
 impl Target {
-    /// `None` when there is no `vault` parameter, it isn't a vault name,
-    /// or the action isn't on a secret, certificate or key. The gate
+    /// `None` when there is no `vault` parameter (except for cross-vault
+    /// actions such as [`Action::SecretMultiEnvSet`]), the vault isn't a vault
+    /// name, or the action isn't on a secret, certificate or key. The gate
     /// refuses those. A missing or malformed item name is not a reason to
     /// refuse: routes such as `/-/new` have none, and the handler rejects
     /// a bad one after the reason check.
     fn from_route(action: Action, params: &RawPathParams) -> Option<Self> {
+        if action == Action::SecretMultiEnvSet {
+            return Some(Self {
+                vault: None,
+                kind: "secrets",
+                section: Section::Environments,
+                name: None,
+                deleted: false,
+            });
+        }
         let param = |k: &str| params.iter().find(|(n, _)| *n == k).map(|(_, v)| v);
         Self::from_parts(action, param("vault")?, param("name"))
     }
@@ -372,7 +392,7 @@ impl Target {
         };
         let verb = action.as_str();
         Some(Self {
-            vault: vault.to_owned(),
+            vault: Some(vault.to_owned()),
             kind,
             section,
             name: name.filter(|n| is_valid_object_name(n)).map(str::to_owned),
@@ -380,9 +400,12 @@ impl Target {
         })
     }
 
-    /// Where "Cancel" goes: the item's page, or the list.
+    /// Where "Cancel" goes: the item's page, the list, or Environments.
     fn cancel_url(&self) -> String {
-        let base = format!("/v/{}/{}", self.vault, self.kind);
+        let Some(vault) = &self.vault else {
+            return "/environments".to_owned();
+        };
+        let base = format!("/v/{vault}/{}", self.kind);
         match (&self.name, self.deleted) {
             (Some(n), true) => format!("{base}/-/deleted/{n}"),
             (Some(n), false) => format!("{base}/{n}"),
@@ -399,8 +422,8 @@ mod tests {
     fn targets_come_from_the_route() {
         let t = Target::from_parts(Action::SecretReveal, "kv-test", Some("db")).unwrap();
         assert_eq!(
-            (t.vault.as_str(), t.kind, t.name.as_deref()),
-            ("kv-test", "secrets", Some("db"))
+            (t.vault.as_deref(), t.kind, t.name.as_deref()),
+            (Some("kv-test"), "secrets", Some("db"))
         );
         assert_eq!(t.cancel_url(), "/v/kv-test/secrets/db");
         let t = Target::from_parts(Action::KeyPurge, "kv-test", Some("old")).unwrap();

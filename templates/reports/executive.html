@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Executive reports - Keyring{% endblock %}
+{% block content %}
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/", "Home") }}{{ ui::crumb_here("Executive reports") }}</ol></nav>
+<div class="title-row"><h1>Executive reports</h1><span class="badge">White-label &amp; continuous</span></div>
+<p class="page-desc">Generate repeatable, white-labelled client security reports from live Azure Key Vault metadata. Only settings, counts and dates are read, never secret values.</p>
+{% call ui::about() %}
+<p>Every report option lives in the page URL, so you can bookmark or script the exact same client report every month or quarter with zero stored state. Tick <strong>White-label report (hide Keyring branding)</strong> to produce a client-branded pack ready to hand directly to executives or print to PDF.</p>
+{% endcall %}
+</div>
+
+<div class="commandbar">
+  <a class="button" href="{{ html_export_url }}">Download executive HTML / PDF pack</a>
+  <span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_export_url }}">Download executive CSV</a></span>
+  <span class="cmd-item">{{ ui::icon("download") }}<a class="button cmd" href="{{ json_export_url }}">Download JSON snapshot</a></span>
+</div>
+
+<div class="report-layout">
+  <section aria-labelledby="builder-heading" class="card">
+    <h2 id="builder-heading">White-label report settings</h2>
+    <form method="get" action="/reports/executive" class="stacked">
+      <input type="hidden" name="submitted" value="1">
+
+      <label for="client">Client or organisation name <span class="muted">(optional)</span></label>
+      <p class="field-help" id="client-help">Shown on the report cover and used for the downloaded filename, such as Contoso Financial Services.</p>
+      <input id="client" name="client" type="text" maxlength="100" value="{{ opts.client_name }}" aria-describedby="client-help"{% call ui::ident() %}{% endcall %}>
+
+      <label for="title">Report title</label>
+      <p class="field-help" id="title-help">Cover heading for the executive summary pack.</p>
+      <input id="title" name="title" type="text" maxlength="120" value="{{ opts.report_title }}" aria-describedby="title-help"{% call ui::ident() %}{% endcall %}>
+
+      <label for="prepared_by">Prepared by / white-label brand <span class="muted">(optional)</span></label>
+      <p class="field-help" id="prepared_by-help">Your consultancy, MSP or internal security team name shown in the cover header and footer.</p>
+      <input id="prepared_by" name="prepared_by" type="text" maxlength="100" value="{{ opts.prepared_by }}" aria-describedby="prepared_by-help"{% call ui::ident() %}{% endcall %}>
+
+      <label for="period">Reporting period</label>
+      <p class="field-help" id="period-help">Month, quarter or cadence label, such as Nov 2026 or Q4 2026.</p>
+      <input id="period" name="period" type="text" maxlength="60" value="{{ opts.period }}" aria-describedby="period-help"{% call ui::ident() %}{% endcall %}>
+
+      <label for="theme">Brand colour theme</label>
+      <p class="field-help" id="theme-help">Accent palette used for the report cover and charts.</p>
+      <select id="theme" name="theme" aria-describedby="theme-help">
+        {% for t in themes %}
+        <option value="{{ t.slug() }}"{% if self.is_theme(t) %} selected{% endif %}>{{ t.label() }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="scope">Vault scope</label>
+      <p class="field-help" id="scope-help">Filter the report to all visible vaults, production vaults only or non-production vaults only.</p>
+      <select id="scope" name="scope" aria-describedby="scope-help">
+        {% for sc in scopes %}
+        <option value="{{ sc.slug() }}"{% if self.is_scope(sc) %} selected{% endif %}>{{ sc.label() }}</option>
+        {% endfor %}
+      </select>
+
+      <fieldset>
+        <legend>Branding &amp; included sections</legend>
+        <div class="checkbox">
+          <input id="white_label" name="white_label" type="checkbox" value="1"{% if opts.white_label %} checked{% endif %}>
+          <label for="white_label">White-label report (hide Keyring branding)</label>
+        </div>
+        <div class="checkbox">
+          <input id="charts" name="charts" type="checkbox" value="1"{% if opts.include_charts %} checked{% endif %}>
+          <label for="charts">Include security posture, lifecycle and expiry horizon charts</label>
+        </div>
+        <div class="checkbox">
+          <input id="actions" name="actions" type="checkbox" value="1"{% if opts.include_actions %} checked{% endif %}>
+          <label for="actions">Include prioritised executive remediation actions</label>
+        </div>
+        <div class="checkbox">
+          <input id="vaults" name="vaults" type="checkbox" value="1"{% if opts.include_vaults %} checked{% endif %}>
+          <label for="vaults">Include per-vault compliance and risk register</label>
+        </div>
+        <div class="checkbox">
+          <input id="envs" name="envs" type="checkbox" value="1"{% if opts.include_environments %} checked{% endif %}>
+          <label for="envs">Include multi-environment workload breakdown</label>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit">Update preview</button>
+        <a class="button button-secondary" href="{{ html_export_url }}">Download HTML / PDF pack</a>
+      </div>
+    </form>
+
+    <div class="continuous-box">
+      <h3>Continuous reporting URL</h3>
+      <p class="field-help" id="continuous-help">Bookmark this link to regenerate the exact same branded report each month or quarter against live Azure data.</p>
+      <label for="continuous-url" class="visually-hidden">Continuous reporting URL</label>
+      <input id="continuous-url" class="mono" type="text" readonly value="{{ continuous_url }}" aria-describedby="continuous-help"{% call ui::ident() %}{% endcall %}>
+    </div>
+  </section>
+
+  <section aria-labelledby="preview-heading" class="card report-preview-card">
+    <h2 id="preview-heading">Live executive preview</h2>
+    <div class="report-cover report-theme-{{ opts.theme.slug() }}">
+      <div class="report-cover-kicker">{{ opts.display_issuer() }} · {{ opts.period }}</div>
+      <div class="report-cover-title">{{ opts.report_title }}</div>
+      <div class="report-cover-client">{{ opts.display_client() }}</div>
+      <div class="report-cover-meta">Scope: {{ opts.scope.label() }} · Generated {{ generated_utc }} · Metadata only (zero secret values)</div>
+    </div>
+
+    <div class="kpi-grid kpi-grid-compact">
+      <div class="kpi-card kpi-accent">
+        <span class="kpi-label">Posture score</span>
+        <div class="kpi-value-row">
+          <span class="kpi-value">{{ snap.posture_score }}%</span>
+          <span class="badge {{ snap.posture_badge }}">{{ snap.posture_label }}</span>
+        </div>
+        <div class="kpi-sub">Across 8 security controls</div>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Vaults monitored</span>
+        <div class="kpi-value">{{ snap.total_vaults }}</div>
+        <div class="kpi-sub">{{ snap.prod_vaults }} prod · {{ snap.non_prod_vaults }} non-prod · {{ snap.subscriptions }} sub(s)</div>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Managed credentials</span>
+        <div class="kpi-value">{{ snap.total_items }}</div>
+        <div class="kpi-sub">{{ snap.secrets_count }} secrets · {{ snap.certs_count }} certs · {{ snap.keys_count }} keys</div>
+      </div>
+      <div class="kpi-card {% if snap.expired + snap.expiring_30 > 0 %}kpi-danger{% else %}kpi-ok{% endif %}">
+        <span class="kpi-label">Expired / &lt;= 30d</span>
+        <div class="kpi-value">{{ snap.expired + snap.expiring_30 }}</div>
+        <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.stale }} stale · {{ snap.no_expiry }} no expiry</div>
+      </div>
+    </div>
+
+    {% if opts.include_charts %}
+    <h3>Control compliance snapshot</h3>
+    <ul class="hbar-list">
+      {% for c in snap.controls %}
+      <li>
+        <div class="hbar-meta">
+          <span>{{ c.label }}</span>
+          <span class="mono">{{ c.passed }}/{{ c.total }} ({{ c.pct }}%)</span>
+        </div>
+        <svg class="hbar-svg" viewBox="0 0 220 8" width="220" height="8" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <rect class="bar-track" x="0" y="0" width="220" height="8" rx="4"/>
+          <rect class="{{ c.css_class }}" x="0" y="0" width="{{ c.bar_width }}" height="8" rx="4"/>
+        </svg>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if opts.include_actions && !snap.actions.is_empty() %}
+    <h3>Prioritised remediation actions</h3>
+    <ul class="action-list">
+      {% for act in snap.actions %}
+      <li>
+        <span class="badge {{ act.badge_class }}">{{ act.priority }}</span>
+        <strong>{{ act.title }}</strong>
+        <p class="small muted">{{ act.detail }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if opts.include_vaults && !snap.vault_rows.is_empty() %}
+    <h3>Vault compliance register</h3>
+    {% call ui::table_wrap("preview-vaults-caption") %}
+    <table class="one-line">
+      <caption class="visually-hidden" id="preview-vaults-caption">Vault compliance register preview</caption>
+      <thead>
+        <tr>
+          <th scope="col">Vault</th>
+          <th scope="col">Env</th>
+          <th scope="col">Risk</th>
+          <th scope="col">Items</th>
+          <th scope="col">Gaps</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in snap.vault_rows %}
+        <tr>
+          <th scope="row" class="item-name">{{ v.name }}</th>
+          <td><span class="badge {% if v.is_prod %}badge-warn{% else %}badge-muted{% endif %}">{{ v.env_label }}</span></td>
+          <td><span class="badge {{ v.risk_badge }}">{{ v.risk_label }}</span></td>
+          <td>{{ v.total_items }}</td>
+          <td class="cell-wrap">{{ v.issues_summary }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endcall %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

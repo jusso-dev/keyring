@@ -74,3 +74,4 @@ Each walkthrough names the Keyring audit actions its steps write, such as `secre
 | 14 | Access review report |
 | 15 | For auditors |
 | 16 | Share a secret |
+| 17 | Collaborate across environments |

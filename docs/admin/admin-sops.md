@@ -17,8 +17,8 @@ Settings and template parameters are described once, in the README (Configuratio
 
 | Item | Value |
 | --- | --- |
-| Version | 0.1 |
-| Date | 18-11-2026 |
+| Version | 1.2 |
+| Date | 21-11-2026 |
 | Owner | Keyring maintainer |
 | Review | After any release that changes deployment, settings or email |
 | Status | Draft |
@@ -40,6 +40,7 @@ Settings and template parameters are described once, in the README (Configuratio
 13. [Remove Keyring](#13-remove-keyring)
 14. [Run the real-tenant checklist](#14-run-the-real-tenant-checklist)
 15. [Turn on sharing](#15-turn-on-sharing)
+16. [Organise vaults into environment groups](#16-organise-vaults-into-environment-groups)
 
 ---
 
@@ -645,3 +646,48 @@ Set an availability test or alert on `/healthz/audit` and `/healthz/notify` so a
 - As someone with only Key Vault Secrets Officer, a share is refused naming the roles that can share.
 
 Not yet confirmed on a real tenant: every sharing step, including the PIM end date, the plain fallback, revoke, the Graph search with and without consent, and the guest alert. See the "Sharing a secret" section of [real-vault-checklist.md](../real-vault-checklist.md).
+
+---
+
+## 16. Organise vaults into environment groups
+
+**Purpose.** Tag each workload's Key Vaults (`dev`, `test`, `staging`, `prod`) so Keyring's **Environments** matrix and **Across environments** panel group them automatically in promotion order.
+
+**When to run.** When onboarding a workload with multiple environments, or migrating folders from Delinea Secret Server onto per-environment Key Vaults.
+
+**Who.** The vault or resource group owner (Contributor or Tag Contributor on each vault).
+
+**Before you start.**
+
+- The list of Key Vault resource IDs for one workload (for example `kv-payments-dev`, `kv-payments-test`, `kv-payments-prod`).
+- The agreed workload name (e.g. `payments`) and environment names (`dev`, `test`, `uat`, `staging`, `preprod`, `prod`, `dr`).
+- Separate Entra ID security groups per environment so non-production officers do not hold standing write access in production.
+
+**Steps.**
+
+1. Tag each vault with its workload group and environment label:
+
+   ```sh
+   for pair in "kv-payments-dev:dev" "kv-payments-test:test" "kv-payments-prod:prod"; do
+     vault="${pair%%:*}"
+     env="${pair##*:}"
+     VAULT_ID=$(az keyvault show -n "$vault" --query id -o tsv)
+     az tag update --resource-id "$VAULT_ID" --operation merge \
+       --tags app=payments env="$env"
+   done
+   ```
+
+   Keyring also recognises `keyring-group`, `application`, `service`, `workload` and `system` for the group, and `keyring-env`, `environment` and `stage` for the environment. Vaults following `<prefix>-<env>` naming are grouped automatically even before tags are added.
+
+2. Verify least-privilege RBAC across the environments:
+   - Grant the engineering team **Key Vault Reader** (names and properties only) across `dev`, `test` and `prod` so they can spot missing or drifting secrets in **Environments** without viewing production values.
+   - Grant **Key Vault Secrets Officer** directly on `dev` and `test`, and as a **PIM eligible** role (with approval) on `prod`.
+
+3. Ask the workload owner to review parity in Keyring's **Environments** page (`/environments`) and archive a baseline **Download CSV** parity report.
+
+**Verification.**
+
+- **Vaults** shows the **Environment** badge on each vault (`prod` highlighted).
+- **Environments** displays the workload tab with vaults ordered `dev` -> `test` -> `prod`.
+- Opening any secret in `kv-payments-dev` shows the **Across environments** panel with `kv-payments-test` and `kv-payments-prod`.
+- A developer without `prod` Secrets Officer who uses **Set across environments** sees `dev` and `test` succeed and `prod` cleanly reported as **Refused** with a link to **My access**.

@@ -116,6 +116,58 @@ pub(super) async fn read(
     .await
 }
 
+/// Read only each vault's secret list (or reuse the full cached list when
+/// fresh), so an unrelated certificate or key RBAC denial never hides a
+/// vault's secrets on the Environments comparison matrix.
+pub(super) async fn read_secrets(
+    state: &AppState,
+    session: &CurrentSession,
+    wanted: Vec<String>,
+) -> Fanned<Arc<Vec<Item>>> {
+    let limits = state.fanout;
+    fanout::read_each_within(
+        wanted,
+        |vault| {
+            let azure = state.azure.clone();
+            let sess = session.0.clone();
+            let url = state.config.vault_url(&vault);
+            async move {
+                if let Some(items) = sess.cached_list(&vault) {
+                    return (items, None);
+                }
+                let secrets = SecretsApi {
+                    azure: &azure,
+                    session: &sess,
+                    vault_url: url,
+                };
+                match secrets.list().await {
+                    Ok(list) => {
+                        let items = list
+                            .iter()
+                            .map(|x| Item {
+                                vault: vault.clone(),
+                                kind: ItemType::Secret,
+                                name: x.name().to_owned(),
+                                enabled: x.attributes.is_enabled(),
+                                expires: x.attributes.expires,
+                                not_before: x.attributes.not_before,
+                                created: x.attributes.created,
+                                content_type: x.content_type.clone().unwrap_or_default(),
+                                managed: x.managed.unwrap_or(false),
+                                tags: tag_vec(x.tags()),
+                            })
+                            .collect();
+                        (Arc::new(items), None)
+                    }
+                    Err(e) => (Arc::new(Vec::new()), Some(reason(&e))),
+                }
+            }
+        },
+        limits,
+    )
+    .await
+}
+
 /// "You don't have..." becomes "you don't have...", leaving names like
 /// "Key Vault" and "Azure" alone.
 fn lower_first(s: &str) -> String {

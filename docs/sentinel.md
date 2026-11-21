@@ -8,6 +8,19 @@ Three things are easy to mix up:
 - **`KeyringAudit_CL`**: the same events, sent by the audit sink to a Log Analytics table. This page is about this table. See [deploy.md](deploy.md#audit-sink) to turn it on.
 - **Key Vault's audit log** (`AzureDiagnostics` or `AZKVAuditLogs`): every call Key Vault receives, from Keyring or anything else. Two rules compare with it.
 
+![Keyring SOC logging, correlation and Sentinel telemetry pipeline.](diagrams/drawio/export/07-soc-logging-telemetry.png)
+
+## SOC onboarding checklist
+
+Before enabling Sentinel rules in production, confirm these six baseline settings so the SOC receives high-value, low-noise events:
+
+1. **Structured logs & sink on**: set `KEYRING_LOG_FORMAT=json` and configure `KEYRING_AUDIT_INGESTION_ENDPOINT`, `KEYRING_AUDIT_DCR_ID` and `KEYRING_AUDIT_STREAM` (`infra/modules/audit-sink.bicep`).
+2. **Fail-closed reveals**: set `KEYRING_AUDIT_REQUIRED=true` so reveals, copies, shares and private key downloads pause if the audit sink degrades for more than 60 seconds.
+3. **True client IPs**: set `KEYRING_TRUSTED_PROXY_HOPS` to match your reverse proxy / Front Door / Application Gateway hop count so `reveal-new-ip` and `app-attack` see real browser IPs.
+4. **Reason & ticket enrichment**: set `KEYRING_REQUIRE_REASON=reveal` (or `all`) and `KEYRING_REASON_TICKET_PATTERN` so every sensitive audit row carries change/incident context.
+5. **Diagnostic settings on every vault**: verify all production Key Vaults send `AuditEvent` to Log Analytics (`AZKVAuditLogs` preferred) using Keyring's **Vault health** view.
+6. **Health probe monitoring**: point an Azure Monitor availability test at `/healthz/audit` and `/healthz/notify` (both return HTTP 503 when degraded) and enable `health` in `KEYRING_NOTIFY_TYPES`.
+
 ## What is in the table
 
 One row per event. The columns are `COLUMNS` in `src/audit/sink.rs`, listed with what each holds in [deploy.md](deploy.md#audit-event-fields):

@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Keyring{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ crate::routes::assets::url("logo.svg") }}">
   <link rel="stylesheet" href="{{ crate::routes::assets::url("style.css") }}">
   <script src="{{ crate::routes::assets::url("behaviors.js") }}" defer></script>
   <script src="{{ crate::routes::assets::url("app.js") }}" defer></script>
@@ -15,7 +16,7 @@
 <body data-idle-seconds="{{ shell.idle_seconds() }}">
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="/"><svg class="brand-mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="6.5" cy="10" r="4.25" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.75 10H18M14.5 10v3M17 10v2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Keyring</a>
+    <a class="brand" href="/">{{ icons::brand_logo(30, "hdr") }}<span>Keyring</span></a>
     {% if let Some(user) = shell.user %}
     <div class="vault-picker">{{ icons::icon("vaults", "icon") }}
       {% if let Some(vault) = shell.vault %}
@@ -56,6 +57,7 @@
         <p class="nav-label" id="nav-across">Across vaults</p>
         <ul aria-labelledby="nav-across">
           {{ icons::nav_item(sec, "vaults") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Environments, "environments") }}
           {{ icons::nav_item(crate::routes::shell::Section::Expiry, "expiry") }}
           {{ icons::nav_item(crate::routes::shell::Section::Health, "health") }}
           <li>{{ icons::icon("search", "nav-icon") }}<a href="/search"{% block search_current %}{% endblock %}>Search</a></li>
@@ -67,6 +69,7 @@
           {{ icons::nav_item(crate::routes::shell::Section::Audit, "audit") }}
           {{ icons::nav_item(crate::routes::shell::Section::Access, "access") }}
           {{ icons::nav_item(crate::routes::shell::Section::MyAccess, "myaccess") }}
+          {{ icons::nav_item(crate::routes::shell::Section::Reports, "reports") }}
         </ul>
       </div>
       <div class="nav-group">

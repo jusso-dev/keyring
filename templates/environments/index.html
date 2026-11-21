@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Environments - Keyring{% endblock %}
+{% block content %}
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/", "Home") }}{{ ui::crumb_here("Environments") }}</ol></nav>
+<div class="title-row"><h1>Environments</h1></div>
+<p class="page-desc">Compare secrets across environments side by side, spot missing or drifting credentials, and set separate values per environment. Only names and properties are read, never values.</p>
+{% if total_visible_vaults > 0 %}{% call ui::about() %}
+<p>Keyring groups vaults that share an ARM tag (<span class="mono">keyring-group</span>, <span class="mono">app</span>, <span class="mono">service</span>, <span class="mono">workload</span> or <span class="mono">system</span>) or a common prefix with an environment suffix such as <span class="mono">-dev</span>, <span class="mono">-test</span> and <span class="mono">-prod</span>. Environment labels come from the vault's <span class="mono">keyring-env</span>, <span class="mono">env</span>, <span class="mono">environment</span> or <span class="mono">stage</span> tag, or from the suffix.</p>
+<p>You can also pick any vaults you can see (up to {{ max_vaults }}) under <strong>Choose vaults to compare</strong>. Every vault is read with your own Azure roles; a vault you can't read is shown as <strong>Not read</strong> rather than missing.</p>
+{% endcall %}{% endif %}
+</div>
+
+{% if total_visible_vaults == 0 %}
+<div class="empty-state">
+  <p><strong>You can't see any vaults yet.</strong></p>
+  <p>Keyring lists the vaults your account can see in Azure. Ask your admin for the Reader role where your team's vaults live, plus Key Vault Reader on the vaults you want to compare.</p>
+</div>
+{% else %}
+<div class="commandbar">
+  {% if !columns.is_empty() %}
+  <a class="button" href="{{ set_url }}">Set across environments</a>
+  <span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span>
+  {% endif %}
+  <span class="cmd-item">{{ ui::icon("vaults") }}<a class="button cmd" href="/vaults">Vaults</a></span>
+</div>
+
+{% if !groups.is_empty() %}
+<nav class="tabs" aria-label="Environment groups"><ul>
+  {% for g in groups %}
+  <li><a href="{{ g.href }}"{% if g.active %} aria-current="page"{% endif %}>{{ g.name }} <span class="muted small">({{ g.count }})</span></a></li>
+  {% endfor %}
+</ul></nav>
+{% endif %}
+
+<details class="about">
+  <summary>Choose vaults to compare (up to {{ max_vaults }})</summary>
+  <form method="get" action="/environments" class="stacked">
+    <fieldset>
+      <legend>Vaults</legend>
+      <div class="env-picks">
+        {% for vp in vault_picks %}
+        <div class="checkbox">
+          <input id="pick-vault-{{ vp.name }}" name="v" type="checkbox" value="{{ vp.name }}"{% if vp.selected %} checked{% endif %}>
+          <label for="pick-vault-{{ vp.name }}"><span class="item-name">{{ vp.name }}</span>{% if !vp.env.is_empty() %} <span class="badge {% if vp.env.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ vp.env.name }}</span>{% endif %}</label>
+        </div>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <div class="actions">
+      <button type="submit" class="button-secondary">Compare selected</button>
+    </div>
+  </form>
+</details>
+
+{% if capped %}
+<p class="notice notice-warn">Showing the first {{ max_vaults }} vaults in this selection. Use <strong>Choose vaults to compare</strong> to pick a different set.</p>
+{% endif %}
+
+{% if columns.is_empty() %}
+<div class="empty-state">
+  <p><strong>No vaults selected.</strong></p>
+  <p>Open <strong>Choose vaults to compare</strong> above and pick the vaults for your environments.</p>
+</div>
+{% else %}
+{% for col in columns %}
+  {% if let Some(why) = col.read_error %}
+  <p class="notice notice-warn">Couldn't read <span class="item-name">{{ col.vault }}</span>: {{ why }}. Its column is marked Not read so missing secrets aren't confused with an unreadable vault.</p>
+  {% endif %}
+{% endfor %}
+
+<div class="tiles">
+  <a class="tile{% if query.parity.is_empty() %} tile-active{% endif %}" href="{{ self.filter_url("") }}"><span class="tile-n">{{ counts.total }}</span><span class="tile-label">Total secrets</span></a>
+  <a class="tile{% if query.parity == "missing" %} tile-active{% endif %}{% if counts.missing > 0 %} tile-error{% endif %}" href="{{ self.filter_url("missing") }}"><span class="tile-n">{{ counts.missing }}</span><span class="tile-label">Missing in an environment</span></a>
+  <a class="tile{% if query.parity == "attention" %} tile-active{% endif %}{% if counts.attention > 0 %} tile-warn{% endif %}" href="{{ self.filter_url("attention") }}"><span class="tile-n">{{ counts.attention }}</span><span class="tile-label">Needs attention</span></a>
+  <a class="tile{% if query.parity == "drift" %} tile-active{% endif %}{% if counts.drift > 0 %} tile-warn{% endif %}" href="{{ self.filter_url("drift") }}"><span class="tile-n">{{ counts.drift }}</span><span class="tile-label">Metadata differs</span></a>
+  <a class="tile{% if query.parity == "complete" %} tile-active{% endif %}" href="{{ self.filter_url("complete") }}"><span class="tile-n">{{ counts.complete }}</span><span class="tile-label">In sync</span></a>
+</div>
+
+<form class="filters" method="get" action="/environments" role="search" data-live-filter="env-table">
+  <input type="hidden" name="vaults" value="{{ vaults_csv }}">
+  <div class="fpill"><label for="q">Search</label><input id="q" name="q" type="search" value="{{ query.q }}"{% call ui::ident() %}{% endcall %}></div>
+  {% call ui::tag_filter(query.tag, tag_options) %}{% endcall %}
+  <div class="fpill"><label for="parity">Parity</label><select id="parity" name="parity">
+    {% for (val, label, sel) in self.parity_options() %}<option value="{{ val }}"{% if sel %} selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></div>
+  {% call ui::mine_filter(query.mine_on()) %}{% endcall %}
+  <div class="filters-submit">
+    <button type="submit" class="button-secondary">Apply</button>
+    {% if query.has_filters() %}<a href="{{ clear_url }}">Clear</a>{% endif %}
+  </div>
+</form>
+
+{% if rows.is_empty() %}
+<div class="empty-state">
+  {% if counts.total == 0 %}
+  <p><strong>No secrets found in the selected vaults.</strong></p>
+  <p>Use <a href="{{ set_url }}">Set across environments</a> to add a secret with separate values in each environment.</p>
+  {% else %}
+  <p>No secrets match those filters. Try a shorter search or clear the filters.</p>
+  {% endif %}
+</div>
+{% else %}
+{% call ui::table_wrap("env-table-caption") %}
+<table id="env-table">
+  <caption class="visually-hidden" id="env-table-caption">Secrets across environments</caption>
+  <thead>
+    <tr>
+      <th scope="col">Secret</th>
+      <th scope="col">Parity</th>
+      {% for col in columns %}
+      <th scope="col">
+        <a class="item-name" href="/v/{{ col.vault }}/secrets">{{ col.vault }}</a>
+        <div><span class="badge {% if col.env.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ col.env.display() }}</span></div>
+      </th>
+      {% endfor %}
+      <th scope="col"><span class="visually-hidden">Actions</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr data-filter-text="{{ row.filter_text }}">
+      <th scope="row" class="item-name">{{ row.name }}</th>
+      <td class="nowrap">
+        <span class="badge {{ row.parity.badge_class() }}">{{ row.parity.label() }}</span>
+        {% if !row.drift_notes.is_empty() %}<div class="muted small">{{ row.drift_summary() }}</div>{% endif %}
+      </td>
+      {% for cell in row.cells %}
+      {% let col = columns[loop.index0] %}
+      <td class="env-cell">
+        {% match cell %}
+        {% when crate::environments::CellState::Present with (p) %}
+          <div><a href="/v/{{ col.vault }}/secrets/{{ row.name }}">{% call ui::status(p.enabled, p.is_expired(), p.is_expiring(), false, p.not_yet_valid, false) %}{% endcall %}</a>{% if !p.stale.is_empty() %} <span class="badge badge-warn">{{ p.stale }}</span>{% endif %}</div>
+          {% if !p.changed.is_empty() %}<div class="muted small">Changed {{ p.changed }}</div>{% endif %}
+          {% if !p.expires.is_empty() %}<div class="muted small">Expires {{ p.expires }}</div>{% endif %}
+        {% when crate::environments::CellState::Missing %}
+          <div><span class="badge badge-error">Missing</span></div>
+          <div class="small env-cell-actions">
+            <a href="{{ self.create_href(col.vault, row.name, row.type_slug) }}">Create<span class="visually-hidden"> {{ row.name }} in {{ col.vault }}</span></a>
+            {% if let Some(src) = row.copy_source %} · <a href="{{ self.copy_href(src, row.name, col.vault) }}">Copy from {{ src }}</a>{% endif %}
+          </div>
+        {% when crate::environments::CellState::NotRead %}
+          <span class="muted">Not read</span>
+        {% endmatch %}
+      </td>
+      {% endfor %}
+      <td class="nowrap"><a class="button button-small button-secondary" href="{{ self.set_secret_href(row.name) }}">Set values<span class="visually-hidden"> for {{ row.name }}</span></a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+<p class="muted" data-live-filter-empty role="status" hidden>No secrets match.</p>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

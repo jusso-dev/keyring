@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Set a secret across environments - Keyring{% endblock %}
+{% block content %}
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/environments", "Environments") }}{{ ui::crumb_here("Set across environments") }}</ol></nav>
+<div class="title-row"><h1>Set a secret across environments</h1></div>
+<p class="page-desc">Create or update the same secret name across multiple vaults with a separate value for each environment. Leave any environment blank to skip it.</p>
+</div>
+
+{% call ui::error_summary(errors) %}{% endcall %}
+{% call ui::optional_note() %}{% endcall %}
+
+<form method="post" action="/environments/set" class="stacked" novalidate>
+  <input type="hidden" name="csrf" value="{{ shell.csrf() }}">
+  <input type="hidden" name="vaults" value="{{ vaults_csv }}">
+
+  {% call ui::name_field(form.name, "secret") %}{% endcall %}
+
+  <fieldset>
+    <legend>Value per environment</legend>
+    <p class="field-help" id="env-values-help">Enter a distinct value for each environment you want to write to. Keyring writes each vault as you; vaults you don't have Key Vault Secrets Officer on will be reported on the next page so another team member can finish them. Values are never echoed back if the form has an error.{% if !self.policy_help().is_empty() %} {{ self.policy_help() }}{% endif %}</p>
+    {% for t in targets %}
+    {% let field_name = t.field_id %}
+    <div class="env-value-row">
+      <input type="hidden" name="{{ t.vault_field_id }}" value="{{ t.vault }}">
+      <label for="{{ t.field_id }}"><span class="item-name">{{ t.vault }}</span> <span class="badge {% if t.env.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ t.env.display() }}</span> <span class="muted">(optional, leave blank to skip)</span></label>
+      {% if !t.status_note.is_empty() %}<p class="field-help" id="{{ t.field_id }}-note">{{ t.status_note }}</p>{% endif %}
+      <input id="{{ t.field_id }}" name="{{ t.field_id }}" type="password" value="" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"{% call ui::aria(t.field_id, t.help_ids) %}{% endcall %}>
+      {% include "_field_error.html" %}
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  {% if show_duplicate_confirm || form.allow_duplicate %}
+  <div class="checkbox">
+    <input id="allow_duplicate" name="allow_duplicate" type="checkbox" value="1"{% if form.allow_duplicate %} checked{% endif %} aria-describedby="allow_duplicate-help{% if error_for("allow_duplicate").is_some() %} allow_duplicate-error{% endif %}">
+    <label for="allow_duplicate">Allow the same value in more than one environment</label>
+  </div>
+  <p class="field-help" id="allow_duplicate-help">Keyring warns when two environments are given identical values so non-production secrets aren't reused in production by mistake.</p>
+  {% let field_name = "allow_duplicate" %}{% include "_field_error.html" %}
+  {% endif %}
+
+  {% call ui::description_field(form.description, "secret") %}{% endcall %}
+  {% call ui::owner_fields(form.owners, owner_options) %}{% endcall %}
+  {% call ui::reveal_field(form.reveal, "secret") %}{% endcall %}
+
+  {% let field_name = "content_type" %}
+  <label for="content_type">Content type <span class="muted">(optional)</span></label>
+  <p class="field-help" id="content_type-help">Short note of what the value holds, such as text/plain or application/json.</p>
+  <input id="content_type" name="content_type" type="text" value="{{ form.content_type }}" maxlength="255"{% call ui::ident() %}{% endcall %}{% call ui::aria("content_type", "content_type-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+
+  {% let field_name = "not_before" %}
+  <label for="not_before">Active from <span class="muted">(optional)</span></label>
+  <p class="field-help" id="not_before-help">YYYY-MM-DD (UTC). Leave blank to be active straight away.</p>
+  <input id="not_before" name="not_before" type="text" value="{{ form.not_before }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("not_before", "not_before-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+
+  {% let field_name = "expires" %}
+  <label for="expires">Expires <span class="muted">(optional)</span></label>
+  <p class="field-help" id="expires-help">YYYY-MM-DD (UTC). Applied to every environment written.</p>
+  <input id="expires" name="expires" type="text" value="{{ form.expires }}"{% call ui::ident() %}{% endcall %}{% call ui::aria("expires", "expires-help") %}{% endcall %}>
+  {% include "_field_error.html" %}
+
+  <div class="checkbox">
+    <input id="enabled" name="enabled" type="checkbox" value="1"{% if form.enabled %} checked{% endif %}>
+    <label for="enabled">Enabled</label>
+  </div>
+
+  {% call ui::tag_field(form.tags, "Applied to every environment written. Key Vault allows up to 15 tags on a secret.") %}{% endcall %}
+
+  {% if shell.asks_reason_to_change() %}{% call ui::reason_fields("") %}{% endcall %}{% endif %}
+
+  <div class="actions">
+    <button type="submit">Save across environments</button>
+    <a href="{{ back_url }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

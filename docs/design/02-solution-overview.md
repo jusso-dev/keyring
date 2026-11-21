@@ -8,6 +8,14 @@ It is a thin layer. Every call to Key Vault is made as the person who is signed 
 
 Keyring is written in Rust (Axum and Askama) and ships as one container image of about 8 MB. There is no Node.js or npm anywhere in the product.
 
+## End-to-end solution architecture
+
+Figure 1 shows the complete Azure solution architecture: users and browsers on the left, Microsoft Entra ID (OIDC, PKCE, On-Behalf-Of, Conditional Access and PIM) and the stateless Keyring runtime in the centre, multi-environment Azure Key Vaults (`dev`, `test`, `prod`) reached strictly as the signed-in user via Private Endpoints on the top right, and the audit, Microsoft Sentinel and Azure Communication Services integrations on the bottom right.
+
+::: wide
+![Enterprise solution architecture with Azure services. Every customer Key Vault, Resource Graph, ARM and audit read call uses the signed-in user's OBO token; Keyring's single user-assigned managed identity is restricted to its federated credential, KeyringAudit_CL ingestion and ACS email.](../diagrams/drawio/export/00-solution-architecture.png)
+:::
+
 ## Design principles
 
 These four principles come first. Every later decision in this document follows from one of them.

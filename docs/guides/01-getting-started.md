@@ -39,9 +39,9 @@ Everyone who uses Keyring.
 
    ![The home page.](../images/screenshots/home.png)
 
-4. Use the menu on the left. It has the same sections: **Vaults**, **Secrets**, **Certificates**, **Keys**, **Expiry**, **Vault health**, **Generator**, **Audit**, **Access** and **My access**.
+4. Use the menu on the left. It has the same sections: **Vaults**, **Environments**, **Secrets**, **Certificates**, **Keys**, **Expiry**, **Vault health**, **Generator**, **Audit**, **Access** and **My access**.
 
-   Secrets, Certificates, Keys, Audit, Access and My access are about one vault at a time. Expiry, Vault health and search cover every vault you can see.
+   Secrets, Certificates, Keys, Audit, Access and My access are about one vault at a time. Environments, Expiry, Vault health and search cover every vault you can see.
 
 ### Choose a vault
 

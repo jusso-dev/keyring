@@ -20,6 +20,7 @@ use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
+const LOGO_SVG: &str = include_str!("../../static/logo.svg");
 const APP_JS: &str = include_str!("../../static/app.js");
 const PINS_JS: &str = include_str!("../../static/pins.js");
 const TAGS_JS: &str = include_str!("../../static/tags.js");
@@ -62,6 +63,7 @@ pub const CACHE_UNVERSIONED: &str = "public, max-age=300";
 fn lookup(file: &str) -> Option<(&'static str, &'static str)> {
     match file {
         "style.css" => Some((STYLE_CSS, "text/css; charset=utf-8")),
+        "logo.svg" => Some((LOGO_SVG, "image/svg+xml; charset=utf-8")),
         "app.js" => Some((APP_JS, "text/javascript; charset=utf-8")),
         "pins.js" => Some((PINS_JS, "text/javascript; charset=utf-8")),
         "tags.js" => Some((TAGS_JS, "text/javascript; charset=utf-8")),
@@ -78,6 +80,7 @@ fn hash(body: &str) -> String {
 }
 
 static STYLE_VERSION: LazyLock<String> = LazyLock::new(|| hash(STYLE_CSS));
+static LOGO_VERSION: LazyLock<String> = LazyLock::new(|| hash(LOGO_SVG));
 static APP_VERSION: LazyLock<String> = LazyLock::new(|| hash(APP_JS));
 static PINS_VERSION: LazyLock<String> = LazyLock::new(|| hash(PINS_JS));
 static TAGS_VERSION: LazyLock<String> = LazyLock::new(|| hash(TAGS_JS));
@@ -87,6 +90,7 @@ static BEHAVIORS_VERSION: LazyLock<String> = LazyLock::new(|| hash(BEHAVIORS_JS)
 fn version(file: &str) -> Option<&'static str> {
     match file {
         "style.css" => Some(STYLE_VERSION.as_str()),
+        "logo.svg" => Some(LOGO_VERSION.as_str()),
         "app.js" => Some(APP_VERSION.as_str()),
         "pins.js" => Some(PINS_VERSION.as_str()),
         "tags.js" => Some(TAGS_VERSION.as_str()),
@@ -155,11 +159,12 @@ pub fn plain_page(heading: &str, message: &str) -> Html<String> {
     Html(format!(
         "<!doctype html>\n<html lang=\"en-AU\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{heading} - Keyring</title>\n<link rel=\"stylesheet\" href=\"{css}\">\n</head>\n\
+         <title>{heading} - Keyring</title>\n<link rel=\"icon\" type=\"image/svg+xml\" href=\"{logo}\">\n<link rel=\"stylesheet\" href=\"{css}\">\n</head>\n\
          <body>\n<header class=\"site-header\"><a class=\"brand\" href=\"/\">Keyring</a></header>\n\
          <div class=\"layout layout-plain\"><main id=\"main\" class=\"content\">\n\
          <div class=\"panel narrow\" role=\"alert\">\n<h1>{heading}</h1>\n<p>{message}</p>\n\
          <p><a class=\"button\" href=\"/\">Back to home</a></p>\n</div>\n</main></div>\n</body>\n</html>\n",
+        logo = url("logo.svg"),
         css = url("style.css"),
     ))
 }

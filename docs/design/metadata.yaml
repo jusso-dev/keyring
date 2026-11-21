@@ -1,7 +1,7 @@
 title: "Keyring: Solution Design Document"
 running-title: "Keyring Solution Design Document"
-version: "1.1"
-date: "18-11-2026"
+version: "1.2"
+date: "21-11-2026"
 status: "Draft for review"
 lang: en-AU
 toc-title: Contents
@@ -11,13 +11,13 @@ control: |
   | Item | Value |
   |---|---|
   | Document | Keyring Solution Design Document |
-  | Version | 1.1 |
-  | Date | 18-11-2026 |
+  | Version | 1.2 |
+  | Date | 21-11-2026 |
   | Status | Draft for review |
   | Owner | Keyring maintainer (to be confirmed) |
   | Source | `docs/design/` in the `jusso-dev/keyring` repository. The PDF and Word editions are rebuilt with `docs/design/build.sh` |
-  | Describes | `main` at commit `b76c19a` (18-11-2026), and secret sharing as built in pull request #289 |
-  | Related | `docs/architecture.md` stays the quick engineering reference. This document is the formal record for design review, security assessment and the teams that deploy and run Keyring. The documentation site is <https://jusso-dev.github.io/keyring/> |
+  | Describes | `main` with multi-environment collaboration (`/environments`, `/environments/set`), enterprise security pack and comparison guide (21-11-2026) |
+  | Related | `docs/architecture.md` stays the quick engineering reference. This document is the formal record for design review, security assessment and the teams that deploy and run Keyring. Companion editions: `Keyring-Security.pdf`, `Keyring-Enterprise-Comparison.pdf`, `Keyring-Deployment-Guide.pdf`, `Keyring-Admin-SOPs.pdf`, `Keyring-Developer-Guide.pdf` and `Keyring-Walkthrough-Guides.pdf`. The documentation site is <https://jusso-dev.github.io/keyring/> |
 
   ## Version history
 
@@ -25,6 +25,7 @@ control: |
   |---|---|---|---|
   | 1.0 | 18-11-2026 | Keyring maintainers | First formal design document: architecture, components, data, integrations (I-01 to I-27), identity, controls (C1 to C22), STRIDE threat model (T1 to T24), deployment, operations, RAID and appendices, with six draw.io diagrams |
   | 1.1 | 18-11-2026 | Keyring maintainers | Adds what was in progress in 1.0, now built: request access (#258), activity emails (#259), reveal limits (#261 part 2), the access review (#261 part 3) and the webhook subscription allow-list (#278); and secret sharing (#286), which uses delegated Microsoft Graph permissions for names and so reverses constraint K6 (no Graph permission) for that one feature. Integrations to I-30, controls to C27, threats to T34, decisions to D25; diagrams 1, 4 and 6 updated |
+  | 1.2 | 21-11-2026 | Keyring maintainers | Adds multi-environment collaboration (`/environments`, `/environments.csv`, `/environments/set`, sibling panel on secret details, `secret.multi_env_set`), control C28, threats T35 to T36 and decisions D26 to D27 |
 
   ## Reviewers
 

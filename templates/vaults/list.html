@@ -15,6 +15,7 @@
 {#- Pinned and recently opened, filled in by static/pins.js. -#}
 <div class="pins-box" data-pins hidden></div>
 <div class="commandbar">
+  <span class="cmd-item">{{ ui::icon("environments") }}<a class="button cmd" href="/environments">Compare environments</a></span>
   <span class="cmd-item">{{ ui::icon("health") }}<a class="button cmd" href="/vault-health">Vault health</a></span>
   <span class="cmd-item">{{ ui::icon("expiry") }}<a class="button cmd" href="/expiry">Expiry</a></span>
 </div>
@@ -51,6 +52,7 @@
   <thead>
     <tr>
       <th scope="col">Name</th>
+      <th scope="col">Environment</th>
       <th scope="col">Subscription</th>
       <th scope="col">Resource group</th>
       <th scope="col" class="col-p3">Location</th>
@@ -66,6 +68,8 @@
     {% for (v, audit) in vaults %}
     <tr data-filter-text="{{ v.name|lower }} {{ v.resource_group|lower }}">
       <th scope="row" class="item-name nowrap">{{ v.name }}{% if selected.as_deref() == Some(v.name.as_str()) %} <span class="badge">Current</span>{% endif %}</th>
+      {% let env_label = crate::environments::EnvLabel::of(v) %}
+      <td class="nowrap">{% if env_label.is_empty() %}<span class="muted">None</span>{% else %}<span class="badge {% if env_label.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ env_label.name }}</span>{% endif %}</td>
       <td class="cell-fluid"><span class="clip clip-md">{{ ui::or_none(v.subscription_name) }}</span></td>
       <td class="cell-fluid">{% if v.resource_group.is_empty() %}<span class="muted">None</span>{% else %}{% call ui::clip_more(v.resource_group, "md", 22, "resource group") %}{% endcall %}{% endif %}</td>
       <td class="nowrap col-p3">{{ ui::or_none(v.location) }}</td>

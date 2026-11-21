@@ -23,11 +23,14 @@ import zipfile
 from xml.sax.saxutils import escape as xml_escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "reference.docx")
+OUT = os.environ.get("KEYRING_REFERENCE_OUT") or os.path.join(HERE, "reference.docx")
 
 
-def meta(key):
-    """Read one plain `key: "value"` line from metadata.yaml, so the header matches the PDF."""
+def meta(key, env_key=None):
+    """Read one plain `key: "value"` line from metadata.yaml, or from an env
+    override when building another document with the shared styles."""
+    if env_key and os.environ.get(env_key):
+        return os.environ[env_key]
     with open(os.path.join(HERE, "metadata.yaml"), encoding="utf-8") as f:
         for line in f:
             m = re.match(rf'^{re.escape(key)}:\s*"?([^"\n]*)"?\s*$', line)
@@ -36,10 +39,10 @@ def meta(key):
     raise SystemExit(f"metadata.yaml has no {key}")
 
 
-DOC_TITLE = meta("running-title")
-DOC_VERSION = meta("version")
-DOC_DATE = meta("date")
-DOC_STATUS = meta("status")
+DOC_TITLE = meta("running-title", "KEYRING_DOC_TITLE")
+DOC_VERSION = meta("version", "KEYRING_DOC_VERSION")
+DOC_DATE = meta("date", "KEYRING_DOC_DATE")
+DOC_STATUS = meta("status", "KEYRING_DOC_STATUS")
 
 INK, INK2, ACCENT, ACCENT_TINT, PAPER, PAPER2, RULE, CHROME, CHROME_INK = (
     "1C222A", "515963", "186575", "E3F4F8", "F5F7FA", "EBEFF2", "DADEE3", "1D252D", "F3F5F8")

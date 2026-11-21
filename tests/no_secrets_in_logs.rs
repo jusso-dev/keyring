@@ -139,6 +139,78 @@ async fn values_never_reach_the_logs() {
         .await;
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
 
+    // Multi-environment comparison and writes: values never reach logs or
+    // HTML on refusal or success; per-vault and multi-env audit events fire.
+    {
+        let dev = std::sync::Arc::new(support::keyvault::KvState::default());
+        let prod = std::sync::Arc::new(support::keyvault::KvState::default());
+        let wm = support::world_of_vaults_with(
+            vec![("kv-app-dev", dev.clone()), ("kv-app-prod", prod.clone())],
+            &[],
+        )
+        .await;
+        *wm.arm.state.vaults.lock().unwrap() = vec![
+            support::vault_row("kv-app-dev", "sub-a", true),
+            support::vault_row("kv-app-prod", "sub-a", true),
+        ];
+        dev.put("existing-secret", "ENVLEAK-existing");
+        // Matrix & CSV never read or show values.
+        let (st, html) = wm.page("/environments?vaults=kv-app-dev,kv-app-prod").await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(!html.contains("ENVLEAK-existing"));
+        let (st, csv) = wm
+            .page("/environments.csv?vaults=kv-app-dev,kv-app-prod")
+            .await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(!csv.contains("ENVLEAK-existing"));
+        // Duplicate value refused without echoing or logging.
+        let res = wm
+            .post(
+                "/environments/set",
+                &[
+                    ("name", "multi-secret"),
+                    ("vaults", "kv-app-dev,kv-app-prod"),
+                    ("env-vault-1", "kv-app-dev"),
+                    ("env-val-1", "ENVLEAK-dup-value"),
+                    ("env-vault-2", "kv-app-prod"),
+                    ("env-val-2", "ENVLEAK-dup-value"),
+                    ("enabled", "1"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!support::body_text(res).await.contains("ENVLEAK"));
+        // Distinct values written cleanly.
+        let res = wm
+            .post(
+                "/environments/set",
+                &[
+                    ("name", "multi-secret"),
+                    ("vaults", "kv-app-dev,kv-app-prod"),
+                    ("env-vault-1", "kv-app-dev"),
+                    ("env-val-1", "ENVLEAK-dev-only"),
+                    ("env-vault-2", "kv-app-prod"),
+                    ("env-val-2", "ENVLEAK-prod-only"),
+                    ("description", "ENVLEAK-desc"),
+                    ("owner", "envownerleak@example.com"),
+                    ("enabled", "1"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let html = support::body_text(res).await;
+        assert!(html.contains("2 environments written"), "{html}");
+        assert!(!html.contains("ENVLEAK-dev-only") && !html.contains("ENVLEAK-prod-only"));
+        assert_eq!(
+            dev.current("multi-secret").unwrap().value,
+            "ENVLEAK-dev-only"
+        );
+        assert_eq!(
+            prod.current("multi-secret").unwrap().value,
+            "ENVLEAK-prod-only"
+        );
+    }
+
     // With a reason asked for: the reason is logged, the value isn't, and
     // a value posted to the reason page isn't either.
     let wr = support::world_with(&[("KEYRING_REQUIRE_REASON", "all")]).await;
@@ -1864,6 +1936,11 @@ async fn values_never_reach_the_logs() {
         !logs.contains("Sup3r-S3cret"),
         "value leaked into logs:\n{logs}"
     );
+    assert!(!logs.contains("ENVLEAK"), "multi-env value leaked:\n{logs}");
+    assert!(
+        !logs.contains("envownerleak"),
+        "multi-env owner leaked:\n{logs}"
+    );
     assert!(!logs.contains("QUERYLEAK"), "query string leaked:\n{logs}");
     for leak in ["reviewcallerleak", "reviewownerleak", "reviewnotifyleak"] {
         assert!(!logs.contains(leak), "an address leaked ({leak}):\n{logs}");
@@ -2131,6 +2208,8 @@ async fn values_never_reach_the_logs() {
     let json = String::from_utf8(json.0.lock().unwrap().clone()).unwrap();
     for leak in [
         "Sup3r-S3cret",
+        "ENVLEAK",
+        "envownerleak",
         "QUERYLEAK",
         "Upl0ad-Passw0rd",
         "GENLEAK_",
@@ -2173,6 +2252,21 @@ async fn values_never_reach_the_logs() {
             .iter()
             .any(|l| l["kind"] == "audit" && l["action"] == "secret.reveal"),
         "the reveal is an audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.multi_env_set"
+            && l["item_name"] == "multi-secret"
+            && l["outcome"] == "success"),
+        "the multi-env write emits a secret.multi_env_set audit event"
+    );
+    assert!(
+        lines.iter().any(|l| l["kind"] == "audit"
+            && l["action"] == "secret.create"
+            && l["vault"] == "kv-app-prod"
+            && l["item_name"] == "multi-secret"
+            && l["outcome"] == "success"),
+        "each written vault emits its own secret.create audit event"
     );
     assert!(
         lines.iter().any(|l| l["kind"] == "audit"

@@ -86,12 +86,20 @@ local function styled(style, text)
   return pandoc.Div({ pandoc.Para(pandoc.Inlines(text)) }, { ["custom-style"] = style })
 end
 
+local function meta_str(meta, key, default)
+  if meta[key] then
+    local s = stringify(meta[key])
+    if s ~= "" then return s end
+  end
+  return default
+end
+
 local function cover(meta)
   local blocks = {
-    styled("Cover Kicker", "Solution Design Document"),
-    styled("Title", "Keyring"),
-    styled("Subtitle", "A plain-English web front end for Azure Key Vault"),
-    styled("Cover Note", "Acts as the signed-in person. Stores nothing."),
+    styled("Cover Kicker", meta_str(meta, "kicker", "Solution Design Document")),
+    styled("Title", meta_str(meta, "cover-title", "Keyring")),
+    styled("Subtitle", meta_str(meta, "cover-name", "A plain-English web front end for Azure Key Vault")),
+    styled("Cover Note", meta_str(meta, "cover-sub", "Acts as the signed-in person. Stores nothing.")),
   }
   local md = "| Item | Value |\n|---|---|\n"
     .. "| Version | " .. stringify(meta.version) .. " |\n"
@@ -99,7 +107,7 @@ local function cover(meta)
     .. "| Status | " .. stringify(meta.status) .. " |\n"
     .. "| Repository | `github.com/jusso-dev/keyring` |\n"
   for _, b in ipairs(pandoc.read(md, "markdown").blocks) do table.insert(blocks, b) end
-  table.insert(blocks, styled("Not Confirmed", "Draft for review. Not reviewed, approved or endorsed by anyone."))
+  table.insert(blocks, styled("Not Confirmed", meta_str(meta, "cover-note", "Draft for review. Not reviewed, approved or endorsed by anyone.")))
   table.insert(blocks, PAGE_BREAK)
   return blocks
 end
