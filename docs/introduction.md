@@ -4,7 +4,7 @@ slug: /
 
 # Introduction
 
-![Keyring](images/keyring-banner.jpg)
+![Keyring: Zero-Storage Azure Key Vault PAM](images/keyring-banner.png)
 
 Keyring is a small web app that sits in front of Azure Key Vault. It lets people who don't use the Azure portal find a vault, look up a secret, add a certificate or rotate a key, in plain English.
 
