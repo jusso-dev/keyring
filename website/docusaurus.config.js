@@ -11,6 +11,7 @@ const repoLinks = require('./src/remark/repo-links');
 const config = {
   title: 'Keyring',
   tagline: 'A small web app in front of Azure Key Vault',
+  favicon: 'img/logo.svg',
   url: 'https://jusso-dev.github.io',
   baseUrl: '/keyring/',
   organizationName: 'jusso-dev',
@@ -94,6 +95,10 @@ const config = {
       },
       navbar: {
         title: 'Keyring',
+        logo: {
+          alt: 'Keyring logo',
+          src: 'img/logo.svg',
+        },
         items: [
           {type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs'},
           {href: REPO, label: 'GitHub', position: 'right'},

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/keyring-banner.jpg" alt="Keyring: Zero-Storage Azure Key Vault PAM - Entra ID OBO, Sentinel Ready, Multi-Environment" width="100%">
+  <img src="docs/images/keyring-banner.png" alt="Keyring: Zero-Storage Azure Key Vault PAM - Entra ID OBO, Sentinel Ready, Multi-Environment" width="100%">
 </p>
 
 # Keyring
