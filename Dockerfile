@@ -18,7 +18,7 @@
 #
 # VERSION and VCS_REF tie an image to the commit it was built from. CI
 # passes them; for your own builds:
-#   docker build --build-arg VERSION=0.1.0 --build-arg VCS_REF=$(git rev-parse HEAD) .
+#   docker build --build-arg VERSION=1.0.0 --build-arg VCS_REF=$(git rev-parse HEAD) .
 
 FROM rust:1.100.0-alpine3.22@sha256:8e71319e2fb470aa2d6335a8376a104ceea1957f86ec91b7efcbb9b4732973ae AS build
 # Use the toolchain already in the pinned image (its rustup default).
