@@ -518,12 +518,12 @@ fn seed_access(arm: &support::ArmState) {
         a(&vault, support::SECRETS_USER, 4, "User"),
     ];
     m.eligible = vec![a(&vault, support::SECRETS_USER, 5, "User")];
-    let end = chrono::Utc::now() + chrono::Duration::minutes(95);
+    let end = support::rfc3339_utc(support::now_unix() + 95 * 60);
     m.pim.active = vec![(
         vault.clone(),
         support::SECRETS_USER.into(),
         "Activated".into(),
-        Some(end.to_rfc3339()),
+        Some(end),
     )];
     m.pim.eligible = vec![(
         rg,

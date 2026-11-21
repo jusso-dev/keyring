@@ -49,13 +49,11 @@ async fn world() -> World {
 }
 
 fn in_days(d: i64) -> String {
-    let t = chrono::Utc::now().date_naive() + chrono::Duration::days(d);
-    t.format("%Y-%m-%d").to_string()
+    support::iso_date_in_days(d)
 }
 
 fn dmy(d: i64) -> String {
-    let t = chrono::Utc::now().date_naive() + chrono::Duration::days(d);
-    t.format("%d-%m-%Y").to_string()
+    support::dmy_in_days(d)
 }
 
 fn writes(w: &support::World) -> Vec<(String, String)> {
@@ -244,7 +242,7 @@ async fn a_pim_setting_that_refuses_is_not_stepped_round() {
 #[tokio::test]
 async fn an_overdue_plain_share_is_flagged_on_the_panel_and_the_review() {
     let World { w, .. } = world().await;
-    let past = chrono::Utc::now().date_naive() - chrono::Duration::days(3);
+    let past = dmy(-3);
     w.arm
         .state
         .share
@@ -257,10 +255,7 @@ async fn an_overdue_plain_share_is_flagged_on_the_panel_and_the_review() {
             role: SECRETS_USER.into(),
             principal_id: BLAIR.into(),
             principal_type: "User".into(),
-            description: Some(format!(
-                "Shared by Keyring by {USER_OID} until {}",
-                past.format("%d-%m-%Y")
-            )),
+            description: Some(format!("Shared by Keyring by {USER_OID} until {past}")),
         });
     let (_, html) = w.page("/v/kv-test/secrets/db-password").await;
     assert!(html.contains("Overdue"), "{html}");

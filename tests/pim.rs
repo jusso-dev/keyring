@@ -466,7 +466,7 @@ async fn forged_and_cross_site_posts_are_refused() {
 #[tokio::test]
 async fn my_access_lists_roles_and_deactivates() {
     let w = world().await;
-    let end = chrono::Utc::now() + chrono::Duration::minutes(130);
+    let end = support::rfc3339_utc(support::now_unix() + 130 * 60);
     {
         let mut m = w.arm.state.authz.lock().unwrap();
         m.pim.active = vec![
@@ -474,7 +474,7 @@ async fn my_access_lists_roles_and_deactivates() {
                 VAULT.into(),
                 SECRETS_USER.into(),
                 "Activated".into(),
-                Some(end.to_rfc3339()),
+                Some(end),
             ),
             (
                 "/subscriptions/sub-a".into(),
@@ -1073,17 +1073,17 @@ fn section<'a>(html: &'a str, from: &str, to: &str) -> &'a str {
 #[tokio::test]
 async fn an_assignment_that_starts_later_is_not_on_now() {
     let w = world().await;
-    let starts = chrono::Utc::now() + chrono::Duration::days(1);
-    let ends = starts + chrono::Duration::hours(2);
+    let starts = support::now_unix() + 86_400;
+    let ends = starts + 2 * 3600;
     {
         let mut m = w.arm.state.authz.lock().unwrap();
         m.pim.active = vec![(
             VAULT.into(),
             SECRETS_USER.into(),
             "Activated".into(),
-            Some(ends.to_rfc3339()),
+            Some(support::rfc3339_utc(ends)),
         )];
-        m.pim.active_starts = vec![Some(starts.to_rfc3339())];
+        m.pim.active_starts = vec![Some(support::rfc3339_utc(starts))];
     }
     let (status, html) = w.page("/v/kv-test/my-access").await;
     assert_eq!(status, StatusCode::OK);
@@ -1098,7 +1098,7 @@ async fn an_assignment_that_starts_later_is_not_on_now() {
     assert!(
         later.contains(&format!(
             "Starts {}",
-            keyring::dates::format_datetime(starts.timestamp())
+            keyring::dates::format_datetime(starts)
         )),
         "{later}"
     );
@@ -1113,9 +1113,8 @@ async fn an_assignment_that_starts_later_is_not_on_now() {
     assert!(puts(&w).is_empty());
 
     // Once it has started, it is on now.
-    w.arm.state.authz.lock().unwrap().pim.active_starts = vec![Some(
-        (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339(),
-    )];
+    w.arm.state.authz.lock().unwrap().pim.active_starts =
+        vec![Some(support::rfc3339_utc(support::now_unix() - 5 * 60))];
     let (_, html) = w.page("/v/kv-test/my-access").await;
     assert!(!html.contains("<h2>Starting later</h2>"), "{html}");
     assert_eq!(html.matches(">Deactivate</button>").count(), 1, "{html}");
@@ -1142,14 +1141,14 @@ async fn an_unreadable_start_time_is_not_on_now() {
 #[tokio::test]
 async fn an_eligibility_that_starts_later_offers_no_activate() {
     let w = eligible(pim_rules("PT8H", true, false, false)).await;
-    let starts = chrono::Utc::now() + chrono::Duration::days(2);
-    w.arm.state.authz.lock().unwrap().pim.eligible_start = Some(starts.to_rfc3339());
+    let starts = support::now_unix() + 2 * 86_400;
+    w.arm.state.authz.lock().unwrap().pim.eligible_start = Some(support::rfc3339_utc(starts));
     let (_, html) = w.page("/v/kv-test/my-access").await;
     assert!(!html.contains(&format!("{FORM}?role=")), "{html}");
     assert!(
         html.contains(&format!(
             "Eligible from {}",
-            keyring::dates::format_datetime(starts.timestamp())
+            keyring::dates::format_datetime(starts)
         )),
         "{html}"
     );

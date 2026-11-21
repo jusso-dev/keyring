@@ -114,6 +114,8 @@ param reasonTicketPattern string = ''
 
 @description('Password policy for values typed into a Password or Login secret, such as min=14,upper,lower,digit,symbol,max-repeat=3,common. Leave empty for no policy. A Keyring control only: the CLI and portal aren\'t limited by it (see docs/deploy.md, "Password policy").')
 @maxLength(200)
+// Non-secret rule string (for example "min=14,upper"), not a password.
+#disable-next-line secure-secrets-in-params
 param passwordPolicy string = ''
 
 @description('Refuse to create or edit a secret, certificate or key without an owner tag, and skip import rows without one. A Keyring control only: the CLI and portal aren\'t limited by it (see README.md, "Owners").')
