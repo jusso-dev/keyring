@@ -317,11 +317,20 @@ fn check_target(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct PageQuery {
+    #[serde(default)]
+    to_vault: String,
+    #[serde(default)]
+    to_name: String,
+}
+
 async fn page_inner(
     State(state): State<AppState>,
     session: CurrentSession,
     shell: Shell,
     Path((vault, name)): Path<(String, String)>,
+    Query(q): Query<PageQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
     let (name, shell) = checked_name(&name, shell)?;
@@ -329,11 +338,24 @@ async fn page_inner(
     let shell = limit_first(&state, &session, shell, &vault, &name).await?;
     let back = form_path(&vault, &name);
     let (shell, vaults) = visible_vaults(&state, &session, shell, &back).await?;
+    let prefill_vault = vaults
+        .iter()
+        .find(|v| v.eq_ignore_ascii_case(q.to_vault.trim()))
+        .cloned()
+        .unwrap_or_default();
+    let prefill_name = {
+        let trimmed = q.to_name.trim();
+        if !trimmed.is_empty() && is_valid_object_name(trimmed) {
+            trimmed.to_owned()
+        } else {
+            name.clone()
+        }
+    };
     Ok(no_store(
         render(&CopyPage {
             shell,
-            to_vault: String::new(),
-            to_name: name.clone(),
+            to_vault: prefill_vault,
+            to_name: prefill_name,
             vault,
             name,
             vaults,
@@ -776,9 +798,10 @@ pub(crate) async fn page(
     session: CurrentSession,
     shell: Shell,
     path: Path<(String, String)>,
+    query: Query<PageQuery>,
 ) -> Response {
     no_store(
-        page_inner(state, session, shell, path)
+        page_inner(state, session, shell, path, query)
             .await
             .into_response(),
     )

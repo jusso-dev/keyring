@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/keyring-banner.jpg" alt="Keyring: an orange padlock and keys over an outback sunset" width="100%">
+  <img src="docs/images/keyring-banner.jpg" alt="Keyring: Zero-Storage Azure Key Vault PAM - Entra ID OBO, Sentinel Ready, Multi-Environment" width="100%">
 </p>
 
 # Keyring
@@ -61,6 +61,7 @@ These are Keyring controls. Key Vault doesn't know about them, and the Azure CLI
 - **Change many at once**: tags, description, owner, notify list, enabled and (for secrets and keys) expiry on up to 100 ticked items, after a page that shows each change ([Secrets](docs/architecture.md#secrets)).
 - **Import** many secrets from a `.env` or CSV file, after a preview of names, never values. There is no export ([Secrets](docs/architecture.md#secrets)).
 - **Copy a secret to another vault** without showing its value ([Secrets](docs/architecture.md#secrets)).
+- **Collaborate across environments**: compare secrets side by side across `dev`, `test`, `staging` and `prod` vaults without reading values, spot missing or drifting items, export parity CSVs, and set separate values per environment with built-in duplicate-value protection ([Walkthrough 17](docs/guides/17-environments.md)).
 
 ### Notifications
 
@@ -116,10 +117,14 @@ Keyring is for people. Apps, services and pipelines should read Key Vault direct
 ## Documentation
 
 - [Documentation site](https://jusso-dev.github.io/keyring/): these docs as a website.
-- [Design document](docs/Keyring-Design-Document.pdf): the solution design, as a PDF.
-- [Walkthrough guides](docs/guides/00-about.md): each page, step by step, for people using Keyring.
-- [Administrator SOPs](docs/admin/admin-sops.md): procedures for the people who run Keyring.
-- [docs/architecture.md](docs/architecture.md) and [docs/deploy.md](docs/deploy.md): how Keyring works and how to deploy it.
+- [Enterprise comparison and migration guide](docs/Keyring-Enterprise-Comparison.pdf) ([Word](docs/Keyring-Enterprise-Comparison.docx), [Markdown](docs/comparison/01-enterprise-comparison.md)): comparing Keyring + Azure Key Vault against Delinea Secret Server, CyberArk, HashiCorp Vault, 1Password/Bitwarden, Infisical/Doppler and the Azure portal, with a five-phase migration playbook.
+- [Security architecture and controls](docs/Keyring-Security.pdf) ([Word](docs/Keyring-Security.docx), [Markdown](docs/security/01-security.md)): trust boundaries, controls C1 to C28 with source and test proofs, STRIDE threat summary and ISM / Essential Eight / NIST SP 800-53 mapping.
+- [Design document](docs/Keyring-Design-Document.pdf) ([Word](docs/Keyring-Design-Document.docx)): the formal solution design.
+- [Deployment guide](docs/Keyring-Deployment-Guide.pdf) ([Word](docs/Keyring-Deployment-Guide.docx), [Markdown](docs/deploy.md)): step-by-step Azure deployment, hardening, monitoring and upgrades.
+- [Walkthrough guides](docs/guides/00-about.md) ([PDF](docs/Keyring-Walkthrough-Guides.pdf), [Word](docs/Keyring-Walkthrough-Guides.docx)): each page, step by step, for people using Keyring.
+- [Administrator SOPs](docs/admin/admin-sops.md) ([PDF](docs/Keyring-Admin-SOPs.pdf), [Word](docs/Keyring-Admin-SOPs.docx)): procedures for the people who run Keyring.
+- [Developer guide](docs/admin/developer-guide.md) ([PDF](docs/Keyring-Developer-Guide.pdf), [Word](docs/Keyring-Developer-Guide.docx)): repository layout, checks, invariants, local end-to-end demo and documentation builds.
+- [docs/architecture.md](docs/architecture.md): engineering reference.
 
 ## Screenshots
 

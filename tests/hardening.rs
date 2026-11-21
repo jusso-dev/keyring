@@ -9,6 +9,7 @@ use tower::ServiceExt;
 /// Every POST route, with a name that exists in the seeded mock.
 const MUTATING: &[&str] = &[
     "/vaults/select",
+    "/environments/set",
     "/v/kv-test/secrets/-/new",
     "/v/kv-test/secrets/db-password/value",
     "/v/kv-test/secrets/db-password/edit",

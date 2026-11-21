@@ -18,6 +18,7 @@ const guides = fs
 const sidebars = {
   docs: [
     {type: 'doc', id: 'introduction', label: 'Introduction'},
+    {type: 'doc', id: 'comparison/enterprise-comparison', label: 'Enterprise comparison & migration'},
     {type: 'doc', id: 'get-started', label: 'Get started'},
     {
       type: 'category',
@@ -43,7 +44,7 @@ const sidebars = {
       type: 'category',
       label: 'Administer',
       link: {type: 'doc', id: 'admin/admin-sops'},
-      items: ['rotation', 'app-credentials'],
+      items: ['admin/developer-guide', 'rotation', 'app-credentials'],
     },
     {
       type: 'category',
@@ -53,9 +54,10 @@ const sidebars = {
         slug: '/security',
         title: 'Security and audit',
         description:
-          'What Keyring protects and how, what it records, and how to watch it: the threat model, the audit log and sink, Microsoft Sentinel, alerts, step-up and the reason gate.',
+          'What Keyring protects and how, what it records, and how to watch it: the security controls, threat model, audit log and sink, Microsoft Sentinel, alerts, step-up and the reason gate.',
       },
       items: [
+        'security/security',
         {type: 'link', label: 'Threat model', href: '/architecture#threat-model'},
         {type: 'link', label: 'Audit event fields', href: '/deploy#audit-event-fields'},
         {type: 'link', label: 'Audit sink', href: '/deploy#audit-sink'},

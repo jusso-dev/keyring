@@ -404,6 +404,8 @@ struct DetailPage {
     hints: crate::routes::hints::Hints,
     /// The Shared with panel, with `KEYRING_SHARING` on.
     shared_with: Option<crate::routes::share::SharedWith>,
+    /// Sibling environments when this vault belongs to an environment group.
+    siblings: Option<crate::routes::environments::SiblingsView>,
 }
 
 pub(super) async fn detail(
@@ -438,6 +440,19 @@ pub(super) async fn detail(
     let now = now_ts();
     let a = &item.attributes;
     let row = SecretRow::from_item(&item, now).mark_stale(state.config.stale_after_days, now);
+    let siblings = if row.managed {
+        None
+    } else {
+        crate::routes::environments::siblings_for_secret(
+            &state,
+            &session,
+            &vault,
+            &name,
+            &row.content_type,
+            row.enabled && !row.limit.refuses_reveal(),
+        )
+        .await
+    };
     Ok(render(&DetailPage {
         version: item.version().to_owned(),
         created: a.created.map(dates::format_datetime).unwrap_or_default(),
@@ -456,6 +471,7 @@ pub(super) async fn detail(
         access,
         hints,
         shared_with,
+        siblings,
     })
     .into_response())
 }

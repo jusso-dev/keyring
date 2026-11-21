@@ -316,6 +316,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/expiry/age".into(),
         "/vault-health".into(),
         "/vault-health?vault=kv-test".into(),
+        "/reports/executive".into(),
         "/search".into(),
         "/search?q=db".into(),
         "/search?q=nothing-here".into(),
@@ -840,4 +841,40 @@ async fn access_review_states_keep_the_table_rules() {
     page_basics(&html, path);
     assert!(html.contains("alex@example.com"));
     assert!(html.contains("in the Azure portal</span>"));
+}
+
+#[tokio::test]
+async fn environments_pages_have_labels_headings_and_landmarks() {
+    let w = support::world().await;
+    let mut r1 = support::vault_row("kv-test", "sub-a", true);
+    r1["tags"] = serde_json::json!({"app": "demo", "env": "dev"});
+    let mut r2 = support::vault_row("kv-test", "sub-a", true);
+    r2["name"] = serde_json::json!("kv-demo-prod");
+    r2["id"] = serde_json::json!(
+        "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-demo-prod"
+    );
+    r2["tags"] = serde_json::json!({"app": "demo", "env": "prod"});
+    *w.arm.state.vaults.lock().unwrap() = vec![r1, r2];
+    w.kv.state.put("shared-secret", "val");
+
+    let (status, html) = w.page("/environments").await;
+    assert_eq!(status, StatusCode::OK);
+    page_basics(&html, "/environments");
+
+    let (status, html) = w
+        .page("/environments/set?vaults=kv-test,kv-demo-prod&name=shared-secret")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    page_basics(&html, "/environments/set");
+
+    let html = support::body_text(
+        w.post(
+            "/environments/set",
+            &[("vaults", "kv-test,kv-demo-prod"), ("name", "bad name!")],
+        )
+        .await,
+    )
+    .await;
+    page_basics(&html, "/environments/set error");
+    assert!(html.contains("tabindex=\"-1\" data-error-summary"));
 }

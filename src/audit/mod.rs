@@ -73,6 +73,10 @@ pub enum Action {
     /// A secret copied to another vault: the write to the target. Its own
     /// event, on the target vault and name.
     SecretCopyWrite,
+    /// A secret created or updated with separate values across multiple
+    /// environment vaults in one request. One event for the request, and one
+    /// `secret.create` or `secret.set` event per vault written.
+    SecretMultiEnvSet,
     CertificateDownloadPrivateKey,
     CertificateUpload,
     CertificateCreate,
@@ -131,7 +135,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, for tests and docs.
-    pub const ALL: [Action; 46] = [
+    pub const ALL: [Action; 47] = [
         Self::SecretReveal,
         Self::SecretCreate,
         Self::SecretSet,
@@ -145,6 +149,7 @@ impl Action {
         Self::SecretBulkUpdate,
         Self::SecretCopyRead,
         Self::SecretCopyWrite,
+        Self::SecretMultiEnvSet,
         Self::CertificateDownloadPrivateKey,
         Self::CertificateUpload,
         Self::CertificateCreate,
@@ -195,6 +200,7 @@ impl Action {
             Self::SecretBulkUpdate => "secret.bulk_update",
             Self::SecretCopyRead => "secret.copy.read",
             Self::SecretCopyWrite => "secret.copy.write",
+            Self::SecretMultiEnvSet => "secret.multi_env_set",
             Self::CertificateDownloadPrivateKey => "certificate.download_private_key",
             Self::CertificateUpload => "certificate.upload",
             Self::CertificateCreate => "certificate.create",
@@ -250,6 +256,7 @@ impl Action {
             Self::SecretBulkUpdate => "Bulk change secrets",
             Self::SecretCopyRead => "Copy to another vault",
             Self::SecretCopyWrite => "Copy from another vault",
+            Self::SecretMultiEnvSet => "Set secret across environments",
             Self::CertificateDownloadPrivateKey => "Download private key",
             Self::CertificateUpload => "Upload certificate",
             Self::CertificateCreate => "Create certificate",

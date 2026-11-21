@@ -115,7 +115,11 @@ main figcaption::before { counter-increment: figure; content: "Figure " counter(
 /* ---------- Cover ---------- */
 
 .cover { page: cover; position: relative; height: 297mm; padding: 0 24mm; background: var(--paper); }
-.cover-band { position: absolute; left: 0; right: 0; top: 0; height: 64mm; background: var(--chrome); border-bottom: 2mm solid var(--accent); }
+.cover-band { position: absolute; left: 0; right: 0; top: 0; height: 64mm; background: var(--chrome); border-bottom: 2mm solid var(--accent); padding: 18mm 24mm 0 24mm; box-sizing: border-box; }
+.cover-brand { display: flex; align-items: center; gap: 4.5mm; }
+.cover-logo { width: 16mm; height: 16mm; display: block; border-radius: 3.5mm; }
+.cover-brand-name { font: 700 18pt "Helvetica Neue", Helvetica, Arial, sans-serif; color: #f8fafc; letter-spacing: -0.02em; line-height: 1.05; }
+.cover-brand-tag { font: 600 7.5pt "Helvetica Neue", Helvetica, Arial, sans-serif; color: #93c5fd; letter-spacing: 0.12em; text-transform: uppercase; margin-top: 1.2mm; }
 .cover-kicker { margin: 0; padding-top: 92mm; font: 600 10.5pt "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 1.6pt; text-transform: uppercase; color: var(--accent); }
 .cover-title { font-size: 46pt; line-height: 1.05; margin: 3mm 0 0 0; padding: 0; border: none; page-break-before: avoid; string-set: none; }
 .cover-name { font-size: 16pt; font-weight: 600; line-height: 1.25; margin: 4mm 0 0 0; }

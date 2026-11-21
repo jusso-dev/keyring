@@ -9,18 +9,26 @@
 <body>
 
 <section class="cover">
-  <div class="cover-band"></div>
-  <p class="cover-kicker">Solution Design Document</p>
-  <h1 class="cover-title">Keyring</h1>
-  <p class="cover-name">A plain-English web front end for Azure Key Vault</p>
-  <p class="cover-sub">Acts as the signed-in person. Stores nothing.</p>
+  <div class="cover-band">
+    <div class="cover-brand">
+      <img class="cover-logo" src="../images/keyring-logo.svg" alt="Keyring logo">
+      <div class="cover-brand-text">
+        <div class="cover-brand-name">Keyring</div>
+        <div class="cover-brand-tag">Zero-Storage Azure PAM</div>
+      </div>
+    </div>
+  </div>
+  <p class="cover-kicker">$if(kicker)$$kicker$$else$Solution Design Document$endif$</p>
+  <h1 class="cover-title">$if(cover-title)$$cover-title$$else$Keyring$endif$</h1>
+  <p class="cover-name">$if(cover-name)$$cover-name$$else$A plain-English web front end for Azure Key Vault$endif$</p>
+  <p class="cover-sub">$if(cover-sub)$$cover-sub$$else$Acts as the signed-in person. Stores nothing.$endif$</p>
   <table class="cover-meta">
     <tr><th>Version</th><td>$version$</td></tr>
     <tr><th>Date</th><td>$date$</td></tr>
     <tr><th>Status</th><td>$status$</td></tr>
     <tr><th>Repository</th><td><code>github.com/jusso-dev/keyring</code></td></tr>
   </table>
-  <p class="cover-note">Draft for review. Not reviewed, approved or endorsed by anyone.</p>
+  <p class="cover-note">$if(cover-note)$$cover-note$$else$Draft for review. Not reviewed, approved or endorsed by anyone.$endif$</p>
 </section>
 
 <section class="control">

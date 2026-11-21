@@ -13,6 +13,7 @@ use crate::routes::flash::Flash;
 pub enum Section {
     Home,
     Vaults,
+    Environments,
     Secrets,
     Certificates,
     Keys,
@@ -22,16 +23,19 @@ pub enum Section {
     Audit,
     Access,
     MyAccess,
+    Reports,
 }
 
 impl Section {
-    pub const NAV: [Section; 10] = [
+    pub const NAV: [Section; 12] = [
         Section::Vaults,
+        Section::Environments,
         Section::Secrets,
         Section::Certificates,
         Section::Keys,
         Section::Expiry,
         Section::Health,
+        Section::Reports,
         Section::Generator,
         Section::Audit,
         Section::Access,
@@ -42,11 +46,13 @@ impl Section {
         match self {
             Self::Home => "Home",
             Self::Vaults => "Vaults",
+            Self::Environments => "Environments",
             Self::Secrets => "Secrets",
             Self::Certificates => "Certificates",
             Self::Keys => "Keys",
             Self::Expiry => "Expiry",
             Self::Health => "Vault health",
+            Self::Reports => "Executive reports",
             Self::Generator => "Generator",
             Self::Audit => "Audit",
             Self::Access => "Access",
@@ -71,15 +77,60 @@ impl Section {
         match self {
             Self::Home => "/",
             Self::Vaults => "/vaults",
+            Self::Environments => "/environments",
             Self::Secrets => "/secrets",
             Self::Certificates => "/certificates",
             Self::Keys => "/keys",
             Self::Expiry => "/expiry",
             Self::Health => "/vault-health",
+            Self::Reports => "/reports/executive",
             Self::Generator => "/generator",
             Self::Audit => "/audit",
             Self::Access => "/access",
             Self::MyAccess => "/my-access",
+        }
+    }
+
+    /// Icon name in `templates/_ui.html` for navigation and home cards.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::Home | Self::Vaults => "vaults",
+            Self::Environments => "environments",
+            Self::Secrets => "secrets",
+            Self::Certificates => "certificates",
+            Self::Keys => "keys",
+            Self::Expiry => "expiry",
+            Self::Health => "health",
+            Self::Reports => "reports",
+            Self::Generator => "generator",
+            Self::Audit => "audit",
+            Self::Access => "access",
+            Self::MyAccess => "myaccess",
+        }
+    }
+
+    /// Concise summary shown on the Home console cards.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Home => "Workspace overview.",
+            Self::Vaults => "Browse every Key Vault you can see across subscriptions.",
+            Self::Environments => {
+                "Compare secrets across dev, test and prod and set separate values."
+            }
+            Self::Secrets => "View metadata, reveal values, rotate, share and manage versions.",
+            Self::Certificates => "Track TLS certificates, renewal policies and uploads.",
+            Self::Keys => "Manage cryptographic keys and automatic rotation policies.",
+            Self::Expiry => "Review expiring credentials and stale secrets across vaults.",
+            Self::Health => "Check RBAC, purge protection, private endpoints and audit logs.",
+            Self::Reports => {
+                "Export continuous white-label HTML, CSV and JSON executive client reports."
+            }
+            Self::Generator => "Generate strong passwords, passphrases, API keys and GUIDs.",
+            Self::Audit => "Inspect Key Vault audit logs and Keyring activity events.",
+            Self::Access => "Review vault and secret RBAC assignments and run access reviews.",
+            Self::MyAccess => {
+                "Check your active roles, activate PIM eligibility or request access."
+            }
         }
     }
 }

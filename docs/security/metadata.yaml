@@ -1,0 +1,31 @@
+title: "Keyring: Security Architecture and Controls"
+running-title: "Keyring Security Architecture and Controls"
+kicker: "Security Architecture & Controls"
+cover-title: "Keyring"
+cover-name: "Security Architecture and Controls"
+cover-sub: "Every security check, trust boundary, threat mitigation and test proof"
+cover-note: "Draft for review. Describes what is built and tested in the repository; nothing implies formal endorsement or accreditation."
+version: "1.2"
+date: "21-11-2026"
+status: "Draft for review"
+lang: en-AU
+toc-title: Contents
+control: |
+  ## Document control
+
+  | Item | Value |
+  |---|---|
+  | Document | Keyring Security Architecture and Controls |
+  | Version | 1.2 |
+  | Date | 21-11-2026 |
+  | Status | Draft for review |
+  | Owner | Keyring security owner (to be confirmed) |
+  | Audience | CISO office, IRAP / SOC 2 / ISO 27001 assessors, Entra ID and Azure administrators, developers |
+  | Source | `docs/security/` in the `jusso-dev/keyring` repository; rebuilt with `tools/docs/build-doc.sh docs/security Keyring-Security` |
+  | Related | Solution Design Document (`docs/Keyring-Design-Document.pdf`); Deployment Guide (`docs/Keyring-Deployment-Guide.pdf`); Administrator SOPs (`docs/Keyring-Admin-SOPs.pdf`); Enterprise Comparison (`docs/Keyring-Enterprise-Comparison.pdf`) |
+
+  ## Version history
+
+  | Version | Date | Author | Change |
+  |---|---|---|---|
+  | 1.2 | 21-11-2026 | Keyring maintainers | First standalone security pack aligned with Solution Design Document v1.2: controls C1 to C28, trust boundaries, STRIDE threat model T1 to T36, source-to-test traceability, ISM / Essential Eight / NIST SP 800-53 mapping and verification boundaries |

@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ opts.report_title }} - {{ opts.display_client() }}</title>
+<style>
+  :root {
+    --brand: {{ opts.theme.primary_hex() }};
+    --brand-dark: {{ opts.theme.dark_hex() }};
+    --brand-tint: {{ opts.theme.tint_hex() }};
+    --ink: #162133;
+    --ink-2: #4b5a72;
+    --bg: #f4f6fa;
+    --surface: #ffffff;
+    --rule: #d6deea;
+    --ok: #117a49;
+    --ok-tint: #ecfdf3;
+    --warn: #b45309;
+    --warn-tint: #fff7ed;
+    --danger: #c81e32;
+    --danger-tint: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1040px;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 28px rgba(13, 26, 46, 0.08);
+  }
+  .cover {
+    background: linear-gradient(135deg, var(--brand-dark), var(--brand));
+    color: #ffffff;
+    padding: 36px 40px 32px;
+  }
+  .kicker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    opacity: 0.92;
+    margin-bottom: 12px;
+  }
+  .cover h1 {
+    margin: 0 0 8px;
+    font-size: 28px;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  .cover .client {
+    font-size: 17px;
+    font-weight: 500;
+    opacity: 0.95;
+    margin-bottom: 18px;
+  }
+  .cover-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 24px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.22);
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  .body { padding: 32px 40px 40px; }
+  h2 {
+    margin: 28px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--brand-tint);
+    font-size: 16px;
+    color: var(--brand-dark);
+    letter-spacing: -0.01em;
+  }
+  h2:first-child { margin-top: 0; }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin: 16px 0 24px;
+  }
+  .kpi {
+    padding: 14px 16px;
+    border: 1px solid var(--rule);
+    border-top: 3.5px solid var(--brand);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+  .kpi.danger { border-top-color: var(--danger); }
+  .kpi.warn { border-top-color: var(--warn); }
+  .kpi.ok { border-top-color: var(--ok); }
+  .kpi-lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); }
+  .kpi-num { font-size: 26px; font-weight: 700; line-height: 1.2; margin: 4px 0; font-variant-numeric: tabular-nums; }
+  .kpi-sub { font-size: 11.5px; color: var(--ink-2); }
+  .charts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin: 16px 0 24px;
+  }
+  .chart-box {
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 18px 20px;
+    background: #fcfdff;
+    break-inside: avoid;
+  }
+  .chart-box h3 { margin: 0 0 12px; font-size: 14px; color: var(--ink); }
+  .donut-row { display: flex; align-items: center; gap: 18px; }
+  .legend { list-style: none; margin: 0; padding: 0; flex: 1; font-size: 12px; }
+  .legend li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #edf1f7; }
+  .legend li:last-child { border-bottom: 0; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .bar-list { list-style: none; margin: 0; padding: 0; }
+  .bar-list li { margin-bottom: 9px; }
+  .bar-meta { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    border: 1px solid var(--rule);
+    background: #f1f5f9;
+    color: var(--ink-2);
+  }
+  .badge-ok { background: var(--ok-tint); color: var(--ok); border-color: #86d7ad; }
+  .badge-warn { background: var(--warn-tint); color: var(--warn); border-color: #f3b36d; }
+  .badge-error { background: var(--danger-tint); color: var(--danger); border-color: #f2a4ad; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 20px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  thead th {
+    background: #f4f7fb;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.045em;
+    color: var(--ink-2);
+    border-bottom: 1.5px solid var(--rule);
+  }
+  .actions-list { list-style: none; margin: 0; padding: 0; }
+  .actions-list li {
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    border: 1px solid var(--rule);
+    border-left: 3.5px solid var(--brand);
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+  .actions-list p { margin: 4px 0 0; color: var(--ink-2); font-size: 12px; }
+  .notice {
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: var(--warn-tint);
+    border: 1px solid #f3b36d;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .footer {
+    padding: 16px 40px;
+    background: #f6f8fc;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+  @media (max-width: 780px) {
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .charts { grid-template-columns: 1fr; }
+    body { padding: 10px; }
+    .cover, .body, .footer { padding-left: 20px; padding-right: 20px; }
+  }
+  @media print {
+    @page { size: A4; margin: 12mm; }
+    body { background: #ffffff; padding: 0; }
+    .page { border: 0; border-radius: 0; box-shadow: none; max-width: none; }
+    .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .kpi, .badge, rect, circle { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="cover">
+    <div class="kicker">
+      {% if !opts.white_label %}
+      <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="2" y="2" width="60" height="60" rx="15" fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
+        <path d="M 33.94 44.22 A 16 16 0 1 1 44.22 33.94" fill="none" stroke="#bae6fd" stroke-width="4.2" stroke-linecap="round"/>
+        <circle cx="29" cy="29" r="6.5" fill="none" stroke="#ffffff" stroke-width="4"/>
+        <path d="M 33.8 33.8 L 50.5 50.5 M 42.8 42.8 L 38.3 47.3 M 48.0 48.0 L 44.5 51.5" fill="none" stroke="#ffffff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="29" cy="29" r="2.1" fill="#bae6fd"/>
+      </svg>
+      {% endif %}
+      <span>{{ opts.display_issuer() }} · {{ opts.period }}</span>
+    </div>
+    <h1>{{ opts.report_title }}</h1>
+    <div class="client">{{ opts.display_client() }}</div>
+    <div class="cover-meta">
+      <span><strong>Scope:</strong> {{ opts.scope.label() }}</span>
+      <span><strong>Generated:</strong> {{ generated_utc }}</span>
+      <span><strong>Vaults assessed:</strong> {{ snap.total_vaults }} ({{ snap.read_vaults }} read)</span>
+      <span><strong>Data classification:</strong> Metadata only (zero secret values)</span>
+    </div>
+  </header>
+
+  <main class="body">
+    {% if snap.skipped_vaults > 0 %}
+    <div class="notice"><strong>Partial read disclosure:</strong> {{ snap.skipped_vaults }} of {{ snap.total_vaults }} vault(s) could not be read in full during report generation due to Azure RBAC permissions, firewall restrictions or timeout. Unreadable vaults are explicitly flagged in the register below.</div>
+    {% endif %}
+
+    <h2>Executive summary</h2>
+    <p>Across <strong>{{ snap.total_vaults }}</strong> Azure Key Vault(s) in <strong>{{ snap.subscriptions }}</strong> subscription(s), this estate holds <strong>{{ snap.total_items }}</strong> managed credential(s) ({{ snap.secrets_count }} secrets, {{ snap.certs_count }} certificates and {{ snap.keys_count }} cryptographic keys). Overall security posture is rated <strong>{{ snap.posture_label }} ({{ snap.posture_score }}%)</strong> across eight core governance controls.</p>
+
+    <div class="kpis">
+      <div class="kpi {% if snap.posture_score >= 80 %}ok{% elif snap.posture_score >= 55 %}warn{% else %}danger{% endif %}">
+        <div class="kpi-lbl">Posture Score</div>
+        <div class="kpi-num">{{ snap.posture_score }}%</div>
+        <div class="kpi-sub">{{ snap.posture_label }}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Vaults</div>
+        <div class="kpi-num">{{ snap.total_vaults }}</div>
+        <div class="kpi-sub">{{ snap.prod_vaults }} prod · {{ snap.non_prod_vaults }} non-prod</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Credentials</div>
+        <div class="kpi-num">{{ snap.total_items }}</div>
+        <div class="kpi-sub">{{ snap.secrets_count }}S · {{ snap.certs_count }}C · {{ snap.keys_count }}K</div>
+      </div>
+      <div class="kpi {% if snap.expired + snap.expiring_30 > 0 %}danger{% else %}ok{% endif %}">
+        <div class="kpi-lbl">Expired / &lt;=30d</div>
+        <div class="kpi-num">{{ snap.expired + snap.expiring_30 }}</div>
+        <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.expiring_30 }} soon</div>
+      </div>
+      <div class="kpi {% if snap.stale + snap.no_expiry > 0 %}warn{% else %}ok{% endif %}">
+        <div class="kpi-lbl">Stale / No Expiry</div>
+        <div class="kpi-num">{{ snap.stale + snap.no_expiry }}</div>
+        <div class="kpi-sub">{{ snap.stale }} &gt;{{ snap.stale_after_days }}d · {{ snap.no_expiry }} open</div>
+      </div>
+    </div>
+
+    {% if opts.include_charts %}
+    <h2>Posture &amp; lifecycle analytics</h2>
+    <div class="charts">
+      <div class="chart-box">
+        <h3>Credential health &amp; lifecycle</h3>
+        <div class="donut-row">
+          <svg width="144" height="144" viewBox="0 0 120 120" aria-hidden="true">
+            <circle cx="60" cy="60" r="48" fill="none" stroke="#e4eaf3" stroke-width="14"/>
+            {% for sl in snap.health_donut %}
+            {% if sl.count > 0 %}
+            <circle cx="60" cy="60" r="48" fill="none" stroke="{{ sl.hex }}" stroke-width="14" stroke-dasharray="{{ sl.dash_array }}" stroke-dashoffset="{{ sl.dash_offset }}" transform="rotate(-90 60 60)"/>
+            {% endif %}
+            {% endfor %}
+            <text x="60" y="57" text-anchor="middle" font-size="18" font-weight="700" fill="#162133">{{ snap.total_items }}</text>
+            <text x="60" y="71" text-anchor="middle" font-size="9.5" fill="#4b5a72">credentials</text>
+          </svg>
+          <ul class="legend">
+            {% for sl in snap.health_donut %}
+            <li>
+              <span><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="{{ sl.hex }}"/></svg> {{ sl.label }}</span>
+              <span class="mono"><strong>{{ sl.count }}</strong> ({{ sl.pct }}%)</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="chart-box">
+        <h3>Security control compliance</h3>
+        <ul class="bar-list">
+          {% for c in snap.controls %}
+          <li>
+            <div class="bar-meta"><span>{{ c.label }}</span><span class="mono">{{ c.passed }}/{{ c.total }} ({{ c.pct }}%)</span></div>
+            <svg viewBox="0 0 220 8" width="100%" height="8" preserveAspectRatio="none" aria-hidden="true">
+              <rect x="0" y="0" width="220" height="8" rx="4" fill="#e4eaf3"/>
+              <rect x="0" y="0" width="{{ c.bar_width }}" height="8" rx="4" fill="{{ c.hex }}"/>
+            </svg>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      <div class="chart-box">
+        <h3>Expiry &amp; renewal horizon</h3>
+        <svg viewBox="0 0 420 172" width="100%" height="172" aria-hidden="true">
+          <line x1="12" y1="144" x2="408" y2="144" stroke="#cbd5e1" stroke-width="1"/>
+          {% for b in snap.horizon %}
+          <text x="{{ b.label_x }}" y="{{ b.count_y }}" text-anchor="middle" font-size="11" font-weight="700" fill="#162133">{{ b.count }}</text>
+          <rect x="{{ b.x }}" y="{{ b.y }}" width="42" height="{{ b.height }}" rx="4" fill="{{ b.hex }}"/>
+          <text x="{{ b.label_x }}" y="162" text-anchor="middle" font-size="10.5" fill="#4b5a72">{{ b.short_label }}</text>
+          {% endfor %}
+        </svg>
+      </div>
+
+      <div class="chart-box">
+        <h3>Credential estate by environment</h3>
+        <ul class="bar-list">
+          {% for e in snap.env_distribution %}
+          <li>
+            <div class="bar-meta">
+              <span><strong>{{ e.label }}</strong> ({{ e.vaults }} vault(s))</span>
+              <span class="mono">{{ e.total_items }} ({{ e.secrets }}S · {{ e.certs }}C · {{ e.keys }}K)</span>
+            </div>
+            <svg viewBox="0 0 220 8" width="100%" height="8" preserveAspectRatio="none" aria-hidden="true">
+              <rect x="0" y="0" width="220" height="8" rx="4" fill="#e4eaf3"/>
+              <rect x="0" y="0" width="{{ e.bar_width }}" height="8" rx="4" fill="{% if e.is_prod %}#b45309{% else %}{{ opts.theme.primary_hex() }}{% endif %}"/>
+            </svg>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if opts.include_actions && !snap.actions.is_empty() %}
+    <h2>Prioritised executive remediation plan</h2>
+    <ul class="actions-list">
+      {% for act in snap.actions %}
+      <li>
+        <span class="badge {{ act.badge_class }}">{{ act.priority }}</span>
+        <strong>{{ act.title }}</strong>
+        <p>{{ act.detail }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if opts.include_environments && !snap.env_groups.is_empty() %}
+    <h2>Multi-environment workload groups</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Workload group</th>
+          <th>Vaults (promotion order)</th>
+          <th>Total credentials</th>
+          <th>Expired / &lt;=30d</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in snap.env_groups %}
+        <tr>
+          <td><strong>{{ g.name }}</strong></td>
+          <td class="mono">{% for vn in g.vaults %}{% if !loop.first %} &rarr; {% endif %}{{ vn }}{% endfor %}</td>
+          <td>{{ g.total_items }}</td>
+          <td>{{ g.expired_or_soon }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if opts.include_vaults && !snap.vault_rows.is_empty() %}
+    <h2>Vault security posture &amp; risk register</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Vault</th>
+          <th>Env</th>
+          <th>Risk</th>
+          <th>Items</th>
+          <th>Exp / 30d</th>
+          <th>RBAC</th>
+          <th>Purge</th>
+          <th>Net Lock</th>
+          <th>Owners</th>
+          <th>Findings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in snap.vault_rows %}
+        <tr>
+          <td><strong>{{ v.name }}</strong></td>
+          <td><span class="badge {% if v.is_prod %}badge-warn{% else %}{% endif %}">{{ v.env_label }}</span></td>
+          <td><span class="badge {{ v.risk_badge }}">{{ v.risk_label }}</span></td>
+          <td>{{ v.total_items }}</td>
+          <td>{{ v.expired }} / {{ v.expiring_30 }}</td>
+          <td>{% if v.rbac %}Pass{% else %}Warn{% endif %}</td>
+          <td>{% if v.purge_protection %}Pass{% else %}Warn{% endif %}</td>
+          <td>{% if v.network_restricted %}Pass{% else %}Warn{% endif %}</td>
+          <td>{% if v.has_owners %}Pass{% else %}Warn{% endif %}</td>
+          <td>{{ v.issues_summary }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </main>
+
+  <footer class="footer">
+    <span>Prepared by {{ opts.display_issuer() }} for {{ opts.display_client() }}</span>
+    <span>{{ opts.period }} · Generated {{ generated_utc }} · Metadata-only report (no secret values)</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -110,12 +110,20 @@ if (guides) {
   await shot(page, "07-bulk-review", 900);
   await visit(page, `${vault}/access`, "10-access", 900);
   await visit(page, `${vault}/my-access`, "10-my-access", 900);
+  await visit(page, "/environments?group=payments", "17-environments", 950);
+  await visit(
+    page,
+    "/environments/set?vaults=kv-payments-dev,kv-payments-test,kv-payments-prod&name=apple-pay-merchant-key",
+    "17-environments-set",
+    950,
+  );
   await desktop.close();
   await browser.close();
   process.exit(0);
 }
 
-await visit(page, "/", "home", 900);
+await visit(page, "/", "home", 1450);
+await visit(page, "/reports/executive?submitted=1&client=Contoso+Financial&title=Executive+Key+Vault+Security+Brief&prepared_by=Platform+Security+Office&period=Nov+2026&theme=cobalt&scope=all&white_label=1&charts=1&vaults=1&envs=1&actions=1", "executive-reports", 1350);
 await visit(page, "/vaults", "vaults", 900);
 await visit(page, `${vault}/secrets`, "secrets-list");
 await visit(page, `${vault}/secrets/db-connection-string`, "secret-detail");

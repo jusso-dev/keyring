@@ -15,6 +15,7 @@ mod bulk;
 mod certs;
 pub(crate) mod confirm;
 mod details;
+pub(crate) mod environments;
 pub mod error;
 mod every_vault;
 mod expiry;
@@ -34,6 +35,7 @@ pub(crate) mod paging;
 pub(crate) mod pim;
 pub(crate) mod reason;
 mod rejection;
+pub(crate) mod reports;
 pub(crate) mod reveal_limit;
 pub mod search;
 mod secrets;
@@ -408,6 +410,16 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/expiry/age.csv", get(age::csv))
         .route("/vault-health", get(vault_health::page))
         .route("/vault-health.csv", get(vault_health::csv))
+        .route("/reports/executive", get(reports::page))
+        .route("/reports/executive/export", get(reports::export))
+        .route("/environments", get(environments::page))
+        .route("/environments.csv", get(environments::csv))
+        .route(
+            "/environments/set",
+            get(environments::set_form)
+                .merge(audited(Action::SecretMultiEnvSet, environments::apply))
+                .layer(axum::extract::DefaultBodyLimit::max(MAX_VALUE_FORM_BYTES)),
+        )
         .route("/search", get(search::page))
         .route("/generator", get(generator::page).post(generator::generate))
         .route("/auth/keepalive", get(auth::keepalive))

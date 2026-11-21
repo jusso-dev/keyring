@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Results for {{ name }} across environments - Keyring{% endblock %}
+{% block content %}
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/environments", "Environments") }}{{ ui::crumb_here("Results") }}</ol></nav>
+<div class="title-row"><h1>Results for <span class="item-name">{{ name }}</span></h1></div>
+<p class="page-desc">{{ written }} environment{% if written != 1 %}s{% endif %} written{% if failed > 0 %}, {{ failed }} not written{% endif %}. Values are never shown.</p>
+</div>
+
+{% call ui::table_wrap("env-results-caption") %}
+<table id="env-results">
+  <caption class="visually-hidden" id="env-results-caption">Write results per environment</caption>
+  <thead>
+    <tr>
+      <th scope="col">Vault</th>
+      <th scope="col">Environment</th>
+      <th scope="col">Outcome</th>
+      <th scope="col">Details</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <th scope="row" class="item-name">{{ r.vault }}</th>
+      <td class="nowrap"><span class="badge {% if r.env.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ r.env.display() }}</span></td>
+      <td class="nowrap">
+        {% match r.status %}
+        {% when crate::routes::environments::EnvWriteStatus::Created %}<span class="badge badge-ok">Created</span>
+        {% when crate::routes::environments::EnvWriteStatus::NewVersion %}<span class="badge badge-ok">New version</span>
+        {% when crate::routes::environments::EnvWriteStatus::SkippedBlank %}<span class="badge badge-muted">Skipped</span>
+        {% when crate::routes::environments::EnvWriteStatus::BlockedManaged %}<span class="badge badge-error">Managed</span>
+        {% when crate::routes::environments::EnvWriteStatus::BlockedDeleted %}<span class="badge badge-error">Deleted</span>
+        {% when crate::routes::environments::EnvWriteStatus::Denied %}<span class="badge badge-error">Refused</span>
+        {% when crate::routes::environments::EnvWriteStatus::Failed %}<span class="badge badge-error">Failed</span>
+        {% endmatch %}
+      </td>
+      <td>
+        {% match r.status %}
+        {% when crate::routes::environments::EnvWriteStatus::Created | crate::routes::environments::EnvWriteStatus::NewVersion %}
+          <a href="/v/{{ r.vault }}/secrets/{{ name }}">Open in {{ r.vault }}</a>{% if !r.version.is_empty() %} <span class="muted small mono">({{ r.version }})</span>{% endif %}
+        {% when crate::routes::environments::EnvWriteStatus::Denied %}
+          {{ r.why }} <a href="/v/{{ r.vault }}/my-access">Check my access in {{ r.vault }}</a>
+        {% when crate::routes::environments::EnvWriteStatus::BlockedDeleted %}
+          {{ r.why }} <a href="/v/{{ r.vault }}/secrets/-/deleted">Deleted secrets in {{ r.vault }}</a>
+        {% else %}
+          {{ r.why }}
+        {% endmatch %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endcall %}
+
+<div class="actions">
+  <a class="button" href="{{ compare_url }}">Back to Environments</a>
+</div>
+{% endblock %}

@@ -1,17 +1,219 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block content %}
 <div class="page-head">
-<div class="title-row"><h1>Keyring</h1></div>
-<p class="page-desc">Find a vault, look up a secret, add a certificate or rotate a key, in plain English. Everything you do here happens as you. If you can't do it in the Azure portal, you can't do it here.</p>
+<div class="title-row"><h1>Keyring</h1><span class="badge">Zero-storage PAM</span></div>
+<p class="page-desc">Organisation-wide Azure Key Vault security posture, credential lifecycle telemetry and privileged operations. Everything you do here happens as you.</p>
 </div>
+
 {#- Pinned and recently opened, filled in by static/pins.js. -#}
 <div class="pins-box" data-pins hidden></div>
+
+<div class="commandbar">
+  <a class="button" href="/reports/executive">Export executive report</a>
+  <span class="cmd-item">{{ ui::icon("environments") }}<a class="button cmd" href="/environments">Compare environments</a></span>
+  <span class="cmd-item">{{ ui::icon("health") }}<a class="button cmd" href="/vault-health">Vault health</a></span>
+  <span class="cmd-item">{{ ui::icon("expiry") }}<a class="button cmd" href="/expiry">Expiry dashboard</a></span>
+  <span class="cmd-item">{{ ui::icon("vaults") }}<a class="button cmd" href="/vaults">All vaults</a></span>
+</div>
+
 {% if allow_purge %}
 <p class="notice notice-warn">Permanent deletes are turned on for this Keyring.</p>
 {% endif %}
-<ul class="card-list">
-  {% for s in sections %}
-  <li><a href="{{ shell.nav_path(s) }}">{{ s.label() }}</a></li>
-  {% endfor %}
-</ul>
+
+{% if let Some(s) = snapshot %}
+{% if s.skipped_vaults > 0 %}
+<p class="notice notice-warn">{{ s.skipped_vaults }} of {{ s.total_vaults }} visible vault(s) couldn't be read in full (missing Key Vault Reader, firewall or timeout). Charts reflect the {{ s.read_vaults }} vault(s) read.</p>
+{% endif %}
+
+<section aria-labelledby="kpi-heading" class="dash-section">
+  <h2 id="kpi-heading" class="visually-hidden">Organisation summary</h2>
+  <div class="kpi-grid">
+    <a class="kpi-card kpi-posture" href="/vault-health">
+      <div class="kpi-top">
+        <span class="kpi-label">Security posture</span>
+      </div>
+      <div class="kpi-gauge-row">
+        <svg class="kpi-ring" width="40" height="40" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+          <circle class="ring-track" cx="50" cy="50" r="44" fill="none" stroke-width="12"/>
+          <circle class="ring-fill {% if s.posture_score >= 80 %}chart-ok{% elif s.posture_score >= 55 %}chart-warn{% else %}chart-danger{% endif %}" cx="50" cy="50" r="44" fill="none" stroke-width="12" stroke-dasharray="{{ s.posture_dash }}" stroke-linecap="round" transform="rotate(-90 50 50)"/>
+        </svg>
+        <div class="kpi-value">{{ s.posture_score }}%</div>
+      </div>
+      <div class="kpi-badge-row">
+        <span class="badge {{ s.posture_badge }}">{{ s.posture_label }}</span>
+      </div>
+    </a>
+
+    <a class="kpi-card kpi-accent" href="/vaults">
+      <div class="kpi-top"><span class="kpi-label">Vaults monitored</span></div>
+      <div class="kpi-value">{{ s.total_vaults }}</div>
+      <div class="kpi-sub">{{ s.prod_vaults }} prod · {{ s.non_prod_vaults }} non-prod · {{ s.subscriptions }} sub(s)</div>
+    </a>
+
+    <a class="kpi-card kpi-accent" href="/search">
+      <div class="kpi-top"><span class="kpi-label">Managed credentials</span></div>
+      <div class="kpi-value">{{ s.total_items }}</div>
+      <div class="kpi-sub">{{ s.secrets_count }} secrets · {{ s.certs_count }} certs · {{ s.keys_count }} keys</div>
+    </a>
+
+    <a class="kpi-card {% if s.expired > 0 || s.expiring_30 > 0 %}kpi-danger{% else %}kpi-ok{% endif %}" href="/expiry">
+      <div class="kpi-top"><span class="kpi-label">Expired &amp; &lt;= 30 days</span></div>
+      <div class="kpi-value">{{ s.expired + s.expiring_30 }}</div>
+      <div class="kpi-sub">{{ s.expired }} expired · {{ s.expiring_30 }} within 30d</div>
+    </a>
+
+    <a class="kpi-card {% if s.stale > 0 || s.no_expiry > 0 %}kpi-warn{% else %}kpi-ok{% endif %}" href="/expiry/age">
+      <div class="kpi-top"><span class="kpi-label">Stale &amp; no expiry</span></div>
+      <div class="kpi-value">{{ s.stale + s.no_expiry }}</div>
+      <div class="kpi-sub">{{ s.stale }} &gt;{{ s.stale_after_days }}d old · {{ s.no_expiry }} no expiry</div>
+    </a>
+  </div>
+</section>
+
+<section aria-labelledby="charts-heading" class="dash-section">
+  <h2 id="charts-heading" class="visually-hidden">Organisation posture and lifecycle charts</h2>
+  <div class="dash-grid">
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h3>Credential health &amp; lifecycle</h3>
+        <a class="small" href="/expiry">Open expiry</a>
+      </div>
+      <div class="donut-wrap">
+        <svg class="donut-svg" width="156" height="156" viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+          <circle class="ring-track" cx="60" cy="60" r="48" fill="none" stroke-width="14"/>
+          {% for sl in s.health_donut %}
+          {% if sl.count > 0 %}
+          <circle class="donut-seg {{ sl.css_class }}" cx="60" cy="60" r="48" fill="none" stroke-width="14" stroke-dasharray="{{ sl.dash_array }}" stroke-dashoffset="{{ sl.dash_offset }}" transform="rotate(-90 60 60)"/>
+          {% endif %}
+          {% endfor %}
+          <text x="60" y="57" text-anchor="middle" class="donut-center-n">{{ s.total_items }}</text>
+          <text x="60" y="72" text-anchor="middle" class="donut-center-lbl">credentials</text>
+        </svg>
+        <ul class="donut-legend">
+          {% for sl in s.health_donut %}
+          <li>
+            <span class="legend-swatch {{ sl.css_class }}" aria-hidden="true"></span>
+            <span class="legend-name">{{ sl.label }}</span>
+            <span class="legend-val"><strong>{{ sl.count }}</strong> <span class="muted">({{ sl.pct }}%)</span></span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </article>
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h3>Security posture controls</h3>
+        <a class="small" href="/vault-health">Vault health</a>
+      </div>
+      <ul class="hbar-list">
+        {% for c in s.controls %}
+        <li>
+          <div class="hbar-meta">
+            <span>{{ c.label }}</span>
+            <span class="mono">{{ c.passed }}/{{ c.total }} ({{ c.pct }}%)</span>
+          </div>
+          <svg class="hbar-svg" viewBox="0 0 220 8" width="220" height="8" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            <rect class="bar-track" x="0" y="0" width="220" height="8" rx="4"/>
+            <rect class="{{ c.css_class }}" x="0" y="0" width="{{ c.bar_width }}" height="8" rx="4"/>
+          </svg>
+        </li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h3>Expiry &amp; renewal horizon</h3>
+        <a class="small" href="/expiry">View schedule</a>
+      </div>
+      <svg class="horizon-svg" viewBox="0 0 420 172" aria-hidden="true" focusable="false">
+        <line class="chart-axis" x1="12" y1="144" x2="408" y2="144" stroke-width="1"/>
+        {% for b in s.horizon %}
+        <text class="chart-num" x="{{ b.label_x }}" y="{{ b.count_y }}" text-anchor="middle">{{ b.count }}</text>
+        <rect class="{{ b.css_class }}" x="{{ b.x }}" y="{{ b.y }}" width="42" height="{{ b.height }}" rx="4"/>
+        <text class="chart-lbl" x="{{ b.label_x }}" y="162" text-anchor="middle">{{ b.short_label }}</text>
+        {% endfor %}
+      </svg>
+      <div class="horizon-links">
+        {% for b in s.horizon %}
+        <a href="{{ b.href }}">{{ b.label }}: <strong>{{ b.count }}</strong></a>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="card chart-card">
+      <div class="chart-head">
+        <h3>Estate by environment</h3>
+        <a class="small" href="/environments">Compare environments</a>
+      </div>
+      <ul class="hbar-list">
+        {% for e in s.env_distribution %}
+        <li>
+          <div class="hbar-meta">
+            <span><span class="badge {% if e.is_prod %}badge-warn{% else %}badge-muted{% endif %}">{{ e.label }}</span> <span class="muted small">{{ e.vaults }} vault(s)</span></span>
+            <span class="mono">{{ e.total_items }} ({{ e.secrets }}S · {{ e.certs }}C · {{ e.keys }}K)</span>
+          </div>
+          <svg class="hbar-svg" viewBox="0 0 220 8" width="220" height="8" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            <rect class="bar-track" x="0" y="0" width="220" height="8" rx="4"/>
+            <rect class="{% if e.is_prod %}bar-warn{% else %}bar-accent{% endif %}" x="0" y="0" width="{{ e.bar_width }}" height="8" rx="4"/>
+          </svg>
+        </li>
+        {% endfor %}
+      </ul>
+      {% if !s.env_groups.is_empty() %}
+      <p class="small muted dash-foot">Discovered workload groups: {% for g in s.env_groups %}{% if !loop.first %}, {% endif %}<a href="/environments?group={{ g.name }}">{{ g.name }}</a> ({{ g.vaults.len() }} vaults){% endfor %}.</p>
+      {% endif %}
+    </article>
+
+  </div>
+</section>
+
+{% if !s.top_risks.is_empty() %}
+<section aria-labelledby="risks-heading" class="dash-section">
+  <div class="section-head">
+    <h2 id="risks-heading">Vault risk &amp; compliance watchlist</h2>
+    <a class="small" href="/reports/executive">Build executive report</a>
+  </div>
+  {% call ui::table_wrap("risk-table-caption") %}
+  <table class="one-line">
+    <caption class="visually-hidden" id="risk-table-caption">Vault risk and compliance watchlist</caption>
+    <thead>
+      <tr>
+        <th scope="col">Vault</th>
+        <th scope="col">Environment</th>
+        <th scope="col">Risk</th>
+        <th scope="col">Credentials</th>
+        <th scope="col">Expired / 30d</th>
+        <th scope="col">Posture gaps</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for v in s.top_risks %}
+      <tr>
+        <th scope="row"><a class="item-name" href="/v/{{ v.name }}/secrets">{{ v.name }}</a></th>
+        <td><span class="badge {% if v.is_prod %}badge-warn{% else %}badge-muted{% endif %}">{{ v.env_label }}</span></td>
+        <td><span class="badge {{ v.risk_badge }}">{{ v.risk_label }}</span></td>
+        <td>{{ v.total_items }}</td>
+        <td>{{ v.expired }} / {{ v.expiring_30 }}</td>
+        <td class="cell-wrap">{{ v.issues_summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+</section>
+{% endif %}
+{% endif %}
+
+<section aria-labelledby="modules-heading" class="dash-section">
+  <h2 id="modules-heading">Workspace modules</h2>
+  <ul class="card-list home-grid">
+    {% for s in sections %}
+    <li><a href="{{ shell.nav_path(s) }}"><span class="card-head"><span class="card-icon">{{ ui::icon(s.icon_name(), "icon") }}</span><span class="card-title">{{ s.label() }}</span></span><p>{{ s.summary() }}</p></a></li>
+    {% endfor %}
+  </ul>
+</section>
 {% endblock %}

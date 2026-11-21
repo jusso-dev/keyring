@@ -216,13 +216,24 @@ impl FormPage {
     /// is the one shown.
     fn type_choices(&self) -> Vec<(&'static str, String, bool)> {
         let base = vault_path(&self.vault, "/secrets/-/new");
-        std::iter::once(("Password", base.clone(), self.form.secret_type.is_none()))
+        let name_q = if self.form.name.is_empty() {
+            String::new()
+        } else {
+            format!("name={}", crate::auth::return_to::encode(&self.form.name))
+        };
+        let plain_url = if name_q.is_empty() {
+            base.clone()
+        } else {
+            format!("{base}?{name_q}")
+        };
+        std::iter::once(("Password", plain_url, self.form.secret_type.is_none()))
             .chain(SecretType::ALL.into_iter().map(|t| {
-                (
-                    t.label(),
-                    format!("{base}?type={}", t.slug()),
-                    self.form.secret_type == Some(t),
-                )
+                let url = if name_q.is_empty() {
+                    format!("{base}?type={}", t.slug())
+                } else {
+                    format!("{base}?type={}&{name_q}", t.slug())
+                };
+                (t.label(), url, self.form.secret_type == Some(t))
             }))
             .collect()
     }
@@ -321,6 +332,8 @@ fn saved(state: &AppState, to: &str, message: String) -> Response {
 pub(crate) struct NewQuery {
     #[serde(default, rename = "type")]
     kind: String,
+    #[serde(default)]
+    name: String,
 }
 
 pub(crate) async fn new_form(
@@ -331,8 +344,17 @@ pub(crate) async fn new_form(
     Query(q): Query<NewQuery>,
 ) -> PageResult {
     let (vault, shell) = current_vault(&session, shell, &vault)?;
+    let prefill_name = q.name.trim();
+    let name = if !prefill_name.is_empty()
+        && crate::routes::vault_ctx::is_valid_object_name(prefill_name)
+    {
+        prefill_name.to_owned()
+    } else {
+        String::new()
+    };
     // An unknown type shows the plain form.
     let view = FormView {
+        name,
         enabled: true,
         secret_type: SecretType::from_slug(&q.kind),
         ..FormView::default()

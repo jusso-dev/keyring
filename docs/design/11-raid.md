@@ -63,6 +63,8 @@ The design decisions D1 to D12 are in section 2.3. Decisions made while building
 | D23 | An empty `KEYRING_EVENTGRID_SUBSCRIPTIONS` is the same as unset | Every setting treats an empty value as unset; the warning at start says any subscription is accepted |
 | D24 | Sharing uses delegated Microsoft Graph for names, as the person | A share picked by object ID alone is too easy to get wrong. Reverses the object-IDs-only design (K6) for this one feature; the Access page and access review still make no Graph call |
 | D25 | A PIM setting that refuses a share refuses it; only a missing PIM licence falls back to a plain assignment | A plain assignment has no end date and would step round the setting |
+| D26 | Environment grouping comes from vault ARM tags (`keyring-group`/`app`/`service` and `keyring-env`/`env`/`stage`) with name-suffix fallback, and custom vault selection | Keeps "store nothing" true while working out of the box on existing vaults |
+| D27 | `/environments/set` refuses identical values across environments unless confirmed and always carries stricter `keyring-reveal` limits | Stops accidental reuse of dev/test values in prod without logging values, and prevents bypassing reveal limits through multi-env writes |
 
 ## Confirmed and not yet confirmed on a real tenant
 

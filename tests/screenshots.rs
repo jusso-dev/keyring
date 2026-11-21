@@ -27,6 +27,8 @@ const DEMO_CERT_PEM: &str = include_str!("fixtures/demo-cert.pem");
 const DEMO_CERT_SOON_PEM: &str = include_str!("fixtures/demo-cert-soon.pem");
 
 const PAYMENTS: &str = "kv-payments-prod";
+const PAYMENTS_DEV: &str = "kv-payments-dev";
+const PAYMENTS_TEST: &str = "kv-payments-test";
 /// Real sign-in names and notes are long. The demo uses values as long as
 /// a real tenant's, so a row that wraps shows up in the screenshots.
 const OWNER_LONG: &str = "payments-platform-oncall@demo-enterprise.example";
@@ -258,6 +260,89 @@ fn mark_managed(kv: &KvState, name: &str) {
     }
 }
 
+fn seed_payments_dev(kv: &KvState) {
+    let n = now();
+    kv.put_with(
+        "db-connection-string",
+        "Server=dev-sql.example;Database=payments_dev;User Id=dev-app;Password=demo-dev-only",
+        |v| {
+            v.content_type = Some("text/plain".into());
+            v.created = n - 8 * DAY;
+            v.updated = n - 8 * DAY;
+            v.exp = Some(n + 120 * DAY);
+            v.tags = tags(&[("owner", OWNER_LONG), ("env", "dev")]);
+        },
+    );
+    kv.put_with("stripe-webhook-secret", "demo-whsec-dev-0001", |v| {
+        v.content_type = Some("text/plain".into());
+        v.created = n - 30 * DAY;
+        v.updated = n - 30 * DAY;
+        v.exp = Some(n + 180 * DAY);
+        v.tags = tags(&[("owner", OWNER_LONG), ("env", "dev")]);
+    });
+    kv.put_with(
+        "jwt-signing-config",
+        r#"{"issuer":"https://auth.dev.example"}"#,
+        |v| {
+            v.content_type = Some("application/json".into());
+            v.created = n - 20 * DAY;
+            v.updated = n - 20 * DAY;
+            v.exp = Some(n + 200 * DAY);
+            v.tags = tags(&[("owner", "platform"), ("env", "dev")]);
+        },
+    );
+    kv.put_with("apple-pay-merchant-key", "demo-applepay-dev", |v| {
+        v.content_type = Some("application/x-api-key".into());
+        v.created = n - 2 * DAY;
+        v.updated = n - 2 * DAY;
+        v.exp = Some(n + 360 * DAY);
+        v.tags = tags(&[("owner", OWNER_LONG), ("env", "dev")]);
+    });
+}
+
+fn seed_payments_test(kv: &KvState) {
+    let n = now();
+    kv.put_with(
+        "db-connection-string",
+        "Server=test-sql.example;Database=payments_test;User Id=test-app;Password=demo-test-only",
+        |v| {
+            v.content_type = Some("text/plain".into());
+            v.created = n - 10 * DAY;
+            v.updated = n - 10 * DAY;
+            v.exp = Some(n + 90 * DAY);
+            v.tags = tags(&[("owner", OWNER_LONG), ("env", "test")]);
+        },
+    );
+    kv.put_with("stripe-webhook-secret", "demo-whsec-test-0002", |v| {
+        v.content_type = Some("text/plain".into());
+        v.created = n - 30 * DAY;
+        v.updated = n - 30 * DAY;
+        v.exp = Some(n + 150 * DAY);
+        v.tags = tags(&[("owner", OWNER_LONG), ("env", "test")]);
+    });
+    kv.put_with(
+        "jwt-signing-config",
+        r#"{"issuer":"https://auth.test.example"}"#,
+        |v| {
+            v.content_type = Some("application/json".into());
+            v.created = n - 25 * DAY;
+            v.updated = n - 25 * DAY;
+            v.exp = Some(n + 190 * DAY);
+            v.tags = tags(&[
+                ("owner", "payments-qa@demo-enterprise.example"),
+                ("env", "test"),
+            ]);
+        },
+    );
+    kv.put_with("apple-pay-merchant-key", "demo-applepay-test", |v| {
+        v.content_type = Some("application/x-api-key".into());
+        v.created = n - DAY;
+        v.updated = n - DAY;
+        v.exp = Some(n + 360 * DAY);
+        v.tags = tags(&[("owner", OWNER_LONG), ("env", "test")]);
+    });
+}
+
 fn seed_platform(kv: &KvState) {
     let n = now();
     kv.put_with("github-actions-token", "demo-gha-token", |v| {
@@ -315,7 +400,11 @@ fn seed_identity(kv: &KvState) {
 
 fn vault_row(name: &str, sub: &str, env: &str, location: &str) -> serde_json::Value {
     let mut row = support::vault_row(name, sub, true);
-    row["tags"] = json!({"env": env, "owner": "platform"});
+    let mut t = json!({"env": env, "owner": "platform"});
+    if name.starts_with("kv-payments-") {
+        t["app"] = json!("payments");
+    }
+    row["tags"] = t;
     row["location"] = json!(location);
     row["enablePurgeProtection"] = json!(env == "prod");
     row
@@ -457,13 +546,16 @@ async fn serve_demo_for_screenshots() {
     let idp = support::start_idp().await;
     let arm = support::start_arm().await;
 
-    let vaults: Vec<(&'static str, Arc<KvState>)> = [PAYMENTS, PLATFORM, IDENTITY]
-        .into_iter()
-        .map(|n| (n, Arc::new(KvState::default())))
-        .collect();
+    let vaults: Vec<(&'static str, Arc<KvState>)> =
+        [PAYMENTS, PAYMENTS_DEV, PAYMENTS_TEST, PLATFORM, IDENTITY]
+            .into_iter()
+            .map(|n| (n, Arc::new(KvState::default())))
+            .collect();
     seed_payments(&vaults[0].1);
-    seed_platform(&vaults[1].1);
-    seed_identity(&vaults[2].1);
+    seed_payments_dev(&vaults[1].1);
+    seed_payments_test(&vaults[2].1);
+    seed_platform(&vaults[3].1);
+    seed_identity(&vaults[4].1);
     let kv_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let kv_url = format!("http://{}", kv_listener.local_addr().unwrap());
     let kv_app = support::keyvault::several_vaults(vaults);
@@ -475,6 +567,8 @@ async fn serve_demo_for_screenshots() {
     ];
     *arm.state.vaults.lock().unwrap() = vec![
         vault_row(PAYMENTS, "sub-a", "prod", "australiaeast"),
+        vault_row(PAYMENTS_TEST, "sub-b", "test", "australiaeast"),
+        vault_row(PAYMENTS_DEV, "sub-b", "dev", "australiaeast"),
         vault_row(IDENTITY, "sub-b", "test", "australiasoutheast"),
         vault_row(PLATFORM, "sub-b", "dev", "australiaeast"),
     ];

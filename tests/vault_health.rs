@@ -344,8 +344,8 @@ async fn vault_list_badges_vaults_without_audit_logs() {
             .find(&format!("class=\"item-name nowrap\">{vault}"))
             .unwrap_or_else(|| panic!("{vault}"));
         let row = &html[at..at + html[at..].find("</tr>").unwrap()];
-        // The eighth cell, whatever class the cells before it carry.
-        let td = row.split("<td").nth(8).unwrap();
+        // The ninth cell, whatever class the cells before it carry.
+        let td = row.split("<td").nth(9).unwrap();
         td[td.find('>').unwrap() + 1..].to_owned()
     };
     assert!(cell("kv-logged").starts_with("On</td>"));
