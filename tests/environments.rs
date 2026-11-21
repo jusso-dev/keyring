@@ -333,8 +333,11 @@ async fn set_across_environments_writes_distinct_values_and_guards_duplicates() 
             &[
                 ("vaults", vaults),
                 ("name", "webhook-secret"),
+                ("env-vault-1", "kv-payments-dev"),
                 ("env-val-1", "AccidentallyReused!99"),
+                ("env-vault-2", "kv-payments-test"),
                 ("env-val-2", "UniqueTestSecret!88"),
+                ("env-vault-3", "kv-payments-prod"),
                 ("env-val-3", "AccidentallyReused!99"),
                 ("enabled", "1"),
             ],
@@ -356,8 +359,11 @@ async fn set_across_environments_writes_distinct_values_and_guards_duplicates() 
             &[
                 ("vaults", vaults),
                 ("name", "webhook-secret"),
+                ("env-vault-1", "kv-payments-dev"),
                 ("env-val-1", "DevOnlySecretValue!11"),
+                ("env-vault-2", "kv-payments-test"),
                 ("env-val-2", ""),
+                ("env-vault-3", "kv-payments-prod"),
                 ("env-val-3", "ProdOnlySecretValue!33"),
                 ("description", "Webhook HMAC secret"),
                 ("owner", "alex@example.com"),
@@ -424,6 +430,7 @@ async fn set_across_environments_enforces_password_policy_owner_reveal_carry_and
             &[
                 ("vaults", vaults),
                 ("name", "db-pass"),
+                ("env-vault-1", "kv-payments-dev"),
                 ("env-val-1", "StrongDevPass1234"),
                 ("owner", "alex@example.com"),
                 ("enabled", "1"),
@@ -441,6 +448,7 @@ async fn set_across_environments_enforces_password_policy_owner_reveal_carry_and
             &[
                 ("vaults", vaults),
                 ("name", "db-pass"),
+                ("env-vault-1", "kv-payments-dev"),
                 ("env-val-1", "weak"),
                 ("reason", "Quarterly database password rotation"),
                 ("enabled", "1"),
@@ -459,8 +467,11 @@ async fn set_across_environments_enforces_password_policy_owner_reveal_carry_and
             &[
                 ("vaults", vaults),
                 ("name", "db-pass"),
+                ("env-vault-1", "kv-payments-dev"),
                 ("env-val-1", "StrongDevPass1234"),
+                ("env-vault-2", "kv-payments-test"),
                 ("env-val-2", "StrongTestPass5678"),
+                ("env-vault-3", "kv-payments-prod"),
                 ("env-val-3", "StrongProdPass9012"),
                 ("owner", "alex@example.com"),
                 ("reveal", ""), // attempting to leave blank must NOT loosen dev's `none`!
@@ -488,4 +499,130 @@ async fn set_across_environments_enforces_password_policy_owner_reveal_carry_and
         "StrongTestPass5678"
     );
     assert!(w.prod.current("db-pass").is_none());
+}
+
+#[tokio::test]
+async fn matrix_ignores_unrelated_key_list_failures() {
+    let w = multi_world(&[]).await;
+    w.dev.put("api-token", "dev-val");
+    w.test.put("api-token", "test-val");
+    w.prod.put("api-token", "prod-val");
+    // Denying `/keys` on prod must not hide prod's readable secrets on `/environments`.
+    w.prod
+        .fail_each
+        .lock()
+        .unwrap()
+        .push((Method::GET, "/keys".into(), 403, "ForbiddenByRbac"));
+
+    let (status, html) = w.get("/environments").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("api-token"));
+    assert!(!html.contains("badge-muted\">Not read<"));
+    assert!(html.contains("In sync"));
+    let (_, csv) = w.get("/environments.csv").await;
+    assert!(!csv.contains("NOT READ"));
+    assert!(csv.contains("kv-payments-prod (prod) status"));
+    assert!(csv.contains("api-token,In sync,"));
+}
+
+#[tokio::test]
+async fn set_binds_values_by_vault_name_and_never_shifts_on_missing_vault() {
+    let w = multi_world(&[]).await;
+    let vaults = "kv-payments-dev,kv-payments-test,kv-payments-prod";
+
+    // Simulate `kv-payments-test` disappearing from the user's visible vaults
+    // between GET and POST: `env-val-2` (intended for test) MUST be rejected,
+    // never shifted into `kv-payments-prod`!
+    w._arm
+        .state
+        .vaults
+        .lock()
+        .unwrap()
+        .retain(|row| row["name"] != "kv-payments-test");
+
+    let (status, err_html) = w
+        .post(
+            "/environments/set",
+            &[
+                ("vaults", vaults),
+                ("name", "shift-guard"),
+                ("env-vault-1", "kv-payments-dev"),
+                ("env-val-1", "DevSentinel!11"),
+                ("env-vault-2", "kv-payments-test"),
+                ("env-val-2", "TestSentinel!22"),
+                ("env-vault-3", "kv-payments-prod"),
+                ("env-val-3", "ProdSentinel!33"),
+                ("enabled", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(err_html.contains("kv-payments-test is no longer available"));
+    assert!(w.dev.current("shift-guard").is_none());
+    assert!(w.prod.current("shift-guard").is_none());
+}
+
+#[tokio::test]
+async fn set_fails_closed_when_versions_check_errors_and_blocks_structured_secrets() {
+    let w = multi_world(&[]).await;
+    let vaults = "kv-payments-dev,kv-payments-test,kv-payments-prod";
+
+    // 1. `dev`: plain secret (allowed)
+    w.dev.put("app-cred", "old-dev");
+    // 2. `test`: existing secret with `keyring-reveal=none` whose versions check fails -> MUST fail closed!
+    w.test.put_with("app-cred", "old-test", |v| {
+        v.tags.insert("keyring-reveal".into(), "none".into());
+    });
+    w.test.fail_each.lock().unwrap().push((
+        Method::GET,
+        "/secrets/app-cred/versions".into(),
+        500,
+        "InternalError",
+    ));
+    // 3. `prod`: structured Keyring Login secret -> MUST refuse plain overwrite and link to typed form!
+    w.prod.put_with(
+        "app-cred",
+        "{\"username\":\"svc\",\"password\":\"pw\"}",
+        |v| {
+            v.content_type = Some("application/vnd.keyring.login+json;v=1".into());
+        },
+    );
+
+    let (status, res_html) = w
+        .post(
+            "/environments/set",
+            &[
+                ("vaults", vaults),
+                ("name", "app-cred"),
+                ("env-vault-1", "kv-payments-dev"),
+                ("env-val-1", "NewDevVal!11"),
+                ("env-vault-2", "kv-payments-test"),
+                ("env-val-2", "NewTestVal!22"),
+                ("env-vault-3", "kv-payments-prod"),
+                ("env-val-3", "PlainOverwrite!33"),
+                ("reveal", ""),
+                ("enabled", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{res_html}");
+    assert!(res_html.contains("1 environment written, 2 not written"));
+    assert!(res_html.contains(">Typed secret<"));
+    assert!(res_html.contains("/v/kv-payments-prod/secrets/app-cred/set"));
+    assert!(res_html.contains("verify existing secret metadata"));
+
+    // Verify `dev` updated, while `test` kept `none` and `prod` kept its structured JSON!
+    assert_eq!(w.dev.current("app-cred").unwrap().value, "NewDevVal!11");
+    let test_cur = w.test.current("app-cred").unwrap();
+    assert_eq!(test_cur.value, "old-test");
+    assert_eq!(
+        test_cur.tags.get("keyring-reveal").map(String::as_str),
+        Some("none")
+    );
+    let prod_cur = w.prod.current("app-cred").unwrap();
+    assert_eq!(
+        prod_cur.content_type.as_deref(),
+        Some("application/vnd.keyring.login+json;v=1")
+    );
+    assert!(prod_cur.value.contains("\"username\":\"svc\""));
 }

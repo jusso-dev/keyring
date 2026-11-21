@@ -31,6 +31,7 @@
         {% when crate::routes::environments::EnvWriteStatus::SkippedBlank %}<span class="badge badge-muted">Skipped</span>
         {% when crate::routes::environments::EnvWriteStatus::BlockedManaged %}<span class="badge badge-error">Managed</span>
         {% when crate::routes::environments::EnvWriteStatus::BlockedDeleted %}<span class="badge badge-error">Deleted</span>
+        {% when crate::routes::environments::EnvWriteStatus::BlockedTyped %}<span class="badge badge-error">Typed secret</span>
         {% when crate::routes::environments::EnvWriteStatus::Denied %}<span class="badge badge-error">Refused</span>
         {% when crate::routes::environments::EnvWriteStatus::Failed %}<span class="badge badge-error">Failed</span>
         {% endmatch %}
@@ -43,6 +44,8 @@
           {{ r.why }} <a href="/v/{{ r.vault }}/my-access">Check my access in {{ r.vault }}</a>
         {% when crate::routes::environments::EnvWriteStatus::BlockedDeleted %}
           {{ r.why }} <a href="/v/{{ r.vault }}/secrets/-/deleted">Deleted secrets in {{ r.vault }}</a>
+        {% when crate::routes::environments::EnvWriteStatus::BlockedTyped %}
+          {{ r.why }} <a href="/v/{{ r.vault }}/secrets/{{ name }}/set">Set typed value in {{ r.vault }}</a>
         {% else %}
           {{ r.why }}
         {% endmatch %}

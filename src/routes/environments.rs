@@ -294,7 +294,7 @@ impl MatrixPage {
 
 async fn load_matrix(state: &AppState, session: &CurrentSession, selected: &[EnvVault]) -> Matrix {
     let wanted: Vec<String> = selected.iter().map(|v| v.vault.name.clone()).collect();
-    let fanned = every_vault::read(state, session, wanted).await;
+    let fanned = every_vault::read_secrets(state, session, wanted).await;
     let skipped_map: BTreeMap<String, String> = fanned
         .skipped
         .into_iter()
@@ -637,6 +637,19 @@ const ENV_VAL_IDS: [&str; MAX_COMPARE_VAULTS] = [
     "env-val-8",
 ];
 
+/// Paired hidden vault-name fields binding each `env-val-N` strictly to the
+/// vault displayed when the form was rendered.
+const ENV_VAULT_IDS: [&str; MAX_COMPARE_VAULTS] = [
+    "env-vault-1",
+    "env-vault-2",
+    "env-vault-3",
+    "env-vault-4",
+    "env-vault-5",
+    "env-vault-6",
+    "env-vault-7",
+    "env-vault-8",
+];
+
 /// One target vault row shown on the multi-environment set form.
 struct EnvTargetRow {
     vault: String,
@@ -645,6 +658,8 @@ struct EnvTargetRow {
     status_note: String,
     /// Static input id and name (`env-val-1` .. `env-val-8`).
     field_id: &'static str,
+    /// Static hidden vault-name field (`env-vault-1` .. `env-vault-8`).
+    vault_field_id: &'static str,
     /// `aria-describedby` help IDs for this environment's input.
     help_ids: String,
 }
@@ -701,6 +716,7 @@ fn target_rows(selected: &[EnvVault], mut notes: BTreeMap<String, String>) -> Ve
         .take(MAX_COMPARE_VAULTS)
         .map(|(i, ev)| {
             let field_id = ENV_VAL_IDS[i];
+            let vault_field_id = ENV_VAULT_IDS[i];
             let status_note = notes.remove(&ev.vault.name).unwrap_or_default();
             let help_ids = if status_note.is_empty() {
                 "env-values-help".to_owned()
@@ -709,6 +725,7 @@ fn target_rows(selected: &[EnvVault], mut notes: BTreeMap<String, String>) -> Ve
             };
             EnvTargetRow {
                 field_id,
+                vault_field_id,
                 help_ids,
                 status_note,
                 vault: ev.vault.name.clone(),
@@ -844,6 +861,7 @@ pub(super) enum EnvWriteStatus {
     SkippedBlank,
     BlockedManaged,
     BlockedDeleted,
+    BlockedTyped,
     Denied,
     Failed,
 }
@@ -897,6 +915,7 @@ pub(super) async fn apply(
     let mut allow_duplicate = false;
     let mut tag_post = TagPost::default();
     let mut values_by_id: BTreeMap<String, Secret> = BTreeMap::new();
+    let mut vaults_by_id: BTreeMap<String, String> = BTreeMap::new();
 
     for (k, v) in openidconnect::url::form_urlencoded::parse(&body) {
         let key = k.as_ref();
@@ -918,6 +937,9 @@ pub(super) async fn apply(
             "allow_duplicate" => allow_duplicate = true,
             other if ENV_VAL_IDS.contains(&other) => {
                 values_by_id.insert(other.to_owned(), Secret::new(normalise_lf(&v)));
+            }
+            other if ENV_VAULT_IDS.contains(&other) => {
+                vaults_by_id.insert(other.to_owned(), v.trim().to_owned());
             }
             _ => {}
         }
@@ -1072,47 +1094,93 @@ pub(super) async fn apply(
         );
     }
 
-    // Collect non-empty per-vault values and run password policy + duplicate check.
-    let mut non_empty: Vec<(&EnvVault, &Secret)> = Vec::new();
-    for (idx, ev) in sel.selected.iter().enumerate().take(MAX_COMPARE_VAULTS) {
-        let field_id = ENV_VAL_IDS[idx];
-        if let Some(sec) = values_by_id.get(field_id) {
-            if sec.expose().is_empty() {
-                continue;
-            }
-            if sec.expose().len() > MAX_VALUE_BYTES {
-                errors.push(
-                    field_id,
-                    format!(
-                        "Value for {} is over {} KB, which is Key Vault's limit.",
-                        ev.vault.name,
-                        MAX_VALUE_BYTES / 1024
-                    ),
-                );
-                continue;
-            }
-            if let Some(problem) = state
-                .config
-                .password_policy
-                .check(&format!("Value for {}", ev.vault.name), sec)
-            {
-                refusal_code.get_or_insert(Refusal::PasswordPolicy);
-                errors.push(field_id, problem);
-            }
-            non_empty.push((ev, sec));
+    // Bind each non-empty per-vault value strictly to the vault name submitted
+    // alongside it (`env-vault-N`), never by position, so a vault disappearing
+    // or changing environment labels between GET and POST can never shift a
+    // value into a different vault.
+    let selected_by_name: BTreeMap<String, (usize, &EnvVault)> = sel
+        .selected
+        .iter()
+        .enumerate()
+        .take(MAX_COMPARE_VAULTS)
+        .map(|(idx, ev)| (ev.vault.name.to_ascii_lowercase(), (idx, ev)))
+        .collect();
+    let mut values_by_vault: BTreeMap<String, Secret> = BTreeMap::new();
+    let mut non_empty_vaults: Vec<&EnvVault> = Vec::new();
+    for i in 0..MAX_COMPARE_VAULTS {
+        let val_id = ENV_VAL_IDS[i];
+        let vault_id = ENV_VAULT_IDS[i];
+        let Some(sec) = values_by_id.remove(val_id) else {
+            continue;
+        };
+        if sec.expose().is_empty() {
+            continue;
         }
+        let Some(posted_vault) = vaults_by_id.get(vault_id).filter(|v| !v.is_empty()) else {
+            refusal_code.get_or_insert(Refusal::InvalidRequest);
+            errors.push(
+                ENV_VAL_IDS[0],
+                "The target vault list changed or was incomplete. Reload the form and enter your values again.",
+            );
+            continue;
+        };
+        let key = posted_vault.to_ascii_lowercase();
+        let Some(&(target_idx, ev)) = selected_by_name.get(&key) else {
+            refusal_code.get_or_insert(Refusal::InvalidRequest);
+            errors.push(
+                ENV_VAL_IDS[0],
+                format!(
+                    "Vault {posted_vault} is no longer available in your selection. Reload the form so no value is written to the wrong environment."
+                ),
+            );
+            continue;
+        };
+        if values_by_vault.contains_key(&key) {
+            refusal_code.get_or_insert(Refusal::InvalidRequest);
+            errors.push(
+                ENV_VAL_IDS[target_idx],
+                format!("More than one value was submitted for {}.", ev.vault.name),
+            );
+            continue;
+        }
+        let err_field = ENV_VAL_IDS[target_idx];
+        if sec.expose().len() > MAX_VALUE_BYTES {
+            errors.push(
+                err_field,
+                format!(
+                    "Value for {} is over {} KB, which is Key Vault's limit.",
+                    ev.vault.name,
+                    MAX_VALUE_BYTES / 1024
+                ),
+            );
+            continue;
+        }
+        if let Some(problem) = state
+            .config
+            .password_policy
+            .check(&format!("Value for {}", ev.vault.name), &sec)
+        {
+            refusal_code.get_or_insert(Refusal::PasswordPolicy);
+            errors.push(err_field, problem);
+        }
+        values_by_vault.insert(key, sec);
+        non_empty_vaults.push(ev);
     }
 
-    if non_empty.is_empty() && errors.is_empty() {
+    if non_empty_vaults.is_empty() && errors.is_empty() {
         errors.push(
             ENV_VAL_IDS[0],
             "Enter a value for at least one environment.",
         );
     }
 
-    let check_pairs: Vec<(&str, bool, &Secret)> = non_empty
+    let check_pairs: Vec<(&str, bool, &Secret)> = non_empty_vaults
         .iter()
-        .map(|(ev, s)| (ev.vault.name.as_str(), ev.env.is_production(), *s))
+        .filter_map(|ev| {
+            values_by_vault
+                .get(&ev.vault.name.to_ascii_lowercase())
+                .map(|s| (ev.vault.name.as_str(), ev.env.is_production(), s))
+        })
         .collect();
     let dupes = environments::find_duplicate_values(&check_pairs);
     let show_duplicate_confirm = !dupes.is_empty();
@@ -1180,12 +1248,12 @@ pub(super) async fn apply(
     let mut tried = 0usize;
     let mut all_denied = true;
 
-    for (idx, ev) in sel.selected.iter().enumerate().take(MAX_COMPARE_VAULTS) {
+    for ev in sel.selected.iter().take(MAX_COMPARE_VAULTS) {
         let vault_name = &ev.vault.name;
         if !is_valid_vault_name(vault_name) {
             continue;
         }
-        let Some(secret_val) = values_by_id.remove(ENV_VAL_IDS[idx]) else {
+        let Some(secret_val) = values_by_vault.remove(&vault_name.to_ascii_lowercase()) else {
             rows.push(EnvResultRow {
                 vault: vault_name.clone(),
                 env: ev.env.clone(),
@@ -1214,23 +1282,48 @@ pub(super) async fn apply(
             vault_url: state.config.vault_url(vault_name),
         };
 
-        // Inspect existing state before writing: refuse certificate-managed
-        // secrets and soft-deleted names, and carry any stricter reveal limit.
+        // Fail-closed metadata check before writing: refuse certificate-managed
+        // secrets, structured typed secrets, soft-deleted names, and any vault
+        // whose existing version metadata cannot be verified (so an existing
+        // `keyring-reveal` limit can never be silently lowered).
         let existing_versions = match api.versions(&trimmed_name).await {
-            Ok(v) => Some(v),
-            Err(AzureError::Status { status: 404, .. }) => Some(Vec::new()),
+            Ok(v) => v,
+            Err(AzureError::Status { status: 404, .. }) => Vec::new(),
             Err(AzureError::Status {
                 status: 401 | 403, ..
             }) => {
-                // Can't list versions, try the write directly so Key Vault
-                // gives the definitive RBAC answer and audit record.
-                None
+                ItemEvents::for_request(Action::SecretSet, state.audit_sink.clone())
+                    .in_vault(vault_name)
+                    .refused(&trimmed_name, Refusal::InvalidRequest)
+                    .await;
+                rows.push(EnvResultRow {
+                    vault: vault_name.clone(),
+                    env: ev.env.clone(),
+                    status: EnvWriteStatus::Denied,
+                    version: String::new(),
+                    why: "Needs Key Vault Secrets Officer on this vault (couldn't verify existing secret metadata).".to_owned(),
+                });
+                continue;
             }
-            Err(_) => None,
+            Err(_) => {
+                all_denied = false;
+                ItemEvents::for_request(Action::SecretSet, state.audit_sink.clone())
+                    .in_vault(vault_name)
+                    .refused(&trimmed_name, Refusal::InvalidRequest)
+                    .await;
+                rows.push(EnvResultRow {
+                    vault: vault_name.clone(),
+                    env: ev.env.clone(),
+                    status: EnvWriteStatus::Failed,
+                    version: String::new(),
+                    why: "Couldn't verify existing secret metadata in Key Vault, so this vault wasn't written.".to_owned(),
+                });
+                continue;
+            }
         };
 
-        if let Some(ref versions) = existing_versions {
-            if versions.first().is_some_and(|i| i.managed.unwrap_or(false)) {
+        if let Some(cur) = existing_versions.first() {
+            if cur.managed.unwrap_or(false) {
                 all_denied = false;
                 ItemEvents::for_request(Action::SecretSet, state.audit_sink.clone())
                     .in_vault(vault_name)
@@ -1245,25 +1338,44 @@ pub(super) async fn apply(
                 });
                 continue;
             }
-            if versions.is_empty() && api.get_deleted(&trimmed_name).await.is_ok() {
+            if !matches!(
+                crate::secret_types::classify(cur.content_type.as_deref()),
+                crate::secret_types::ContentKind::Plain
+            ) {
                 all_denied = false;
-                ItemEvents::for_request(Action::SecretCreate, state.audit_sink.clone())
+                ItemEvents::for_request(Action::SecretSet, state.audit_sink.clone())
                     .in_vault(vault_name)
                     .refused(&trimmed_name, Refusal::InvalidRequest)
                     .await;
                 rows.push(EnvResultRow {
                     vault: vault_name.clone(),
                     env: ev.env.clone(),
-                    status: EnvWriteStatus::BlockedDeleted,
+                    status: EnvWriteStatus::BlockedTyped,
                     version: String::new(),
-                    why: "A deleted secret with this name is still kept in this vault. Recover it first.".to_owned(),
+                    why: "Uses a structured Keyring secret type; update its fields from the vault's Set a new value form instead.".to_owned(),
                 });
                 continue;
             }
+        } else if api.get_deleted(&trimmed_name).await.is_ok() {
+            all_denied = false;
+            ItemEvents::for_request(Action::SecretCreate, state.audit_sink.clone())
+                .in_vault(vault_name)
+                .refused(&trimmed_name, Refusal::InvalidRequest)
+                .await;
+            rows.push(EnvResultRow {
+                vault: vault_name.clone(),
+                env: ev.env.clone(),
+                status: EnvWriteStatus::BlockedDeleted,
+                version: String::new(),
+                why:
+                    "A deleted secret with this name is still kept in this vault. Recover it first."
+                        .to_owned(),
+            });
+            continue;
         }
 
-        let existed = existing_versions.as_ref().is_some_and(|v| !v.is_empty());
-        let carried_tags = match existing_versions.as_ref().and_then(|v| v.first()) {
+        let existed = !existing_versions.is_empty();
+        let carried_tags = match existing_versions.first() {
             Some(cur) => reveal_limit::carry(&base_tags, cur.tags()),
             None => base_tags.clone(),
         };

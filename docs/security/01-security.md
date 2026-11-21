@@ -104,7 +104,7 @@ The full 36-threat STRIDE register (T1 to T36) is maintained in the Solution Des
 | T28 | Info disclosure | Bypassing Keyring UI controls via Azure CLI or portal | C23, C10, C11, C16 | Keyring controls apply only to Keyring; enforce Conditional Access on Key Vault for all paths |
 | T29 | Elevation | Stolen session used to share secrets (`KEYRING_SHARING=true`) | C26, C10, C11, C13, Sentinel shares rule | Step-up and reason gate are opt-in; enable both when sharing is on |
 | T35 | Info disclosure | Reusing a dev/test secret value in production via `/environments/set` | C28 (in-memory duplicate check blocks prod/non-prod reuse unless confirmed; never logs values) | An operator can still tick confirmation for genuinely shared credentials; Sentinel and audit events record every vault written |
-| T36 | Tampering | Multi-environment write attempting to weaken an existing vault's `keyring-reveal` limit | C23, C28 (`reveal_limit::carry` preserves stricter limit on every target vault; never loosens) | None via `/environments/set`; loosening requires the individual item's Edit details flow with step-up and reason |
+| T36 | Tampering | Multi-environment write attempting to weaken an existing vault's `keyring-reveal` limit | C23, C28 (fail-closed preflight metadata verification refuses writes if existing metadata cannot be checked; `reveal_limit::carry` preserves stricter limit on every target vault) | Azure Key Vault `SetSecret` lacks server-side version preconditions, so a concurrent admin tightening `keyring-reveal` between preflight and `PUT` is a narrow race; loosening intentionally requires the item's Edit details flow with step-up and reason |
 
 # Compliance framework mapping
 

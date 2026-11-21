@@ -97,28 +97,38 @@ KeyringAudit_CL
 **Audit multi-environment secret writes and partial RBAC failures:**
 
 ```kusto
+let MultiRequests =
+    KeyringAudit_CL
+    | where TimeGenerated > ago(7d) and Action == "secret.multi_env_set"
+    | project RequestTime=TimeGenerated, ActorUpn, SessionRef, ItemName,
+              RequestOutcome=Outcome, RequestReasonCode=ReasonCode, Ticket;
 KeyringAudit_CL
-| where TimeGenerated > ago(7d)
-| where Action in ("secret.multi_env_set", "secret.create", "secret.set")
-| summarize Actions=make_set(Action), Vaults=make_set(Vault),
-            Outcomes=make_set(Outcome), ReasonCodes=make_set(ReasonCode)
-  by bin(TimeGenerated, 1m), ActorUpn, SessionRef, ItemName, Ticket
-| where Actions has "secret.multi_env_set"
+| where TimeGenerated > ago(7d) and Action in ("secret.create", "secret.set")
+| join kind=inner MultiRequests on ActorUpn, SessionRef, ItemName
+| where TimeGenerated between ((RequestTime - 2m) .. (RequestTime + 2m))
+| project TimeGenerated, ActorUpn, SessionRef, ItemName, Vault, Action,
+          VaultOutcome=Outcome, VaultReasonCode=ReasonCode, RequestOutcome, Ticket, KvRequestId
 | order by TimeGenerated desc
 ```
 
-**Correlate Keyring reveals with Entra ID sign-in risk and MFA posture:**
+**Correlate Keyring reveals with the preceding Entra ID sign-in risk and MFA posture:**
 
 ```kusto
 KeyringAudit_CL
 | where TimeGenerated > ago(24h) and Action in ("secret.reveal", "certificate.download_private_key")
+| project RevealTime=TimeGenerated, ActorObjectId, ActorUpn, Vault, ItemName,
+          ClientIp, Reason, Ticket, KvRequestId
 | join kind=leftouter (
     SigninLogs
-    | where TimeGenerated > ago(25h)
-    | summarize arg_max(TimeGenerated, ConditionalAccessStatus, RiskLevelAggregated, AuthenticationRequirement, IPAddress) by UserId
+    | where TimeGenerated > ago(36h)
+    | project SignInTime=TimeGenerated, UserId, SignInIp=IPAddress,
+              ConditionalAccessStatus, RiskLevelAggregated, AuthenticationRequirement
 ) on $left.ActorObjectId == $right.UserId
-| project TimeGenerated, ActorUpn, Vault, ItemName, ClientIp, IPAddress,
-          ConditionalAccessStatus, RiskLevelAggregated, AuthenticationRequirement, Reason, Ticket
+| where isnull(SignInTime) or SignInTime <= RevealTime
+| summarize arg_max(SignInTime, SignInIp, ConditionalAccessStatus,
+                    RiskLevelAggregated, AuthenticationRequirement)
+  by RevealTime, ActorObjectId, ActorUpn, Vault, ItemName, ClientIp, Reason, Ticket, KvRequestId
+| order by RevealTime desc
 ```
 
 ### Hard redaction guarantee for SOC reviewers

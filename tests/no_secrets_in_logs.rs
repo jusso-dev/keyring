@@ -170,7 +170,9 @@ async fn values_never_reach_the_logs() {
                 &[
                     ("name", "multi-secret"),
                     ("vaults", "kv-app-dev,kv-app-prod"),
+                    ("env-vault-1", "kv-app-dev"),
                     ("env-val-1", "ENVLEAK-dup-value"),
+                    ("env-vault-2", "kv-app-prod"),
                     ("env-val-2", "ENVLEAK-dup-value"),
                     ("enabled", "1"),
                 ],
@@ -185,7 +187,9 @@ async fn values_never_reach_the_logs() {
                 &[
                     ("name", "multi-secret"),
                     ("vaults", "kv-app-dev,kv-app-prod"),
+                    ("env-vault-1", "kv-app-dev"),
                     ("env-val-1", "ENVLEAK-dev-only"),
+                    ("env-vault-2", "kv-app-prod"),
                     ("env-val-2", "ENVLEAK-prod-only"),
                     ("description", "ENVLEAK-desc"),
                     ("owner", "envownerleak@example.com"),

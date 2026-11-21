@@ -9,7 +9,7 @@ Keyring removes that gap without introducing a second vault, a second database o
 | Outcome | What changes when you consolidate onto Keyring + Azure Key Vault |
 |---|---|
 | Single source of truth | Applications (via managed identities, Key Vault references and CSI drivers) and people (via Keyring) work against the exact same Key Vaults, eliminating copy-paste drift between Secret Server and Azure |
-| Zero new database or blast radius | Keyring stores nothing and holds no vault role. Compromising Keyring's container or managed identity grants access to zero vaults |
+| Zero new database or standing vault roles | Keyring stores nothing and its managed identity holds zero vault roles. Compromising the identity or container at rest yields zero vault access; runtime compromise is strictly limited to active in-memory user OBO sessions until idle or absolute expiry |
 | Native Entra ID governance | Sign-in, MFA, Conditional Access step-up, PIM just-in-time activation and approval workflows, and leaver offboarding all live in Entra ID with no directory sync lag |
 | Multi-environment collaboration | Teams compare `dev`, `test`, `staging` and `prod` vaults side by side without revealing values, spot missing or drifting secrets, export release-readiness CSVs, and set separate values per environment with built-in duplicate-value protection |
 | Lower total cost of ownership | Eliminates per-user / per-secret commercial vault licences, dedicated SQL Server / IIS / cluster infrastructure, backup jobs and database HA maintenance |
@@ -144,7 +144,7 @@ One of the main reasons engineering teams cling to standalone tools like Doppler
 3. **Setting distinct values across environments with production reuse protection.** On **Set across environments** (`/environments/set`), a team member enters separate values for each environment in one audited form with shared description, owner, notify list, expiry, reveal limit and tags:
    - **Duplicate-value safety guard:** Keyring compares submitted values in memory (never logging or quoting them) and refuses when the exact same secret value is entered for more than one environment (highlighting production reuse in particular) unless explicitly confirmed.
    - **RBAC-aware handoff:** If a developer holds `Key Vault Secrets Officer` in `dev` and `test` but only `Reader` in `prod`, `dev` and `test` succeed and the results page cleanly reports `prod` as **Refused** with a direct link to **My access** (PIM activation or owner access request) so an operator or release manager finishes `prod`.
-   - **Strict reveal-limit preservation:** Existing `keyring-reveal` limits (`copy-only` or `none`) on any target vault are automatically carried forward and can never be lowered by a multi-environment write.
+   - **Fail-closed reveal-limit preservation:** Before writing any target vault, Keyring verifies existing secret metadata (failing closed if metadata cannot be read) and carries forward any stricter `keyring-reveal` limit (`copy-only` or `none`). Note that Azure Key Vault's `SetSecret` API does not provide server-side version preconditions against a concurrent admin tightening the tag mid-flight.
 4. **Release-readiness CSV exports.** `/environments.csv` exports a formula-guarded parity report (marking any unreadable vaults as `NOT READ`) for Change Advisory Board (CAB) sign-off and quarterly audits.
 
 # Total cost of ownership (TCO) and operational footprint
@@ -159,7 +159,7 @@ Indicative annual comparison for a 150-engineer Azure organisation managing 2,00
 | **Database backup, DR and patching** | **Zero** (stateless container; Azure Key Vault geo-redundancy & soft delete built in) | Full SQL Server backup/DR, OS patching, IIS & application upgrades | Raft snapshot automation, DR secondary cluster, seal key ceremonies |
 | **Audit & SIEM ingestion** | Low volume `KeyringAudit_CL` rows into existing Log Analytics / Sentinel workspace | Custom syslog forwarders / connectors + ingestion | Audit log shipping + parser maintenance |
 | **Identity administration** | Zero separate users/groups; uses existing Entra groups & PIM | AD/Entra sync jobs, internal roles, break-glass local admin rotation | Auth method config, entity/group aliases, root token procedures |
-| **Blast radius of app compromise** | **Zero vault access** (app holds no vault credentials; only active in-memory user OBO tokens) | High (app tier has access to vault database and master encryption keys) | High (compromised Vault node with unseal access exposes stored secrets) |
+| **Blast radius of app compromise** | **Zero standing vault access** (no stored secrets or vault roles; runtime compromise limited strictly to active in-memory user OBO sessions) | High (app tier has access to vault database and master encryption keys) | High (compromised Vault node with unseal access exposes stored secrets) |
 
 # Compliance and regulatory alignment
 

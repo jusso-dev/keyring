@@ -23,6 +23,7 @@
     {% for t in targets %}
     {% let field_name = t.field_id %}
     <div class="env-value-row">
+      <input type="hidden" name="{{ t.vault_field_id }}" value="{{ t.vault }}">
       <label for="{{ t.field_id }}"><span class="item-name">{{ t.vault }}</span> <span class="badge {% if t.env.is_production() %}badge-warn{% else %}badge-muted{% endif %}">{{ t.env.display() }}</span> <span class="muted">(optional, leave blank to skip)</span></label>
       {% if !t.status_note.is_empty() %}<p class="field-help" id="{{ t.field_id }}-note">{{ t.status_note }}</p>{% endif %}
       <input id="{{ t.field_id }}" name="{{ t.field_id }}" type="password" value="" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"{% call ui::aria(t.field_id, t.help_ids) %}{% endcall %}>
