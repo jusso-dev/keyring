@@ -1,0 +1,21 @@
+{
+  "publisherId": "jusso-dev",
+  "offerId": "azure-sentinel-solution-keyring",
+  "firstPublishDate": "2026-11-21",
+  "lastPublishDate": "2026-11-21",
+  "providers": [
+    "Keyring"
+  ],
+  "categories": {
+    "domains": [
+      "Security - Identity",
+      "Security - Cloud Security"
+    ],
+    "verticals": []
+  },
+  "support": {
+    "name": "jusso-dev",
+    "tier": "Community",
+    "link": "https://github.com/jusso-dev/keyring/issues"
+  }
+}

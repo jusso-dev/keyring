@@ -1,0 +1,23 @@
+id: 5b4c0e3a-8d6f-4a14-83e7-9f0a1b2c3d02
+Parser:
+  Title: Audit Event ASIM parser for Keyring
+  Version: '1.0.0'
+  LastUpdated: '2026-11-21'
+Product:
+  Name: Keyring
+Normalization:
+  Schema: AuditEvent
+  Version: '1.0.0'
+References:
+  - Title: Keyring Microsoft Sentinel documentation
+    Link: https://github.com/jusso-dev/keyring/blob/main/docs/sentinel.md
+  - Title: ASIM Audit Event schema
+    Link: https://learn.microsoft.com/azure/sentinel/normalization-schema-audit
+Description: |
+  Parameter-less ASIM Audit Event parser for Keyring's custom Log Analytics audit table (KeyringAudit_CL), delegating to vimAuditEventKeyring.
+ParserName: ASimAuditEventKeyring
+EquivalentBuiltInParser: _ASim_AuditEvent
+ParserQuery: |
+  // The parameter-less ASIM Audit Event parser for Keyring: every row of
+  // vimAuditEventKeyring, unfiltered. Deployed as ASimAuditEventKeyring.
+  vimAuditEventKeyring()

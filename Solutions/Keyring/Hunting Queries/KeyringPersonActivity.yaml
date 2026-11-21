@@ -1,0 +1,26 @@
+id: 4a3b9d2f-7c5e-4f03-b2d6-8e9f0a1b2c05
+name: "Keyring: one person's activity"
+description: |
+  Returns every action recorded for one person in KeyringAudit_CL. Set who at the top to the person's sign-in name or Entra object ID before running.
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+tactics:
+  - Collection
+relevantTechniques:
+  - T1530
+query: |
+  // Everything one person did through Keyring. Set who to their exact
+  // sign-in name or object ID first.
+  let who = "name@example.com";
+  KeyringAudit_CL
+  | where ActorUpn =~ who or ActorObjectId =~ who
+  | project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, SessionRef, Reason, Ticket
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+version: 1.0.0

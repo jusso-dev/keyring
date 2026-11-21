@@ -1,0 +1,64 @@
+id: 3f2a8c1e-6b4d-4e92-a1c5-7d8e9f0a1b07
+name: 'Keyring: no audit events while Key Vault saw Keyring'
+description: |
+  Identifies when no Keyring audit events arrive in KeyringAudit_CL for 6 hours while Azure Key Vault logs reads or changes from Keyring's outbound IP addresses, suggesting the audit sink is broken or disabled. Populate keyringOutboundIps in the query before enabling, and switch KeyVaultCalls to AZKVAuditLogs if your vaults use resource-specific diagnostics.
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+  - connectorId: AzureKeyVault
+    dataTypes:
+      - AzureDiagnostics
+      - AZKVAuditLogs
+queryFrequency: 6h
+queryPeriod: 6h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - DefenseEvasion
+relevantTechniques:
+  - T1562
+query: |
+  let window = 6h;
+  // Populate with Keyring's outbound IP addresses before enabling this rule.
+  let keyringIps = dynamic([]);
+  // Uses AzureDiagnostics by default; replace with infra/sentinel/rules/keyvault-azkv.kql if vaults write to AZKVAuditLogs.
+  let KeyVaultCalls = AzureDiagnostics
+  | where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'
+  | project TimeGenerated, ResourceId = _ResourceId, OperationName,
+      Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2]),
+      CallerIpAddress = tostring(column_ifexists('CallerIPAddress', '')),
+      CorrelationId = tostring(column_ifexists('CorrelationId', '')),
+      CallerObjectId = coalesce(
+          tostring(column_ifexists('identity_claim_http_schemas_microsoft_com_identity_claims_objectidentifier_g', '')),
+          tostring(column_ifexists('identity_claim_oid_g', '')));
+  // No Keyring events at all in the window while Key Vault logged calls from
+  // Keyring's outbound addresses that only an audited action makes: the audit
+  // sink is broken or turned off.
+  // Set by main.bicep: window, KeyVaultCalls, keyringIps
+  let KeyringEvents = toscalar(KeyringAudit_CL | where TimeGenerated > ago(window) | count);
+  KeyVaultCalls
+  | where TimeGenerated > ago(window)
+  | where CallerIpAddress in (keyringIps)
+  | where OperationName in ("SecretGet", "SecretSet", "SecretDelete", "SecretPurge", "SecretRecover",
+      "CertificateImport", "CertificateCreate", "CertificateDelete", "CertificatePurge", "CertificateRecover",
+      "KeyCreate", "KeyRotate", "KeyDelete", "KeyPurge", "KeyRecover")
+  | summarize KeyVaultCallCount = count(), Operations = make_set(OperationName, 20),
+      CallerIpAddress = take_any(CallerIpAddress), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)
+      by ResourceId
+  | where KeyringEvents == 0
+entityMappings:
+  - entityType: AzureResource
+    fieldMappings:
+      - identifier: ResourceId
+        columnName: ResourceId
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: CallerIpAddress
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

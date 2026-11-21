@@ -1,0 +1,36 @@
+{
+  "Name": "Keyring",
+  "Author": "jusso-dev",
+  "Logo": "<img src=\"https://raw.githubusercontent.com/jusso-dev/keyring/main/docs/images/keyring-logo.svg\" width=\"75px\" height=\"75px\">",
+  "Description": "The Keyring solution for Microsoft Sentinel provides ASIM Audit Event parsers, scheduled analytic rules, hunting queries and a workbook for monitoring Keyring's custom audit table (KeyringAudit_CL) and correlating it with Azure Key Vault diagnostic logs.",
+  "Parsers": [
+    "Parsers/vimAuditEventKeyring.yaml",
+    "Parsers/ASimAuditEventKeyring.yaml"
+  ],
+  "Analytic Rules": [
+    "Analytic Rules/KeyringManyReveals.yaml",
+    "Analytic Rules/KeyringRevealNewIp.yaml",
+    "Analytic Rules/KeyringDeniedProbing.yaml",
+    "Analytic Rules/KeyringOffHoursSensitiveAction.yaml",
+    "Analytic Rules/KeyringForgedOrCrossSiteRequests.yaml",
+    "Analytic Rules/KeyringSecretShares.yaml",
+    "Analytic Rules/KeyringAuditGap.yaml",
+    "Analytic Rules/KeyringUnmatchedSecretGet.yaml"
+  ],
+  "Hunting Queries": [
+    "Hunting Queries/KeyringSecretValuesRead.yaml",
+    "Hunting Queries/KeyringPrivateKeysDownloaded.yaml",
+    "Hunting Queries/KeyringDeletesPurgesRecoveries.yaml",
+    "Hunting Queries/KeyringRefusedAndDenied.yaml",
+    "Hunting Queries/KeyringPersonActivity.yaml",
+    "Hunting Queries/KeyringKeyVaultSideBySide.yaml"
+  ],
+  "Workbooks": [
+    "Workbooks/KeyringAudit.json"
+  ],
+  "Metadata": "SolutionMetadata.json",
+  "BasePath": "Solutions/Keyring",
+  "Version": "3.0.0",
+  "TemplateSpec": true,
+  "Is1PConnector": false
+}

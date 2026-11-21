@@ -1,0 +1,722 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.49.2.45890",
+      "templateHash": "9948374714832348181"
+    }
+  },
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Log Analytics workspace that holds KeyringAudit_CL, in this resource group. Sentinel must already be turned on for it."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Region of the workbook. Usually the workspace's region."
+      }
+    },
+    "deployParsers": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Add the ASIM parsers vimAuditEventKeyring and ASimAuditEventKeyring as workspace functions."
+      }
+    },
+    "deployHuntingQueries": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Add the hunting queries as saved searches."
+      }
+    },
+    "deployWorkbook": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Add the Keyring workbook."
+      }
+    },
+    "keyVaultTable": {
+      "type": "string",
+      "defaultValue": "AzureDiagnostics",
+      "allowedValues": [
+        "AzureDiagnostics",
+        "AZKVAuditLogs"
+      ],
+      "metadata": {
+        "description": "Which table the vaults' diagnostic settings write Key Vault's log to, for the two rules that compare with it: AzureDiagnostics or AZKVAuditLogs (\"Resource specific\")."
+      }
+    },
+    "keyringOutboundIps": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Keyring's outbound IP addresses, as Key Vault sees them (the App Service outbound addresses, or the Container Apps environment's static outbound IP or NAT gateway). Keyring can't know these itself. Leave empty and the audit gap and unmatched SecretGet rules aren't created."
+      }
+    },
+    "ingestionDelayMinutes": {
+      "type": "int",
+      "defaultValue": 10,
+      "minValue": 0,
+      "maxValue": 60,
+      "metadata": {
+        "description": "Minutes rows can take to arrive in KeyringAudit_CL after they happen. Each rule looks back this much further than it runs, and counts a row in the run after it arrives, so a late row is neither missed nor raised twice. Measure it in your workspace (see docs/sentinel.md) and set it above what you see."
+      }
+    },
+    "enableManyReveals": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: many secret reveals or private key downloads by one person in a short time."
+      }
+    },
+    "revealThreshold": {
+      "type": "int",
+      "defaultValue": 20,
+      "minValue": 2,
+      "metadata": {
+        "description": "Reveals (and private key downloads) by one person in the window that raise an alert."
+      }
+    },
+    "revealWindowMinutes": {
+      "type": "int",
+      "defaultValue": 60,
+      "minValue": 5,
+      "maxValue": 1440,
+      "metadata": {
+        "description": "Window for the many reveals rule, in minutes. The rule also runs this often."
+      }
+    },
+    "enableRevealNewIp": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: a reveal or private key download from an address not seen for that person in the last 14 days."
+      }
+    },
+    "newIpWindowHours": {
+      "type": "int",
+      "defaultValue": 1,
+      "minValue": 1,
+      "maxValue": 24,
+      "metadata": {
+        "description": "How often the new address rule runs, and how far back it looks for new reads, in hours. Sentinel needs at least an hour for a rule that looks back 14 days."
+      }
+    },
+    "enableDeniedProbing": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: one person denied by Key Vault in several vaults (probing)."
+      }
+    },
+    "probingVaults": {
+      "type": "int",
+      "defaultValue": 3,
+      "minValue": 2,
+      "metadata": {
+        "description": "Distinct vaults one person must be denied in to raise an alert."
+      }
+    },
+    "probingDenied": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "metadata": {
+        "description": "Denied events one person must have, across those vaults, to raise an alert."
+      }
+    },
+    "probingWindowMinutes": {
+      "type": "int",
+      "defaultValue": 60,
+      "minValue": 5,
+      "maxValue": 1440,
+      "metadata": {
+        "description": "Window for the probing rule, in minutes. The rule also runs this often."
+      }
+    },
+    "enableOffHours": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: a purge, private key download or other watched action outside working hours."
+      }
+    },
+    "offHoursActions": {
+      "type": "array",
+      "defaultValue": [
+        "secret.purge",
+        "certificate.purge",
+        "key.purge",
+        "certificate.download_private_key"
+      ],
+      "metadata": {
+        "description": "Actions the working hours rule watches, by exact name."
+      }
+    },
+    "offHoursTerms": {
+      "type": "array",
+      "defaultValue": [
+        "bulk"
+      ],
+      "metadata": {
+        "description": "Words the working hours rule also watches for as a dotted part of an action name. \"bulk\" catches bulk change actions whatever they are named. Empty for none."
+      }
+    },
+    "utcOffsetMinutes": {
+      "type": "int",
+      "defaultValue": 600,
+      "minValue": -720,
+      "maxValue": 840,
+      "metadata": {
+        "description": "The organisation's offset from UTC, in minutes (600 for AEST, 660 for AEDT). Fixed: daylight saving isn't followed."
+      }
+    },
+    "workStartHour": {
+      "type": "int",
+      "defaultValue": 8,
+      "minValue": 0,
+      "maxValue": 23,
+      "metadata": {
+        "description": "First working hour, local time, 0 to 23."
+      }
+    },
+    "workEndHour": {
+      "type": "int",
+      "defaultValue": 18,
+      "minValue": 1,
+      "maxValue": 24,
+      "metadata": {
+        "description": "Hour working hours end, local time, 1 to 24."
+      }
+    },
+    "workDays": {
+      "type": "array",
+      "defaultValue": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "metadata": {
+        "description": "Working days, 0 for Sunday to 6 for Saturday."
+      }
+    },
+    "offHoursWindowMinutes": {
+      "type": "int",
+      "defaultValue": 15,
+      "minValue": 5,
+      "maxValue": 1440,
+      "metadata": {
+        "description": "How often the working hours rule runs, and the window it looks at, in minutes."
+      }
+    },
+    "enableAppAttack": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: requests Keyring refused as a forged form (csrf) or a cross-site post (cross_site)."
+      }
+    },
+    "attackThreshold": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "metadata": {
+        "description": "Such refusals from one address in the window that raise an alert."
+      }
+    },
+    "attackWindowMinutes": {
+      "type": "int",
+      "defaultValue": 15,
+      "minValue": 5,
+      "maxValue": 1440,
+      "metadata": {
+        "description": "Window for the attack rule, in minutes. The rule also runs this often."
+      }
+    },
+    "enableShares": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: a secret shared through Keyring with a guest account, or more than shareThreshold shares by one person in the window."
+      }
+    },
+    "shareThreshold": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "metadata": {
+        "description": "Shares by one person in the window above which an alert is raised."
+      }
+    },
+    "shareWindowMinutes": {
+      "type": "int",
+      "defaultValue": 60,
+      "minValue": 5,
+      "maxValue": 1440,
+      "metadata": {
+        "description": "Window for the shares rule, in minutes. The rule also runs this often."
+      }
+    },
+    "enableAuditGap": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: no Keyring events at all while Key Vault logged changes or reads from Keyring's outbound addresses. Needs keyringOutboundIps."
+      }
+    },
+    "auditGapHours": {
+      "type": "int",
+      "defaultValue": 6,
+      "minValue": 1,
+      "maxValue": 48,
+      "metadata": {
+        "description": "Hours with no Keyring events that count as a gap. The rule also runs this often."
+      }
+    },
+    "enableUnmatchedSecretGet": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Turn on: a Key Vault SecretGet from Keyring's addresses with no matching Keyring event. Not yet checked on a real vault: leave off until the real-vault checklist row \"Sentinel: kv_request_id is CorrelationId\" passes. Needs keyringOutboundIps."
+      }
+    },
+    "severity": {
+      "type": "string",
+      "defaultValue": "Medium",
+      "allowedValues": [
+        "Informational",
+        "Low",
+        "Medium",
+        "High"
+      ],
+      "metadata": {
+        "description": "Microsoft Sentinel severity of each rule."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    }
+  },
+  "variables": {
+    "$fxv#0": "AzureDiagnostics\n| where ResourceProvider == 'MICROSOFT.KEYVAULT' and Category == 'AuditEvent'\n| project TimeGenerated, ResourceId = _ResourceId, OperationName,\n    Item = tostring(split(tostring(parse_url(tostring(column_ifexists('requestUri_s', ''))).Path), '/')[2]),\n    CallerIpAddress = tostring(column_ifexists('CallerIPAddress', '')),\n    CorrelationId = tostring(column_ifexists('CorrelationId', '')),\n    CallerObjectId = coalesce(\n        tostring(column_ifexists('identity_claim_http_schemas_microsoft_com_identity_claims_objectidentifier_g', '')),\n        tostring(column_ifexists('identity_claim_oid_g', '')))\n",
+    "$fxv#1": "AZKVAuditLogs\n| extend Claims = column_ifexists('Identity', dynamic(null)).claim\n| project TimeGenerated, ResourceId = _ResourceId, OperationName,\n    Item = tostring(split(tostring(parse_url(column_ifexists('RequestUri', '')).Path), '/')[2]),\n    CallerIpAddress = tostring(column_ifexists('CallerIpAddress', '')),\n    CorrelationId = tostring(column_ifexists('CorrelationId', '')),\n    CallerObjectId = coalesce(tostring(Claims['http://schemas.microsoft.com/identity/claims/objectidentifier']), tostring(Claims.oid))\n",
+    "$fxv#10": "// ASIM Audit Event parser for Keyring's own audit events (KeyringAudit_CL).\n// Schema: AuditEvent 1.0.0. Deployed as the function vimAuditEventKeyring\n// by infra/sentinel/main.bicep, which also declares its parameters.\n// One output row per table row, no joins, no time filter of its own.\n// Sign-in and sign-out events (session.*) are left out: they belong to the\n// Authentication schema, not Audit Event.\n// Never a secret value: Keyring's table has none, so NewValue stays empty.\nKeyringAudit_CL\n| where not(disabled)\n| where isnull(starttime) or TimeGenerated >= starttime\n| where isnull(endtime) or TimeGenerated <= endtime\n| where not(Action startswith \"session.\")\n| where array_length(srcipaddr_has_any_prefix) == 0 or has_any_ipv4_prefix(ClientIp, srcipaddr_has_any_prefix)\n| where array_length(actorusername_has_any) == 0 or ActorUpn has_any (actorusername_has_any)\n| where array_length(operation_has_any) == 0 or Action has_any (operation_has_any)\n| where array_length(newvalue_has_any) == 0\n| extend Verb = tostring(split(Action, \".\")[-1])\n| extend EventType = case(\n    Action in (\"secret.reveal\", \"secret.copy.read\", \"certificate.download_private_key\"), \"Read\",\n    Verb in (\"create\", \"upload\", \"import\", \"rotate\"), \"Create\",\n    Verb in (\"delete\", \"purge\", \"cancel\"), \"Delete\",\n    Verb in (\"set\", \"update\", \"rollback\", \"bulk_update\", \"write\"), \"Set\",\n    Action == \"role.activate\", \"Enable\",\n    Action == \"role.deactivate\", \"Disable\",\n    Action == \"share.grant\", \"Enable\",\n    Action == \"share.revoke\", \"Disable\",\n    \"Other\")\n| where array_length(eventtype_in) == 0 or EventType in~ (eventtype_in)\n| extend EventResult = iff(Outcome == \"success\", \"Success\", \"Failure\")\n| where eventresult == \"*\" or EventResult =~ eventresult\n| extend\n    EventCount = int(1),\n    EventStartTime = TimeGenerated,\n    EventEndTime = TimeGenerated,\n    EventSubType = iff(Verb == \"recover\", \"Recover\", \"\"),\n    EventResultDetails = case(\n        Outcome == \"denied\", \"Denied by Azure\",\n        Outcome == \"refused\", \"Refused by Keyring\",\n        Outcome == \"failed\", \"Failed\",\n        \"\"),\n    EventOriginalResultDetails = ReasonCode,\n    EventSeverity = case(\n        Outcome == \"refused\" and ReasonCode in (\"csrf\", \"cross_site\"), \"Medium\",\n        Outcome == \"success\", \"Informational\",\n        \"Low\"),\n    EventOriginalType = Action,\n    EventOriginalUid = EventId,\n    EventUid = _ItemId,\n    EventProduct = \"Keyring\",\n    EventProductVersion = KeyringVersion,\n    EventVendor = \"Keyring\",\n    EventSchema = \"AuditEvent\",\n    EventSchemaVersion = \"1.0.0\",\n    Dvc = \"Keyring\",\n    Operation = Action,\n    Object = case(isnotempty(ItemName), strcat(Vault, \"/\", ItemName), isnotempty(Vault), Vault, \"Keyring\"),\n    ObjectType = iff(isnotempty(Vault), \"Cloud Resource\", \"Other\"),\n    OriginalObjectType = iff(isnotempty(ItemKind), ItemKind, iff(isnotempty(Vault), \"vault\", \"\")),\n    ActorUserId = ActorObjectId,\n    ActorUserIdType = iff(isnotempty(ActorObjectId), \"AADID\", \"\"),\n    ActorUserAadId = ActorObjectId,\n    ActorScopeId = ActorTenantId,\n    ActorUsername = ActorUpn,\n    ActorUsernameType = iff(isnotempty(ActorUpn), \"UPN\", \"\"),\n    ActorSessionId = SessionRef,\n    SrcIpAddr = ClientIp,\n    HttpUserAgent = UserAgent,\n    TargetAppName = \"Keyring\",\n    TargetAppType = \"Service\",\n    AdditionalFields = bag_pack(\n        \"ReasonCode\", ReasonCode,\n        \"ItemVersion\", ItemVersion,\n        \"KvRequestId\", KvRequestId,\n        \"Reason\", Reason,\n        \"Ticket\", Ticket,\n        \"Role\", column_ifexists(\"Role\", \"\"),\n        \"RoleScope\", column_ifexists(\"RoleScope\", \"\"),\n        \"RoleDuration\", column_ifexists(\"RoleDuration\", \"\"),\n        \"NotifyType\", column_ifexists(\"NotifyType\", \"\"),\n        \"NotifyRecipientCount\", column_ifexists(\"NotifyRecipientCount\", int(null)),\n        \"NotifyRecipients\", column_ifexists(\"NotifyRecipients\", \"\"),\n        \"NotifyEventCount\", column_ifexists(\"NotifyEventCount\", int(null)),\n        \"RevealLimitFrom\", column_ifexists(\"RevealLimitFrom\", \"\"),\n        \"RevealLimitTo\", column_ifexists(\"RevealLimitTo\", \"\"),\n        \"SharePrincipalId\", column_ifexists(\"SharePrincipalId\", \"\"),\n        \"SharePrincipalType\", column_ifexists(\"SharePrincipalType\", \"\"),\n        \"ShareUntil\", column_ifexists(\"ShareUntil\", \"\"),\n        \"SharePath\", column_ifexists(\"SharePath\", \"\"),\n        \"WriterIdentityClientId\", WriterIdentityClientId,\n        \"KeyringInstance\", KeyringInstance)\n| where array_length(object_has_any) == 0 or Object has_any (object_has_any)\n| extend\n    User = ActorUsername,\n    IpAddr = SrcIpAddr,\n    Src = SrcIpAddr,\n    Application = TargetAppName\n| project-away Verb\n",
+    "$fxv#11": "// The parameter-less ASIM Audit Event parser for Keyring: every row of\n// vimAuditEventKeyring, unfiltered. Deployed as ASimAuditEventKeyring.\nvimAuditEventKeyring()\n",
+    "$fxv#12": "// Secret values read through Keyring: who, which vault and item, from where.\n// The same question as \"Secret values read\" on Keyring's audit page, which\n// reads Key Vault's log. Set who to part of a sign-in name to narrow it.\nlet who = \"\";\nKeyringAudit_CL\n| where Action == \"secret.reveal\"\n| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who\n| project TimeGenerated, ActorUpn, ActorObjectId, Vault, ItemName, ItemVersion, Outcome, ReasonCode, ClientIp, KvRequestId, Reason, Ticket\n| order by TimeGenerated desc\n",
+    "$fxv#13": "// Certificate private keys downloaded through Keyring.\nlet who = \"\";\nKeyringAudit_CL\n| where Action == \"certificate.download_private_key\"\n| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who\n| project TimeGenerated, ActorUpn, ActorObjectId, Vault, ItemName, Outcome, ReasonCode, ClientIp, KvRequestId, Reason, Ticket\n| order by TimeGenerated desc\n",
+    "$fxv#14": "// Deletes, purges and recoveries of secrets, certificates and keys through Keyring.\nlet who = \"\";\nKeyringAudit_CL\n| where Action in (\"secret.delete\", \"secret.purge\", \"secret.recover\",\n    \"certificate.delete\", \"certificate.purge\", \"certificate.recover\",\n    \"key.delete\", \"key.purge\", \"key.recover\")\n| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who\n| project TimeGenerated, Action, ActorUpn, ActorObjectId, Vault, ItemKind, ItemName, Outcome, ReasonCode, ClientIp, KvRequestId\n| order by TimeGenerated desc\n",
+    "$fxv#15": "// What Keyring refused, or Azure denied, counted by person, vault and reason.\nlet who = \"\";\nKeyringAudit_CL\n| where Outcome in (\"refused\", \"denied\")\n| where isempty(who) or ActorUpn contains who or ActorObjectId =~ who\n| summarize Count = count(), LastTime = max(TimeGenerated), Actions = make_set(Action, 10), Addresses = make_set(ClientIp, 10)\n    by ActorObjectId, ActorUpn, Vault, Outcome, ReasonCode\n| order by Count desc\n",
+    "$fxv#16": "// Everything one person did through Keyring. Set who to their exact\n// sign-in name or object ID first.\nlet who = \"name@example.com\";\nKeyringAudit_CL\n| where ActorUpn =~ who or ActorObjectId =~ who\n| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, SessionRef, Reason, Ticket\n| order by TimeGenerated desc\n",
+    "$fxv#17": "// Key Vault's log and Keyring's log side by side for one vault: every Key\n// Vault call next to the Keyring event whose KvRequestId matches its\n// CorrelationId. A call with no Keyring event isn't proof it came from\n// elsewhere: a rollback reads the old value and then writes it, and its\n// event carries only the write's request ID. Check the caller and address. Change AZKVAuditLogs to AzureDiagnostics, and the\n// columns as in docs/sentinel.md, if the vault logs there. The CorrelationId\n// match is still to be confirmed on a real vault.\nlet vaultName = \"kv-app-prod\";\nlet Keyring = KeyringAudit_CL\n| where Vault =~ vaultName and isnotempty(KvRequestId)\n| project KvRequestId, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket;\nAZKVAuditLogs\n| where _ResourceId endswith strcat(\"/vaults/\", tolower(vaultName))\n| extend CorrelationId = tostring(column_ifexists(\"CorrelationId\", \"\"))\n| join kind=leftouter Keyring on $left.CorrelationId == $right.KvRequestId\n| project TimeGenerated, OperationName, ResultSignature, CallerIpAddress, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket\n| order by TimeGenerated desc\n",
+    "$fxv#18": "{\n  \"version\": \"Notebook/1.0\",\n  \"items\": [\n    {\n      \"type\": 1,\n      \"name\": \"intro\",\n      \"content\": {\n        \"json\": \"## Keyring audit\\nKeyring's own audit events from `KeyringAudit_CL`: what people did through Keyring, including what Keyring refused and Azure denied. Key Vault's own log is separate. No row holds a secret value. Times are UTC.\"\n      }\n    },\n    {\n      \"type\": 9,\n      \"name\": \"parameters\",\n      \"content\": {\n        \"version\": \"KqlParameterItem/1.0\",\n        \"crossComponentResources\": [],\n        \"parameters\": [\n          {\n            \"id\": \"7b1f4c0e-1d2a-4c55-9a0c-000000000001\",\n            \"version\": \"KqlParameterItem/1.0\",\n            \"name\": \"TimeRange\",\n            \"label\": \"Time range\",\n            \"type\": 4,\n            \"isRequired\": true,\n            \"value\": {\n              \"durationMs\": 604800000\n            },\n            \"typeSettings\": {\n              \"selectableValues\": [\n                {\n                  \"durationMs\": 3600000\n                },\n                {\n                  \"durationMs\": 86400000\n                },\n                {\n                  \"durationMs\": 604800000\n                },\n                {\n                  \"durationMs\": 2592000000\n                }\n              ],\n              \"allowCustom\": true\n            }\n          },\n          {\n            \"id\": \"7b1f4c0e-1d2a-4c55-9a0c-000000000002\",\n            \"version\": \"KqlParameterItem/1.0\",\n            \"name\": \"Person\",\n            \"label\": \"Person (sign-in name or object ID, for the drill-down)\",\n            \"type\": 1,\n            \"value\": \"\"\n          }\n        ],\n        \"style\": \"pills\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"reveals-over-time\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| where Action in (\\\"secret.reveal\\\", \\\"certificate.download_private_key\\\")\\n| summarize Count = count() by bin(TimeGenerated, 1h), Outcome\\n| render timechart\",\n        \"size\": 0,\n        \"title\": \"Secret reveals and private key downloads over time\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"timechart\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"top-people\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| where Action in (\\\"secret.reveal\\\", \\\"certificate.download_private_key\\\") and Outcome == \\\"success\\\"\\n| summarize Reveals = count(), Vaults = dcount(Vault), LastTime = max(TimeGenerated) by ActorUpn, ActorObjectId\\n| top 20 by Reveals\",\n        \"size\": 0,\n        \"title\": \"Top people by reveals\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"table\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"top-vaults\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| where isnotempty(Vault)\\n| summarize Events = count(), Reveals = countif(Action in (\\\"secret.reveal\\\", \\\"certificate.download_private_key\\\")), People = dcount(ActorObjectId) by Vault\\n| top 20 by Events\",\n        \"size\": 0,\n        \"title\": \"Top vaults by activity\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"table\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"denied-refused\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| where Outcome in (\\\"denied\\\", \\\"refused\\\")\\n| summarize Count = count(), LastTime = max(TimeGenerated), Addresses = make_set(ClientIp, 5) by Outcome, ReasonCode, Action, ActorUpn\\n| order by Count desc\",\n        \"size\": 0,\n        \"title\": \"Denied by Azure and refused by Keyring\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"table\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"sink-health\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| make-series Events = count() default = 0 on TimeGenerated from {TimeRange:start} to {TimeRange:end} step 1h by KeyringInstance\\n| render timechart\",\n        \"size\": 0,\n        \"title\": \"Audit sink health: events per hour by Keyring instance. A gap while Keyring was in use means the sink stopped. /healthz/audit has the live state\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"timechart\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"sink-writers\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"KeyringAudit_CL\\n| summarize Events = count(), FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), SchemaVersions = make_set(SchemaVersion) by KeyringInstance, KeyringVersion, WriterIdentityClientId\\n| extend SinceLast = now() - LastTime\\n| order by LastTime desc\",\n        \"size\": 0,\n        \"title\": \"Writers: each Keyring instance, version and identity, and when it last wrote\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"table\"\n      }\n    },\n    {\n      \"type\": 3,\n      \"name\": \"person\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"query\": \"let who = \\\"{Person:escape}\\\";\\nKeyringAudit_CL\\n| where isnotempty(who) and (ActorUpn contains who or ActorObjectId =~ who)\\n| project TimeGenerated, Action, Outcome, ReasonCode, Vault, ItemKind, ItemName, ClientIp, UserAgent, Reason, Ticket\\n| order by TimeGenerated desc\",\n        \"size\": 0,\n        \"title\": \"One person's activity (set Person above)\",\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"queryType\": 0,\n        \"resourceType\": \"microsoft.operationalinsights/workspaces\",\n        \"visualization\": \"table\"\n      }\n    }\n  ],\n  \"fallbackResourceIds\": [],\n  \"$schema\": \"https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json\"\n}\n",
+    "$fxv#2": "// Many secret reveals or private key downloads by one person in a short time.\n// Rows can arrive late, so the rule looks back window + delay, and only\n// alerts when a row counted arrived in the last window.\n// Set by main.bicep: window, delay, revealThreshold\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where Action in (\"secret.reveal\", \"certificate.download_private_key\") and Outcome == \"success\"\n| summarize Reveals = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),\n    ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),\n    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated),\n    LastArrived = max(coalesce(ingestion_time(), TimeGenerated))\n    by ActorObjectId\n| where Reveals >= revealThreshold and LastArrived > ago(window)\n",
+    "$fxv#3": "// A reveal or private key download from an address not seen for that\n// person in the 14 days before. Only for people seen before, so a first\n// sign-in doesn't alert. The rule looks back 14 days.\n// Reads are taken by when they arrived, so a late row is still looked at\n// once.\n// Set by main.bicep: window, delay\nlet Known = KeyringAudit_CL\n| where TimeGenerated between (ago(14d) .. ago(window + delay))\n| where isnotempty(ActorObjectId) and isnotempty(ClientIp)\n| summarize by ActorObjectId, ClientIp;\nlet People = Known | summarize by ActorObjectId;\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where coalesce(ingestion_time(), TimeGenerated) > ago(window)\n| where Action in (\"secret.reveal\", \"certificate.download_private_key\") and Outcome == \"success\"\n| where isnotempty(ActorObjectId) and isnotempty(ClientIp)\n| join kind=leftsemi People on ActorObjectId\n| join kind=leftanti Known on ActorObjectId, ClientIp\n| summarize Reads = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),\n    take_any(ActorUpn, UserAgent), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)\n    by ActorObjectId, ClientIp\n",
+    "$fxv#4": "// One person denied by Key Vault in several vaults: probing for access.\n// Looks back window + delay for late rows; alerts only when a row counted\n// arrived in the last window.\n// Set by main.bicep: window, delay, probingVaults, probingDenied\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where Outcome == \"denied\" and isnotempty(Vault)\n| summarize Denied = count(), VaultCount = dcount(Vault), Vaults = make_set(Vault, 20),\n    Actions = make_set(Action, 10), ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),\n    TimeGenerated = max(TimeGenerated), LastArrived = max(coalesce(ingestion_time(), TimeGenerated))\n    by ActorObjectId\n| where VaultCount >= probingVaults and Denied >= probingDenied and LastArrived > ago(window)\n",
+    "$fxv#5": "// A purge, private key download or other watched action outside working\n// hours, in the organisation's own time zone. An action counts if it is in\n// watchedActions, or one of the parts of its name (split at \".\" and \"_\")\n// is in watchedTerms, so \"bulk\" catches secret.bulk_update or bulk.tag.set\n// whatever the bulk change actions end up named.\n// Each event is looked at once, in the run after it arrives, so late rows\n// are neither missed nor raised twice. Working hours may run past midnight\n// (workStart 22, workEnd 6); the day is the local day of the event.\n// Set by main.bicep: window, delay, watchedActions, watchedTerms, utcOffset, workStart, workEnd, workDays\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where coalesce(ingestion_time(), TimeGenerated) > ago(window)\n| extend Parts = split(replace_string(Action, \"_\", \".\"), \".\")\n| where Action in (watchedActions) or array_length(set_intersect(Parts, watchedTerms)) > 0\n| extend LocalTime = TimeGenerated + utcOffset\n| extend LocalHour = hourofday(LocalTime), LocalDay = toint(dayofweek(LocalTime) / 1d)\n| extend InHours = iff(workStart <= workEnd,\n    LocalHour >= workStart and LocalHour < workEnd,\n    LocalHour >= workStart or LocalHour < workEnd)\n| where not(InHours) or LocalDay !in (workDays)\n| project TimeGenerated, LocalTime, Action, Outcome, ReasonCode, ActorObjectId, ActorUpn,\n    ClientIp, Vault, ItemKind, ItemName, KvRequestId\n",
+    "$fxv#6": "// Requests Keyring refused as a forged form or a cross-site post: a possible\n// attack on Keyring itself.\n// Looks back window + delay for late rows; alerts only when a row counted\n// arrived in the last window.\n// Set by main.bicep: window, delay, attackThreshold\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where Outcome == \"refused\" and ReasonCode in (\"csrf\", \"cross_site\")\n| summarize Refused = count(), Reasons = make_set(ReasonCode, 5), Actions = make_set(Action, 10),\n    UserAgents = make_set(UserAgent, 5), take_any(ActorObjectId, ActorUpn),\n    LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated), LastArrived = max(coalesce(ingestion_time(), TimeGenerated))\n    by ClientIp\n| where Refused >= attackThreshold and LastArrived > ago(window)\n",
+    "$fxv#7": "// Secrets shared through Keyring (#286) that need a look: a share to a\n// guest account, or more than shareThreshold shares by one person in the\n// window. Rows can arrive late, so the rule looks back window + delay, and\n// only alerts when a row counted arrived in the last window.\n// Set by main.bicep: window, delay, shareThreshold\nKeyringAudit_CL\n| where TimeGenerated > ago(window + delay)\n| where Action == \"share.grant\" and Outcome == \"success\"\n| extend PrincipalType = tostring(column_ifexists(\"SharePrincipalType\", \"\")),\n    PrincipalId = tostring(column_ifexists(\"SharePrincipalId\", \"\"))\n| summarize Shares = count(), Guests = countif(PrincipalType == \"guest\"),\n    Recipients = make_set(PrincipalId, 20), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),\n    ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),\n    FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated),\n    LastArrived = max(coalesce(ingestion_time(), TimeGenerated))\n    by ActorObjectId\n| where (Guests > 0 or Shares > shareThreshold) and LastArrived > ago(window)\n",
+    "$fxv#8": "// No Keyring events at all in the window while Key Vault logged calls from\n// Keyring's outbound addresses that only an audited action makes: the audit\n// sink is broken or turned off.\n// Set by main.bicep: window, KeyVaultCalls, keyringIps\nlet KeyringEvents = toscalar(KeyringAudit_CL | where TimeGenerated > ago(window) | count);\nKeyVaultCalls\n| where TimeGenerated > ago(window)\n| where CallerIpAddress in (keyringIps)\n| where OperationName in (\"SecretGet\", \"SecretSet\", \"SecretDelete\", \"SecretPurge\", \"SecretRecover\",\n    \"CertificateImport\", \"CertificateCreate\", \"CertificateDelete\", \"CertificatePurge\", \"CertificateRecover\",\n    \"KeyCreate\", \"KeyRotate\", \"KeyDelete\", \"KeyPurge\", \"KeyRecover\")\n| summarize KeyVaultCallCount = count(), Operations = make_set(OperationName, 20),\n    CallerIpAddress = take_any(CallerIpAddress), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)\n    by ResourceId\n| where KeyringEvents == 0\n",
+    "$fxv#9": "// A Key Vault SecretGet from Keyring's outbound addresses with no Keyring\n// event to match it, joined on Key Vault's CorrelationId and Keyring's\n// KvRequestId. A rollback reads the value and then writes it, so its event\n// carries the later call's ID: a SecretGet with no ID match still counts as\n// matched if the same person has a reveal, rollback, copy or private key download\n// event on the same vault and item within two minutes.\n// Looks at Key Vault calls from one to two hours ago, so Keyring's events\n// have had time to arrive.\n// NOT YET CHECKED on a real vault: that Key Vault records Keyring's\n// x-ms-client-request-id as CorrelationId. Off by default until the\n// real-vault checklist row passes.\n// Set by main.bicep: KeyVaultCalls, keyringIps\nlet Gets = KeyVaultCalls\n| where TimeGenerated between (ago(2h) .. ago(1h))\n| where CallerIpAddress in (keyringIps) and OperationName == \"SecretGet\"\n| extend VaultName = tolower(tostring(split(ResourceId, \"/\")[-1]));\nlet Events = KeyringAudit_CL\n| where TimeGenerated > ago(3h)\n| where isnotempty(KvRequestId)\n| project KvRequestId;\nlet ByPerson = KeyringAudit_CL\n| where TimeGenerated > ago(3h)\n| where Action in (\"secret.reveal\", \"secret.rollback\", \"secret.copy.read\", \"certificate.download_private_key\")\n| project EventTime = TimeGenerated, ActorObjectId, EventVault = tolower(Vault), ItemName;\nGets\n| join kind=leftanti Events on $left.CorrelationId == $right.KvRequestId\n| join kind=leftouter ByPerson on $left.CallerObjectId == $right.ActorObjectId, $left.VaultName == $right.EventVault, $left.Item == $right.ItemName\n| summarize Near = countif(isnotempty(EventTime) and abs(datetime_diff('second', EventTime, TimeGenerated)) <= 120)\n    by TimeGenerated, ResourceId, VaultName, Item, CallerObjectId, CallerIpAddress, CorrelationId\n| where Near == 0\n| project-away Near\n",
+    "ipsLiteral": "[format('dynamic({0})', string(parameters('keyringOutboundIps')))]",
+    "keyVaultSource": "[if(equals(parameters('keyVaultTable'), 'AzureDiagnostics'), variables('$fxv#0'), variables('$fxv#1'))]",
+    "keyVaultLet": "[format('let keyringIps = {0};\nlet KeyVaultCalls = {1};\n', variables('ipsLiteral'), variables('keyVaultSource'))]",
+    "hasIps": "[not(empty(parameters('keyringOutboundIps')))]",
+    "delayLet": "[format('let delay = {0}m;\n', parameters('ingestionDelayMinutes'))]",
+    "accountEntity": {
+      "entityType": "Account",
+      "fieldMappings": [
+        {
+          "identifier": "AadUserId",
+          "columnName": "ActorObjectId"
+        },
+        {
+          "identifier": "FullName",
+          "columnName": "ActorUpn"
+        }
+      ]
+    },
+    "ipEntity": {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "ClientIp"
+        }
+      ]
+    },
+    "keyVaultIpEntity": {
+      "entityType": "IP",
+      "fieldMappings": [
+        {
+          "identifier": "Address",
+          "columnName": "CallerIpAddress"
+        }
+      ]
+    },
+    "vaultEntity": {
+      "entityType": "AzureResource",
+      "fieldMappings": [
+        {
+          "identifier": "ResourceId",
+          "columnName": "ResourceId"
+        }
+      ]
+    },
+    "allRules": [
+      {
+        "key": "many-reveals",
+        "create": true,
+        "enabled": "[parameters('enableManyReveals')]",
+        "displayName": "Keyring: many secret reveals by one person",
+        "description": "[format('One person revealed secret values or downloaded private keys through Keyring {0} or more times in {1} minutes.', parameters('revealThreshold'), parameters('revealWindowMinutes'))]",
+        "query": "[format('let window = {0}m;\n{1}let revealThreshold = {2};\n{3}', parameters('revealWindowMinutes'), variables('delayLet'), parameters('revealThreshold'), variables('$fxv#2'))]",
+        "frequency": "[format('PT{0}M', parameters('revealWindowMinutes'))]",
+        "period": "[format('PT{0}M', add(parameters('revealWindowMinutes'), parameters('ingestionDelayMinutes')))]",
+        "tactics": [
+          "CredentialAccess",
+          "Collection"
+        ],
+        "entities": [
+          "[variables('accountEntity')]",
+          "[variables('ipEntity')]"
+        ]
+      },
+      {
+        "key": "reveal-new-ip",
+        "create": true,
+        "enabled": "[parameters('enableRevealNewIp')]",
+        "displayName": "Keyring: secret revealed from a new address",
+        "description": "A person revealed a secret value or downloaded a private key through Keyring from an address they hadn't used in the 14 days before.",
+        "query": "[format('let window = {0}h;\n{1}{2}', parameters('newIpWindowHours'), variables('delayLet'), variables('$fxv#3'))]",
+        "frequency": "[format('PT{0}H', parameters('newIpWindowHours'))]",
+        "period": "P14D",
+        "tactics": [
+          "CredentialAccess",
+          "InitialAccess"
+        ],
+        "entities": [
+          "[variables('accountEntity')]",
+          "[variables('ipEntity')]"
+        ]
+      },
+      {
+        "key": "denied-probing",
+        "create": true,
+        "enabled": "[parameters('enableDeniedProbing')]",
+        "displayName": "Keyring: one person denied in several vaults",
+        "description": "[format('Key Vault denied one person through Keyring at least {0} times across {1} or more vaults in {2} minutes.', parameters('probingDenied'), parameters('probingVaults'), parameters('probingWindowMinutes'))]",
+        "query": "[format('let window = {0}m;\n{1}let probingVaults = {2};\nlet probingDenied = {3};\n{4}', parameters('probingWindowMinutes'), variables('delayLet'), parameters('probingVaults'), parameters('probingDenied'), variables('$fxv#4'))]",
+        "frequency": "[format('PT{0}M', parameters('probingWindowMinutes'))]",
+        "period": "[format('PT{0}M', add(parameters('probingWindowMinutes'), parameters('ingestionDelayMinutes')))]",
+        "tactics": [
+          "Discovery"
+        ],
+        "entities": [
+          "[variables('accountEntity')]",
+          "[variables('ipEntity')]"
+        ]
+      },
+      {
+        "key": "off-hours",
+        "create": true,
+        "enabled": "[parameters('enableOffHours')]",
+        "displayName": "Keyring: sensitive action outside working hours",
+        "description": "[format('A purge, private key download or other watched action through Keyring outside working hours ({0}:00 to {1}:00, UTC offset {2} minutes).', parameters('workStartHour'), parameters('workEndHour'), parameters('utcOffsetMinutes'))]",
+        "query": "[format('let window = {0}m;\n{1}let watchedActions = dynamic({2});\nlet watchedTerms = dynamic({3});\nlet utcOffset = {4} * 1m;\nlet workStart = {5};\nlet workEnd = {6};\nlet workDays = dynamic({7});\n{8}', parameters('offHoursWindowMinutes'), variables('delayLet'), string(parameters('offHoursActions')), string(parameters('offHoursTerms')), parameters('utcOffsetMinutes'), parameters('workStartHour'), parameters('workEndHour'), string(parameters('workDays')), variables('$fxv#5'))]",
+        "frequency": "[format('PT{0}M', parameters('offHoursWindowMinutes'))]",
+        "period": "[format('PT{0}M', add(parameters('offHoursWindowMinutes'), parameters('ingestionDelayMinutes')))]",
+        "tactics": [
+          "Impact",
+          "CredentialAccess"
+        ],
+        "entities": [
+          "[variables('accountEntity')]",
+          "[variables('ipEntity')]"
+        ]
+      },
+      {
+        "key": "app-attack",
+        "create": true,
+        "enabled": "[parameters('enableAppAttack')]",
+        "displayName": "Keyring: forged or cross-site requests",
+        "description": "[format('Keyring refused {0} or more requests from one address in {1} minutes as a forged form (csrf) or a cross-site post (cross_site): a possible attack on Keyring itself.', parameters('attackThreshold'), parameters('attackWindowMinutes'))]",
+        "query": "[format('let window = {0}m;\n{1}let attackThreshold = {2};\n{3}', parameters('attackWindowMinutes'), variables('delayLet'), parameters('attackThreshold'), variables('$fxv#6'))]",
+        "frequency": "[format('PT{0}M', parameters('attackWindowMinutes'))]",
+        "period": "[format('PT{0}M', add(parameters('attackWindowMinutes'), parameters('ingestionDelayMinutes')))]",
+        "tactics": [
+          "InitialAccess"
+        ],
+        "entities": [
+          "[variables('ipEntity')]",
+          "[variables('accountEntity')]"
+        ]
+      },
+      {
+        "key": "shares",
+        "create": true,
+        "enabled": "[parameters('enableShares')]",
+        "displayName": "Keyring: secret shared with a guest, or many shares",
+        "description": "[format('A person shared a secret through Keyring with a guest account, or made more than {0} shares in {1} minutes. A share is a Key Vault Secrets User assignment made as that person.', parameters('shareThreshold'), parameters('shareWindowMinutes'))]",
+        "query": "[format('let window = {0}m;\n{1}let shareThreshold = {2};\n{3}', parameters('shareWindowMinutes'), variables('delayLet'), parameters('shareThreshold'), variables('$fxv#7'))]",
+        "frequency": "[format('PT{0}M', parameters('shareWindowMinutes'))]",
+        "period": "[format('PT{0}M', add(parameters('shareWindowMinutes'), parameters('ingestionDelayMinutes')))]",
+        "tactics": [
+          "Persistence",
+          "CredentialAccess"
+        ],
+        "entities": [
+          "[variables('accountEntity')]",
+          "[variables('ipEntity')]"
+        ]
+      },
+      {
+        "key": "audit-gap",
+        "create": "[variables('hasIps')]",
+        "enabled": "[parameters('enableAuditGap')]",
+        "displayName": "Keyring: no audit events while Key Vault saw Keyring",
+        "description": "[format('No Keyring audit events in {0} hours, while Key Vault logged reads or changes from Keyring''s outbound addresses. The audit sink may be broken or turned off.', parameters('auditGapHours'))]",
+        "query": "[format('let window = {0}h;\n{1}{2}', parameters('auditGapHours'), variables('keyVaultLet'), variables('$fxv#8'))]",
+        "frequency": "[format('PT{0}H', parameters('auditGapHours'))]",
+        "period": "[format('PT{0}H', parameters('auditGapHours'))]",
+        "tactics": [
+          "DefenseEvasion"
+        ],
+        "entities": [
+          "[variables('vaultEntity')]",
+          "[variables('keyVaultIpEntity')]"
+        ]
+      },
+      {
+        "key": "unmatched-secret-get",
+        "create": "[variables('hasIps')]",
+        "enabled": "[parameters('enableUnmatchedSecretGet')]",
+        "displayName": "Keyring: SecretGet from Keyring with no audit event",
+        "description": "Key Vault logged a SecretGet from Keyring's outbound addresses with no matching Keyring audit event. Not yet checked on a real vault.",
+        "query": "[format('{0}{1}', variables('keyVaultLet'), variables('$fxv#9'))]",
+        "frequency": "PT1H",
+        "period": "PT3H",
+        "tactics": [
+          "DefenseEvasion",
+          "CredentialAccess"
+        ],
+        "entities": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "AadUserId",
+                "columnName": "CallerObjectId"
+              }
+            ]
+          },
+          "[variables('keyVaultIpEntity')]",
+          "[variables('vaultEntity')]"
+        ]
+      }
+    ],
+    "rules": "[filter(variables('allRules'), lambda('r', lambdaVariables('r').create))]",
+    "parserParameters": "starttime:datetime=datetime(null), endtime:datetime=datetime(null), srcipaddr_has_any_prefix:dynamic=dynamic([]), eventtype_in:dynamic=dynamic([]), eventresult:string='*', actorusername_has_any:dynamic=dynamic([]), operation_has_any:dynamic=dynamic([]), object_has_any:dynamic=dynamic([]), newvalue_has_any:dynamic=dynamic([]), disabled:bool=False, pack:bool=False",
+    "huntingQueries": [
+      {
+        "key": "secret-values-read",
+        "displayName": "Keyring: secret values read",
+        "description": "Secret values revealed through Keyring, with who, vault, item, address and Key Vault request ID.",
+        "query": "[variables('$fxv#12')]",
+        "tactics": "CredentialAccess"
+      },
+      {
+        "key": "private-keys-downloaded",
+        "displayName": "Keyring: private keys downloaded",
+        "description": "Certificate private keys downloaded through Keyring.",
+        "query": "[variables('$fxv#13')]",
+        "tactics": "CredentialAccess"
+      },
+      {
+        "key": "deletes-purges-recoveries",
+        "displayName": "Keyring: deletes, purges and recoveries",
+        "description": "Secrets, certificates and keys deleted, purged or recovered through Keyring.",
+        "query": "[variables('$fxv#14')]",
+        "tactics": "Impact"
+      },
+      {
+        "key": "refused-and-denied",
+        "displayName": "Keyring: refused and denied, by person",
+        "description": "What Keyring refused or Azure denied, counted by person, vault and reason.",
+        "query": "[variables('$fxv#15')]",
+        "tactics": "Discovery"
+      },
+      {
+        "key": "person-activity",
+        "displayName": "Keyring: one person's activity",
+        "description": "Everything one person did through Keyring.",
+        "query": "[variables('$fxv#16')]",
+        "tactics": "Collection"
+      },
+      {
+        "key": "side-by-side",
+        "displayName": "Keyring: Key Vault's log beside Keyring's",
+        "description": "Every Key Vault call for one vault, with the Keyring event that made it, if any. The CorrelationId match is still to be confirmed on a real vault.",
+        "query": "[variables('$fxv#17')]",
+        "tactics": "DefenseEvasion"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "copy": {
+        "name": "alertRules",
+        "count": "[length(variables('rules'))]"
+      },
+      "type": "Microsoft.SecurityInsights/alertRules",
+      "apiVersion": "2024-09-01",
+      "scope": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+      "name": "[guid(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'keyring', variables('rules')[copyIndex()].key)]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "[variables('rules')[copyIndex()].displayName]",
+        "description": "[variables('rules')[copyIndex()].description]",
+        "enabled": "[variables('rules')[copyIndex()].enabled]",
+        "severity": "[parameters('severity')]",
+        "query": "[variables('rules')[copyIndex()].query]",
+        "queryFrequency": "[variables('rules')[copyIndex()].frequency]",
+        "queryPeriod": "[variables('rules')[copyIndex()].period]",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": "[variables('rules')[copyIndex()].tactics]",
+        "entityMappings": "[variables('rules')[copyIndex()].entities]",
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities"
+          }
+        }
+      }
+    },
+    {
+      "condition": "[parameters('deployParsers')]",
+      "type": "Microsoft.OperationalInsights/workspaces/savedSearches",
+      "apiVersion": "2020-08-01",
+      "name": "[format('{0}/{1}', parameters('workspaceName'), 'vimAuditEventKeyring')]",
+      "properties": {
+        "category": "ASIM",
+        "displayName": "Audit Event ASIM filtering parser for Keyring",
+        "query": "[variables('$fxv#10')]",
+        "functionAlias": "vimAuditEventKeyring",
+        "functionParameters": "[variables('parserParameters')]",
+        "version": 2,
+        "tags": [
+          {
+            "name": "Schema",
+            "value": "AuditEvent"
+          },
+          {
+            "name": "SchemaVersion",
+            "value": "1.0.0"
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('deployParsers')]",
+      "type": "Microsoft.OperationalInsights/workspaces/savedSearches",
+      "apiVersion": "2020-08-01",
+      "name": "[format('{0}/{1}', parameters('workspaceName'), 'ASimAuditEventKeyring')]",
+      "properties": {
+        "category": "ASIM",
+        "displayName": "Audit Event ASIM parser for Keyring",
+        "query": "[variables('$fxv#11')]",
+        "functionAlias": "ASimAuditEventKeyring",
+        "version": 2,
+        "tags": [
+          {
+            "name": "Schema",
+            "value": "AuditEvent"
+          },
+          {
+            "name": "SchemaVersion",
+            "value": "1.0.0"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/savedSearches', parameters('workspaceName'), 'vimAuditEventKeyring')]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "hunting",
+        "count": "[length(variables('huntingQueries'))]"
+      },
+      "condition": "[parameters('deployHuntingQueries')]",
+      "type": "Microsoft.OperationalInsights/workspaces/savedSearches",
+      "apiVersion": "2020-08-01",
+      "name": "[format('{0}/{1}', parameters('workspaceName'), format('keyring-{0}', variables('huntingQueries')[copyIndex()].key))]",
+      "properties": {
+        "category": "Hunting Queries",
+        "displayName": "[variables('huntingQueries')[copyIndex()].displayName]",
+        "query": "[variables('huntingQueries')[copyIndex()].query]",
+        "version": 2,
+        "tags": [
+          {
+            "name": "description",
+            "value": "[variables('huntingQueries')[copyIndex()].description]"
+          },
+          {
+            "name": "tactics",
+            "value": "[variables('huntingQueries')[copyIndex()].tactics]"
+          }
+        ]
+      }
+    },
+    {
+      "condition": "[parameters('deployWorkbook')]",
+      "type": "Microsoft.Insights/workbooks",
+      "apiVersion": "2023-06-01",
+      "name": "[guid(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'keyring-workbook')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "shared",
+      "properties": {
+        "displayName": "Keyring audit",
+        "category": "sentinel",
+        "sourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+        "serializedData": "[variables('$fxv#18')]"
+      }
+    }
+  ],
+  "outputs": {
+    "rules": {
+      "type": "array",
+      "metadata": {
+        "description": "Rules created, each with whether it is turned on."
+      },
+      "copy": {
+        "count": "[length(variables('rules'))]",
+        "input": {
+          "name": "[guid(resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName')), 'keyring', variables('rules')[copyIndex()].key)]",
+          "displayName": "[variables('rules')[copyIndex()].displayName]",
+          "enabled": "[variables('rules')[copyIndex()].enabled]"
+        }
+      }
+    }
+  }
+}

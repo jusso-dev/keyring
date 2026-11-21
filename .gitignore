@@ -12,3 +12,7 @@
 website/node_modules
 website/build
 website/.docusaurus
+
+# Python bytecode from helper scripts in tools/.
+__pycache__/
+*.pyc

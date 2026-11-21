@@ -67,6 +67,16 @@ Keyring's managed identity gets nothing here. It can only write rows through the
 
 ## Deploy
 
+### One-click deploy (Azure portal)
+
+Deploy [infra/sentinel/azuredeploy.json](../infra/sentinel/azuredeploy.json) (compiled directly from `infra/sentinel/main.bicep`) into the resource group that holds your existing Log Analytics workspace:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjusso-dev%2Fkeyring%2Fmain%2Finfra%2Fsentinel%2Fazuredeploy.json)
+
+Supply `workspaceName` and `location` (defaulting to the resource group's region). Every analytic rule defaults to disabled until you switch its `enable...` parameter to `true` or enable it in Sentinel's **Analytics** blade.
+
+### Azure CLI (Bicep)
+
 ```sh
 cp infra/sentinel/main.example.bicepparam infra/sentinel/main.bicepparam
 # Edit: workspaceName, keyVaultTable, keyringOutboundIps, and the enable... switches you want.
@@ -74,9 +84,34 @@ az deployment group create -g <workspace resource group> \
   -f infra/sentinel/main.bicep -p infra/sentinel/main.bicepparam
 ```
 
-With only `workspaceName` set (or the example file as it is), it adds the parsers, the hunting queries and the workbook, and five rules, all turned off. Nothing raises an alert or an incident until you turn a rule on, either with its parameter or in Sentinel's **Analytics** blade.
+With only `workspaceName` set (or the example file as it is), it adds the parsers, the hunting queries and the workbook, and six rules, all turned off. Nothing raises an alert or an incident until you turn a rule on, either with its parameter or in Sentinel's **Analytics** blade.
 
 To remove it, delete the rules (named by a GUID; their display names start with "Keyring:"), the saved searches `vimAuditEventKeyring`, `ASimAuditEventKeyring` and `keyring-*`, and the "Keyring audit" workbook.
+
+## Content Hub solution
+
+A Microsoft Sentinel Content Hub V3 solution package lives under [Solutions/Keyring/](../Solutions/Keyring/README.md), following the [Azure/Azure-Sentinel Solutions](https://github.com/Azure/Azure-Sentinel/tree/master/Solutions) directory layout:
+
+- `Solutions/Keyring/Data/Solution_Keyring.json` and `Solutions/Keyring/SolutionMetadata.json`: solution manifest and publisher metadata
+- `Solutions/Keyring/Analytic Rules/*.yaml`: all eight scheduled analytic rules in Azure-Sentinel YAML format (with GUIDs, `requiredDataConnectors`, `queryFrequency`, `queryPeriod`, MITRE tactics/techniques and `entityMappings`)
+- `Solutions/Keyring/Hunting Queries/*.yaml`: all six hunting queries in Azure-Sentinel YAML format
+- `Solutions/Keyring/Parsers/*.yaml`: ASIM Audit Event parser definitions (`vimAuditEventKeyring` and `ASimAuditEventKeyring`)
+- `Solutions/Keyring/Workbooks/KeyringAudit.json`: the Keyring audit workbook
+- `Solutions/Keyring/Package/mainTemplate.json` and `Solutions/Keyring/Package/createUiDefinition.json`: Content Hub V3 ARM package (`contentPackages` and `contentTemplates`) and portal UI definition
+
+Deploy the Content Hub V3 package into an existing workspace with:
+
+```sh
+az deployment group create -g <workspace resource group> \
+  --template-file Solutions/Keyring/Package/mainTemplate.json \
+  --parameters workspace=<workspace name> workspace-location=<workspace region>
+```
+
+No Logic App playbooks are included; Keyring uses Azure Monitor action groups and Event Grid for expiry and access notifications (`infra/alerts/`).
+
+## Defender XDR
+
+All Keyring detections query `KeyringAudit_CL` and Key Vault's Log Analytics diagnostic tables (`AzureDiagnostics` or `AZKVAuditLogs`). None of the detections run on native Microsoft Defender XDR Advanced Hunting tables (`DeviceEvents`, `EmailEvents`, `IdentityLogonEvents`, `CloudAppEvents` or `EntraIdSignInEvents`), so no separate `defender-xdr/` custom detection rules are shipped. Workspaces onboarded to the unified Microsoft Defender portal can run the Sentinel rules and hunting queries directly.
 
 ## The ASIM parser
 

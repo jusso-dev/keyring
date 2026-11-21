@@ -1,0 +1,59 @@
+id: 3f2a8c1e-6b4d-4e92-a1c5-7d8e9f0a1b02
+name: 'Keyring: secret revealed from a new address'
+description: |
+  Identifies when a person reveals a secret value or downloads a private key through Keyring from a client IP address not seen for that person in the preceding 14 days. Only alerts for people previously observed in KeyringAudit_CL.
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+queryFrequency: 1h
+queryPeriod: 14d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - CredentialAccess
+  - InitialAccess
+relevantTechniques:
+  - T1555
+  - T1078
+query: |
+  let window = 1h;
+  let delay = 10m;
+  // A reveal or private key download from an address not seen for that
+  // person in the 14 days before. Only for people seen before, so a first
+  // sign-in doesn't alert. The rule looks back 14 days.
+  // Reads are taken by when they arrived, so a late row is still looked at
+  // once.
+  // Set by main.bicep: window, delay
+  let Known = KeyringAudit_CL
+  | where TimeGenerated between (ago(14d) .. ago(window + delay))
+  | where isnotempty(ActorObjectId) and isnotempty(ClientIp)
+  | summarize by ActorObjectId, ClientIp;
+  let People = Known | summarize by ActorObjectId;
+  KeyringAudit_CL
+  | where TimeGenerated > ago(window + delay)
+  | where coalesce(ingestion_time(), TimeGenerated) > ago(window)
+  | where Action in ("secret.reveal", "certificate.download_private_key") and Outcome == "success"
+  | where isnotempty(ActorObjectId) and isnotempty(ClientIp)
+  | join kind=leftsemi People on ActorObjectId
+  | join kind=leftanti Known on ActorObjectId, ClientIp
+  | summarize Reads = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
+      take_any(ActorUpn, UserAgent), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated)
+      by ActorObjectId, ClientIp
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: AadUserId
+        columnName: ActorObjectId
+      - identifier: FullName
+        columnName: ActorUpn
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

@@ -1,0 +1,43 @@
+id: 4a3b9d2f-7c5e-4f03-b2d6-8e9f0a1b2c06
+name: "Keyring: Key Vault's log beside Keyring's"
+description: |
+  Correlates Azure Key Vault audit events (AZKVAuditLogs) with KeyringAudit_CL events for one vault using CorrelationId and KvRequestId. Set vaultName before running.
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+  - connectorId: AzureKeyVault
+    dataTypes:
+      - AZKVAuditLogs
+tactics:
+  - DefenseEvasion
+relevantTechniques:
+  - T1562
+query: |
+  // Key Vault's log and Keyring's log side by side for one vault: every Key
+  // Vault call next to the Keyring event whose KvRequestId matches its
+  // CorrelationId. A call with no Keyring event isn't proof it came from
+  // elsewhere: a rollback reads the old value and then writes it, and its
+  // event carries only the write's request ID. Check the caller and address. Change AZKVAuditLogs to AzureDiagnostics, and the
+  // columns as in docs/sentinel.md, if the vault logs there. The CorrelationId
+  // match is still to be confirmed on a real vault.
+  let vaultName = "kv-app-prod";
+  let Keyring = KeyringAudit_CL
+  | where Vault =~ vaultName and isnotempty(KvRequestId)
+  | project KvRequestId, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket;
+  AZKVAuditLogs
+  | where _ResourceId endswith strcat("/vaults/", tolower(vaultName))
+  | extend CorrelationId = tostring(column_ifexists("CorrelationId", ""))
+  | join kind=leftouter Keyring on $left.CorrelationId == $right.KvRequestId
+  | project TimeGenerated, OperationName, ResultSignature, CallerIpAddress, Action, Outcome, ActorUpn, ClientIp, Reason, Ticket
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: FullName
+        columnName: ActorUpn
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+version: 1.0.0

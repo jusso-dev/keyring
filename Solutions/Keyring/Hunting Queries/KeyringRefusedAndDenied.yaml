@@ -1,0 +1,29 @@
+id: 4a3b9d2f-7c5e-4f03-b2d6-8e9f0a1b2c04
+name: 'Keyring: refused and denied, by person'
+description: |
+  Summarises requests refused by Keyring or denied by Azure Key Vault, grouped by person, vault, outcome and reason code.
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+tactics:
+  - Discovery
+relevantTechniques:
+  - T1526
+query: |
+  // What Keyring refused, or Azure denied, counted by person, vault and reason.
+  let who = "";
+  KeyringAudit_CL
+  | where Outcome in ("refused", "denied")
+  | where isempty(who) or ActorUpn contains who or ActorObjectId =~ who
+  | summarize Count = count(), LastTime = max(TimeGenerated), Actions = make_set(Action, 10), Addresses = make_set(ClientIp, 10)
+      by ActorObjectId, ActorUpn, Vault, Outcome, ReasonCode
+  | order by Count desc
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: AadUserId
+        columnName: ActorObjectId
+      - identifier: FullName
+        columnName: ActorUpn
+version: 1.0.0
