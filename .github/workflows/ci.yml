@@ -206,6 +206,23 @@ jobs:
           done
           exit $status
 
+  sentinel:
+    name: sentinel packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Sentinel ARM templates, Content Hub V3 package and YAML/KQL
+        env:
+          BICEP_VERSION: v0.49.2
+        run: |
+          az bicep install --version "$BICEP_VERSION"
+          python3 tools/sentinel/package.py --check
+          python3 tools/sentinel/validate.py
+
   docker:
     name: container build
     runs-on: ubuntu-24.04

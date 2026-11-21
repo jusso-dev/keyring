@@ -660,6 +660,14 @@ Bicep templates for App Service and Container Apps are in `infra/`, with optiona
 - [docs/troubleshooting.md](docs/troubleshooting.md): common problems
 - [docs/real-vault-checklist.md](docs/real-vault-checklist.md): what to check on the first run against a real tenant and vault
 
+### Deploy Microsoft Sentinel content
+
+Deploy Keyring's ASIM Audit Event parsers, analytic rules (all disabled by default), hunting queries and workbook into an existing Log Analytics workspace with Microsoft Sentinel enabled:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjusso-dev%2Fkeyring%2Fmain%2Finfra%2Fsentinel%2Fazuredeploy.json)
+
+The button deploys [infra/sentinel/azuredeploy.json](infra/sentinel/azuredeploy.json) (generated from [infra/sentinel/main.bicep](infra/sentinel/main.bicep)) and prompts for your existing workspace name and location. For Microsoft Sentinel Content Hub packaging (V3 `mainTemplate.json`, `createUiDefinition.json` and Azure-Sentinel YAML rule definitions), see [Solutions/Keyring/](Solutions/Keyring/README.md) and [docs/sentinel.md](docs/sentinel.md).
+
 ## Accessibility
 
 Pages work with a keyboard and without JavaScript. Every form control has a label, each page has one main heading, errors are listed at the top with links to the fields and get focus, and colours meet WCAG AA contrast. Copy countdowns are announced at the start and near the end rather than every second. A test checks labels, headings and landmarks on every page.

@@ -1,0 +1,151 @@
+id: 5b4c0e3a-8d6f-4a14-83e7-9f0a1b2c3d01
+Parser:
+  Title: Audit Event ASIM filtering parser for Keyring
+  Version: '1.0.0'
+  LastUpdated: '2026-11-21'
+Product:
+  Name: Keyring
+Normalization:
+  Schema: AuditEvent
+  Version: '1.0.0'
+References:
+  - Title: Keyring Microsoft Sentinel documentation
+    Link: https://github.com/jusso-dev/keyring/blob/main/docs/sentinel.md
+  - Title: ASIM Audit Event schema
+    Link: https://learn.microsoft.com/azure/sentinel/normalization-schema-audit
+Description: |
+  ASIM Audit Event filtering parser for Keyring's custom Log Analytics audit table (KeyringAudit_CL). Maps Keyring actions, outcomes, actors, client addresses and resource targets to the Microsoft Sentinel AuditEvent 1.0.0 schema.
+ParserName: vimAuditEventKeyring
+EquivalentBuiltInParser: _Im_AuditEvent
+ParserParams:
+  - Name: starttime
+    Type: datetime
+    Default: datetime(null)
+  - Name: endtime
+    Type: datetime
+    Default: datetime(null)
+  - Name: srcipaddr_has_any_prefix
+    Type: dynamic
+    Default: dynamic([])
+  - Name: eventtype_in
+    Type: dynamic
+    Default: dynamic([])
+  - Name: eventresult
+    Type: string
+    Default: '*'
+  - Name: actorusername_has_any
+    Type: dynamic
+    Default: dynamic([])
+  - Name: operation_has_any
+    Type: dynamic
+    Default: dynamic([])
+  - Name: object_has_any
+    Type: dynamic
+    Default: dynamic([])
+  - Name: newvalue_has_any
+    Type: dynamic
+    Default: dynamic([])
+  - Name: disabled
+    Type: bool
+    Default: false
+  - Name: pack
+    Type: bool
+    Default: false
+ParserQuery: |
+  // ASIM Audit Event parser for Keyring's own audit events (KeyringAudit_CL).
+  // Schema: AuditEvent 1.0.0. Deployed as the function vimAuditEventKeyring
+  // by infra/sentinel/main.bicep, which also declares its parameters.
+  // One output row per table row, no joins, no time filter of its own.
+  // Sign-in and sign-out events (session.*) are left out: they belong to the
+  // Authentication schema, not Audit Event.
+  // Never a secret value: Keyring's table has none, so NewValue stays empty.
+  KeyringAudit_CL
+  | where not(disabled)
+  | where isnull(starttime) or TimeGenerated >= starttime
+  | where isnull(endtime) or TimeGenerated <= endtime
+  | where not(Action startswith "session.")
+  | where array_length(srcipaddr_has_any_prefix) == 0 or has_any_ipv4_prefix(ClientIp, srcipaddr_has_any_prefix)
+  | where array_length(actorusername_has_any) == 0 or ActorUpn has_any (actorusername_has_any)
+  | where array_length(operation_has_any) == 0 or Action has_any (operation_has_any)
+  | where array_length(newvalue_has_any) == 0
+  | extend Verb = tostring(split(Action, ".")[-1])
+  | extend EventType = case(
+      Action in ("secret.reveal", "secret.copy.read", "certificate.download_private_key"), "Read",
+      Verb in ("create", "upload", "import", "rotate"), "Create",
+      Verb in ("delete", "purge", "cancel"), "Delete",
+      Verb in ("set", "update", "rollback", "bulk_update", "write"), "Set",
+      Action == "role.activate", "Enable",
+      Action == "role.deactivate", "Disable",
+      Action == "share.grant", "Enable",
+      Action == "share.revoke", "Disable",
+      "Other")
+  | where array_length(eventtype_in) == 0 or EventType in~ (eventtype_in)
+  | extend EventResult = iff(Outcome == "success", "Success", "Failure")
+  | where eventresult == "*" or EventResult =~ eventresult
+  | extend
+      EventCount = int(1),
+      EventStartTime = TimeGenerated,
+      EventEndTime = TimeGenerated,
+      EventSubType = iff(Verb == "recover", "Recover", ""),
+      EventResultDetails = case(
+          Outcome == "denied", "Denied by Azure",
+          Outcome == "refused", "Refused by Keyring",
+          Outcome == "failed", "Failed",
+          ""),
+      EventOriginalResultDetails = ReasonCode,
+      EventSeverity = case(
+          Outcome == "refused" and ReasonCode in ("csrf", "cross_site"), "Medium",
+          Outcome == "success", "Informational",
+          "Low"),
+      EventOriginalType = Action,
+      EventOriginalUid = EventId,
+      EventUid = _ItemId,
+      EventProduct = "Keyring",
+      EventProductVersion = KeyringVersion,
+      EventVendor = "Keyring",
+      EventSchema = "AuditEvent",
+      EventSchemaVersion = "1.0.0",
+      Dvc = "Keyring",
+      Operation = Action,
+      Object = case(isnotempty(ItemName), strcat(Vault, "/", ItemName), isnotempty(Vault), Vault, "Keyring"),
+      ObjectType = iff(isnotempty(Vault), "Cloud Resource", "Other"),
+      OriginalObjectType = iff(isnotempty(ItemKind), ItemKind, iff(isnotempty(Vault), "vault", "")),
+      ActorUserId = ActorObjectId,
+      ActorUserIdType = iff(isnotempty(ActorObjectId), "AADID", ""),
+      ActorUserAadId = ActorObjectId,
+      ActorScopeId = ActorTenantId,
+      ActorUsername = ActorUpn,
+      ActorUsernameType = iff(isnotempty(ActorUpn), "UPN", ""),
+      ActorSessionId = SessionRef,
+      SrcIpAddr = ClientIp,
+      HttpUserAgent = UserAgent,
+      TargetAppName = "Keyring",
+      TargetAppType = "Service",
+      AdditionalFields = bag_pack(
+          "ReasonCode", ReasonCode,
+          "ItemVersion", ItemVersion,
+          "KvRequestId", KvRequestId,
+          "Reason", Reason,
+          "Ticket", Ticket,
+          "Role", column_ifexists("Role", ""),
+          "RoleScope", column_ifexists("RoleScope", ""),
+          "RoleDuration", column_ifexists("RoleDuration", ""),
+          "NotifyType", column_ifexists("NotifyType", ""),
+          "NotifyRecipientCount", column_ifexists("NotifyRecipientCount", int(null)),
+          "NotifyRecipients", column_ifexists("NotifyRecipients", ""),
+          "NotifyEventCount", column_ifexists("NotifyEventCount", int(null)),
+          "RevealLimitFrom", column_ifexists("RevealLimitFrom", ""),
+          "RevealLimitTo", column_ifexists("RevealLimitTo", ""),
+          "SharePrincipalId", column_ifexists("SharePrincipalId", ""),
+          "SharePrincipalType", column_ifexists("SharePrincipalType", ""),
+          "ShareUntil", column_ifexists("ShareUntil", ""),
+          "SharePath", column_ifexists("SharePath", ""),
+          "WriterIdentityClientId", WriterIdentityClientId,
+          "KeyringInstance", KeyringInstance)
+  | where array_length(object_has_any) == 0 or Object has_any (object_has_any)
+  | extend
+      User = ActorUsername,
+      IpAddr = SrcIpAddr,
+      Src = SrcIpAddr,
+      Application = TargetAppName
+  | project-away Verb

@@ -1,0 +1,32 @@
+id: 4a3b9d2f-7c5e-4f03-b2d6-8e9f0a1b2c02
+name: 'Keyring: private keys downloaded'
+description: |
+  Lists certificate private keys downloaded through Keyring, with actor, vault, item, outcome, client address, Key Vault request ID, reason and ticket.
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+tactics:
+  - CredentialAccess
+relevantTechniques:
+  - T1552
+query: |
+  // Certificate private keys downloaded through Keyring.
+  let who = "";
+  KeyringAudit_CL
+  | where Action == "certificate.download_private_key"
+  | where isempty(who) or ActorUpn contains who or ActorObjectId =~ who
+  | project TimeGenerated, ActorUpn, ActorObjectId, Vault, ItemName, Outcome, ReasonCode, ClientIp, KvRequestId, Reason, Ticket
+  | order by TimeGenerated desc
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: AadUserId
+        columnName: ActorObjectId
+      - identifier: FullName
+        columnName: ActorUpn
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+version: 1.0.0

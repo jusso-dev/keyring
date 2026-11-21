@@ -1,0 +1,66 @@
+id: 3f2a8c1e-6b4d-4e92-a1c5-7d8e9f0a1b04
+name: 'Keyring: sensitive action outside working hours'
+description: |
+  Identifies a purge, private key download, bulk change or other watched Keyring action performed outside the organisation's working hours (default 08:00 to 18:00, Monday to Friday, UTC+10).
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+queryFrequency: 15m
+queryPeriod: 25m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Impact
+  - CredentialAccess
+relevantTechniques:
+  - T1485
+  - T1555
+query: |
+  let window = 15m;
+  let delay = 10m;
+  let watchedActions = dynamic(["secret.purge","certificate.purge","key.purge","certificate.download_private_key"]);
+  let watchedTerms = dynamic(["bulk"]);
+  let utcOffset = 600 * 1m;
+  let workStart = 8;
+  let workEnd = 18;
+  let workDays = dynamic([1,2,3,4,5]);
+  // A purge, private key download or other watched action outside working
+  // hours, in the organisation's own time zone. An action counts if it is in
+  // watchedActions, or one of the parts of its name (split at "." and "_")
+  // is in watchedTerms, so "bulk" catches secret.bulk_update or bulk.tag.set
+  // whatever the bulk change actions end up named.
+  // Each event is looked at once, in the run after it arrives, so late rows
+  // are neither missed nor raised twice. Working hours may run past midnight
+  // (workStart 22, workEnd 6); the day is the local day of the event.
+  // Set by main.bicep: window, delay, watchedActions, watchedTerms, utcOffset, workStart, workEnd, workDays
+  KeyringAudit_CL
+  | where TimeGenerated > ago(window + delay)
+  | where coalesce(ingestion_time(), TimeGenerated) > ago(window)
+  | extend Parts = split(replace_string(Action, "_", "."), ".")
+  | where Action in (watchedActions) or array_length(set_intersect(Parts, watchedTerms)) > 0
+  | extend LocalTime = TimeGenerated + utcOffset
+  | extend LocalHour = hourofday(LocalTime), LocalDay = toint(dayofweek(LocalTime) / 1d)
+  | extend InHours = iff(workStart <= workEnd,
+      LocalHour >= workStart and LocalHour < workEnd,
+      LocalHour >= workStart or LocalHour < workEnd)
+  | where not(InHours) or LocalDay !in (workDays)
+  | project TimeGenerated, LocalTime, Action, Outcome, ReasonCode, ActorObjectId, ActorUpn,
+      ClientIp, Vault, ItemKind, ItemName, KvRequestId
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: AadUserId
+        columnName: ActorObjectId
+      - identifier: FullName
+        columnName: ActorUpn
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

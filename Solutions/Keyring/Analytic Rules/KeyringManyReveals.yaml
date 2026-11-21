@@ -1,0 +1,52 @@
+id: 3f2a8c1e-6b4d-4e92-a1c5-7d8e9f0a1b01
+name: 'Keyring: many secret reveals by one person'
+description: |
+  Identifies when one person reveals secret values or downloads private keys through Keyring 20 or more times in 60 minutes. Looks back an additional 10 minutes to handle ingestion delay without double-alerting.
+severity: Medium
+status: Available
+requiredDataConnectors:
+  - connectorId: CustomLogsAma
+    dataTypes:
+      - KeyringAudit_CL
+queryFrequency: 1h
+queryPeriod: 70m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - CredentialAccess
+  - Collection
+relevantTechniques:
+  - T1555
+  - T1530
+query: |
+  let window = 60m;
+  let delay = 10m;
+  let revealThreshold = 20;
+  // Many secret reveals or private key downloads by one person in a short time.
+  // Rows can arrive late, so the rule looks back window + delay, and only
+  // alerts when a row counted arrived in the last window.
+  // Set by main.bicep: window, delay, revealThreshold
+  KeyringAudit_CL
+  | where TimeGenerated > ago(window + delay)
+  | where Action in ("secret.reveal", "certificate.download_private_key") and Outcome == "success"
+  | summarize Reveals = count(), Vaults = make_set(Vault, 10), Items = make_set(ItemName, 20),
+      ClientIp = take_any(ClientIp), ActorUpn = take_any(ActorUpn),
+      FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated), TimeGenerated = max(TimeGenerated),
+      LastArrived = max(coalesce(ingestion_time(), TimeGenerated))
+      by ActorObjectId
+  | where Reveals >= revealThreshold and LastArrived > ago(window)
+entityMappings:
+  - entityType: Account
+    fieldMappings:
+      - identifier: AadUserId
+        columnName: ActorObjectId
+      - identifier: FullName
+        columnName: ActorUpn
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientIp
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
