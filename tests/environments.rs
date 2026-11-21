@@ -218,13 +218,16 @@ async fn matrix_discovers_groups_spots_missing_and_drift_and_never_reads_values(
     );
 
     // No secret values were read or rendered!
-    for secret in [
+    for sentinel in [
         "dev-secret-never-shown",
         "test-secret-never-shown",
         "dev-db-val",
         "prod-db-val",
     ] {
-        assert!(!html.contains(secret), "matrix must never show {secret}");
+        assert!(
+            !html.contains(sentinel),
+            "matrix must never render a secret value"
+        );
     }
     for (label, kv) in [("dev", &w.dev), ("test", &w.test), ("prod", &w.prod)] {
         let log = kv.log.lock().unwrap();
