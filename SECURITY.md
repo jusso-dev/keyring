@@ -18,11 +18,11 @@ You'll get an acknowledgement within five working days. We'll agree a fix and a 
 
 ## Supported versions
 
-Keyring is in early development and has no releases yet. Only the latest commit on `main` gets security fixes. To check whether a running copy has a fix, compare its image's `org.opencontainers.image.revision` label with the fix's commit (see the README, "Which version am I running?").
+Security fixes apply to the latest `1.x` release and `main`. To check whether a running copy has a fix, compare its image's `org.opencontainers.image.version` and `org.opencontainers.image.revision` labels with the release or fix commit (see the README, "Which version am I running?").
 
 ## Verifying an image
 
-This applies once Keyring's releases are published. Each version tag's image is built by [`.github/workflows/release.yml`](.github/workflows/release.yml) and carries a signed build provenance attestation. To check that an image came from this repository's workflow, run:
+Each version tag's image is built by [`.github/workflows/release.yml`](.github/workflows/release.yml) and carries a signed build provenance attestation (published to `ghcr.io` when `KEYRING_PUBLISH_IMAGE=true`, or attached as an attested workflow archive). To check that a published image came from this repository's workflow, run:
 
 ```sh
 gh attestation verify oci://ghcr.io/jusso-dev/keyring@sha256:<digest> --repo jusso-dev/keyring
@@ -34,7 +34,7 @@ If the command fails, don't deploy that image.
 
 - The Keyring application in `src/`, `templates/` and `static/`
 - The container image built from `Dockerfile`
-- The Bicep templates in `infra/`
+- The Bicep templates in `infra/` and the Microsoft Sentinel Content Hub package in `Solutions/Keyring/`
 
 Out of scope: Azure Key Vault, Entra ID and other Microsoft services themselves (report those to the [Microsoft Security Response Center](https://msrc.microsoft.com/)), and problems that need an attacker to already control a signed-in person's browser or the server.
 

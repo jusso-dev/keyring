@@ -153,7 +153,7 @@ Direct dependencies, from `Cargo.toml` and `Cargo.lock`. `deny.toml` allows only
 | `tracing`, `tracing-subscriber` | 0.1.44, 0.3.23 | MIT | Logging |
 | `x509-cert` | 0.3.0 | Apache-2.0 OR MIT | Certificate parsing |
 | `zeroize` | 1.9.1 | Apache-2.0 OR MIT | Clearing secrets from memory |
-| `chrono`, `http-body-util`, `rsa`, `url` | dev only | MIT OR Apache-2.0, MIT | Tests |
+| `http-body-util`, `rsa`, `url` | dev only | MIT OR Apache-2.0, MIT | Tests |
 :::
 
 `Cargo.lock` holds 300 packages including build and test dependencies, every one under the allow-list. Accepted advisories: RUSTSEC-2023-0071 (`rsa` via `openidconnect`; Keyring does no RSA private-key operation; #41) and RUSTSEC-2026-0543 (`chrono` unmaintained notice; #271). CI produces a CycloneDX SBOM for the crates and one for the image.

@@ -350,7 +350,7 @@ pub(crate) fn answer(
             scope: scope.clone(),
             body: v.clone(),
             status: status.clone(),
-            created: chrono_now(),
+            created: super::rfc3339_utc(super::now_unix()),
         });
         if p["requestType"] == "AdminAssign" && status == "Provisioned" {
             let name = uuid_like(s.writes.len());
@@ -474,10 +474,4 @@ pub(crate) fn answer(
 
 fn uuid_like(n: usize) -> String {
     format!("bbbbbbbb-0000-0000-0000-{n:012}")
-}
-
-fn chrono_now() -> String {
-    chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-        .to_string()
 }

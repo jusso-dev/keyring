@@ -1730,9 +1730,7 @@ async fn values_never_reach_the_logs() {
         "RECIPIENTNAMELEAK\nFORGEDLINE",
         "recipientleak@example.com",
     ));
-    let until = (chrono::Utc::now().date_naive() + chrono::Duration::days(3))
-        .format("%Y-%m-%d")
-        .to_string();
+    let until = support::iso_date_in_days(3);
     let res = ws.get("/v/kv-test/share/people?q=PICKERQUERYLEAK").await;
     let _ = support::body_text(res).await;
     let share = |extra: Vec<(&'static str, String)>| {

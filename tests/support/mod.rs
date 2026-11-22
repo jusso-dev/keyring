@@ -20,16 +20,12 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use chrono::{DateTime, Utc};
 use keyring::config::Config;
 use openidconnect::core::{
     CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
     CoreRsaPrivateSigningKey,
 };
-use openidconnect::{
-    Audience, EndUserName, EndUserUsername, IssuerUrl, JsonWebKeyId, LocalizedClaim, Nonce,
-    PrivateSigningKey, StandardClaims, SubjectIdentifier,
-};
+use openidconnect::{JsonWebKeyId, PrivateSigningKey};
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use serde_json::json;
 
@@ -374,10 +370,37 @@ async fn jwks(State(s): State<Arc<IdpState>>) -> Response {
     json_response(StatusCode::OK, json!({ "keys": [jwk] }))
 }
 
-fn now_plus(secs: u64) -> DateTime<Utc> {
-    let t = SystemTime::now() + Duration::from_secs(secs);
-    let secs = t.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    DateTime::from_timestamp(secs, 0).unwrap()
+pub(crate) fn now_unix() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs() as i64
+}
+
+pub(crate) fn rfc3339_utc(ts: i64) -> String {
+    let date = keyring::dates::iso_date(ts);
+    let secs = ts.rem_euclid(86_400);
+    format!(
+        "{date}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
+pub(crate) fn iso_date_in_days(days: i64) -> String {
+    keyring::dates::iso_date(now_unix() + days * 86_400)
+}
+
+pub(crate) fn dmy_in_days(days: i64) -> String {
+    let iso = iso_date_in_days(days);
+    let mut parts = iso.split('-');
+    let (y, m, d) = (
+        parts.next().unwrap(),
+        parts.next().unwrap(),
+        parts.next().unwrap(),
+    );
+    format!("{d}-{m}-{y}")
 }
 
 async fn token(
@@ -426,29 +449,28 @@ async fn token(
         .lock()
         .unwrap()
         .unwrap_or((USER_OID, "alex@example.com"));
-    let mut name = LocalizedClaim::new();
-    name.insert(None, EndUserName::new("Alex Example".into()));
-    let claims = openidconnect::IdTokenClaims::new(
-        IssuerUrl::new(s.issuer.clone()).unwrap(),
-        vec![Audience::new(audience.into())],
-        now_plus(3600),
-        now_plus(0),
-        StandardClaims::new(SubjectIdentifier::new("user-subject".into()))
-            .set_name(Some(name))
-            .set_preferred_username(Some(EndUserUsername::new(upn.into()))),
-        keyring::auth::oidc::EntraClaims {
-            oid: Some(oid.into()),
-            tid: Some(TENANT.into()),
-            acrs: s.acrs.lock().unwrap().clone(),
-        },
-    )
-    .set_nonce(Some(Nonce::new(nonce)))
-    .set_auth_time(
-        s.auth_time
-            .lock()
-            .unwrap()
-            .and_then(|t| DateTime::from_timestamp(t, 0)),
-    );
+    let iat = now_unix();
+    let exp = iat + 3600;
+    let mut claims_json = json!({
+        "iss": s.issuer,
+        "aud": [audience],
+        "exp": exp,
+        "iat": iat,
+        "sub": "user-subject",
+        "name": "Alex Example",
+        "preferred_username": upn,
+        "nonce": nonce,
+        "oid": oid,
+        "tid": TENANT,
+    });
+    if let Some(acrs) = s.acrs.lock().unwrap().clone() {
+        claims_json["acrs"] = json!(acrs);
+    }
+    if let Some(auth_time) = *s.auth_time.lock().unwrap() {
+        claims_json["auth_time"] = json!(auth_time);
+    }
+    let claims: openidconnect::IdTokenClaims<keyring::auth::oidc::EntraClaims, CoreGenderClaim> =
+        serde_json::from_value(claims_json).expect("mock ID token claims");
     let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
         TokenBehaviour::WrongKey if rolled => &s.key,

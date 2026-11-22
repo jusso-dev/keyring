@@ -8,6 +8,15 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 
 ## [Unreleased]
 
+### Added
+- Microsoft Sentinel Content Hub V3 solution package under `Solutions/Keyring/` (ASIM parsers, 8 analytic rule YAMLs, 6 hunting query YAMLs, workbook, `mainTemplate.json` and `createUiDefinition.json`), one-click Deploy to Azure ARM template (`infra/sentinel/azuredeploy.json`), and packaging/validation scripts in `tools/sentinel/` (#301).
+
+### Changed
+- Removed `chrono` from test dev-dependencies in favour of `keyring::dates` and standard library time helpers, leaving `openidconnect`/`oauth2` as the only remaining transitive source of `chrono` (#271).
+- Silenced false-positive `secure-secrets-in-params` Bicep linter warning on the non-secret `passwordPolicy` parameter in `infra/app-service/main.bicep` and `infra/container-apps/main.bicep`.
+- Updated `.env.example`, `SECURITY.md`, `README.md`, `docs/sentinel.md` and `docs/real-vault-checklist.md` to reflect `v1.0.0`, real-tenant test runs through 19-11-2026, and all production environment variables.
+- Bumped `taiki-e/install-action` from `2.90.3` to `2.90.6` in CI (#290).
+
 ## [1.0.0] - 2026-11-21
 
 Initial v1.0.0 release of Keyring, a self-hosted, zero-storage secrets console for Azure Key Vault built in Rust (Axum and Askama) that signs people in with Entra ID and makes every Azure call on their behalf.

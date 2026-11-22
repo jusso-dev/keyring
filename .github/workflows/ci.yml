@@ -27,7 +27,9 @@ jobs:
   rust:
     name: fmt, clippy, test, build
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Test plus a release build of the whole tree runs 16-26 minutes on a
+    # hosted runner; 20 cut the release build off on main and on PRs.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

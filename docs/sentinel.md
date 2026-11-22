@@ -38,7 +38,7 @@ One row per event. The columns are `COLUMNS` in `src/audit/sink.rs`, listed with
 | `ClientIp`, `UserAgent` | The browser |
 | `Vault`, `ItemKind`, `ItemName`, `ItemVersion` | What was acted on |
 | `KvRequestId` | The `x-ms-client-request-id` Keyring sent on its last Key Vault call for the request |
-| `Reason`, `Ticket` | Free text a person typed (#205). Empty until that change ships |
+| `Reason`, `Ticket` | Free text a person typed: the reason and ticket when `KEYRING_REQUIRE_REASON` is set, the PIM justification and ticket on `role.activate`, and the request reason/ticket on `access.request`; empty otherwise |
 | `WriterIdentityClientId`, `KeyringInstance`, `KeyringVersion` | The writer |
 
 No row holds a secret value, a token or Azure's error message.
