@@ -265,7 +265,7 @@ async fn validation_errors_name_the_field_and_echo_no_secret_material() {
     assert!(html.contains("name=\"secret_type\" value=\"login\""));
     assert!(w.kv.state.current("bad-name").is_none());
 
-    // Over 25 KB once encoded: the error names the field to shorten.
+    // Over the limit once encoded: the error names the field to shorten.
     let key = format!("{}\n", "\"".repeat(16 * 1024 - 1));
     let res = w
         .post(
@@ -279,7 +279,7 @@ async fn validation_errors_name_the_field_and_echo_no_secret_material() {
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let html = body_text(res).await;
-    assert!(html.contains("over Key Vault&#39;s 25 KB limit. Shorten Private key."));
+    assert!(html.contains("over Key Vault&#39;s limit of 25,600 characters. Shorten Private key."));
     assert!(html.contains("id=\"private_key-error\""));
     assert!(w.kv.state.current("big-key").is_none());
 }

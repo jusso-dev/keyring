@@ -22,6 +22,8 @@ pub(crate) struct KeyVersion {
     pub ops: Vec<String>,
     pub enabled: bool,
     pub created: i64,
+    /// Moved by "Update Key", as on a real vault.
+    pub updated: i64,
     pub exp: Option<i64>,
     pub tags: BTreeMap<String, String>,
 }
@@ -111,7 +113,7 @@ fn base(headers: &HeaderMap, vault: &str) -> String {
 }
 
 fn attrs(v: &KeyVersion) -> Value {
-    let mut a = json!({"enabled": v.enabled, "created": v.created, "updated": v.created, "recoveryLevel": "Recoverable+Purgeable"});
+    let mut a = json!({"enabled": v.enabled, "created": v.created, "updated": v.updated, "recoveryLevel": "Recoverable+Purgeable"});
     if let Some(e) = v.exp {
         a["exp"] = json!(e);
     }
@@ -227,7 +229,11 @@ async fn update_version(
     body: String,
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
+    if let Some(refused) = super::keyvault::tag_problem(&body) {
+        return refused;
+    }
     let b = base(&headers, &vault);
+    let t = s.tick();
     let mut keys = s.keys.lock().unwrap();
     let Some(k) = keys.get_mut(&name) else {
         return err(404, "KeyNotFound");
@@ -250,6 +256,7 @@ async fn update_version(
             .map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_owned()))
             .collect();
     }
+    v.updated = t;
     json_response(StatusCode::OK, bundle(&b, &name, v, managed))
 }
 
@@ -262,6 +269,9 @@ async fn create(
     let body: Value = serde_json::from_str(&body).unwrap();
     if s.deleted_keys.lock().unwrap().contains_key(&name) {
         return err(409, "Conflict");
+    }
+    if let Some(refused) = super::keyvault::tag_problem(&body) {
+        return refused;
     }
     let kty = body["kty"].as_str().unwrap_or("RSA").to_owned();
     // A Standard vault refuses HSM keys with 403 and inner code
@@ -437,8 +447,15 @@ async fn get_deleted(
     headers: HeaderMap,
 ) -> Response {
     let b = base(&headers, &vault);
+    // "Get Deleted Key" answers with the whole bundle: `kid` is inside `key`,
+    // not at the top as in the list (checked on a real vault, 22-11-2026).
     match s.deleted_keys.lock().unwrap().get(&name) {
-        Some(d) => json_response(StatusCode::OK, deleted_item(&b, &name, d)),
+        Some(d) => {
+            let mut out = deleted_item(&b, &name, d);
+            let kid = out.as_object_mut().unwrap().remove("kid").unwrap();
+            out["key"] = json!({"kid": kid, "kty": "RSA"});
+            json_response(StatusCode::OK, out)
+        }
         None => err(404, "KeyNotFound"),
     }
 }
@@ -481,6 +498,7 @@ impl KvState {
             ops: vec!["sign".into(), "verify".into()],
             enabled: true,
             created: super::keyvault::BASE_TIME,
+            updated: super::keyvault::BASE_TIME,
             exp: None,
             tags: BTreeMap::new(),
         });

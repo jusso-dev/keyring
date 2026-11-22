@@ -62,7 +62,7 @@ Key Vault has no description or owner field. Keyring keeps these in ordinary tag
 
 ### Content types Keyring writes
 
-Typed secrets use the content type `application/vnd.keyring.<type>+json;v=1` (`login`, `database`, `api-key`, `ssh-key`) and a compact JSON value with every field in a fixed order. Nothing is stored outside Key Vault. Reading is strict and bounded: over 25 KB isn't parsed, at most eight entries, and anything unexpected is shown as a plain value with a warning.
+Typed secrets use the content type `application/vnd.keyring.<type>+json;v=1` (`login`, `database`, `api-key`, `ssh-key`) and a compact JSON value with every field in a fixed order. Nothing is stored outside Key Vault. Reading is strict and bounded: over Key Vault's 25,600-character limit isn't parsed, at most eight entries, and anything unexpected is shown as a plain value with a warning.
 
 ### Settings that act on values
 

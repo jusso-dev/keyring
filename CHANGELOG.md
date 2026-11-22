@@ -8,7 +8,12 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 
 ## [Unreleased]
 
+### Fixed
+- The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
+- Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
+
 ### Added
+- Twelve more real-vault checklist rows in `tests/real_vault.rs` (21 in all): typed content types, value and description limits, line breaks, tag round trips, tags replaced as a whole, certificate and key Edit details, certificate tags on backing items, `created` on list calls, `managed` backing items and rotation tags. All 21 run on 22-11-2026 against a throwaway vault, and the mock Key Vault now matches every answer (#170).
 - Microsoft Sentinel Content Hub V3 solution package under `Solutions/Keyring/` (ASIM parsers, 8 analytic rule YAMLs, 6 hunting query YAMLs, workbook, `mainTemplate.json` and `createUiDefinition.json`), one-click Deploy to Azure ARM template (`infra/sentinel/azuredeploy.json`), and packaging/validation scripts in `tools/sentinel/` (#301).
 
 ### Changed

@@ -20,7 +20,7 @@
 | K2 | No app-only or managed identity access to people's data | Design principle "act as the user" |
 | K3 | No npm or Node in the product; server-rendered HTML; strict CSP | Decisions D2 and D3 |
 | K4 | One managed identity for Keyring's own calls; no client secret or second identity for them | `docs/architecture.md`, "Who makes each call" |
-| K5 | Key Vault's own limits: 15 tags per item, 256 characters per tag value, 25 KB per secret value | Key Vault |
+| K5 | Key Vault's own limits: 15 tags per item, 256 characters per tag value, 25,600 characters (UTF-16 code units) per secret value | Key Vault |
 | K6 | No Microsoft Graph permission beyond sign-in, so no names for principals and no app registration credentials. **Reversed for sharing only** (D24): with `KEYRING_SHARING=true`, delegated `User.ReadBasic.All` and `GroupMember.Read.All` | Keeps consent to four delegated permissions unless sharing is wanted |
 | K7 | New crates need a reason, `cargo deny` and `cargo audit` | `deny.toml`, dependency policy |
 
