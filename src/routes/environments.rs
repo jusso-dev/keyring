@@ -36,7 +36,7 @@ use crate::routes::error::{Need, PageError, PageResult, Problem};
 use crate::routes::every_vault;
 use crate::routes::forms::{FieldErrors, name_problem};
 use crate::routes::lifecycle::Kind;
-use crate::routes::secrets::form::{MAX_CONTENT_TYPE, MAX_TAGS, MAX_VALUE_BYTES};
+use crate::routes::secrets::form::{MAX_CONTENT_TYPE, MAX_TAGS, MAX_VALUE_UNITS, value_len};
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 use crate::routes::tag_rows::{self, Suggestions, TagField, TagPost};
@@ -1144,13 +1144,12 @@ pub(super) async fn apply(
             continue;
         }
         let err_field = ENV_VAL_IDS[target_idx];
-        if sec.expose().len() > MAX_VALUE_BYTES {
+        if value_len(sec.expose()) > MAX_VALUE_UNITS {
             errors.push(
                 err_field,
                 format!(
-                    "Value for {} is over {} KB, which is Key Vault's limit.",
-                    ev.vault.name,
-                    MAX_VALUE_BYTES / 1024
+                    "Value for {} is over {} characters, which is Key Vault's limit.",
+                    ev.vault.name, MAX_VALUE_UNITS
                 ),
             );
             continue;

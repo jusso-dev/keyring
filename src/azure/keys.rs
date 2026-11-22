@@ -204,10 +204,19 @@ impl KeyBundle {
     }
 }
 
+/// A soft-deleted key. "Get Deleted Keys" (the list) puts `kid` at the top
+/// of each item, but "Get Deleted Key" sends a full bundle with `kid`
+/// inside `key` and none at the top (checked on a real vault, 22-11-2026).
+/// Either is read; `recoveryId` is the fallback for the name.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletedKeyItem {
-    pub kid: String,
+    #[serde(default)]
+    kid: Option<String>,
+    #[serde(default)]
+    key: Option<DeletedKeyJwk>,
+    #[serde(default)]
+    pub recovery_id: Option<String>,
     #[serde(default)]
     pub deleted_date: Option<Timestamp>,
     #[serde(default)]
@@ -217,9 +226,30 @@ pub struct DeletedKeyItem {
     pub attributes: Attributes,
 }
 
+/// Only the `kid` of a deleted key's JWK is kept.
+#[derive(Debug, Clone, Deserialize)]
+struct DeletedKeyJwk {
+    #[serde(default)]
+    kid: Option<String>,
+}
+
 impl DeletedKeyItem {
+    pub fn kid(&self) -> &str {
+        self.kid
+            .as_deref()
+            .or_else(|| self.key.as_ref().and_then(|k| k.kid.as_deref()))
+            .unwrap_or_default()
+    }
+
     pub fn name(&self) -> &str {
-        id_part(&self.kid, "keys", 0)
+        match id_part(self.kid(), "keys", 0) {
+            "" => self
+                .recovery_id
+                .as_deref()
+                .map(|r| id_part(r, "deletedkeys", 0))
+                .unwrap_or_default(),
+            n => n,
+        }
     }
 }
 
@@ -810,5 +840,32 @@ pub(crate) mod tests {
         let j = serde_json::to_value(&b).unwrap();
         assert_eq!(j["key_size"], 3072);
         assert!(j.get("crv").is_none());
+    }
+
+    /// The two shapes Key Vault sends for a deleted key (real vault,
+    /// 22-11-2026): the list item has `kid` at the top, the single read
+    /// has it inside `key`.
+    #[test]
+    fn deleted_key_name_from_either_shape() {
+        let listed: DeletedKeyItem = serde_json::from_value(serde_json::json!({
+            "kid": "https://v.vault.azure.net/keys/k1",
+            "recoveryId": "https://v.vault.azure.net/deletedkeys/k1",
+            "attributes": {"recoveryLevel": "CustomizedRecoverable+Purgeable"}
+        }))
+        .unwrap();
+        assert_eq!(listed.name(), "k1");
+        let read: DeletedKeyItem = serde_json::from_value(serde_json::json!({
+            "key": {"kid": "https://v.vault.azure.net/keys/k2/0123", "kty": "RSA"},
+            "recoveryId": "https://v.vault.azure.net/deletedkeys/k2",
+            "attributes": {"recoveryLevel": "CustomizedRecoverable+Purgeable", "recoverableDays": 7}
+        }))
+        .unwrap();
+        assert_eq!(read.name(), "k2");
+        assert_eq!(read.attributes.recoverable_days, Some(7));
+        let only_recovery: DeletedKeyItem = serde_json::from_value(serde_json::json!({
+            "recoveryId": "https://v.vault.azure.net/deletedkeys/k3"
+        }))
+        .unwrap();
+        assert_eq!(only_recovery.name(), "k3");
     }
 }

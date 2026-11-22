@@ -25,8 +25,7 @@ pub(crate) const MAX_TAGS: usize = crate::description::MAX_TAGS;
 /// Longest tag name and value Key Vault takes, in characters.
 pub(crate) const MAX_TAG_NAME: usize = 512;
 pub(crate) const MAX_TAG_VALUE: usize = 256;
-/// Key Vault's limit on a secret value (25 KB).
-pub(crate) const MAX_VALUE_BYTES: usize = 25 * 1024;
+pub(crate) use crate::secret_types::{MAX_VALUE_UNITS, value_len};
 pub(crate) const MAX_CONTENT_TYPE: usize = 255;
 
 /// What the create and edit-properties forms post. Strings, because HTML
@@ -371,8 +370,8 @@ fn checked_value(
             errors.push("value", "Enter a value.");
             None
         }
-        Some(v) if v.len() > MAX_VALUE_BYTES => {
-            errors.push("value", "Values can be up to 25 KB.");
+        Some(v) if value_len(&v) > MAX_VALUE_UNITS => {
+            errors.push("value", "Values can be up to 25,600 characters.");
             None
         }
         Some(v) => {
@@ -728,7 +727,7 @@ mod tests {
         f.value = Some("\na\r\nb\r\n".into());
         let (_, body) = for_create(&f, NOW, &OFF, R).unwrap();
         assert_eq!(body.value.expose(), "\na\nb\n");
-        // A value right at 25 KB once CRLF is LF isn't refused for its CRs.
+        // A value right at the limit once CRLF is LF isn't refused for its CRs.
         let line = "x".repeat(1023);
         f.value = Some(vec![line.as_str(); 25].join("\r\n") + "\r\n");
         assert!(for_create(&f, NOW, &OFF, R).is_ok());

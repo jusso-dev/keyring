@@ -34,7 +34,10 @@ use keyring::azure::certs::{
     LifetimeTrigger, Policy, SecretProps, X509Props,
 };
 use keyring::azure::keys::{CreateKey, KeysApi};
-use keyring::azure::secrets::{API_VERSION, Attributes, SecretsApi, SetSecret, now_ts};
+use keyring::azure::secrets::{
+    API_VERSION, Attributes, SecretsApi, SetSecret, UpdateAttributes, UpdateProperties,
+    UpdateSecret, now_ts,
+};
 use keyring::azure::token::AccessToken;
 use keyring::azure::vaults::is_valid_vault_name;
 use keyring::azure::{AzureError, Resource};
@@ -42,6 +45,7 @@ use keyring::config::Config;
 use keyring::secret::Secret;
 use reqwest::Method;
 use rsa::rand_core::{OsRng, RngCore};
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------
 // Guard rails
@@ -1054,6 +1058,816 @@ async fn ber_encoded_pfx(t: &Target) -> Import {
 }
 
 // ---------------------------------------------------------------------
+// Shared helpers for rows 10 to 21
+// ---------------------------------------------------------------------
+
+/// Whether Key Vault took a write, and if not, how it refused.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    Accepted,
+    Refused(Refusal),
+}
+
+fn answer<T>(what: &str, r: Result<T, AzureError>) -> Answer {
+    match r {
+        Ok(_) => Answer::Accepted,
+        Err(AzureError::Status {
+            status,
+            code,
+            message,
+        }) => {
+            // Recorded for the checklist's Result column.
+            eprintln!(
+                "{what}: refused with {status}: {}",
+                message.unwrap_or_default()
+            );
+            Answer::Refused(Refusal { status, code })
+        }
+        Err(e) => fail(what, e),
+    }
+}
+
+fn refused_400() -> Answer {
+    Answer::Refused(Refusal {
+        status: 400,
+        code: Some("BadParameter".into()),
+    })
+}
+
+fn tags<const N: usize>(pairs: [(&str, &str); N]) -> BTreeMap<String, String> {
+    pairs
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
+}
+
+fn tag_names(t: &BTreeMap<String, String>) -> Vec<String> {
+    t.keys().cloned().collect()
+}
+
+/// A secret PATCH that carries tags only, as Edit details sends it.
+fn secret_tags(t: BTreeMap<String, String>) -> UpdateSecret {
+    UpdateSecret {
+        content_type: None,
+        attributes: UpdateAttributes::default(),
+        tags: Some(t),
+    }
+}
+
+/// A key or certificate PATCH that carries tags only, with `"attributes": {}`.
+fn item_tags(t: BTreeMap<String, String>) -> UpdateProperties {
+    UpdateProperties {
+        attributes: UpdateAttributes::default(),
+        tags: Some(t),
+    }
+}
+
+/// Key Vault's dates are whole seconds. Wait long enough that the next
+/// write gets a later one.
+async fn pause(t: &Target) {
+    tokio::time::sleep(t.pace.every * 2).await;
+}
+
+fn secret_with(
+    value: String,
+    content_type: Option<&str>,
+    t: Option<BTreeMap<String, String>>,
+) -> SetSecret {
+    SetSecret {
+        value: Secret::new(value),
+        content_type: content_type.map(str::to_owned),
+        attributes: Attributes {
+            enabled: Some(true),
+            ..Attributes::default()
+        },
+        tags: t,
+    }
+}
+
+fn simple_key(t: Option<BTreeMap<String, String>>, expires: Option<i64>) -> CreateKey {
+    CreateKey {
+        kty: "RSA".into(),
+        key_size: Some(2048),
+        crv: None,
+        key_ops: vec!["sign".into(), "verify".into()],
+        attributes: Attributes {
+            enabled: Some(true),
+            expires,
+            ..Attributes::default()
+        },
+        tags: t,
+    }
+}
+
+/// A self-signed certificate that finished. Tracked for clean-up.
+async fn completed_cert(t: &Target, row: &str) -> String {
+    let name = unique_name();
+    t.cleanup.track(Item::Cert(name.clone()));
+    let made = create_self_signed(t, &name, 12).await;
+    assert_eq!(
+        made.finished, "completed",
+        "{row}: the certificate wasn't created in time"
+    );
+    name
+}
+
+// ---------------------------------------------------------------------
+// Row 10: Secrets, "Typed secret content type survives Key Vault"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct Typed {
+    content_type: Option<String>,
+    value_kept: bool,
+}
+
+const ROW_TYPED: &str = "Secrets: Typed secret content type survives Key Vault";
+/// `SecretType::Login.content_type()` in `src/secret_types.rs`.
+const LOGIN_CONTENT_TYPE: &str = "application/vnd.keyring.login+json;v=1";
+
+fn expect_typed() -> Typed {
+    Typed {
+        content_type: Some(LOGIN_CONTENT_TYPE.into()),
+        value_kept: true,
+    }
+}
+
+async fn typed_content_type(t: &Target) -> Typed {
+    let name = t.secret_name();
+    let api = t.h.secrets();
+    let value = format!(r#"{{"username":"kr-real-user","password":"{DUMMY_VALUE}"}}"#);
+    ok(
+        "set typed secret",
+        api.set(
+            &name,
+            &secret_with(value.clone(), Some(LOGIN_CONTENT_TYPE), None),
+        )
+        .await,
+    );
+    let props = ok("read properties", api.properties(&name).await);
+    let read = ok("read value", api.get_value(&name, None).await);
+    Typed {
+        content_type: props.content_type,
+        value_kept: read.value.expose() == value,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 11: Secrets, "Typed secret with a 25 KB value"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct ValueLimit {
+    /// 25,600 ASCII characters, `MAX_VALUE_UNITS` in `src/secret_types.rs`.
+    ascii_at_limit: Answer,
+    ascii_one_over: Answer,
+    /// 12,801 two-byte characters: 25,602 bytes but half as many characters.
+    /// Accepted: Key Vault counts characters (UTF-16 code units), not bytes.
+    /// Keyring counts bytes, which is never fewer, so it is stricter.
+    two_byte_over_in_bytes: Answer,
+}
+
+const ROW_VALUE_LIMIT: &str = "Secrets: Typed secret with a 25 KB value";
+const VALUE_LIMIT_BYTES: usize = 25 * 1024;
+
+/// Recorded on 22-11-2026: "Secret is beyond the maximum permitted length
+/// of 25600 characters.", with inner code `SecretTooLarge`.
+fn expect_value_limit() -> ValueLimit {
+    ValueLimit {
+        ascii_at_limit: Answer::Accepted,
+        ascii_one_over: Answer::Refused(Refusal {
+            status: 400,
+            code: Some("SecretTooLarge".into()),
+        }),
+        two_byte_over_in_bytes: Answer::Accepted,
+    }
+}
+
+async fn try_value(t: &Target, value: String) -> Answer {
+    let name = t.secret_name();
+    answer(
+        "set a large value",
+        t.h.secrets()
+            .set(&name, &secret_with(value, None, None))
+            .await,
+    )
+}
+
+async fn value_limit(t: &Target) -> ValueLimit {
+    ValueLimit {
+        ascii_at_limit: try_value(t, "x".repeat(VALUE_LIMIT_BYTES)).await,
+        ascii_one_over: try_value(t, "x".repeat(VALUE_LIMIT_BYTES + 1)).await,
+        two_byte_over_in_bytes: try_value(t, "é".repeat(VALUE_LIMIT_BYTES / 2 + 1)).await,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 12: Secrets, "Description length, as Key Vault counts it"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct DescriptionLength {
+    ascii_256: (Answer, bool),
+    /// 128 emoji: 256 UTF-16 code units, 512 UTF-8 bytes.
+    emoji_128: (Answer, bool),
+    ascii_257: Answer,
+    /// 129 emoji: 258 UTF-16 code units but only 129 characters. Refused
+    /// means Key Vault counts UTF-16 code units, as `src/description.rs` does.
+    emoji_129: Answer,
+}
+
+const ROW_DESCRIPTION_LENGTH: &str = "Secrets: Description length, as Key Vault counts it";
+
+fn expect_description_length() -> DescriptionLength {
+    DescriptionLength {
+        ascii_256: (Answer::Accepted, true),
+        emoji_128: (Answer::Accepted, true),
+        ascii_257: refused_400(),
+        emoji_129: refused_400(),
+    }
+}
+
+/// Set `description` on a secret's version, and whether it reads back as sent.
+async fn try_description(t: &Target, name: &str, version: &str, text: &str) -> (Answer, bool) {
+    let api = t.h.secrets();
+    let sent = answer(
+        "set a description",
+        api.update(name, version, &secret_tags(tags([("description", text)])))
+            .await,
+    );
+    let back = ok("read properties", api.properties(name).await);
+    let kept = back.tags().get("description").map(String::as_str) == Some(text);
+    (sent, kept)
+}
+
+async fn description_length(t: &Target) -> DescriptionLength {
+    let name = t.secret_name();
+    let made = ok(
+        "set secret",
+        t.h.secrets().set(&name, &simple_secret()).await,
+    );
+    let v = made.version().to_owned();
+    let emoji = "\u{1F600}";
+    DescriptionLength {
+        ascii_256: try_description(t, &name, &v, &"a".repeat(256)).await,
+        emoji_128: try_description(t, &name, &v, &emoji.repeat(128)).await,
+        ascii_257: try_description(t, &name, &v, &"a".repeat(257)).await.0,
+        emoji_129: try_description(t, &name, &v, &emoji.repeat(129)).await.0,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 13: Secrets, "Description with line breaks"
+// ---------------------------------------------------------------------
+
+const ROW_DESCRIPTION_LINES: &str = "Secrets: Description with line breaks";
+const EXPECT_DESCRIPTION_LINES: (Answer, bool) = (Answer::Accepted, true);
+
+async fn description_with_line_breaks(t: &Target) -> (Answer, bool) {
+    let name = t.secret_name();
+    let made = ok(
+        "set secret",
+        t.h.secrets().set(&name, &simple_secret()).await,
+    );
+    try_description(t, &name, made.version(), "first line\nsecond line").await
+}
+
+// ---------------------------------------------------------------------
+// Row 14: Keys, "Tag rows round trip" (on a secret, as the row says)
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct TagRoundTrip {
+    /// Tag names as Key Vault keeps them, after the create.
+    names_after_create: Vec<String>,
+    padded_value_kept: bool,
+    line_break_kept: bool,
+    /// After a PATCH that sends every tag except `env`.
+    names_after_removal: Vec<String>,
+}
+
+const ROW_TAG_ROWS: &str = "Keys: Tag rows round trip";
+
+fn expect_tag_rows() -> TagRoundTrip {
+    TagRoundTrip {
+        names_after_create: vec![" padded ".into(), "env".into(), "note".into()],
+        padded_value_kept: true,
+        line_break_kept: true,
+        names_after_removal: vec![" padded ".into(), "note".into()],
+    }
+}
+
+async fn tag_rows_round_trip(t: &Target) -> TagRoundTrip {
+    let name = t.secret_name();
+    let api = t.h.secrets();
+    let start = tags([("env", "prod"), (" padded ", "a = b"), ("note", "one\ntwo")]);
+    let made = ok(
+        "set secret",
+        api.set(&name, &secret_with(DUMMY_VALUE.into(), None, Some(start)))
+            .await,
+    );
+    let read = ok("read properties", api.properties(&name).await);
+    let names_after_create = tag_names(read.tags());
+    let padded_value_kept = read.tags().get(" padded ").map(String::as_str) == Some("a = b");
+    let line_break_kept = read.tags().get("note").map(String::as_str) == Some("one\ntwo");
+    let mut rest = read.tags().clone();
+    rest.remove("env");
+    ok(
+        "remove env",
+        api.update(&name, made.version(), &secret_tags(rest)).await,
+    );
+    let after = ok("read properties", api.properties(&name).await);
+    TagRoundTrip {
+        names_after_create,
+        padded_value_kept,
+        line_break_kept,
+        names_after_removal: tag_names(after.tags()),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 15: Secrets, "Bulk tag change keeps the other tags"
+// ---------------------------------------------------------------------
+
+/// The tag names left on a secret, a key and a certificate that had `old`,
+/// after a PATCH sending only `new`. `["new"]` means Key Vault replaces the
+/// tags as a whole, so Keyring has to send the full set.
+#[derive(Debug, PartialEq, Eq)]
+struct TagsReplaced {
+    secret: Vec<String>,
+    key: Vec<String>,
+    certificate: Vec<String>,
+}
+
+const ROW_BULK_TAGS: &str = "Secrets: Bulk tag change keeps the other tags";
+
+fn expect_bulk_tags() -> TagsReplaced {
+    let new = vec!["new".to_owned()];
+    TagsReplaced {
+        secret: new.clone(),
+        key: new.clone(),
+        certificate: new,
+    }
+}
+
+async fn tags_replaced_as_a_whole(t: &Target) -> TagsReplaced {
+    let old = || tags([("old", "1")]);
+    let new = || tags([("new", "1")]);
+
+    let s = t.secret_name();
+    let secrets = t.h.secrets();
+    let made = ok(
+        "set secret",
+        secrets
+            .set(&s, &secret_with(DUMMY_VALUE.into(), None, Some(old())))
+            .await,
+    );
+    ok(
+        "tag secret",
+        secrets
+            .update(&s, made.version(), &secret_tags(new()))
+            .await,
+    );
+    let secret = tag_names(ok("read secret", secrets.properties(&s).await).tags());
+
+    let k = unique_name();
+    t.cleanup.track(Item::Key(k.clone()));
+    let keys = t.h.keys();
+    let made = ok(
+        "create key",
+        keys.create(&k, &simple_key(Some(old()), None)).await,
+    );
+    ok(
+        "tag key",
+        keys.update(&k, made.version(), &item_tags(new())).await,
+    );
+    let key = tag_names(
+        ok("read key", keys.get(&k, None).await)
+            .tags
+            .as_ref()
+            .unwrap_or(&BTreeMap::new()),
+    );
+
+    let c = completed_cert(t, ROW_BULK_TAGS).await;
+    let certs = t.h.certs();
+    let v = ok("read certificate", certs.get_cert(&c, None).await)
+        .version()
+        .to_owned();
+    ok(
+        "tag certificate",
+        certs.update(&c, &v, &item_tags(old())).await,
+    );
+    ok(
+        "retag certificate",
+        certs.update(&c, &v, &item_tags(new())).await,
+    );
+    let certificate = tag_names(
+        ok("read certificate", certs.get_cert(&c, None).await)
+            .tags
+            .as_ref()
+            .unwrap_or(&BTreeMap::new()),
+    );
+    TagsReplaced {
+        secret,
+        key,
+        certificate,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 16: Certificates, "Edit details keeps everything else"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct CertEdit {
+    patched: Answer,
+    tags: Vec<String>,
+    enabled_kept: bool,
+    dates_kept: bool,
+    policy_kept: bool,
+    versions: usize,
+}
+
+const ROW_CERT_EDIT: &str = "Certificates: Edit details keeps everything else";
+
+fn expect_cert_edit() -> CertEdit {
+    CertEdit {
+        patched: Answer::Accepted,
+        tags: vec!["description".into(), "env".into()],
+        enabled_kept: true,
+        dates_kept: true,
+        policy_kept: true,
+        versions: 1,
+    }
+}
+
+async fn cert_edit_details(t: &Target) -> CertEdit {
+    let name = completed_cert(t, ROW_CERT_EDIT).await;
+    let api = t.h.certs();
+    ok(
+        "set renewal",
+        api.update_lifetime_actions(&name, &[days_action("EmailContacts", 14)])
+            .await,
+    );
+    let v = ok("read certificate", api.get_cert(&name, None).await)
+        .version()
+        .to_owned();
+    ok(
+        "tag certificate",
+        api.update(&name, &v, &item_tags(tags([("env", "test")])))
+            .await,
+    );
+    let before = ok("read certificate", api.get_cert(&name, None).await);
+    let patched = answer(
+        "add a description",
+        api.update(
+            &name,
+            &v,
+            &item_tags(tags([("env", "test"), ("description", "kr-real note")])),
+        )
+        .await,
+    );
+    let after = ok("read certificate", api.get_cert(&name, None).await);
+    let (b, a) = (&before.attributes, &after.attributes);
+    CertEdit {
+        patched,
+        tags: tag_names(after.tags.as_ref().unwrap_or(&BTreeMap::new())),
+        enabled_kept: a.enabled == b.enabled,
+        dates_kept: a.expires == b.expires && a.not_before == b.not_before,
+        policy_kept: after.policy == before.policy,
+        versions: ok("list versions", api.versions(&name).await).len(),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 17: Certificates, "Does a certificate's tag reach its backing secret"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct BackingTags {
+    secret_has_it: bool,
+    key_has_it: bool,
+}
+
+const ROW_BACKING_TAG: &str = "Certificates: Does a certificate's tag reach its backing secret";
+/// Recorded on 22-11-2026: Key Vault copies the certificate version's tags
+/// onto its backing secret and key.
+const EXPECT_BACKING_TAGS: BackingTags = BackingTags {
+    secret_has_it: true,
+    key_has_it: true,
+};
+
+async fn cert_tag_reaches_backing(t: &Target) -> BackingTags {
+    let name = completed_cert(t, ROW_BACKING_TAG).await;
+    let api = t.h.certs();
+    let v = ok("read certificate", api.get_cert(&name, None).await)
+        .version()
+        .to_owned();
+    ok(
+        "tag certificate",
+        api.update(&name, &v, &item_tags(tags([("keyring-reveal", "none")])))
+            .await,
+    );
+    let has = |t: &BTreeMap<String, String>| t.get("keyring-reveal").is_some();
+    let secret = ok("read backing secret", t.h.secrets().properties(&name).await);
+    let key = ok("read backing key", t.h.keys().get(&name, None).await);
+    BackingTags {
+        secret_has_it: has(secret.tags()),
+        key_has_it: key.tags.as_ref().is_some_and(has),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 18: Keys, "Key Edit details"
+// ---------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct KeyEdit {
+    after_add: Vec<String>,
+    after_clear: Vec<String>,
+    ops_kept: bool,
+    expiry_kept: bool,
+    versions: usize,
+}
+
+const ROW_KEY_EDIT: &str = "Keys: Key Edit details";
+
+fn expect_key_edit() -> KeyEdit {
+    KeyEdit {
+        after_add: vec!["description".into(), "env".into()],
+        after_clear: vec!["env".into()],
+        ops_kept: true,
+        expiry_kept: true,
+        versions: 1,
+    }
+}
+
+async fn key_edit_details(t: &Target) -> KeyEdit {
+    let name = unique_name();
+    t.cleanup.track(Item::Key(name.clone()));
+    let api = t.h.keys();
+    let exp = now_ts() + 30 * 86_400;
+    let made = ok(
+        "create key",
+        api.create(&name, &simple_key(Some(tags([("env", "test")])), Some(exp)))
+            .await,
+    );
+    let v = made.version().to_owned();
+    let ops = |b: &keyring::azure::keys::KeyBundle| {
+        let mut o = b.key.key_ops.clone();
+        o.sort();
+        o
+    };
+    let ops_before = ops(&made);
+    let tag_set = |b: &keyring::azure::keys::KeyBundle| {
+        tag_names(b.tags.as_ref().unwrap_or(&BTreeMap::new()))
+    };
+    ok(
+        "add a description",
+        api.update(
+            &name,
+            &v,
+            &item_tags(tags([("env", "test"), ("description", "kr-real note")])),
+        )
+        .await,
+    );
+    let added = ok("read key", api.get(&name, None).await);
+    ok(
+        "clear the description",
+        api.update(&name, &v, &item_tags(tags([("env", "test")])))
+            .await,
+    );
+    let cleared = ok("read key", api.get(&name, None).await);
+    KeyEdit {
+        after_add: tag_set(&added),
+        after_clear: tag_set(&cleared),
+        ops_kept: ops(&cleared) == ops_before,
+        expiry_kept: cleared.attributes.expires == Some(exp),
+        versions: ok("list versions", api.versions(&name).await).len(),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 19: Expiry and audit, "Age: list gives the current version's created"
+// ---------------------------------------------------------------------
+
+/// For one kind of item with two versions, the second's tags then edited.
+#[derive(Debug, PartialEq, Eq)]
+struct AgeRow {
+    /// The list call's `created` is the newest version's, not the first's.
+    list_created_is_newest: bool,
+    /// The tag edit left the newest version's `created` alone...
+    tag_edit_kept_created: bool,
+    /// ...and moved its `updated`.
+    tag_edit_moved_updated: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Age {
+    secret: AgeRow,
+    key: AgeRow,
+    certificate: AgeRow,
+}
+
+const ROW_AGE: &str = "Expiry and audit: Age: list gives the current version's created";
+
+fn expect_age() -> Age {
+    let row = || AgeRow {
+        list_created_is_newest: true,
+        tag_edit_kept_created: true,
+        tag_edit_moved_updated: true,
+    };
+    Age {
+        secret: row(),
+        key: row(),
+        certificate: row(),
+    }
+}
+
+/// `first`, `second` and `listed` are (created, updated) of the first
+/// version, the second version after its tag edit, and the list call's
+/// item. `second_made` is the second version's created when it was made.
+fn age_row(
+    first: Option<i64>,
+    second_made: Option<i64>,
+    second: (Option<i64>, Option<i64>),
+    listed: Option<i64>,
+) -> AgeRow {
+    AgeRow {
+        list_created_is_newest: listed == second.0 && second.0 != first,
+        tag_edit_kept_created: second.0 == second_made,
+        tag_edit_moved_updated: second.1 > second.0,
+    }
+}
+
+async fn age_list_created(t: &Target) -> Age {
+    let edit = || tags([("age", "1")]);
+
+    let s = t.secret_name();
+    let secrets = t.h.secrets();
+    let one = ok("set secret", secrets.set(&s, &simple_secret()).await);
+    pause(t).await;
+    let two = ok("set secret again", secrets.set(&s, &simple_secret()).await);
+    pause(t).await;
+    ok(
+        "tag secret",
+        secrets
+            .update(&s, two.version(), &secret_tags(edit()))
+            .await,
+    );
+    let now = ok("read secret", secrets.properties(&s).await);
+    let listed = ok("list secrets", secrets.list().await)
+        .into_iter()
+        .find(|i| i.name() == s)
+        .expect("the secret is listed");
+    let secret = age_row(
+        one.attributes.created,
+        two.attributes.created,
+        (now.attributes.created, now.attributes.updated),
+        listed.attributes.created,
+    );
+
+    let k = unique_name();
+    t.cleanup.track(Item::Key(k.clone()));
+    let keys = t.h.keys();
+    let one = ok("create key", keys.create(&k, &simple_key(None, None)).await);
+    pause(t).await;
+    let two = ok("rotate key", keys.rotate(&k).await);
+    pause(t).await;
+    ok(
+        "tag key",
+        keys.update(&k, two.version(), &item_tags(edit())).await,
+    );
+    let now = ok("read key", keys.get(&k, None).await);
+    let listed = ok("list keys", keys.list().await)
+        .into_iter()
+        .find(|i| i.name() == k)
+        .expect("the key is listed");
+    let key = age_row(
+        one.attributes.created,
+        two.attributes.created,
+        (now.attributes.created, now.attributes.updated),
+        listed.attributes.created,
+    );
+
+    let c = unique_name();
+    t.cleanup.track(Item::Cert(c.clone()));
+    let certs = t.h.certs();
+    let one = ok("import", certs.import(&c, &pfx_import(PLAIN_PFX)).await);
+    pause(t).await;
+    let two = ok(
+        "import again",
+        certs.import(&c, &pfx_import(PLAIN_PFX)).await,
+    );
+    pause(t).await;
+    ok(
+        "tag certificate",
+        certs.update(&c, two.version(), &item_tags(edit())).await,
+    );
+    let now = ok("read certificate", certs.get_cert(&c, None).await);
+    let listed = ok("list certificates", certs.list().await)
+        .into_iter()
+        .find(|i| i.name() == c)
+        .expect("the certificate is listed");
+    let certificate = age_row(
+        one.attributes.created,
+        two.attributes.created,
+        (now.attributes.created, now.attributes.updated),
+        listed.attributes.created,
+    );
+    Age {
+        secret,
+        key,
+        certificate,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 20: Expiry and audit, "Age: backing secrets marked managed"
+// ---------------------------------------------------------------------
+
+/// `managed` on the list calls' items for a certificate's backing secret
+/// and key. `None` when the item isn't listed at all.
+#[derive(Debug, PartialEq, Eq)]
+struct Managed {
+    secret: Option<Option<bool>>,
+    key: Option<Option<bool>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BackingManaged {
+    self_signed: Managed,
+    imported: Managed,
+}
+
+const ROW_MANAGED: &str = "Expiry and audit: Age: backing secrets marked managed";
+
+fn expect_managed() -> BackingManaged {
+    let row = || Managed {
+        secret: Some(Some(true)),
+        key: Some(Some(true)),
+    };
+    BackingManaged {
+        self_signed: row(),
+        imported: row(),
+    }
+}
+
+async fn managed_of(t: &Target, name: &str) -> Managed {
+    let secrets = ok("list secrets", t.h.secrets().list().await);
+    let keys = ok("list keys", t.h.keys().list().await);
+    Managed {
+        secret: secrets.iter().find(|s| s.name() == name).map(|s| s.managed),
+        key: keys.iter().find(|k| k.name() == name).map(|k| k.managed),
+    }
+}
+
+async fn backing_marked_managed(t: &Target) -> BackingManaged {
+    let made = completed_cert(t, ROW_MANAGED).await;
+    let imported = unique_name();
+    t.cleanup.track(Item::Cert(imported.clone()));
+    ok(
+        "import",
+        t.h.certs().import(&imported, &pfx_import(PLAIN_PFX)).await,
+    );
+    BackingManaged {
+        self_signed: managed_of(t, &made).await,
+        imported: managed_of(t, &imported).await,
+    }
+}
+
+// ---------------------------------------------------------------------
+// Row 21: Expiry and audit, "Rotation tags on the list call"
+// ---------------------------------------------------------------------
+
+const ROW_ROTATION_TAGS: &str = "Expiry and audit: Rotation tags on the list call";
+const EXPECT_ROTATION_TAGS: bool = true;
+
+/// True when the list call's item carries all three tags as set.
+async fn rotation_tags_on_list(t: &Target) -> bool {
+    let name = t.secret_name();
+    let api = t.h.secrets();
+    let want = tags([
+        ("rotation", "test-rotator"),
+        ("rotation-last", "2026-11-02"),
+        ("rotation-status", "failed"),
+    ]);
+    ok(
+        "set secret",
+        api.set(
+            &name,
+            &secret_with(DUMMY_VALUE.into(), None, Some(want.clone())),
+        )
+        .await,
+    );
+    let listed = ok("list secrets", api.list().await)
+        .into_iter()
+        .find(|i| i.name() == name)
+        .expect("the secret is listed");
+    want.iter().all(|(k, v)| listed.tags().get(k) == Some(v))
+}
+
+// ---------------------------------------------------------------------
 // The tests
 // ---------------------------------------------------------------------
 
@@ -1265,6 +2079,120 @@ async fn real_ber_encoded_pfx() {
     )
     .await;
 }
+
+/// One `mock_` and one ignored `real_` test for a row whose scenario and
+/// expected value are plain functions.
+macro_rules! row_tests {
+    ($mock:ident, $real:ident, $row:expr, $file:expr, $scenario:expr, $expected:expr) => {
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn $mock() {
+            mock_row($row, $scenario, $expected).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #[ignore = "needs a real kr-test- vault: docs/real-vault-automation.md"]
+        async fn $real() {
+            real_row($row, $file, $scenario, $expected).await;
+        }
+    };
+}
+
+row_tests!(
+    mock_typed_secret_content_type,
+    real_typed_secret_content_type,
+    ROW_TYPED,
+    "tests/support/keyvault.rs (set)",
+    typed_content_type,
+    expect_typed()
+);
+row_tests!(
+    mock_typed_secret_value_limit,
+    real_typed_secret_value_limit,
+    ROW_VALUE_LIMIT,
+    "tests/support/keyvault.rs (set)",
+    value_limit,
+    expect_value_limit()
+);
+row_tests!(
+    mock_description_length,
+    real_description_length,
+    ROW_DESCRIPTION_LENGTH,
+    "tests/support/keyvault.rs (update)",
+    description_length,
+    expect_description_length()
+);
+row_tests!(
+    mock_description_with_line_breaks,
+    real_description_with_line_breaks,
+    ROW_DESCRIPTION_LINES,
+    "tests/support/keyvault.rs (update)",
+    description_with_line_breaks,
+    EXPECT_DESCRIPTION_LINES
+);
+row_tests!(
+    mock_tag_rows_round_trip,
+    real_tag_rows_round_trip,
+    ROW_TAG_ROWS,
+    "tests/support/keyvault.rs (set, update)",
+    tag_rows_round_trip,
+    expect_tag_rows()
+);
+row_tests!(
+    mock_tags_replaced_as_a_whole,
+    real_tags_replaced_as_a_whole,
+    ROW_BULK_TAGS,
+    "tests/support/keyvault.rs, keys.rs, certs.rs (update)",
+    tags_replaced_as_a_whole,
+    expect_bulk_tags()
+);
+row_tests!(
+    mock_certificate_edit_details,
+    real_certificate_edit_details,
+    ROW_CERT_EDIT,
+    "tests/support/certs.rs (update_version)",
+    cert_edit_details,
+    expect_cert_edit()
+);
+row_tests!(
+    mock_certificate_tag_and_backing_items,
+    real_certificate_tag_and_backing_items,
+    ROW_BACKING_TAG,
+    "tests/support/certs.rs (update_version)",
+    cert_tag_reaches_backing,
+    EXPECT_BACKING_TAGS
+);
+row_tests!(
+    mock_key_edit_details,
+    real_key_edit_details,
+    ROW_KEY_EDIT,
+    "tests/support/keys.rs (update_version)",
+    key_edit_details,
+    expect_key_edit()
+);
+row_tests!(
+    mock_age_list_created,
+    real_age_list_created,
+    ROW_AGE,
+    "tests/support/keyvault.rs, keys.rs, certs.rs (attrs, list)",
+    age_list_created,
+    expect_age()
+);
+row_tests!(
+    mock_backing_items_marked_managed,
+    real_backing_items_marked_managed,
+    ROW_MANAGED,
+    "tests/support/certs.rs (create, import), keys.rs (add_managed_key)",
+    backing_marked_managed,
+    expect_managed()
+);
+row_tests!(
+    mock_rotation_tags_on_the_list_call,
+    real_rotation_tags_on_the_list_call,
+    ROW_ROTATION_TAGS,
+    "tests/support/keyvault.rs (list)",
+    rotation_tags_on_list,
+    EXPECT_ROTATION_TAGS
+);
 
 // ---------------------------------------------------------------------
 // Tests of the harness itself (offline)

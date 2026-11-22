@@ -21,6 +21,8 @@ pub(crate) struct CertVersion {
     pub der: Option<Vec<u8>>,
     pub enabled: bool,
     pub created: i64,
+    /// Moved by "Update Certificate", as on a real vault.
+    pub updated: i64,
     pub exp: Option<i64>,
     pub nbf: Option<i64>,
     pub tags: BTreeMap<String, String>,
@@ -175,10 +177,17 @@ fn settle(s: &KvState, name: &str) {
         c.policy.clone()
     };
     let der = super::pem_first_cert(super::TEST_CERT_PEM);
-    s.add_cert_version(name, der, policy, |_| {});
+    let ct = policy["secret_props"]["contentType"]
+        .as_str()
+        .unwrap_or("application/x-pkcs12")
+        .to_owned();
+    let version = s.add_cert_version(name, der, policy, |_| {});
     if let Some(c) = s.certs.lock().unwrap().get_mut(name) {
         c.pending = Some(json!({"status": "completed", "issuer": {"name": "Self"}}));
     }
+    // Key Vault makes a backing secret for a self-signed certificate too,
+    // marked `managed` (real vault, 22-11-2026).
+    s.add_backing_secret(name, &version, "mock-self-signed-pfx", ct);
 }
 
 fn settle_all(s: &KvState) {
@@ -197,7 +206,7 @@ fn base(headers: &HeaderMap, vault: &str) -> String {
 }
 
 fn attrs(v: &CertVersion) -> Value {
-    let mut a = json!({"enabled": v.enabled, "created": v.created, "updated": v.created, "recoveryLevel": "Recoverable+Purgeable"});
+    let mut a = json!({"enabled": v.enabled, "created": v.created, "updated": v.updated, "recoveryLevel": "Recoverable+Purgeable"});
     if let Some(e) = v.exp {
         a["exp"] = json!(e);
     }
@@ -338,7 +347,11 @@ async fn update_version(
     body: String,
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap();
+    if let Some(refused) = super::keyvault::tag_problem(&body) {
+        return refused;
+    }
     let b = base(&headers, &vault);
+    let t = s.tick();
     let mut certs = s.certs.lock().unwrap();
     let Some(c) = certs.get_mut(&name) else {
         return err(404, "CertificateNotFound");
@@ -365,7 +378,16 @@ async fn update_version(
             .map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_owned()))
             .collect();
     }
+    v.updated = t;
     let v = v.clone();
+    drop(certs);
+    // Key Vault copies a certificate version's tags onto its backing secret
+    // and key versions (real vault, 22-11-2026).
+    if body["tags"].is_object() {
+        s.copy_cert_tags(&name, &v.version, &v.tags);
+    }
+    let certs = s.certs.lock().unwrap();
+    let c = &certs[&name];
     json_response(StatusCode::OK, bundle(&b, &name, c, &v))
 }
 
@@ -510,6 +532,9 @@ async fn import(
     if s.deleted_certs.lock().unwrap().contains_key(&name) {
         return deleted_name_conflict();
     }
+    if let Some(refused) = super::keyvault::tag_problem(&body) {
+        return refused;
+    }
     let value = body["value"].as_str().unwrap_or_default();
     let is_pem = body["policy"]["secret_props"]["contentType"] == "application/x-pem-file";
     // "Import Certificate" answers 400 when it can't read the file: a PEM
@@ -565,10 +590,7 @@ async fn import(
         v.enabled = enabled;
     });
     // The backing secret holds what was imported.
-    s.put_with(&name, &value, |sv| {
-        sv.content_type = Some(ct);
-        sv.version = v.clone();
-    });
+    s.add_backing_secret(&name, &v, &value, ct);
     let b = base(&headers, &vault);
     let certs = s.certs.lock().unwrap();
     let c = certs.get(&name).unwrap();
@@ -617,6 +639,7 @@ async fn create(
                 der: None,
                 enabled: false,
                 created: 1,
+                updated: 1,
                 exp: None,
                 nbf: None,
                 tags: BTreeMap::new(),

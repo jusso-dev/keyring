@@ -164,7 +164,7 @@ This walkthrough covers everything you do with one secret: create it (a plain va
 | The start date is after the expiry | "The start date needs to be before the expiry date." |
 | You cleared an expiry date on Edit details | "Key Vault can't remove the expiry date from a version. To have no expiry, set a new value and leave Expires blank. Or pick a later date." |
 | Someone else saved the secret after you opened the form | **This secret changed since you opened it**, and nothing was saved |
-| The value is over 25 KB | "Values can be up to 25 KB." |
+| The value is over 25,600 characters | "Values can be up to 25,600 characters." |
 | The secret is disabled | No **Show value**: "This secret is disabled, so Key Vault won't hand out its value. Enable it first." |
 | It belongs to a certificate | "This secret belongs to the certificate" the name "and holds its private key." Manage it from the certificate |
 | The typed name didn't match | **The name didn't match**: "Nothing was deleted. To confirm, type" the name "exactly as shown." |

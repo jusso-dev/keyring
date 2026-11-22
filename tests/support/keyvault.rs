@@ -125,7 +125,7 @@ impl KvState {
         }
     }
 
-    fn tick(&self) -> i64 {
+    pub(crate) fn tick(&self) -> i64 {
         let mut s = self.seq.lock().unwrap();
         *s += 1;
         BASE_TIME + *s * 60
@@ -212,6 +212,7 @@ impl KvState {
             ],
             enabled: true,
             created: t,
+            updated: t,
             exp: None,
             tags: BTreeMap::new(),
         };
@@ -250,6 +251,7 @@ impl KvState {
             der,
             enabled: true,
             created: t,
+            updated: t,
             exp: Some(t + 365 * 86_400),
             nbf: Some(t),
             tags: BTreeMap::new(),
@@ -281,15 +283,48 @@ impl KvState {
             super::certs::default_policy(exportable, false),
             |_| {},
         );
-        self.put_with(name, secret_value, |sv| {
-            sv.content_type = Some("application/x-pkcs12".into());
-            sv.version = v.clone();
+        self.add_backing_secret(name, &v, secret_value, "application/x-pkcs12".into());
+        v
+    }
+
+    /// The secret version Key Vault keeps behind a certificate version, with
+    /// the same name and version. Key Vault marks it `managed`, whether the
+    /// certificate was imported or created (real vault, 22-11-2026).
+    pub(crate) fn add_backing_secret(
+        &self,
+        name: &str,
+        version: &str,
+        value: &str,
+        content_type: String,
+    ) {
+        self.put_with(name, value, |sv| {
+            sv.content_type = Some(content_type);
+            sv.version = version.to_owned();
         });
-        // Key Vault marks a certificate's backing secret `managed`.
         if let Some(sec) = self.secrets.lock().unwrap().get_mut(name) {
             sec.managed = true;
         }
-        v
+    }
+
+    /// Key Vault copies a certificate version's tags onto the backing secret
+    /// and key versions of the same name and version (real vault,
+    /// 22-11-2026).
+    pub(crate) fn copy_cert_tags(
+        &self,
+        name: &str,
+        version: &str,
+        tags: &BTreeMap<String, String>,
+    ) {
+        if let Some(sec) = self.secrets.lock().unwrap().get_mut(name) {
+            for v in sec.versions.iter_mut().filter(|v| v.version == version) {
+                v.tags = tags.clone();
+            }
+        }
+        if let Some(k) = self.keys.lock().unwrap().get_mut(name) {
+            for v in k.versions.iter_mut().filter(|v| v.version == version) {
+                v.tags = tags.clone();
+            }
+        }
     }
 
     /// Move a secret to the deleted list, as `DELETE` would.
@@ -543,6 +578,36 @@ pub(crate) fn conflict(what: &str, inner: &str, state: &str) -> Response {
     )
 }
 
+/// Key Vault's limits on tags, as a real vault answers them (22-11-2026):
+/// a value over 256 UTF-16 code units gets 400 `BadParameter`, "Property
+/// has invalid value". Shared by the secrets, keys and certificates mocks.
+pub(crate) fn tag_problem(body: &Value) -> Option<Response> {
+    let tags = body["tags"].as_object()?;
+    tags.values()
+        .any(|v| v.as_str().unwrap_or_default().encode_utf16().count() > 256)
+        .then(|| {
+            json_response(
+                StatusCode::BAD_REQUEST,
+                json!({"error": {"code": "BadParameter", "message": "Property  has invalid value\r\n"}}),
+            )
+        })
+}
+
+/// Key Vault's limit on a secret value: 25,600 characters, counted in
+/// UTF-16 code units, not bytes (real vault, 22-11-2026).
+fn value_problem(value: &str) -> Option<Response> {
+    (value.encode_utf16().count() > 25 * 1024).then(|| {
+        json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"error": {
+                "code": "BadParameter",
+                "message": "Secret is beyond the maximum permitted length of 25600 characters.",
+                "innererror": {"code": "SecretTooLarge"}
+            }}),
+        )
+    })
+}
+
 fn base(headers: &HeaderMap, vault: &str) -> String {
     let host = headers
         .get("host")
@@ -767,6 +832,9 @@ async fn set(
     let Some(value) = body["value"].as_str() else {
         return err(400, "BadParameter");
     };
+    if let Some(refused) = value_problem(value).or_else(|| tag_problem(&body)) {
+        return refused;
+    }
     let a = &body["attributes"];
     s.put_with(&name, value, |v| {
         v.enabled = a["enabled"].as_bool().unwrap_or(true);
@@ -792,6 +860,9 @@ async fn update(
     let body: Value = serde_json::from_str(&body).unwrap();
     if body.get("value").is_some() {
         return err(400, "BadParameter");
+    }
+    if let Some(refused) = tag_problem(&body) {
+        return refused;
     }
     s.settle(Some(&name));
     let r = s.retention();

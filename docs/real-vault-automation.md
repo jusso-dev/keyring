@@ -1,6 +1,6 @@
 # Running checklist rows against a real vault
 
-A few rows of the [real-vault checklist](real-vault-checklist.md) can run as a Rust test target, `tests/real_vault.rs`, against a throwaway vault. It covers nine rows, and it is not full coverage.
+A few rows of the [real-vault checklist](real-vault-checklist.md) can run as a Rust test target, `tests/real_vault.rs`, against a throwaway vault. It covers 21 rows, and it is not full coverage. It checks Key Vault's side of each row, the REST answers Keyring depends on, not Keyring's own pages.
 
 Why it exists: every other test runs against the mock Key Vault in `tests/support/`, and the first real run found two places where the mock was wrong. A row that runs on demand checks the mock against Key Vault again, for example before moving off API version 7.5.
 
@@ -17,13 +17,25 @@ Why it exists: every other test runs against the mock Key Vault in `tests/suppor
 | Certificates: Change renewal | `change_renewal` |
 | Certificates: Import onto a soft-deleted name | `import_onto_a_soft_deleted_name` |
 | Certificates: BER-encoded PFX | `ber_encoded_pfx` |
+| Secrets: Typed secret content type survives Key Vault | `typed_secret_content_type` |
+| Secrets: Typed secret with a 25 KB value | `typed_secret_value_limit` |
+| Secrets: Description length, as Key Vault counts it | `description_length` |
+| Secrets: Description with line breaks | `description_with_line_breaks` |
+| Secrets: Bulk tag change keeps the other tags | `tags_replaced_as_a_whole` |
+| Keys: Tag rows round trip | `tag_rows_round_trip` |
+| Keys: Key Edit details | `key_edit_details` |
+| Certificates: Edit details keeps everything else | `certificate_edit_details` |
+| Certificates: Does a certificate's tag reach its backing secret | `certificate_tag_and_backing_items` |
+| Expiry and audit: Age: list gives the current version's created | `age_list_created` |
+| Expiry and audit: Age: backing secrets marked managed | `backing_items_marked_managed` |
+| Expiry and audit: Rotation tags on the list call | `rotation_tags_on_the_list_call` |
 
 Each row has two tests:
 
 - `mock_<row>` runs the steps against the mock and checks the answer Key Vault gave in the recorded run. It runs in a normal `cargo test` and calls nothing outside your machine.
 - `real_<row>` is ignored by default. It runs the same steps against the real vault, then against the mock, and fails if the real answer differs from the recorded one, or if the mock and the real vault disagree. The failure message names the checklist row and the mock file to fix.
 
-The three certificate rows were first run on 13-11-2026. Change renewal: each action replaces the last, but an empty `lifetime_actions` list is answered 200 and the old action stays, and a day count above 27 times the validity gets 400 `BadParameter`. Import onto a soft-deleted name gets the same 409 as for secrets, with inner code `ObjectIsDeletedButRecoverable`. BER-encoded PFX: Key Vault imports `tests/fixtures/test-ber.pfx`, which has indefinite lengths (see `tests/fixtures/README.md`). If a later run answers differently, change the mock and the expected value together.
+The three certificate rows were first run on 13-11-2026. Change renewal: each action replaces the last, but an empty `lifetime_actions` list is answered 200 and the old action stays, and a day count above 27 times the validity gets 400 `BadParameter`. Import onto a soft-deleted name gets the same 409 as for secrets, with inner code `ObjectIsDeletedButRecoverable`. BER-encoded PFX: Key Vault imports `tests/fixtures/test-ber.pfx`, which has indefinite lengths (see `tests/fixtures/README.md`). The twelve rows after those were first run on 22-11-2026. Two were findings in Keyring itself: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, and Key Vault's 25,600 limit on a secret value counts UTF-16 code units, not bytes. Both are fixed. The rest confirmed what Keyring assumed: tag values are limited to 256 UTF-16 code units, tags are replaced as a whole, a certificate's tags are copied to its backing secret and key, and list calls give the current version's `created` and mark backing items `managed`. If a later run answers differently, change the mock and the expected value together.
 
 The steps call Keyring's own clients in `src/azure/` (`SecretsApi`, `KeysApi`, `CertsApi`), so the code that was checked is the code that ships.
 
@@ -51,7 +63,7 @@ The seeded token is treated as valid for 50 minutes. Nothing can refresh it: the
      --query accessToken -o tsv > "$TOKEN_FILE"
    ```
 
-3. Run the real half.
+3. Run the real half. If your shell sets `HTTPS_PROXY` to a proxy that re-signs TLS (the tests then fail with `invalid peer certificate: UnknownIssuer`), unset it for this command. Don't turn off certificate checks.
 
    ```sh
    KEYRING_REAL_VAULT=kr-test-<something> \

@@ -19,9 +19,17 @@ use serde::ser::SerializeMap;
 
 use crate::secret::Secret;
 
-/// Key Vault's limit on a secret value (25 KB). A stored value longer than
-/// this isn't parsed.
-pub(crate) const MAX_VALUE_BYTES: usize = 25 * 1024;
+/// Key Vault's limit on a secret value: 25,600 characters, which it counts
+/// in UTF-16 code units, not bytes ("Secret is beyond the maximum permitted
+/// length of 25600 characters", checked on a real vault, 22-11-2026). So a
+/// value of non-ASCII text can be more than 25 KB in UTF-8. A stored value
+/// longer than this isn't parsed.
+pub(crate) const MAX_VALUE_UNITS: usize = 25 * 1024;
+
+/// A value's length as Key Vault counts it against [`MAX_VALUE_UNITS`].
+pub(crate) fn value_len(value: &str) -> usize {
+    value.encode_utf16().count()
+}
 
 /// Start of every Keyring content type.
 const PREFIX: &str = "application/vnd.keyring.";
@@ -253,7 +261,7 @@ impl TypedValue {
     /// Vault's limit isn't parsed.
     pub(crate) fn decode(kind: SecretType, raw: &Secret) -> Result<Self, Malformed> {
         let raw = raw.expose();
-        if raw.len() > MAX_VALUE_BYTES {
+        if value_len(raw) > MAX_VALUE_UNITS {
             return Err(Malformed);
         }
         let pairs: Pairs = serde_json::from_str(raw).map_err(|_| Malformed)?;
@@ -308,7 +316,7 @@ impl TypedValue {
             return Err(problems);
         }
         let typed = Self { kind, values };
-        if typed.encode().expose().len() > MAX_VALUE_BYTES {
+        if value_len(typed.encode().expose()) > MAX_VALUE_UNITS {
             // Name the field that takes the most room once encoded.
             let (f, _) = typed
                 .fields()
@@ -317,7 +325,7 @@ impl TypedValue {
             return Err(vec![(
                 f.name,
                 format!(
-                    "Together the fields are over Key Vault's 25 KB limit. Shorten {}.",
+                    "Together the fields are over Key Vault's limit of 25,600 characters. Shorten {}.",
                     f.label
                 ),
             )]);
@@ -400,13 +408,14 @@ impl TypedValue {
     }
 }
 
-/// Length of a string once JSON-encoded, without making the copy.
+/// Length of a string once JSON-encoded, in UTF-16 code units as Key Vault
+/// counts it, without making the copy.
 fn encoded_len(s: &str) -> usize {
     s.chars()
         .map(|c| match c {
             '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
             c if c.is_control() && (c as u32) < 0x20 => 6,
-            c => c.len_utf8(),
+            c => c.len_utf16(),
         })
         .sum()
 }
@@ -577,9 +586,9 @@ mod tests {
         assert_eq!(d(&format!("{{{many}\"z\":\"\"}}")), Err(Malformed));
         let big = format!(
             r#"{{"key":"{}","endpoint":"","notes":""}}"#,
-            "a".repeat(MAX_VALUE_BYTES)
+            "a".repeat(MAX_VALUE_UNITS)
         );
-        assert_eq!(d(&big), Err(Malformed), "over 25 KB isn't parsed");
+        assert_eq!(d(&big), Err(Malformed), "over the limit isn't parsed");
     }
 
     #[test]
@@ -621,9 +630,9 @@ mod tests {
     }
 
     #[test]
-    fn the_25_kb_limit_names_the_biggest_field() {
+    fn the_value_limit_names_the_biggest_field() {
         // Each field is under its own cap, but escaped quotes double the
-        // notes, which takes the value past 25 KB.
+        // notes, which takes the value past the limit.
         let notes = "\"".repeat(4096);
         let key = "k".repeat(4096);
         let r = TypedValue::check(SecretType::ApiKey, |n| {
@@ -646,7 +655,8 @@ mod tests {
         assert_eq!(e.len(), 1);
         assert_eq!(e[0].0, "private_key");
         assert!(e[0].1.contains("Shorten Private key"), "{}", e[0].1);
-        assert_eq!(encoded_len("a\"\n\u{1}ü"), 1 + 2 + 2 + 6 + 2);
+        // UTF-16 code units, as Key Vault counts: ü is one, an emoji two.
+        assert_eq!(encoded_len("a\"\n\u{1}ü\u{1F600}"), 1 + 2 + 2 + 6 + 1 + 2);
     }
 
     #[test]

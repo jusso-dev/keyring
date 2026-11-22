@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::dates;
 use crate::routes::forms::name_problem;
 use crate::routes::lifecycle::Kind;
-use crate::routes::secrets::form::{MAX_CONTENT_TYPE, MAX_TAGS, MAX_VALUE_BYTES};
+use crate::routes::secrets::form::{MAX_CONTENT_TYPE, MAX_TAGS, MAX_VALUE_UNITS, value_len};
 use crate::secret::Secret;
 use crate::secret_types::{ContentKind, classify};
 
@@ -150,8 +150,8 @@ fn check(raw: Raw, now: i64, rules: crate::owner::Rules<'_>) -> Row {
     if problem.is_none() && value.is_empty() {
         problem = Some("It has no value. Key Vault needs one.".into());
     }
-    if problem.is_none() && (raw.too_long || value.len() > MAX_VALUE_BYTES) {
-        problem = Some("Its value is over 25 KB, Key Vault's limit.".into());
+    if problem.is_none() && (raw.too_long || value_len(&value) > MAX_VALUE_UNITS) {
+        problem = Some("Its value is over 25,600 characters, Key Vault's limit.".into());
     }
     let content_type = raw.content_type.trim().to_owned();
     if problem.is_none() && content_type.len() > MAX_CONTENT_TYPE {
@@ -390,6 +390,8 @@ struct Quoted {
     escape: bool,
     /// The value went over Key Vault's limit and stopped growing.
     too_long: bool,
+    /// The value's length in UTF-16 code units, as Key Vault counts it.
+    units: usize,
 }
 
 impl Quoted {
@@ -399,6 +401,7 @@ impl Quoted {
             value: Zeroizing::new(String::new()),
             escape: false,
             too_long: false,
+            units: 0,
         }
     }
 
@@ -409,11 +412,13 @@ impl Quoted {
         // CRLF counts as one line break, as the value is stored.
         if c == '\n' && self.value.ends_with('\r') {
             self.value.pop();
+            self.units -= 1;
         }
-        if self.value.len() + c.len_utf8() > MAX_VALUE_BYTES {
+        if self.units + c.len_utf16() > MAX_VALUE_UNITS {
             self.too_long = true;
             return;
         }
+        self.units += c.len_utf16();
         self.value.push(c);
     }
 
@@ -910,12 +915,18 @@ mod tests {
         let t = std::time::Instant::now();
         let rows = env(&text);
         assert!(t.elapsed() < std::time::Duration::from_millis(500));
-        assert!(rows[0].problem.as_deref().unwrap().contains("25 KB"));
-        assert!(rows[0].value.expose().len() <= MAX_VALUE_BYTES);
+        assert!(
+            rows[0]
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("25,600 characters")
+        );
+        assert!(rows[0].value.expose().len() <= MAX_VALUE_UNITS);
         // An escape at the end of a line carries on to the next.
         assert_eq!(env("A=\"x\\\ny\"\n")[0].value.expose(), "x\\\ny");
         // Exactly at the limit is fine.
-        let at = format!("A=\"{}\"\n", "x".repeat(MAX_VALUE_BYTES));
+        let at = format!("A=\"{}\"\n", "x".repeat(MAX_VALUE_UNITS));
         assert!(env(&at)[0].problem.is_none());
     }
 
@@ -950,8 +961,14 @@ mod tests {
         assert!(p[1].contains("YYYY-MM-DD"));
         assert!(p[2].contains("no name"));
         assert!(p[3].contains("twice"));
-        let big = format!("a={}\n", "x".repeat(MAX_VALUE_BYTES + 1));
-        assert!(env(&big)[0].problem.as_deref().unwrap().contains("25 KB"));
+        let big = format!("a={}\n", "x".repeat(MAX_VALUE_UNITS + 1));
+        assert!(
+            env(&big)[0]
+                .problem
+                .as_deref()
+                .unwrap()
+                .contains("25,600 characters")
+        );
     }
 
     #[test]

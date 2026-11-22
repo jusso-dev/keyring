@@ -477,10 +477,9 @@ async fn line_breaks_are_saved_as_lf_and_shown_as_saved() {
 #[tokio::test]
 async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     let w = support::world().await;
-    // 24 KB of three-byte characters is about 72 KB once URL encoded, and
-    // more again with each byte as %XX.
-    let value = "\u{20ac}".repeat(8 * 1024);
-    assert!(value.len() <= 25 * 1024);
+    // Key Vault counts characters (UTF-16 code units), so 25,600 three-byte
+    // characters fit: 75 KB of UTF-8, and 225 KB once each byte is %XX.
+    let value = "\u{20ac}".repeat(25 * 1024);
     let res = w
         .post(
             "/v/kv-test/secrets/-/new",
@@ -490,7 +489,7 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert_eq!(w.kv.state.current("euro").unwrap().value, value);
     // Just over the value limit: the form's own message.
-    let value = "\u{20ac}".repeat(9 * 1024);
+    let value = "\u{20ac}".repeat(25 * 1024 + 1);
     let res = w
         .post(
             "/v/kv-test/secrets/-/new",
@@ -498,7 +497,11 @@ async fn a_full_size_non_ascii_value_gets_the_form_not_a_413() {
         )
         .await;
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert!(body_text(res).await.contains("Values can be up to 25 KB"));
+    assert!(
+        body_text(res)
+            .await
+            .contains("Values can be up to 25,600 characters")
+    );
 }
 
 #[tokio::test]
@@ -533,7 +536,7 @@ async fn an_oversized_body_gets_the_error_page() {
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let html = body_text(res).await;
     assert!(html.contains("That was too much to send"), "{html}");
-    assert!(html.contains("up to 25 KB"));
+    assert!(html.contains("up to 25,600 characters"));
 }
 
 #[tokio::test]

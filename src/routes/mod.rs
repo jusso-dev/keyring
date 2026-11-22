@@ -64,11 +64,12 @@ use crate::routes::shell::Shell;
 pub const MAX_FORM_BYTES: usize = 64 * 1024;
 
 /// Largest body for the two forms that carry a secret value. Values are
-/// capped at 25 KB once line breaks are LF. The worst case on the wire is a
-/// value of line breaks: the browser sends each as CRLF, encoded `%0D%0A`,
-/// so six bytes for every byte stored (150 KB). Other bytes take at most
-/// three. 256 KB leaves room for that and the other fields, so a valid
-/// value always gets the form's own message, not a 413.
+/// capped at 25,600 UTF-16 code units once line breaks are LF, as Key Vault
+/// counts them. The worst case on the wire is 25,600 three-byte characters,
+/// each sent as `%XX%XX%XX`: nine bytes a character (225 KB). A line break
+/// is sent as `%0D%0A`, six bytes, and a four-byte character counts as two
+/// units, so twelve bytes for two. 256 KB leaves room for that and the other
+/// fields, so a valid value always gets the form's own message, not a 413.
 pub const MAX_VALUE_FORM_BYTES: usize = 256 * 1024;
 
 /// A POST route whose every request writes one audit event for `action`,

@@ -45,7 +45,7 @@ fn problem_for(status: StatusCode) -> Problem {
         Problem::new(
             status,
             "That was too much to send",
-            "The form was larger than Keyring accepts, so nothing was saved. Secret values can be up to 25 KB, and certificate files up to 256 KB. Go back and try something smaller.",
+            "The form was larger than Keyring accepts, so nothing was saved. Secret values can be up to 25,600 characters, and certificate files up to 256 KB. Go back and try something smaller.",
         )
     } else {
         Problem::new(
