@@ -121,8 +121,8 @@ Keyring is for people. Apps, services and pipelines should read Key Vault direct
 
 - [Documentation site](https://jusso-dev.github.io/keyring/): these docs as a website.
 - [Enterprise comparison and migration guide](docs/Keyring-Enterprise-Comparison.pdf) ([Word](docs/Keyring-Enterprise-Comparison.docx), [Markdown](docs/comparison/01-enterprise-comparison.md)): comparing Keyring + Azure Key Vault against Delinea Secret Server, CyberArk, HashiCorp Vault, 1Password/Bitwarden, Infisical/Doppler and the Azure portal, with a five-phase migration playbook.
-- [Security architecture and controls](docs/Keyring-Security.pdf) ([Word](docs/Keyring-Security.docx), [Markdown](docs/security/01-security.md)): trust boundaries, controls C1 to C28 with source and test proofs, STRIDE threat summary and ISM / Essential Eight / NIST SP 800-53 mapping.
-- [Threat model](docs/threat-model.md): trust boundaries, a diagram of where each threat is stopped, and all 38 STRIDE threats with what is left.
+- [Security architecture and controls](docs/Keyring-Security.pdf) ([Word](docs/Keyring-Security.docx), [Markdown](docs/security/01-security.md)): trust boundaries, controls C1 to C29 with source and test proofs, STRIDE threat summary and ISM / Essential Eight / NIST SP 800-53 mapping.
+- [Threat model](docs/threat-model.md): trust boundaries, a diagram of where each threat is stopped, and all 39 STRIDE threats with what is left.
 - [Design document](docs/Keyring-Design-Document.pdf) ([Word](docs/Keyring-Design-Document.docx)): the formal solution design.
 - [Deployment guide](docs/Keyring-Deployment-Guide.pdf) ([Word](docs/Keyring-Deployment-Guide.docx), [Markdown](docs/deploy.md)): step-by-step Azure deployment, hardening, monitoring and upgrades.
 - [Walkthrough guides](docs/guides/00-about.md) ([PDF](docs/Keyring-Walkthrough-Guides.pdf), [Word](docs/Keyring-Walkthrough-Guides.docx)): each page, step by step, for people using Keyring.
@@ -342,7 +342,7 @@ See [docs/architecture.md](docs/architecture.md) for more.
 
 ## Threat model
 
-Keyring sits between people's browsers and their vaults, so it is built on one rule: it can never reach further than the person signed in. The diagram shows the two trust boundaries, which identity makes each call, and where each threat is stopped.
+Keyring sits between people's browsers and their vaults, so it is built on two rules: it can never reach further than the person signed in, and it is never reachable from the whole internet, only privately (VPN or ExpressRoute) or from trusted IP ranges. The diagram shows the two trust boundaries, which identity makes each call, and where each threat is stopped.
 
 ![Keyring threat model. People and attackers on the left, Keyring in the middle, the Microsoft cloud on the right, with trust boundaries between them. Red T-numbers mark where each threat is stopped.](docs/images/threat-model.svg)
 
@@ -360,8 +360,9 @@ The threats reviewers ask about first:
 | T18 | Accidental or malicious deletes | Typed-name confirmation on the server, purge off by default, no bulk delete | The CLI and portal can still delete |
 | T23 | Supply chain or container tampering | Pinned toolchain, crates, actions and image digests, `cargo deny` and `cargo audit`, distroless non-root read-only image, signed provenance | Trust in crates and base images that pass the checks |
 | T28 | A value read around Keyring's controls | Reveal limits, step-up and the reason gate in Keyring | Keyring's own controls: the CLI and portal aren't limited. Use Conditional Access on Key Vault |
+| T39 | Keyring reachable from the internet | Templates deploy it privately (VPN or ExpressRoute) or with trusted IP ranges only, and refuse anything open to the whole internet | A front end you build yourself can still open it |
 
-All 38 threats, with STRIDE categories, assets and trust boundaries, are in [docs/threat-model.md](docs/threat-model.md). The controls behind them, with source files and tests, are in [Security architecture and controls](docs/security/01-security.md). To report a problem, see [SECURITY.md](SECURITY.md).
+All 39 threats, with STRIDE categories, assets and trust boundaries, are in [docs/threat-model.md](docs/threat-model.md). The controls behind them, with source files and tests, are in [Security architecture and controls](docs/security/01-security.md). To report a problem, see [SECURITY.md](SECURITY.md).
 
 ## Entra app registration
 

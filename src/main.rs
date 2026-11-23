@@ -22,6 +22,10 @@ async fn main() -> ExitCode {
         );
     }
 
+    for warning in config.risky_settings() {
+        tracing::warn!("{warning}");
+    }
+
     if config.uses_legacy_identity_setting() {
         tracing::warn!(
             "KEYRING_FEDERATED_IDENTITY_CLIENT_ID is deprecated and will be removed in a later release. Rename it to KEYRING_MANAGED_IDENTITY_CLIENT_ID"

@@ -122,7 +122,7 @@ def build():
     text(24, 70, "Trust boundaries, data flows and where each threat is stopped. Red T-numbers match the STRIDE "
          "table in docs/threat-model.md.", 13, INK2)
 
-    zone(PX - 8, 96, PW + 16, ZONE_H, "People and attackers", "Untrusted: every input is checked again", PAPER)
+    zone(PX - 8, 96, PW + 16, ZONE_H, "Trusted networks only", "VPN, ExpressRoute or allowed IPs only", PAPER)
     zone(352, 96, 570, ZONE_H, "Keyring, in your Azure subscription",
          "Holds tokens in memory, stores nothing, has no vault access of its own", ACCENT_TINT)
     zone(AX - 12, 96, AW + 24, ZONE_H, "Microsoft cloud", "Makes every authorisation decision, as the person",
@@ -131,13 +131,13 @@ def build():
     # People and attackers
     card(PX, row(0), PW, ROW_H, "Web browser", ["Holds a random session ID only.", "Never sees a token."],
          ["T2", "T13"])
-    card(PX, row(1) + 30, PW, ROW_H, "Attacker on the internet",
+    card(PX, row(1) + 30, PW, ROW_H, "Attacker",
          ["Stolen cookie, forged forms, crafted", "names and text, floods of requests"],
          ["T4", "T5", "T14", "T21"], fill=DANGER_TINT, stroke=DANGER, dashed=True, title_colour=DANGER)
 
     # Keyring, left column
-    card(LX, row(0), LW, ROW_H, "Request edge", ["HTTPS, strict CSP, Origin and", "form token, size and time limits"],
-         ["T5", "T14", "T21"])
+    card(LX, row(0), LW, ROW_H, "Request edge", ["Private or trusted IPs only, CSP,", "Origin and form token, limits"],
+         ["T5", "T14", "T21", "T39"])
     card(LX, row(1), LW, ROW_H, "Gates before any Azure call",
          ["Typed names, purge off, step-up,", "reason, reveal limits, safe KQL"], ["T15", "T18", "T28"])
     card(LX, row(2), LW, ROW_H, "Values in memory only",
@@ -173,7 +173,7 @@ def build():
     card(AX, row(4), AW, ROW_H, "Azure Communication Services",
          ["Custom role, Read and Write on one resource", "in Keyring's own resource group; no keys"])
     card(AX, row(5), AW, ROW_H, "Azure Event Grid",
-         ["Delivers Key Vault expiry events with a", "signed, app-only Entra token"])
+         ["Only for a self-built public front end;", "templates send expiry via action groups"])
 
     mid = ROW_H // 2
     LABEL_X = (RX + RW + TB2) // 2
@@ -196,7 +196,7 @@ def build():
     arrow([(AX, row(5) + mid), (RX + RW, row(5) + mid)], INBOUND, label="signed delivery",
           label_at=(LABEL_X, row(5) + mid - 8))
 
-    boundary(TB1, "Trust boundary: internet to Keyring")
+    boundary(TB1, "Trust boundary: no public internet (T39)")
     boundary(TB2, "Trust boundary: Keyring to Azure")
 
     # Legend
@@ -207,7 +207,7 @@ def build():
     items = [
         (PERSON, False, "Signed-in person's own token"),
         (IDENTITY, False, "Keyring's managed identity"),
-        (INBOUND, False, "Event Grid delivery"),
+        (INBOUND, False, "Event Grid (not in templates)"),
         (INBOUND, True, "Attacker's requests"),
         (PLAIN, False, "Browser traffic and inside Keyring"),
     ]

@@ -83,7 +83,18 @@ variable "vnet_integration_subnet_id" {
 variable "inbound_private_endpoint_subnet_id" {
   type        = string
   default     = ""
-  description = "Subnet ID for an inbound private endpoint to App Service. Disables public network access."
+  description = "Subnet ID for an inbound private endpoint to App Service, so people reach Keyring over your VNet, VPN or ExpressRoute only. Disables public network access."
+}
+
+variable "allowed_ip_ranges" {
+  type        = list(string)
+  default     = []
+  description = "Without inbound_private_endpoint_subnet_id: the trusted IP ranges (CIDR) that may reach Keyring's public address, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so one of the two is required."
+
+  validation {
+    condition     = alltrue([for r in var.allowed_ip_ranges : r != "*" && !endswith(trimspace(r), "/0") && lower(trimspace(r)) != "internet"])
+    error_message = "allowed_ip_ranges must list trusted ranges only: no /0, * or Internet."
+  }
 }
 
 variable "app_private_dns_zone_id" {

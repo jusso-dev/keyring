@@ -9,6 +9,9 @@ client_id                = "00000000-0000-0000-0000-000000000000"
 app_base_url             = "https://keyring.example.com"
 config_vault_name        = "kv-keyring-config-01"
 ingress                  = "external"
+# Keyring is never open to the whole internet: "internal", or "external"
+# with trusted ranges only.
+allowed_ip_ranges = ["203.0.113.0/24"] # your office or VPN egress
 use_federated_credential = true
 replicas                 = 1
 zone_redundant           = false

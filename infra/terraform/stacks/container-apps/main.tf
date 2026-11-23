@@ -129,6 +129,14 @@ resource "azurerm_container_app_environment" "this" {
       condition     = !var.zone_redundant || var.infrastructure_subnet_id != ""
       error_message = "zone_redundant requires infrastructure_subnet_id."
     }
+    precondition {
+      condition     = var.ingress == "internal" || length(var.allowed_ip_ranges) > 0
+      error_message = "Keyring must not be reachable from the whole internet. Use ingress = \"internal\", or set allowed_ip_ranges to the trusted ranges."
+    }
+    precondition {
+      condition     = !local.has_expiry
+      error_message = "expiry in notify_types needs Event Grid to reach Keyring from the internet, which this stack never allows. Send expiry email with infra/alerts and notifyVia = 'actionGroup' instead (docs/alerts.md)."
+    }
   }
 }
 
@@ -174,6 +182,17 @@ resource "azurerm_container_app" "this" {
     target_port                = 3000
     transport                  = "http"
     allow_insecure_connections = false
+
+    # Only the trusted ranges get in; with only Allow rules, Container Apps
+    # refuses every other address.
+    dynamic "ip_security_restriction" {
+      for_each = var.allowed_ip_ranges
+      content {
+        name             = "trusted-${ip_security_restriction.key}"
+        ip_address_range = ip_security_restriction.value
+        action           = "Allow"
+      }
+    }
 
     traffic_weight {
       latest_revision = true

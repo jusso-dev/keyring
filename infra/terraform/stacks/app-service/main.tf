@@ -136,12 +136,26 @@ resource "azurerm_linux_web_app" "this" {
   }
 
   site_config {
-    always_on                                     = true
-    ftps_state                                    = "Disabled"
-    http2_enabled                                 = true
-    minimum_tls_version                           = "1.2"
-    scm_minimum_tls_version                       = "1.2"
-    health_check_path                             = "/healthz"
+    always_on               = true
+    ftps_state              = "Disabled"
+    http2_enabled           = true
+    minimum_tls_version     = "1.2"
+    scm_minimum_tls_version = "1.2"
+    health_check_path       = "/healthz"
+    # Only the trusted ranges reach the app and its deployment (SCM) site.
+    ip_restriction_default_action     = "Deny"
+    scm_ip_restriction_default_action = "Deny"
+    scm_use_main_ip_restriction       = true
+
+    dynamic "ip_restriction" {
+      for_each = var.allowed_ip_ranges
+      content {
+        name       = "trusted-${ip_restriction.key}"
+        ip_address = ip_restriction.value
+        action     = "Allow"
+        priority   = 100 + ip_restriction.key
+      }
+    }
     vnet_route_all_enabled                        = var.vnet_integration_subnet_id != ""
     container_registry_use_managed_identity       = var.use_managed_identity_for_registry
     container_registry_managed_identity_client_id = var.use_managed_identity_for_registry ? module.config_vault.identity_client_id : null
@@ -157,6 +171,14 @@ resource "azurerm_linux_web_app" "this" {
     precondition {
       condition     = var.config_vault_private_endpoint_subnet_id == "" || (var.vnet_integration_subnet_id != "" && var.vault_private_dns_zone_id != "")
       error_message = "Private config vault requires vnet_integration_subnet_id and vault_private_dns_zone_id."
+    }
+    precondition {
+      condition     = !local.public_inbound || length(var.allowed_ip_ranges) > 0
+      error_message = "Keyring must not be reachable from the whole internet. Set inbound_private_endpoint_subnet_id for private access, or allowed_ip_ranges to the trusted ranges."
+    }
+    precondition {
+      condition     = !local.has_expiry
+      error_message = "expiry in notify_types needs Event Grid to reach Keyring from the internet, which this stack never allows. Send expiry email with infra/alerts and notifyVia = 'actionGroup' instead (docs/alerts.md)."
     }
   }
 }

@@ -68,6 +68,17 @@ variable "ingress" {
   }
 }
 
+variable "allowed_ip_ranges" {
+  type        = list(string)
+  default     = []
+  description = "With external ingress: the trusted IP ranges (CIDR) that may reach Keyring, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so external ingress needs at least one."
+
+  validation {
+    condition     = alltrue([for r in var.allowed_ip_ranges : r != "*" && !endswith(trimspace(r), "/0") && lower(trimspace(r)) != "internet"])
+    error_message = "allowed_ip_ranges must list trusted ranges only: no /0, * or Internet."
+  }
+}
+
 variable "infrastructure_subnet_id" {
   type        = string
   default     = ""

@@ -176,7 +176,7 @@ jobs:
               p="$t/notify-ci.bicepparam"
               { sed -e '/^param notify/d' "$t/main.example.bicepparam"
                 echo "param notifyDomain = '$d'"
-                echo "param notifyTypes = 'expiry,health'"
+                echo "param notifyTypes = 'access-requests,health'"
                 echo "param notifyAdmins = 'ops@example.com'"
                 echo "param notifyAllowedDomains = 'example.com'"
               } > "$p"

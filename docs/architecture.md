@@ -597,6 +597,8 @@ Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor l
 
 What Keyring protects, who it protects it from, and how. This is a summary for reviewers, not a guarantee. [threat-model.md](threat-model.md) has the diagram and the STRIDE table.
 
+Keyring is never reachable from the whole internet: the templates deploy it privately or behind trusted IP ranges only, and refuse anything else (threat T39, [deploy.md, Network access](deploy.md#network-access)).
+
 ### What's worth protecting
 
 - **Secret values, private keys and certificates** in people's vaults.
@@ -673,7 +675,7 @@ What Keyring protects, who it protects it from, and how. This is a summary for r
 - **Pinned names outlive a closed tab.** If someone closes the browser without signing out (or their session times out), the pinned and recent names stay in that browser's `localStorage` until the next sign-out or Clear. They are names only, but on a shared computer they show what someone worked on.
 - **Zeroising covers Keyring's own copies.** Copies of tokens held inside `reqwest` and `serde_json` while a response is read aren't zeroised.
 - **A panic** gives that one request a 500 page. Sessions survive it, since release builds unwind.
-- **The Event Grid webhook hasn't run against a real tenant yet.** The claims Event Grid's token carries (`appid` or `azp`, `roles`, `idtyp`, which issuer version) are taken from Microsoft's documentation and the identity platform's token reference, and tested only against a mock Entra. [real-vault-checklist.md](real-vault-checklist.md) has rows for them. Its dedupe is in memory, so a restart can send one repeat, and several copies of Keyring each keep their own.
-- **Email hasn't run against a real tenant yet.** The ACS Email REST API (api-version 2025-09-01), the repeatability headers, the two-action custom role and the Bicep module are built from Microsoft's reference and tested only against a mock ACS endpoint and token service. [real-vault-checklist.md](real-vault-checklist.md) has rows for each.
+- **The Event Grid webhook has run against a real tenant once** (18-11-2026: validation and delivery). Which claims Event Grid's token carries (`appid` or `azp`, `roles`, `idtyp`, which issuer version) is still taken from Microsoft's documentation, and the custom-topic and unlisted-subscription rows are still to run. [real-vault-checklist.md](real-vault-checklist.md) has rows for them. Its dedupe is in memory, so a restart can send one repeat, and several copies of Keyring each keep their own.
+- **Email has run against a real tenant** (18-11-2026): ACS managed-domain delivery with the two-action custom role, for share, watched read, delete, bulk, access request and expiry emails. A custom mail domain, and the health and role-use emails, are still to confirm. [real-vault-checklist.md](real-vault-checklist.md) has rows for each.
 - **The audit sink hasn't run against a real tenant yet.** The Logs Ingestion API, the `Direct` rule, the table and the role assignment are built from Microsoft's reference and tested only against a mock ingestion endpoint and token service. [real-vault-checklist.md](real-vault-checklist.md) has rows for each.
-- **Sign-in hasn't run against a real tenant yet.** The tests use mock Entra, ARM, Key Vault and Log Analytics servers that follow Microsoft's REST reference. The Key Vault REST calls have been checked against real vaults, and `tests/real_vault.rs` repeats six of those checks on request. Sign-in, on-behalf-of, RBAC roles, the browser and deployments are still to confirm. [real-vault-checklist.md](real-vault-checklist.md) lists what has been checked.
+- **Sign-in has run against a real tenant** (17 to 19-11-2026): browser sign-in, on-behalf-of, the MFA claims challenge and the main pages. PIM, Conditional Access step-up, private vaults and the Sentinel content are still to confirm. [real-vault-checklist.md](real-vault-checklist.md) lists what has been checked.
