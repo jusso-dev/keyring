@@ -54,6 +54,8 @@ Each control has a stable number, used in the overlay diagram (Figure 4) and the
 
 ## STRIDE threat model
 
+![Threat model: trust boundaries and where each threat is stopped. Red T-numbers match the register below.](../images/threat-model.png)
+
 Built from `docs/architecture.md`, "Threat model", and extended for notifications, the webhook and the managed identity. Each threat names its STRIDE category (S spoofing, T tampering, R repudiation, I information disclosure, D denial of service, E elevation of privilege), the controls that answer it and what is left. New threats are added at the end.
 
 ::: {.compact .landscape}
@@ -97,6 +99,7 @@ Built from `docs/architecture.md`, "Threat model", and extended for notification
 | T36 | T | Multi-environment write weakening a target vault's existing `keyring-reveal` limit | C23, C28: `reveal_limit::carry` preserves the stricter limit on every target vault automatically | None via `/environments/set`; loosening requires the individual secret's Edit details flow with step-up and reason |
 | T37 | T | An attacker who triggers a Defender alert puts script, a link or a spreadsheet formula in its text, which Keyring then shows to an administrator | C29: cleaned, escaped, formula-guarded; only Azure portal links kept | The text still reads as the attacker wrote it, so it is shown as an alert's words, not Keyring's |
 | T38 | R | A real Defender alert is hidden: dropped by the read cap, too old, or a failed read shown as none, so vault health passes a vault under attack | C29: open alerts are read however old and before closed ones; more open alerts than the cap, or a failed read, makes the check Unknown | Someone without Security Reader sees Unknown, not the alerts |
+| T39 | S, D, E | Keyring's sign-in page and routes reachable by anyone on the internet, for password spraying against its sign-in, probing for bugs, floods, and use of a stolen cookie from anywhere | Network access: every template deploys Keyring privately (App Service private endpoint, internal Container Apps, VM with no public IP) or with trusted IP ranges only (`allowedIpRanges`, deny by default, SCM site too), and accepts only single IPv4 ranges of /16 or narrower. The Event Grid route, which needs inbound internet, is refused by the templates; expiry email goes through action groups | A deployer who builds their own front end can still open it. The ranges are only as trustworthy as the networks behind them, so pair them with Conditional Access |
 :::
 
 Threats T25 to T34, and controls C23 to C27, were added in version 1.1 for request access, activity emails, reveal limits and sharing. The webhook subscription allow-list changed C15 and T11.

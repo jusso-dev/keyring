@@ -9,6 +9,9 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 ## [Unreleased]
 
 ### Security
+- **Breaking for deployments: Keyring is never reachable from the whole internet.** The App Service and Container Apps templates (Bicep and Terraform) now stop unless Keyring is private (an App Service private endpoint or internal Container Apps, reached over VPN or ExpressRoute) or limited to `allowedIpRanges` / `allowed_ip_ranges` (deny by default, the App Service SCM site included). Each range must be one IPv4 CIDR, /16 or narrower. Existing parameter files that relied on the open public default must add one or the other. See docs/deploy.md, "Network access", and threat T39.
+- The templates refuse `expiry` in `notifyTypes`, because Keyring's Event Grid webhook needs inbound internet access. Send expiry email with `infra/alerts` and `notifyVia = 'actionGroup'` instead.
+- Start-up warns when `KEYRING_SHARING` is on without both step-up and the reason gate (T29), and when `watched-reads` is on without `KEYRING_NOTIFY_ALLOWED_DOMAINS` (T26).
 - Sign-in no longer uses the `openidconnect` crate. Discovery, the authorise URL, the code exchange and the ID token checks are Keyring's own code on `reqwest` and `ring` (`src/auth/oidc.rs`, `src/auth/jwt.rs`): RS256 only with a `kid` and no `crit`, the issuer matched exactly, the client ID in `aud` (and `azp` when there are several), `exp`, `nbf` and `iat` with five minutes' skew, and the nonce compared in constant time. Event Grid webhook tokens are checked against the same keys with `ring`. This takes `rsa` 0.9 and `chrono` out of the build, so the RUSTSEC-2023-0071 (#41) and RUSTSEC-2026-0543 (#271) exceptions are gone from `deny.toml` and `.cargo/audit.toml`. `Cargo.lock` drops from 300 packages to 185.
 - `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
 
@@ -17,6 +20,7 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 
 ### Added
+- **Threat model** (`docs/threat-model.md`, README "Threat model"): a diagram of trust boundaries and where each threat is stopped, drawn by `tools/docs/build-threat-model.py`, and all 39 STRIDE threats with what stops them and what is left.
 - **OpenSSF Scorecard workflow** (`.github/workflows/scorecard.yml`) with pinned action SHAs, minimal token permissions, SARIF upload to GitHub Code Scanning and a public Scorecard badge in `README.md`.
 - **Azure VM & Confidential VM packaging (`infra/vm/`) and IMDS managed identity support**:
   - `KEYRING_MANAGED_IDENTITY_MODE=imds` in `src/config.rs` and `src/auth/assertion.rs` so Keyring can acquire managed identity tokens from Azure VM / VMSS IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`, `Metadata: true`, `api-version=2018-02-01`) with full unit and integration test coverage.

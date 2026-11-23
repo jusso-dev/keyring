@@ -41,4 +41,4 @@ Out of scope: Azure Key Vault, Entra ID and other Microsoft services themselves 
 
 ## How Keyring is built to be safe
 
-See the threat model in [docs/architecture.md](docs/architecture.md#threat-model).
+See the [threat model](docs/threat-model.md): trust boundaries, a diagram and every STRIDE threat with what stops it. The engineering detail is in [docs/architecture.md](docs/architecture.md#threat-model).

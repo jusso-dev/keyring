@@ -17,7 +17,8 @@ Decide:
 
 - **App Service, Container Apps or Azure VM.** App Service is simplest. Container Apps suits teams already using it, and supports an internal-only environment and zone redundancy. For VM-only estates, Azure Compute Gallery golden images, or Confidential VMs (AMD SEV-SNP encrypted memory for in-memory OBO sessions), see [infra/vm/README.md](../infra/vm/README.md).
 - **Bicep or Terraform.** Every hosting target ships in both Bicep (`infra/app-service/`, `infra/container-apps/`, `infra/vm/`, plus Azure Policy guardrails in `infra/policy/`) and modular Terraform (`infra/terraform/`, including an optional `modules/entra-app` module to automate the Entra app registration and federated credential). See [infra/terraform/README.md](../infra/terraform/README.md).
-- **Public or private.** If any vaults people need are private, Keyring must run inside a network that can reach them. Read [private-vaults.md](private-vaults.md) first.
+- **Who can reach it.** Keyring is never open to the whole internet, and the templates refuse to deploy it that way. Choose private access (an App Service private endpoint, internal Container Apps or the VM template, reached over your VNet, VPN or ExpressRoute) or trusted IP ranges only (`allowedIpRanges`, such as your office or VPN egress). See [Network access](#network-access).
+- **Private vaults.** If any vaults people need are private, Keyring must run inside a network that can reach them. Read [private-vaults.md](private-vaults.md) first.
 - **The address people will use**, for example `https://keyring.example.com`. You need it for the app registration. Keyring must be at the root of that host; it can't run under a path such as `/keyring`.
 
 ## 1. Build and push the image
@@ -75,6 +76,7 @@ App Service:
 ```sh
 cp infra/app-service/main.example.bicepparam infra/app-service/main.bicepparam
 # Edit: name, image, clientId, appBaseUrl, configVaultName, and logAnalyticsWorkspaceId (see Logs below)
+# Edit: allowedIpRanges to your office or VPN egress, or set inboundPrivateEndpointSubnetId and allowedIpRanges = [] (see Network access)
 az deployment group create -g <rg> -f infra/app-service/main.bicep -p infra/app-service/main.bicepparam
 ```
 
@@ -85,6 +87,7 @@ Container Apps reads the secrets when it creates the app, so deploy in two runs:
 ```sh
 cp infra/container-apps/main.example.bicepparam infra/container-apps/main.bicepparam
 # Edit: name, image, clientId, appBaseUrl, configVaultName, ingress
+# Edit: allowedIpRanges to your office or VPN egress, or set ingress = 'internal' and allowedIpRanges = [] (see Network access)
 
 # First run: only the config vault and identity.
 az deployment group create -g <rg> -f infra/container-apps/main.bicep -p infra/container-apps/main.bicepparam -p configOnly=true
@@ -103,6 +106,20 @@ This creates:
 | Optional private endpoints, VNet integration | See [private-vaults.md](private-vaults.md) |
 
 Until the secrets are set in step 4, the app has nothing to start with.
+
+### Network access
+
+Keyring is a console for secrets, so it must only be reachable from networks you trust (threat T39 in the [threat model](threat-model.md)). Every template enforces this and stops the deployment otherwise:
+
+| Host | Private (recommended) | Trusted IP ranges |
+| --- | --- | --- |
+| App Service | `inboundPrivateEndpointSubnetId` (and `appPrivateDnsZoneId`): public access is turned off | `allowedIpRanges`: everything else is refused, the deployment (SCM) site included |
+| Container Apps | `ingress = 'internal'` with `infrastructureSubnetId` | `ingress = 'external'` with `allowedIpRanges` |
+| VM | Always private: no public IP, and the NSG allows only `allowedProxySourcePrefix` | Put the trusted-range rule on your front end (Application Gateway, Front Door) |
+
+`allowedIpRanges` takes one IPv4 CIDR per entry, /16 or narrower (a /32 for one address), with no commas, so no list can add up to the whole internet. Terraform has the same rules as `allowed_ip_ranges` and `inbound_private_endpoint_subnet_id`.
+
+Sign-in still works over a private address: the browser goes to Entra ID and comes back, and Keyring's own calls go out to Azure. Only one feature needs inbound traffic from the internet, Keyring's own expiry emails through Event Grid, so the templates refuse `expiry` in `notifyTypes`. Send expiry emails with an action group instead ([alerts.md](alerts.md#expiry-alerts), `notifyVia = 'actionGroup'`); it needs no access to Keyring.
 
 ### Internal Container Apps
 
@@ -162,7 +179,8 @@ App Service (`infra/app-service/main.bicep`):
 | `notifyAdmins` | Sets `KEYRING_NOTIFY_ADMINS`. Needs `notifyDomain` | None |
 | `notifyAllowedDomains` | Sets `KEYRING_NOTIFY_ALLOWED_DOMAINS`. Needs `notifyDomain` | None (any domain) |
 | `vnetIntegrationSubnetId` | Outbound VNet integration, to reach private vaults | None |
-| `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only | None (public) |
+| `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only, over your VNet, VPN or ExpressRoute | None: then `allowedIpRanges` is required |
+| `allowedIpRanges` | Without a private endpoint: the trusted CIDR ranges that may reach Keyring. See [Network access](#network-access) | None |
 | `configVaultPrivateEndpointSubnetId`, `vaultPrivateDnsZoneId` | Make the config vault private. Needs `vnetIntegrationSubnetId` too (the deployment stops if not) | None |
 | `tags` | Tags on everything | None |
 
@@ -170,7 +188,8 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 
 | Parameter | What it's for | Default |
 | --- | --- | --- |
-| `ingress` | `external` (public address) or `internal` (private address in the VNet only) | `external` |
+| `ingress` | `external` (public address, trusted ranges only) or `internal` (private address in the VNet only) | `external` |
+| `allowedIpRanges` | With `external`: the trusted CIDR ranges that may reach Keyring. Required with `external`. See [Network access](#network-access) | None |
 | `privateDnsVnetId` | With `internal`: create the private DNS zone for the environment's default domain, linked to this VNet | None |
 | `registryServer` | Private ACR login server, pulled with the app's identity | None (public image) |
 | `configOnly` | Deploy only the config vault and identity (first of two runs) | `false` |

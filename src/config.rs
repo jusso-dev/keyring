@@ -614,6 +614,29 @@ impl Config {
         })
     }
 
+    /// Settings that leave a documented threat open (docs/threat-model.md),
+    /// as a start-up warning each. Keyring still starts: each is a choice
+    /// the deployer may have made on purpose.
+    pub fn risky_settings(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.sharing
+            && (!self.step_up.is_on() || self.reason.require == crate::reason::RequireReason::Off)
+        {
+            out.push(
+                "KEYRING_SHARING is on without both step-up (KEYRING_STEP_UP_*) and the reason gate (KEYRING_REQUIRE_REASON), so a stolen session can share anything the person can assign with nothing more to pass (threat T29). Turn both on with sharing",
+            );
+        }
+        if let Some(n) = &self.notify
+            && n.allowed_domains.is_none()
+            && n.types.contains(&crate::notify::NotifyType::WatchedReads)
+        {
+            out.push(
+                "watched-reads is on without KEYRING_NOTIFY_ALLOWED_DOMAINS, so anyone who can write an item's tags can have any address told who read it (threat T26). Set the allow-list",
+            );
+        }
+        out
+    }
+
     /// Names of the test-only overrides that are set. Each one sends user
     /// tokens (and for the authority host, the client secret) somewhere
     /// other than Microsoft, so start-up warns about them.
@@ -2019,6 +2042,29 @@ pub(crate) mod tests {
             "DoNotReply@mail.example.com".into(),
         );
         env
+    }
+
+    #[test]
+    fn risky_settings_are_named() {
+        assert!(load(&sample_env()).unwrap().risky_settings().is_empty());
+
+        let mut env = sample_env();
+        env.insert("KEYRING_SHARING", "true".into());
+        let warned = |env: &HashMap<&'static str, String>| load(env).unwrap().risky_settings();
+        assert!(warned(&env)[0].contains("T29"), "sharing with no gates");
+        env.insert("KEYRING_STEP_UP_MAX_AGE", "15".into());
+        assert!(warned(&env)[0].contains("T29"), "step-up only");
+        env.insert("KEYRING_REQUIRE_REASON", "reveal".into());
+        assert!(warned(&env).is_empty(), "both gates on");
+
+        let mut env = with_notify(new_identity_env());
+        env.insert("KEYRING_NOTIFY_TYPES", "watched-reads".into());
+        assert!(warned(&env)[0].contains("T26"), "no allow-list");
+        env.insert("KEYRING_NOTIFY_ALLOWED_DOMAINS", "example.com".into());
+        assert!(warned(&env).is_empty(), "allow-list set");
+        env.insert("KEYRING_NOTIFY_TYPES", "expiry".into());
+        env.remove("KEYRING_NOTIFY_ALLOWED_DOMAINS");
+        assert!(warned(&env).is_empty(), "watched reads off");
     }
 
     #[test]

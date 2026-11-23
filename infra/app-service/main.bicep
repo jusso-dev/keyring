@@ -58,8 +58,11 @@ param allowPurge bool = false
 @description('Subnet for outbound VNet integration, so Keyring can reach private vaults. Must be delegated to Microsoft.Web/serverFarms. Leave empty for none.')
 param vnetIntegrationSubnetId string = ''
 
-@description('Subnet for an inbound private endpoint to the app. Leave empty for public access.')
+@description('Subnet for an inbound private endpoint to the app, so people reach Keyring over your VNet, VPN or ExpressRoute only. Public access is then off. Leave empty to use allowedIpRanges instead.')
 param inboundPrivateEndpointSubnetId string = ''
+
+@description('Without inboundPrivateEndpointSubnetId: the trusted IP ranges (CIDR) that may reach Keyring\'s public address, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so one of the two is required. Each entry is one IPv4 CIDR, /16 or narrower, so no list can open Keyring to the internet.')
+param allowedIpRanges array = []
 
 @description('Private DNS zone ID for privatelink.azurewebsites.net, used with the inbound private endpoint.')
 param appPrivateDnsZoneId string = ''
@@ -191,6 +194,9 @@ var privateVaultNeedsVnet = empty(configVaultPrivateEndpointSubnetId) || (!empty
 var privateVaultCheck = privateVaultNeedsVnet ? 'ok' : fail('configVaultPrivateEndpointSubnetId needs vnetIntegrationSubnetId and vaultPrivateDnsZoneId too, or the app can\'t reach its own secrets.')
 
 var publicInbound = empty(inboundPrivateEndpointSubnetId)
+// Keyring is never open to the whole internet: private, or trusted ranges only.
+var ingressCheck = (!publicInbound || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => !contains(r, '/') || contains(r, ',') || contains(r, ':') || parseCidr(r).cidr < 16)) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Set inboundPrivateEndpointSubnetId for private access, or allowedIpRanges to the trusted ranges (each one IPv4 CIDR, /16 or narrower, no commas).')
+var expiryCheck = !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry') ? 'ok' : fail('expiry in notifyTypes needs Event Grid to reach Keyring from the internet, which this template never allows. Send expiry email with infra/alerts and notifyVia = \'actionGroup\' instead (docs/alerts.md).')
 var identityName = '${name}-id'
 // Known before deployment, as the site's identity block needs.
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
@@ -198,7 +204,7 @@ var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
 module config '../modules/config-vault.bicep' = {
-  name: '${name}-config${privateVaultCheck == 'ok' ? '' : '-invalid'}'
+  name: '${name}-config${privateVaultCheck == 'ok' && ingressCheck == 'ok' && expiryCheck == 'ok' ? '' : '-invalid'}'
   params: {
     location: location
     vaultName: configVaultName
@@ -341,6 +347,16 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       scmMinTlsVersion: '1.2'
       healthCheckPath: '/healthz'
+      // Only the trusted ranges reach the app and its deployment (SCM) site.
+      ipSecurityRestrictionsDefaultAction: 'Deny'
+      ipSecurityRestrictions: [for (range, i) in allowedIpRanges: {
+        name: 'trusted-${i}'
+        ipAddress: range
+        action: 'Allow'
+        priority: 100 + i
+      }]
+      scmIpSecurityRestrictionsUseMain: true
+      scmIpSecurityRestrictionsDefaultAction: 'Deny'
       vnetRouteAllEnabled: !empty(vnetIntegrationSubnetId)
       // Every setting is listed here, so one added by hand in the portal is
       // removed by the next deployment. Optional ones are left out when
@@ -450,7 +466,7 @@ module inbound '../modules/private-endpoint.bicep' = if (!publicInbound) {
 }
 
 output appName string = site.name
-output checks string = '${privateVaultCheck} ${auditCheck} ${notifyCheck}'
+output checks string = '${privateVaultCheck} ${ingressCheck} ${expiryCheck} ${auditCheck} ${notifyCheck}'
 output defaultHostName string = site.properties.defaultHostName
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId

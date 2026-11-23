@@ -68,6 +68,19 @@ variable "ingress" {
   }
 }
 
+variable "allowed_ip_ranges" {
+  type        = list(string)
+  default     = []
+  description = "With external ingress: the trusted IP ranges (CIDR) that may reach Keyring, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so external ingress needs at least one."
+
+  validation {
+    # One IPv4 CIDR per entry, /16 or narrower: no commas, no IPv6, and no
+    # set of ranges wide enough to add up to the whole internet.
+    condition     = alltrue([for r in var.allowed_ip_ranges : can(cidrhost(r, 0)) && !strcontains(r, ",") && !strcontains(r, ":") && can(tonumber(element(split("/", r), 1)) >= 16) && try(tonumber(element(split("/", r), 1)) >= 16, false)])
+    error_message = "allowed_ip_ranges must list trusted ranges only: each one IPv4 CIDR, /16 or narrower, no commas."
+  }
+}
+
 variable "infrastructure_subnet_id" {
   type        = string
   default     = ""

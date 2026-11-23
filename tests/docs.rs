@@ -9,6 +9,7 @@ const ARCHITECTURE: &str = include_str!("../docs/architecture.md");
 const DEPLOY: &str = include_str!("../docs/deploy.md");
 const TROUBLESHOOTING: &str = include_str!("../docs/troubleshooting.md");
 const CHECKLIST: &str = include_str!("../docs/real-vault-checklist.md");
+const THREAT_MODEL: &str = include_str!("../docs/threat-model.md");
 
 fn minutes(d: Duration) -> u64 {
     d.as_secs() / 60
@@ -192,6 +193,7 @@ fn relative_doc_links_point_at_files_that_exist() {
             root.join("docs"),
         ),
         ("docs/real-vault-checklist.md", CHECKLIST, root.join("docs")),
+        ("docs/threat-model.md", THREAT_MODEL, root.join("docs")),
     ];
     for (name, text, base) in docs {
         for (start, _) in text.match_indices("](") {

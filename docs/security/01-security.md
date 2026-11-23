@@ -93,7 +93,11 @@ Each control below maps directly to its implementation in `src/` and automated v
 
 # Threat model summary (STRIDE)
 
-The full 36-threat STRIDE register (T1 to T36) is maintained in the Solution Design Document (Chapter 8). The highest-impact threats and residual risks for security reviewers are summarised below:
+The full STRIDE register (T1 to T39) is maintained in the Solution Design Document (Chapter 8) and summarised, with every threat, in the [threat model](../threat-model.md). The diagram shows the trust boundaries and where each threat is stopped.
+
+![Keyring threat model. Red T-numbers mark where each threat is stopped.](../images/threat-model.png)
+
+The highest-impact threats and residual risks for security reviewers are summarised below:
 
 | ID | Category | Threat | Primary controls | Residual risk |
 |---|---|---|---|---|
@@ -105,6 +109,7 @@ The full 36-threat STRIDE register (T1 to T36) is maintained in the Solution Des
 | T29 | Elevation | Stolen session used to share secrets (`KEYRING_SHARING=true`) | C26, C10, C11, C13, Sentinel shares rule | Step-up and reason gate are opt-in; enable both when sharing is on |
 | T35 | Info disclosure | Reusing a dev/test secret value in production via `/environments/set` | C28 (in-memory duplicate check blocks prod/non-prod reuse unless confirmed; never logs values) | An operator can still tick confirmation for genuinely shared credentials; Sentinel and audit events record every vault written |
 | T36 | Tampering | Multi-environment write attempting to weaken an existing vault's `keyring-reveal` limit | C23, C28 (fail-closed preflight metadata verification refuses writes if existing metadata cannot be checked; `reveal_limit::carry` preserves stricter limit on every target vault) | Azure Key Vault `SetSecret` lacks server-side version preconditions, so a concurrent admin tightening `keyring-reveal` between preflight and `PUT` is a narrow race; loosening intentionally requires the item's Edit details flow with step-up and reason |
+| T39 | Spoofing, DoS | Keyring reachable by anyone on the internet | Templates deploy privately or with trusted IP ranges only (deny by default, SCM too) and accept only single IPv4 ranges of /16 or narrower; the inbound Event Grid route is refused | A hand-built front end can still open it; pair trusted ranges with Conditional Access |
 
 # Compliance framework mapping
 

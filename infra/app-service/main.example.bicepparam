@@ -9,6 +9,10 @@ param image = 'ghcr.io/your-org/keyring@sha256:000000000000000000000000000000000
 param clientId = '00000000-0000-0000-0000-000000000000'
 param appBaseUrl = 'https://keyring.example.com'
 param configVaultName = 'kv-keyring-config-01'
+// Keyring is never open to the whole internet. Either a private endpoint
+// (inboundPrivateEndpointSubnetId, reached over VPN or ExpressRoute) or the
+// trusted ranges that may reach its public address:
+param allowedIpRanges = ['203.0.113.0/24'] // your office or VPN egress
 
 // Optional. Leave empty for the defaults.
 param apiScope = '' // only if your app registration's scope isn't api://<clientId>/access_as_user
@@ -25,6 +29,6 @@ param auditWorkspaceId = '' // a Log Analytics workspace's resource ID: Keyring 
 param auditRetentionInDays = 365 // days the KeyringAudit_CL table keeps rows
 param auditRequired = false // true: refuse reveals and private key downloads while the audit sink is failing
 param notifyDomain = '' // AzureManaged, or your own mail domain: Keyring sends email through ACS as its managed identity; see docs/deploy.md, "Email"
-param notifyTypes = '' // expiry, access-requests, watched-reads, destructive, role-use, health; empty sends none
+param notifyTypes = '' // access-requests, watched-reads, destructive, role-use, health; empty sends none. Expiry email goes through infra/alerts (notifyVia = 'actionGroup')
 param notifyAdmins = '' // addresses for health and fallback notices
 param notifyAllowedDomains = '' // every recipient must be in one of these domains; empty allows any

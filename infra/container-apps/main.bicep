@@ -54,6 +54,9 @@ param configVaultName string
 ])
 param ingress string = 'external'
 
+@description('With external ingress: the trusted IP ranges (CIDR) that may reach Keyring, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so external ingress needs at least one. Each entry is one IPv4 CIDR, /16 or narrower, so no list can open Keyring to the internet.')
+param allowedIpRanges array = []
+
 @description('Subnet for the environment (at least /27, delegated to Microsoft.App/environments). Needed for internal ingress and to reach private vaults. Leave empty for a Microsoft-managed network.')
 param infrastructureSubnetId string = ''
 
@@ -196,6 +199,9 @@ var privateVaultOk = empty(configVaultPrivateEndpointSubnetId) || (!empty(infras
 var privateVaultCheck = privateVaultOk ? 'ok' : fail('configVaultPrivateEndpointSubnetId needs infrastructureSubnetId and vaultPrivateDnsZoneId too, or the app can\'t reach its own secrets.')
 // An internal environment only has an address inside a VNet, so it needs one.
 var internalCheck = ingress == 'external' || !empty(infrastructureSubnetId) ? 'ok' : fail('Internal ingress needs infrastructureSubnetId.')
+// Keyring is never open to the whole internet: internal, or trusted ranges only.
+var ingressCheck = (ingress == 'internal' || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => !contains(r, '/') || contains(r, ',') || contains(r, ':') || parseCidr(r).cidr < 16)) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Use ingress = \'internal\', or set allowedIpRanges to the trusted ranges (each one IPv4 CIDR, /16 or narrower, no commas).')
+var expiryCheck = !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry') ? 'ok' : fail('expiry in notifyTypes needs Event Grid to reach Keyring from the internet, which this template never allows. Send expiry email with infra/alerts and notifyVia = \'actionGroup\' instead (docs/alerts.md).')
 // The DNS zone only makes sense for an internal environment.
 var dnsCheck = empty(privateDnsVnetId) || ingress == 'internal' ? 'ok' : fail('privateDnsVnetId is only used with internal ingress.')
 // Azure Container Apps requires a VNet subnet for zone redundancy.
@@ -220,7 +226,7 @@ var credentialEnv = concat(
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
 module config '../modules/config-vault.bicep' = {
-  name: '${name}-config${privateVaultCheck == 'ok' && internalCheck == 'ok' && dnsCheck == 'ok' && zoneCheck == 'ok' ? '' : '-invalid'}'
+  name: '${name}-config${privateVaultCheck == 'ok' && internalCheck == 'ok' && dnsCheck == 'ok' && zoneCheck == 'ok' && ingressCheck == 'ok' && expiryCheck == 'ok' ? '' : '-invalid'}'
   params: {
     location: location
     vaultName: configVaultName
@@ -372,6 +378,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
         targetPort: 3000
         transport: 'http'
         allowInsecure: false
+        // Only the trusted ranges get in; with only Allow rules, Container
+        // Apps refuses every other address.
+        ipSecurityRestrictions: [for (range, i) in allowedIpRanges: {
+          name: 'trusted-${i}'
+          ipAddressRange: range
+          action: 'Allow'
+        }]
         stickySessions: {
           affinity: replicas > 1 ? 'sticky' : 'none'
         }
@@ -482,7 +495,7 @@ output fqdn string = configOnly ? '' : app!.properties.configuration.ingress.fqd
 output defaultDomain string = configOnly ? '' : env!.properties.defaultDomain
 @description('The environment\'s address: private with internal ingress, public with external.')
 output staticIp string = configOnly ? '' : env!.properties.staticIp
-output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck} ${zoneCheck} ${auditCheck} ${notifyCheck}'
+output checks string = '${privateVaultCheck} ${internalCheck} ${ingressCheck} ${expiryCheck} ${dnsCheck} ${zoneCheck} ${auditCheck} ${notifyCheck}'
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
 @description('The audit data collection rule\'s immutable ID, when the audit sink is on.')

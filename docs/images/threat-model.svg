@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1564 850" width="1564" height="850" role="img" aria-labelledby="tm-title tm-desc" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title id="tm-title">Keyring threat model</title>
+<desc id="tm-desc">Three zones: people and attackers on the internet, Keyring in your Azure subscription, and the Microsoft cloud. Two trust boundaries separate them. Every call that reads or changes a vault carries the signed-in person's on-behalf-of token; Keyring's managed identity only writes audit rows and sends email. Red T-numbers mark where each threat in the STRIDE table is stopped.</desc>
+<defs>
+<marker id="a-person" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#186575"/></marker>
+<marker id="a-identity" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#804d0c"/></marker>
+<marker id="a-inbound" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b02a2d"/></marker>
+<marker id="a-plain" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#515963"/></marker>
+</defs>
+<rect width="1564" height="850" fill="#ffffff"/>
+<text x="24" y="44" font-size="24" fill="#1c222a" font-weight="bold" text-anchor="start" >Keyring threat model</text>
+<text x="24" y="70" font-size="13" fill="#515963" font-weight="normal" text-anchor="start" >Trust boundaries, data flows and where each threat is stopped. Red T-numbers match the STRIDE table in docs/threat-model.md.</text>
+<rect x="16" y="96" width="300" height="700" rx="12" fill="#f5f7fa" stroke="#dadee3" stroke-width="1.3"/>
+<text x="32" y="122" font-size="15" fill="#1c222a" font-weight="bold" text-anchor="start" >Trusted networks only</text>
+<text x="32" y="141" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >VPN, ExpressRoute or allowed IPs only</text>
+<rect x="352" y="96" width="570" height="700" rx="12" fill="#e3f4f8" stroke="#dadee3" stroke-width="1.3"/>
+<text x="368" y="122" font-size="15" fill="#1c222a" font-weight="bold" text-anchor="start" >Keyring, in your Azure subscription</text>
+<text x="368" y="141" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Holds tokens in memory, stores nothing, has no vault access of its own</text>
+<rect x="1068" y="96" width="472" height="700" rx="12" fill="#f5f7fa" stroke="#dadee3" stroke-width="1.3"/>
+<text x="1084" y="122" font-size="15" fill="#1c222a" font-weight="bold" text-anchor="start" >Microsoft cloud</text>
+<text x="1084" y="141" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Makes every authorisation decision, as the person</text>
+<rect x="24" y="160" width="284" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="36" y="186" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Web browser</text>
+<text x="36" y="206" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Holds a random session ID only.</text>
+<text x="36" y="223" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Never sees a token.</text>
+<rect x="266.4" y="150" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="283.2" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T13</text>
+<rect x="236.0" y="150" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="249.2" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T2</text>
+<rect x="24" y="292" width="284" height="86" rx="8" fill="#fcf1ef" stroke="#b02a2d" stroke-width="1.3" stroke-dasharray="6 4"/>
+<text x="36" y="318" font-size="14" fill="#b02a2d" font-weight="bold" text-anchor="start" >Attacker</text>
+<text x="36" y="338" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Stolen cookie, forged forms, crafted</text>
+<text x="36" y="355" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >names and text, floods of requests</text>
+<rect x="266.4" y="282" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="283.2" y="296" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T21</text>
+<rect x="228.8" y="282" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="245.6" y="296" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T14</text>
+<rect x="198.4" y="282" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="211.6" y="296" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T5</text>
+<rect x="168.0" y="282" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="181.2" y="296" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T4</text>
+<rect x="372" y="160" width="240" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="384" y="186" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Request edge</text>
+<text x="384" y="206" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Private or trusted IPs only, CSP,</text>
+<text x="384" y="223" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Origin and form token, limits</text>
+<rect x="570.4" y="150" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="587.2" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T39</text>
+<rect x="532.8" y="150" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="549.6" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T21</text>
+<rect x="495.2" y="150" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="512.0" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T14</text>
+<rect x="464.8" y="150" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="478.0" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T5</text>
+<rect x="372" y="262" width="240" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="384" y="288" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Gates before any Azure call</text>
+<text x="384" y="308" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Typed names, purge off, step-up,</text>
+<text x="384" y="325" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >reason, reveal limits, safe KQL</text>
+<rect x="570.4" y="252" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="587.2" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T28</text>
+<rect x="532.8" y="252" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="549.6" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T18</text>
+<rect x="495.2" y="252" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="512.0" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T15</text>
+<rect x="372" y="364" width="240" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="384" y="390" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Values in memory only</text>
+<text x="384" y="410" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Redacted and zeroised, never</text>
+<text x="384" y="427" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >logged, no-store on every page</text>
+<rect x="570.4" y="354" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="587.2" y="368" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T19</text>
+<rect x="532.8" y="354" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="549.6" y="368" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T13</text>
+<rect x="495.2" y="354" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="512.0" y="368" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T12</text>
+<rect x="372" y="466" width="240" height="188" rx="8" fill="#fdf2dd" stroke="#804d0c" stroke-width="1.3"/>
+<text x="384" y="492" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Keyring&#x27;s managed identity</text>
+<text x="384" y="512" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Proves Keyring is the app,</text>
+<text x="384" y="529" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >writes audit rows, sends email.</text>
+<text x="384" y="546" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" ></text>
+<text x="384" y="563" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >No role on any vault or</text>
+<text x="384" y="580" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >workspace. App registration</text>
+<text x="384" y="597" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >is delegated-only.</text>
+<rect x="577.6" y="456" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="590.8" y="470" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T7</text>
+<rect x="547.2" y="456" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="560.4" y="470" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T6</text>
+<rect x="516.8" y="456" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="530.0" y="470" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T3</text>
+<rect x="372" y="670" width="240" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="384" y="696" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Build and runtime</text>
+<text x="384" y="716" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Distroless, non-root, read-only,</text>
+<text x="384" y="733" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >no unsafe code, pinned crates</text>
+<rect x="570.4" y="660" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="587.2" y="674" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T23</text>
+<rect x="652" y="160" width="250" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="664" y="186" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Sign-in and sessions</text>
+<text x="664" y="206" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >OIDC with PKCE, state and nonce.</text>
+<text x="664" y="223" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Memory-only, 1 h idle, 12 h max</text>
+<rect x="867.6" y="150" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="880.8" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T4</text>
+<rect x="837.2" y="150" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="850.4" y="164" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T2</text>
+<rect x="652" y="262" width="250" height="188" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="664" y="288" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Azure clients</text>
+<text x="664" y="308" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Every call that reads or changes</text>
+<text x="664" y="325" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >a vault carries the signed-in</text>
+<text x="664" y="342" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >person&#x27;s on-behalf-of token.</text>
+<text x="664" y="359" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" ></text>
+<text x="664" y="376" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Shares are made as the person,</text>
+<text x="664" y="393" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >so Azure decides.</text>
+<rect x="860.4" y="252" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="877.2" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T29</text>
+<rect x="822.8" y="252" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="839.6" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T17</text>
+<rect x="792.4" y="252" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="805.6" y="266" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T1</text>
+<rect x="652" y="466" width="250" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="664" y="492" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Audit events</text>
+<text x="664" y="512" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >One per action, refusals included.</text>
+<text x="664" y="529" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Optional sink to KeyringAudit_CL</text>
+<rect x="860.4" y="456" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="877.2" y="470" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T20</text>
+<rect x="652" y="568" width="250" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="664" y="594" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Email sender</text>
+<text x="664" y="614" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Allow-list, per-recipient limits,</text>
+<text x="664" y="631" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >fixed text, never a value</text>
+<rect x="867.6" y="558" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="880.8" y="572" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T9</text>
+<rect x="837.2" y="558" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="850.4" y="572" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T8</text>
+<rect x="652" y="670" width="250" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="664" y="696" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Event Grid webhook</text>
+<text x="664" y="716" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >App-only Entra token, topic and</text>
+<text x="664" y="733" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >subscription checks, size limits</text>
+<rect x="860.4" y="660" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="877.2" y="674" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T11</text>
+<rect x="822.8" y="660" width="33.6" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="839.6" y="674" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T10</text>
+<rect x="1080" y="160" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="186" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Microsoft Entra ID</text>
+<text x="1092" y="206" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Sign-in, MFA and Conditional Access; issues the</text>
+<text x="1092" y="223" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >on-behalf-of tokens for each Azure service</text>
+<rect x="1080" y="262" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="288" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Azure Key Vault</text>
+<text x="1092" y="308" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >RBAC or access policies decide every request.</text>
+<text x="1092" y="325" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Its own diagnostic log records every call</text>
+<rect x="1080" y="364" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="390" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >ARM, Resource Graph, Log Analytics, Graph</text>
+<text x="1092" y="410" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Read and changed as the person. Graph only</text>
+<text x="1092" y="427" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >with sharing on, to find people by name</text>
+<rect x="1080" y="466" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="492" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Logs Ingestion API (audit sink)</text>
+<text x="1092" y="512" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Monitoring Metrics Publisher on one rule:</text>
+<text x="1092" y="529" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >append-only, can&#x27;t read or delete rows</text>
+<rect x="1080" y="568" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="594" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Azure Communication Services</text>
+<text x="1092" y="614" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Custom role, Read and Write on one resource</text>
+<text x="1092" y="631" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >in Keyring&#x27;s own resource group; no keys</text>
+<rect x="1080" y="670" width="448" height="86" rx="8" fill="#ffffff" stroke="#737b84" stroke-width="1.3"/>
+<text x="1092" y="696" font-size="14" fill="#1c222a" font-weight="bold" text-anchor="start" >Azure Event Grid</text>
+<text x="1092" y="716" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >Only for a self-built public front end;</text>
+<text x="1092" y="733" font-size="12" fill="#515963" font-weight="normal" text-anchor="start" >templates send expiry via action groups</text>
+<path d="M 308 190 L 372 190" fill="none" stroke="#515963" stroke-width="2" marker-end="url(#a-plain)"/>
+<path d="M 308 335 L 342 335 L 342 224 L 372 224" fill="none" stroke="#b02a2d" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a-inbound)"/>
+<path d="M 612 203 L 652 203" fill="none" stroke="#515963" stroke-width="2" marker-end="url(#a-plain)"/>
+<path d="M 612 305 L 652 305" fill="none" stroke="#515963" stroke-width="2" marker-end="url(#a-plain)"/>
+<path d="M 612 509 L 652 509" fill="none" stroke="#804d0c" stroke-width="2" marker-end="url(#a-identity)"/>
+<path d="M 612 611 L 652 611" fill="none" stroke="#804d0c" stroke-width="2" marker-end="url(#a-identity)"/>
+<path d="M 902 203 L 1080 203" fill="none" stroke="#186575" stroke-width="2" marker-end="url(#a-person)"/>
+<rect x="919.2" y="183" width="99.6" height="17" rx="4" fill="#ffffff"/>
+<text x="969" y="195" font-size="11" fill="#186575" font-weight="bold" text-anchor="middle" >person&#x27;s token</text>
+<path d="M 902 305 L 1080 305" fill="none" stroke="#186575" stroke-width="2" marker-end="url(#a-person)"/>
+<rect x="925.6" y="285" width="86.8" height="17" rx="4" fill="#ffffff"/>
+<text x="969" y="297" font-size="11" fill="#186575" font-weight="bold" text-anchor="middle" >on-behalf-of</text>
+<path d="M 902 384 L 1080 384" fill="none" stroke="#186575" stroke-width="2" marker-end="url(#a-person)"/>
+<path d="M 902 509 L 1080 509" fill="none" stroke="#804d0c" stroke-width="2" marker-end="url(#a-identity)"/>
+<rect x="912.8" y="489" width="112.4" height="17" rx="4" fill="#ffffff"/>
+<text x="969" y="501" font-size="11" fill="#804d0c" font-weight="bold" text-anchor="middle" >managed identity</text>
+<path d="M 902 611 L 1080 611" fill="none" stroke="#804d0c" stroke-width="2" marker-end="url(#a-identity)"/>
+<path d="M 1080 713 L 902 713" fill="none" stroke="#b02a2d" stroke-width="2" marker-end="url(#a-inbound)"/>
+<rect x="916.0" y="693" width="106.0" height="17" rx="4" fill="#ffffff"/>
+<text x="969" y="705" font-size="11" fill="#b02a2d" font-weight="bold" text-anchor="middle" >signed delivery</text>
+<line x1="332" y1="96" x2="332" y2="810" stroke="#b02a2d" stroke-width="2" stroke-dasharray="9 6"/>
+<text x="332" y="832" font-size="11.5" fill="#b02a2d" font-weight="bold" text-anchor="middle" >Trust boundary: no public internet (T39)</text>
+<line x1="1036" y1="96" x2="1036" y2="810" stroke="#b02a2d" stroke-width="2" stroke-dasharray="9 6"/>
+<text x="1036" y="832" font-size="11.5" fill="#b02a2d" font-weight="bold" text-anchor="middle" >Trust boundary: Keyring to Azure</text>
+<rect x="24" y="472" width="284" height="312" rx="8" fill="#ffffff" stroke="#dadee3" stroke-width="1.3"/>
+<text x="36" y="496" font-size="13" fill="#1c222a" font-weight="bold" text-anchor="start" >Legend</text>
+<path d="M 38 516 L 82 516" fill="none" stroke="#186575" stroke-width="2" marker-end="url(#a-person)"/>
+<text x="94" y="520" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Signed-in person&#x27;s own token</text>
+<path d="M 38 540 L 82 540" fill="none" stroke="#804d0c" stroke-width="2" marker-end="url(#a-identity)"/>
+<text x="94" y="544" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Keyring&#x27;s managed identity</text>
+<path d="M 38 564 L 82 564" fill="none" stroke="#b02a2d" stroke-width="2" marker-end="url(#a-inbound)"/>
+<text x="94" y="568" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Event Grid (not in templates)</text>
+<path d="M 38 588 L 82 588" fill="none" stroke="#b02a2d" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#a-inbound)"/>
+<text x="94" y="592" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Attacker&#x27;s requests</text>
+<path d="M 38 612 L 82 612" fill="none" stroke="#515963" stroke-width="2" marker-end="url(#a-plain)"/>
+<text x="94" y="616" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Browser traffic and inside Keyring</text>
+<line x1="38" y1="636" x2="82" y2="636" stroke="#b02a2d" stroke-width="2" stroke-dasharray="9 6"/>
+<text x="94" y="640" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Trust boundary</text>
+<rect x="55.6" y="652" width="26.4" height="20" rx="10" fill="#b02a2d" stroke="#ffffff" stroke-width="1.5"/>
+<text x="68.8" y="666" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" >T1</text>
+<text x="94" y="666" font-size="12" fill="#1c222a" font-weight="normal" text-anchor="start" >Threat, stopped here (see table)</text>
+</svg>

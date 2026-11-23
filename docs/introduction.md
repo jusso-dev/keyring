@@ -14,7 +14,7 @@ It is a thin layer. Keyring stores nothing. Every call to Key Vault is made as t
 
 - **People who use secrets, certificates and keys** but don't work in the Azure portal: developers, support staff and service owners. Start with the [walkthroughs](guides/00-about.md).
 - **Administrators** who deploy and run Keyring for their organisation. Start with [Deploy](deploy.md) and the [administrator SOPs](admin/admin-sops.md).
-- **Security and audit staff** who need to know what Keyring can do and what it records. Start with [For auditors](guides/15-auditors.md) and the [threat model](architecture.md#threat-model).
+- **Security and audit staff** who need to know what Keyring can do and what it records. Start with [For auditors](guides/15-auditors.md) and the [threat model](threat-model.md).
 
 ## What it does
 

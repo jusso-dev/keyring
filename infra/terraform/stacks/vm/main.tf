@@ -199,6 +199,13 @@ resource "azurerm_linux_virtual_machine" "this" {
     identity_ids = [module.config_vault.identity_id]
   }
 
+  lifecycle {
+    precondition {
+      condition     = !local.has_expiry
+      error_message = "expiry in notify_types needs Event Grid to reach Keyring from the internet, which this stack never allows. Send expiry email with infra/alerts and notifyVia = 'actionGroup' instead (docs/alerts.md)."
+    }
+  }
+
   admin_ssh_key {
     username   = var.admin_username
     public_key = var.ssh_public_key

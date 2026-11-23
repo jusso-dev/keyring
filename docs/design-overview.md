@@ -20,5 +20,6 @@ The other diagrams (logical architecture, identity and token flows, network and 
 
 ## Related
 
-- [Architecture](architecture.md): how the code is laid out, how sign-in and tokens work, and the threat model.
+- [Architecture](architecture.md): how the code is laid out, how sign-in and tokens work, and the threat model in engineering detail.
+- [Threat model](threat-model.md): trust boundaries, the threat model diagram and every STRIDE threat.
 - [Walkthrough guides (PDF)](Keyring-Walkthrough-Guides.pdf) and [administrator SOPs (PDF)](Keyring-Admin-SOPs.pdf), the same content as the [Walkthroughs](guides/00-about.md) and [Administer](admin/admin-sops.md) sections, for printing.

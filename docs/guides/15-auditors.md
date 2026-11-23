@@ -66,6 +66,10 @@ Reading audit pages, reports and CSVs writes no Keyring audit event. Key Vault's
 | Keyring's events and Key Vault's rows don't line up in time | Both are UTC. Key Vault's events can take minutes to arrive |
 | A reason looks odd | Reasons are free text a person typed, with line breaks turned into spaces. Treat them as statements, not evidence |
 
+## How Keyring is protected
+
+The [threat model](../threat-model.md) shows the trust boundaries, where each threat is stopped and what is left, with all 39 STRIDE threats. Keyring is never reachable from the whole internet: only privately or from trusted IP ranges (T39).
+
 ## Related walkthroughs
 
 - [11 Audit](11-audit.md)

@@ -90,7 +90,7 @@ Keyring never reads the vault for this, and its managed identity has no vault ac
 ### What you need first
 
 - Email on in Keyring ([deploy.md, Email](deploy.md#email)) with `expiry` in `KEYRING_NOTIFY_TYPES`. Without it, `/hooks/eventgrid` answers 404.
-- Keyring reachable from Event Grid over HTTPS at its public address. A Keyring that only takes private traffic can't receive these events.
+- Keyring reachable from Event Grid over HTTPS at a public address. Keyring's own templates never allow that ([deploy.md, Network access](deploy.md#network-access)), so they refuse `expiry` in `notifyTypes`; use the action group route above. This route is only for a Keyring you deploy yourself behind a front end that lets Event Grid through, and it adds threat T39 in [threat-model.md](threat-model.md).
 - `KEYRING_EVENTGRID_SUBSCRIPTIONS` holding the vault's subscription ID (see [Which subscriptions may send](#which-subscriptions-may-send)). The host templates set it to Keyring's own subscription; a vault in another subscription needs its ID added.
 - The one-off Entra steps below, done once per tenant.
 

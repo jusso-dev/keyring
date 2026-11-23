@@ -361,13 +361,15 @@ Not yet confirmed on a real tenant: every email step. See the "Email", "The two-
 
 **Purpose.** Send a vault's near-expiry and expired events to Keyring, so Keyring emails them.
 
+**Not with Keyring's templates.** This needs Event Grid to reach Keyring from the internet. Keyring's templates never allow that and refuse `expiry` in `notifyTypes` (threat T39, [deploy.md, Network access](../deploy.md#network-access)). For a template deployment, send expiry email with an action group instead ([alerts.md, Expiry alerts](../alerts.md#expiry-alerts)). This SOP is only for a Keyring you host yourself behind a front end that lets Event Grid through.
+
 **When to run.** For each vault that should get expiry emails from Keyring, after SOP 7.
 
 **Who.** For the one-off Entra steps (once per tenant): an owner of Keyring's app registration, or Application Administrator. For each vault: Contributor (or EventGrid Contributor) on the vault's resource group, and, while you create the subscription, the `AzureEventGridSecureWebhookSubscriber` app role on Keyring's service principal (removed again afterwards).
 
 **Before you start.**
 
-- `expiry` in `notifyTypes` and Keyring running at a public address (Event Grid can't reach a private one).
+- `expiry` in `KEYRING_NOTIFY_TYPES`, and a front end of your own that lets Event Grid reach `/hooks/eventgrid` (Event Grid can't reach a private Keyring).
 - Optionally a storage container for dead-lettering.
 
 **Steps.**

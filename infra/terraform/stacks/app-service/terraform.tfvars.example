@@ -6,6 +6,9 @@ image                    = "ghcr.io/jusso-dev/keyring@sha256:0000000000000000000
 client_id                = "00000000-0000-0000-0000-000000000000"
 app_base_url             = "https://keyring.example.com"
 config_vault_name        = "kv-keyring-config-01"
+# Keyring is never open to the whole internet: a private endpoint
+# (inbound_private_endpoint_subnet_id) or trusted ranges only.
+allowed_ip_ranges = ["203.0.113.0/24"] # your office or VPN egress
 sku_name                 = "P0v3"
 replicas                 = 1
 zone_redundant           = false
