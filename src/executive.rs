@@ -1160,7 +1160,9 @@ impl OrgSnapshot {
                 badge_class: "badge-error",
                 title: format!("Schedule renewal for {expiring_warn} credential(s) expiring within {expiry_warn_days} days"),
                 detail: "Confirm owners and notify lists on each expiring item and rotate before expiry to prevent service disruption.".to_owned(),
-                href: "/expiry?group=30",
+                // The dashboard's groups are fixed bands (7, 30, 90 days), so no one
+                // group holds "within N days": link to all of it, soonest first.
+                href: "/expiry",
             });
         }
         let no_purge = total_vaults.saturating_sub(pass_purge);
@@ -1397,7 +1399,12 @@ pub fn to_csv(snap: &OrgSnapshot, opts: &ReportOptions, generated_utc: &str) -> 
             d.vaults_unknown
         ),
     };
-    let open_s = d.open.total().to_string();
+    // Blank when alerts weren't read, so a spreadsheet can't count them as 0.
+    let open_s = if d.alerts_error.is_some() {
+        String::new()
+    } else {
+        d.open.total().to_string()
+    };
     push_row(
         &mut out,
         &[

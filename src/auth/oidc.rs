@@ -176,6 +176,26 @@ struct TokenErrorResponse {
 /// Longest discovery document or key set read, in bytes.
 const MAX_METADATA_BYTES: usize = 1024 * 1024;
 
+/// A response body, read a chunk at a time and given up on as soon as it
+/// passes `max` bytes, so a misbehaving endpoint can't make Keyring hold a
+/// huge body in memory. `None` when it was too large.
+async fn read_capped(
+    mut res: reqwest::Response,
+    max: usize,
+) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    if res.content_length().is_some_and(|n| n > max as u64) {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = res.chunk().await? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
+}
+
 /// Why discovery failed. Holds no response bodies.
 #[derive(Debug)]
 struct DiscoveryError(String);
@@ -308,11 +328,9 @@ impl Oidc {
         if status != reqwest::StatusCode::OK {
             return Err(DiscoveryError(format!("{what} returned HTTP {status}")));
         }
-        let body = res.bytes().await?;
-        if body.len() > MAX_METADATA_BYTES {
-            return Err(DiscoveryError(format!("{what} is too large")));
-        }
-        Ok(body.to_vec())
+        read_capped(res, MAX_METADATA_BYTES)
+            .await?
+            .ok_or_else(|| DiscoveryError(format!("{what} is too large")))
     }
 
     /// Fetch the discovery document and the keys it points at. The
@@ -541,7 +559,10 @@ impl Oidc {
             .await
             .map_err(unreachable)?;
         let status = res.status();
-        let body = res.bytes().await.map_err(unreachable)?;
+        let body = read_capped(res, MAX_METADATA_BYTES)
+            .await
+            .map_err(unreachable)?
+            .ok_or_else(|| SignInError::Unreachable("token response is too large".into()))?;
         if status.is_success() {
             let token: TokenResponse = serde_json::from_slice(&body)
                 .map_err(|_| SignInError::Unreachable("unreadable token response".into()))?;

@@ -328,7 +328,7 @@ impl Default for VaultDefender {
 pub struct Defender {
     /// Each subscription (lower-case ID) with a plan row: `true` for On.
     pub plans: Result<HashMap<String, bool>, String>,
-    /// Newest first.
+    /// Open alerts first, then newest first.
     pub alerts: Result<Vec<Alert>, String>,
 }
 
@@ -362,10 +362,19 @@ impl Defender {
                 })
                 .collect()
         });
-        let alerts = alerts.map(|rows| {
-            let mut out: Vec<Alert> = rows.iter().take(MAX_ALERTS).map(Alert::from_raw).collect();
+        let alerts = alerts.and_then(|rows| {
+            // The query puts open alerts first, so a full page whose last
+            // row is still open may have left open alerts out. Counting
+            // them would understate the open alerts, so say it couldn't.
+            let out: Vec<Alert> = rows.iter().take(MAX_ALERTS).map(Alert::from_raw).collect();
+            if out.len() >= MAX_ALERTS && out.last().is_some_and(|a| a.status.is_open()) {
+                return Err(format!(
+                    "There are more than {MAX_ALERTS} open alerts, more than Keyring reads at once: see them in Defender for Cloud"
+                ));
+            }
+            let mut out = out;
             sort_newest_first(&mut out);
-            out
+            Ok(out)
         });
         Self { plans, alerts }
     }
@@ -591,6 +600,23 @@ mod tests {
         let urgent = most_urgent(alerts, 2);
         assert_eq!(urgent[0].severity, Severity::High);
         assert_eq!(urgent[1].severity, Severity::Medium);
+
+        let many: Vec<RawAlert> = (0..MAX_ALERTS)
+            .map(|_| raw("kv-a", "Low", "Active", "2026-11-20T03:04:05Z"))
+            .collect();
+        let capped = Defender::from_rows(Ok(vec![]), Ok(many));
+        assert!(
+            capped
+                .open_for("kv-a")
+                .unwrap_err()
+                .contains("more than 1000 open alerts")
+        );
+        let mut closed: Vec<RawAlert> = (0..MAX_ALERTS)
+            .map(|_| raw("kv-a", "Low", "Resolved", "2026-11-20T03:04:05Z"))
+            .collect();
+        closed[0].status = "Active".into();
+        let full_of_closed = Defender::from_rows(Ok(vec![]), Ok(closed));
+        assert_eq!(full_of_closed.open_for("kv-a").unwrap().total(), 1);
 
         let failed = Defender::from_rows(Err("No access".into()), Err("No access".into()));
         assert_eq!(

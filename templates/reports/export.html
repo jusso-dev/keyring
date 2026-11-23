@@ -257,11 +257,19 @@
         <div class="kpi-num">{{ snap.expired + snap.expiring_warn }}</div>
         <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.expiring_warn }} soon</div>
       </div>
+      {% if snap.defender.alerts_error.is_some() %}
+      <div class="kpi warn">
+        <div class="kpi-lbl">Defender Alerts</div>
+        <div class="kpi-num">n/a</div>
+        <div class="kpi-sub">Not read · {{ snap.defender.vaults_off }} unprotected</div>
+      </div>
+      {% else %}
       <div class="kpi {% if snap.defender.open.high > 0 %}danger{% elif snap.defender.open.total() > 0 || snap.defender.vaults_off > 0 %}warn{% else %}ok{% endif %}">
         <div class="kpi-lbl">Defender Alerts</div>
-        <div class="kpi-num">{% if snap.defender.alerts_error.is_some() %}n/a{% else %}{{ snap.defender.open.total() }}{% endif %}</div>
+        <div class="kpi-num">{{ snap.defender.open.total() }}</div>
         <div class="kpi-sub">{{ snap.defender.open.high }} high · {{ snap.defender.vaults_off }} unprotected</div>
       </div>
+      {% endif %}
       <div class="kpi {% if snap.stale + snap.no_expiry > 0 %}warn{% else %}ok{% endif %}">
         <div class="kpi-lbl">Stale / No Expiry</div>
         <div class="kpi-num">{{ snap.stale + snap.no_expiry }}</div>

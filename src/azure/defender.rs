@@ -21,19 +21,23 @@ pub const PLANS_QUERY: &str = "securityresources \
 | project subscriptionId, pricingTier = tostring(properties.pricingTier)";
 
 /// Defender alerts on Key Vaults: alert types `KV_*`, or any alert whose
-/// resource identifiers name a vault. Newest first, at most [`MAX_ALERTS`].
+/// resource identifiers name a vault. Every alert still open, however old,
+/// and closed ones from the last [`ALERT_DAYS`] days. Open alerts come
+/// first, so the [`MAX_ALERTS`] cap only ever drops closed ones before an
+/// open one, then newest first.
 pub fn alerts_query() -> String {
     format!(
         "securityresources \
 | where type =~ 'microsoft.security/locations/alerts' \
 | extend p = properties \
-| extend alertType = tostring(p.alertType), ids = p.resourceIdentifiers, t = todatetime(p.timeGeneratedUtc) \
-| where t > ago({ALERT_DAYS}d) \
+| extend alertType = tostring(p.alertType), ids = p.resourceIdentifiers, t = todatetime(p.timeGeneratedUtc), st = tostring(p.status) \
+| extend isOpen = st !~ 'Resolved' and st !~ 'Dismissed' \
+| where isOpen or t > ago({ALERT_DAYS}d) \
 | where alertType startswith 'KV_' or tostring(ids) contains 'microsoft.keyvault/vaults' \
-| order by t desc \
+| order by isOpen desc, t desc \
 | take {MAX_ALERTS} \
 | project subscriptionId, alertType, displayName = tostring(p.alertDisplayName), \
-severity = tostring(p.severity), status = tostring(p.status), \
+severity = tostring(p.severity), status = st, \
 timeGenerated = tostring(p.timeGeneratedUtc), intent = tostring(p.intent), \
 compromisedEntity = tostring(p.compromisedEntity), alertUri = tostring(p.alertUri), \
 resourceIdentifiers = ids"
@@ -138,6 +142,10 @@ mod tests {
         assert!(q.starts_with("securityresources"));
         assert!(q.contains("microsoft.security/locations/alerts"));
         assert!(q.contains("ago(90d)") && q.contains("take 1000"));
+        assert!(
+            q.contains("where isOpen or t > ago(90d)") && q.contains("order by isOpen desc"),
+            "open alerts are never dropped for age or by the cap"
+        );
         assert!(q.contains("startswith 'KV_'"));
     }
 }
