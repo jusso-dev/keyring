@@ -595,7 +595,7 @@ Access alerts are optional too. `infra/alerts/access.bicep` adds Azure Monitor l
 
 ## Threat model
 
-What Keyring protects, who it protects it from, and how. This is a summary for reviewers, not a guarantee.
+What Keyring protects, who it protects it from, and how. This is a summary for reviewers, not a guarantee. [threat-model.md](threat-model.md) has the diagram and the STRIDE table.
 
 ### What's worth protecting
 

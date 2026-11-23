@@ -58,7 +58,7 @@ const sidebars = {
       },
       items: [
         'security/security',
-        {type: 'link', label: 'Threat model', href: '/architecture#threat-model'},
+        'threat-model',
         {type: 'link', label: 'Audit event fields', href: '/deploy#audit-event-fields'},
         {type: 'link', label: 'Audit sink', href: '/deploy#audit-sink'},
         'sentinel',

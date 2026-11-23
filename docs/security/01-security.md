@@ -93,7 +93,11 @@ Each control below maps directly to its implementation in `src/` and automated v
 
 # Threat model summary (STRIDE)
 
-The full 36-threat STRIDE register (T1 to T36) is maintained in the Solution Design Document (Chapter 8). The highest-impact threats and residual risks for security reviewers are summarised below:
+The full STRIDE register (T1 to T38) is maintained in the Solution Design Document (Chapter 8) and summarised, with every threat, in `docs/threat-model.md`. The diagram shows the trust boundaries and where each threat is stopped.
+
+![Keyring threat model. Red T-numbers mark where each threat is stopped.](../images/threat-model.png)
+
+The highest-impact threats and residual risks for security reviewers are summarised below:
 
 | ID | Category | Threat | Primary controls | Residual risk |
 |---|---|---|---|---|
