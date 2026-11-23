@@ -3,8 +3,11 @@
 //! Resource Graph gives the access model, soft delete, purge protection and
 //! network settings. Each vault's diagnostic settings (ARM, Reader) and its
 //! secrets list (Key Vault Reader) are read through
-//! [`crate::azure::fanout`]. Certificate renewal and key rotation need a
-//! call per item, so they're only read when one vault is picked.
+//! [`crate::azure::fanout`]. Each vault's three lists are read once, for
+//! the expiry, expiring-soon and not-cycled checks. Defender for Key Vault
+//! is one Resource Graph read for every vault on the page. Certificate
+//! renewal and key rotation need a call per item, so they're only read
+//! when one vault is picked.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -24,14 +27,18 @@ use crate::auth::CurrentSession;
 use crate::auth::session::Session;
 use crate::azure::audit::{self, AuditSinks};
 use crate::azure::certs::CertsApi;
+use crate::azure::defender as azure_defender;
 use crate::azure::fanout::{self, reason};
 use crate::azure::keys::KeysApi;
-use crate::azure::secrets::SecretsApi;
+use crate::azure::secrets::now_ts;
 use crate::azure::vaults::{self, Vault, is_valid_vault_name};
 use crate::azure::{AzureClient, AzureError};
-use crate::health::{self, Count, Finding, Kind, Reads, Row, Status};
+use crate::config::Thresholds;
+use crate::defender::VaultDefender;
+use crate::health::{self, Count, Finding, Kind, Lifecycle, Reads, Row, Status, lower_first};
 use crate::routes::assets::render;
 use crate::routes::error::{Need, PageError, PageResult, Problem};
+use crate::routes::every_vault;
 use crate::routes::secrets::reveal::no_store;
 use crate::routes::shell::{Section, Shell};
 
@@ -118,38 +125,68 @@ where
 
 /// Everything read from one vault besides Resource Graph. Failures are
 /// kept in the result as reasons, so the fan-out only skips a vault that
-/// ran out of time.
+/// ran out of time. The vault's three lists are read once and used for
+/// every check that needs them.
 async fn read_vault(
     azure: AzureClient,
     session: Arc<Session>,
-    management_url: String,
-    vault_url: String,
-    vault_id: String,
+    vault: String,
+    urls: (String, String, String),
     per_item_checks: bool,
+    thresholds: Thresholds,
 ) -> (Reads, Option<String>) {
-    let secrets = SecretsApi {
-        azure: &azure,
-        session: &session,
-        vault_url: vault_url.clone(),
-    };
-    let (sinks, secret_list) = tokio::join!(
+    let (management_url, vault_url, vault_id) = urls;
+    let (sinks, lists) = tokio::join!(
         audit::audit_sinks(&azure, &session, &management_url, &vault_id),
-        secrets.list(),
+        every_vault::read_lists(&azure, &session, vault_url.clone()),
     );
     let audit = sinks.map_err(|e| arm_reason(&e));
-    let secrets_without_expiry = match secret_list {
+    let secrets_without_expiry = match &lists.secrets {
         Ok(list) => Count::all_read(
             list.iter()
                 .filter(|s| !s.managed.unwrap_or(false))
                 .filter(|s| s.attributes.is_enabled() && s.attributes.expires.is_none())
                 .count(),
         ),
-        Err(e) => Count::Failed(reason(&e)),
+        Err(e) => Count::Failed(reason(e)),
+    };
+    let (items, failed) = every_vault::items_of(&vault, &lists);
+    let lifecycle = if failed.len() == 3 {
+        Err(reason(failed[0].1))
+    } else {
+        let partly = (!failed.is_empty()).then(|| {
+            let kinds: Vec<&str> = failed.iter().map(|(k, _)| *k).collect();
+            format!(
+                "Its {} couldn't be read: {}",
+                kinds.join(" and "),
+                lower_first(&reason(failed[0].1))
+            )
+        });
+        Ok(Lifecycle::of(&items, thresholds, partly, now_ts()))
     };
     let (certs_not_renewing, keys_without_rotation) = if per_item_checks {
+        let cert_names = lists.certs.as_ref().map(|list| {
+            list.iter()
+                .filter(|c| c.attributes.is_enabled())
+                .map(|c| c.name().to_owned())
+                .filter(|n| crate::routes::vault_ctx::is_valid_object_name(n))
+                .collect::<Vec<_>>()
+        });
+        let key_names = lists.keys.as_ref().map(|list| {
+            list.iter()
+                .filter(|k| !k.managed.unwrap_or(false) && k.attributes.is_enabled())
+                .map(|k| k.name().to_owned())
+                .filter(|n| crate::routes::vault_ctx::is_valid_object_name(n))
+                .collect::<Vec<_>>()
+        });
         tokio::join!(
-            certs_not_renewing(azure.clone(), session.clone(), vault_url.clone()),
-            keys_without_rotation(azure.clone(), session.clone(), vault_url),
+            certs_not_renewing(
+                azure.clone(),
+                session.clone(),
+                vault_url.clone(),
+                cert_names
+            ),
+            keys_without_rotation(azure.clone(), session.clone(), vault_url, key_names),
         )
     } else {
         (Count::Deferred, Count::Deferred)
@@ -160,6 +197,9 @@ async fn read_vault(
             secrets_without_expiry,
             certs_not_renewing,
             keys_without_rotation,
+            lifecycle,
+            // Filled in from the one Resource Graph read for every vault.
+            defender: VaultDefender::default(),
             not_read: None,
         },
         None,
@@ -167,20 +207,15 @@ async fn read_vault(
 }
 
 /// Enabled certificates whose policy has no AutoRenew action.
-async fn certs_not_renewing(azure: AzureClient, session: Arc<Session>, vault_url: String) -> Count {
-    let api = CertsApi {
-        azure: &azure,
-        session: &session,
-        vault_url: vault_url.clone(),
-    };
-    let names: Vec<String> = match api.list().await {
-        Ok(list) => list
-            .iter()
-            .filter(|c| c.attributes.is_enabled())
-            .map(|c| c.name().to_owned())
-            .filter(|n| crate::routes::vault_ctx::is_valid_object_name(n))
-            .collect(),
-        Err(e) => return Count::Failed(reason(&e)),
+async fn certs_not_renewing(
+    azure: AzureClient,
+    session: Arc<Session>,
+    vault_url: String,
+    names: Result<Vec<String>, &AzureError>,
+) -> Count {
+    let names = match names {
+        Ok(n) => n,
+        Err(e) => return Count::Failed(reason(e)),
     };
     per_item(names, |name| {
         let (azure, session, vault_url) = (azure.clone(), session.clone(), vault_url.clone());
@@ -205,20 +240,11 @@ async fn keys_without_rotation(
     azure: AzureClient,
     session: Arc<Session>,
     vault_url: String,
+    names: Result<Vec<String>, &AzureError>,
 ) -> Count {
-    let api = KeysApi {
-        azure: &azure,
-        session: &session,
-        vault_url: vault_url.clone(),
-    };
-    let names: Vec<String> = match api.list().await {
-        Ok(list) => list
-            .iter()
-            .filter(|k| !k.managed.unwrap_or(false) && k.attributes.is_enabled())
-            .map(|k| k.name().to_owned())
-            .filter(|n| crate::routes::vault_ctx::is_valid_object_name(n))
-            .collect(),
-        Err(e) => return Count::Failed(reason(&e)),
+    let names = match names {
+        Ok(n) => n,
+        Err(e) => return Count::Failed(reason(e)),
     };
     per_item(names, |name| {
         let (azure, session, vault_url) = (azure.clone(), session.clone(), vault_url.clone());
@@ -274,17 +300,25 @@ async fn load(
         .iter()
         .map(|n| (n.clone(), by_name[n].id.clone()))
         .collect();
-    let read = fanout::read_each(wanted.clone(), |vault| {
-        read_vault(
-            state.azure.clone(),
-            session.0.clone(),
-            state.config.management_url.clone(),
-            state.config.vault_url(&vault),
-            ids.get(&vault).cloned().unwrap_or_default(),
-            per_item_checks,
-        )
-    })
-    .await;
+    let thresholds = state.config.thresholds();
+    let (read, defender) = tokio::join!(
+        fanout::read_each(wanted.clone(), |vault| {
+            let urls = (
+                state.config.management_url.clone(),
+                state.config.vault_url(&vault),
+                ids.get(&vault).cloned().unwrap_or_default(),
+            );
+            read_vault(
+                state.azure.clone(),
+                session.0.clone(),
+                vault,
+                urls,
+                per_item_checks,
+                thresholds,
+            )
+        }),
+        azure_defender::read(&state.azure, &session.0, &state.config.management_url),
+    );
     let mut reads: HashMap<String, Reads> = read.read.into_iter().collect();
     for s in read.skipped {
         reads.insert(s.vault.clone(), Reads::none(&s.reason));
@@ -292,10 +326,12 @@ async fn load(
     let rows = wanted
         .iter()
         .map(|n| {
-            let r = reads
+            let v = &by_name[n];
+            let mut r = reads
                 .remove(n)
                 .unwrap_or_else(|| Reads::none(fanout::TASK_FAILED));
-            Row::new(&by_name[n], &r)
+            r.defender = defender.for_vault(&v.name, &v.subscription_id);
+            Row::new(v, &r)
         })
         .collect();
     Ok(Loaded {
@@ -319,7 +355,7 @@ struct HealthPage {
     shell: Shell,
     rows: Vec<Row>,
     issues: Vec<Issue>,
-    kinds: [Kind; 10],
+    kinds: [Kind; 13],
     warnings: usize,
     unknowns: usize,
     vault_names: Vec<String>,
@@ -330,6 +366,8 @@ struct HealthPage {
     csv_url: String,
     max_vaults: usize,
     max_item_checks: usize,
+    expiry_warn_days: u32,
+    stale_after_days: u32,
 }
 
 fn csv_url(filter: &HealthFilter) -> String {
@@ -385,6 +423,8 @@ pub(super) async fn page(
         filter,
         max_vaults: MAX_VAULTS,
         max_item_checks: MAX_ITEM_CHECKS,
+        expiry_warn_days: state.config.expiry_warn_days,
+        stale_after_days: state.config.stale_after_days,
     })
     .into_response())
 }

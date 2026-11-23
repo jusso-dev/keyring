@@ -33,12 +33,10 @@
 //! Failures carry only a fixed [`Reject`] code. The token and its claims'
 //! values are never logged or kept.
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use openidconnect::JsonWebKey;
-use openidconnect::core::CoreJwsSigningAlgorithm;
 use serde_json::Value;
 
 use crate::auth::oidc::Oidc;
@@ -249,13 +247,7 @@ fn check_claims(
     Ok(())
 }
 
-/// Unix seconds now.
-pub fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
+pub use crate::auth::jwt::now_unix;
 
 /// Check a bearer token end to end. `may_refetch` is asked once, only when
 /// the `kid` isn't in the cache and every (still unverified) claim passed,
@@ -278,12 +270,11 @@ pub async fn verify(
             .ok_or(Reject::Signature)?,
         None => return Err(Reject::Signature),
     };
-    key.verify_signature(
-        &CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
-        p.signing_input.as_bytes(),
-        &p.signature,
-    )
-    .map_err(|_| Reject::Signature)
+    if key.verify_rs256(p.signing_input.as_bytes(), &p.signature) {
+        Ok(())
+    } else {
+        Err(Reject::Signature)
+    }
 }
 
 #[cfg(test)]

@@ -20,13 +20,11 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use keyring::config::Config;
-use openidconnect::core::{
-    CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
-    CoreRsaPrivateSigningKey,
-};
-use openidconnect::{JsonWebKeyId, PrivateSigningKey};
-use rsa::pkcs1::EncodeRsaPrivateKey;
+use ring::rand::SystemRandom;
+use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::json;
 
 /// JSON response without needing axum's `json` feature in the app.
@@ -211,8 +209,8 @@ pub(crate) struct MockIdp {
 
 pub(crate) struct IdpState {
     issuer: String,
-    pub key: CoreRsaPrivateSigningKey,
-    pub other_key: CoreRsaPrivateSigningKey,
+    pub key: TestKey,
+    pub other_key: TestKey,
     pub behaviour: Mutex<TokenBehaviour>,
     /// Nonce the next ID token should carry (taken from the authorise URL by the test).
     pub nonce: Mutex<Option<String>>,
@@ -265,37 +263,65 @@ pub(crate) const OBO_GRANT: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 /// The object ID the mock puts in every ID token, as Entra does with `oid`.
 pub(crate) const USER_OID: &str = "aaaaaaaa-0000-0000-0000-000000000001";
 
-/// An ID token with Entra's `oid` and `tid` claims.
-type EntraIdToken = openidconnect::IdToken<
-    keyring::auth::oidc::EntraClaims,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJwsSigningAlgorithm,
->;
-
 impl MockIdp {
     pub(crate) fn authority(&self) -> String {
         format!("http://{}", self.addr)
     }
 }
 
-static KEYS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+/// A throwaway RSA key the mock Entra signs with: one of the two fixed
+/// PKCS#8 keys in tests/fixtures, with its `kid`.
+pub(crate) struct TestKey {
+    pair: RsaKeyPair,
+    pub kid: &'static str,
+}
 
-fn keys() -> (CoreRsaPrivateSigningKey, CoreRsaPrivateSigningKey) {
-    // RSA key generation is slow; make the PEMs once per test binary.
-    let (a, b) = KEYS.get_or_init(|| {
-        let gen_pem = || {
-            let mut rng = rsa::rand_core::OsRng;
-            let key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("rsa key");
-            key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
-                .expect("pem")
-                .to_string()
-        };
-        (gen_pem(), gen_pem())
-    });
+impl TestKey {
+    fn load(der: &[u8], kid: &'static str) -> Self {
+        Self {
+            pair: RsaKeyPair::from_pkcs8(der).expect("test key fixture"),
+            kid,
+        }
+    }
+
+    /// RSASSA-PKCS1-v1_5 SHA-256 (RS256) signature of `input`.
+    pub(crate) fn sign(&self, input: &[u8]) -> Vec<u8> {
+        let mut sig = vec![0; self.pair.public().modulus_len()];
+        self.pair
+            .sign(&RSA_PKCS1_SHA256, &SystemRandom::new(), input, &mut sig)
+            .expect("rs256 signature");
+        sig
+    }
+
+    /// The public key as Entra publishes it in its key set.
+    pub(crate) fn jwk(&self) -> serde_json::Value {
+        let c = RsaPublicKeyComponents::<Vec<u8>>::from(self.pair.public());
+        json!({
+            "kty": "RSA",
+            "use": "sig",
+            "kid": self.kid,
+            "n": URL_SAFE_NO_PAD.encode(&c.n),
+            "e": URL_SAFE_NO_PAD.encode(&c.e),
+        })
+    }
+
+    /// A compact JWS of `claims` with `header`, signed RS256 whatever the
+    /// header says.
+    pub(crate) fn jws(&self, header: &serde_json::Value, claims: &serde_json::Value) -> String {
+        let input = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(header.to_string()),
+            URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        let sig = self.sign(input.as_bytes());
+        format!("{input}.{}", URL_SAFE_NO_PAD.encode(sig))
+    }
+}
+
+fn keys() -> (TestKey, TestKey) {
     (
-        CoreRsaPrivateSigningKey::from_pem(a, Some(JsonWebKeyId::new("k1".into()))).unwrap(),
-        CoreRsaPrivateSigningKey::from_pem(b, Some(JsonWebKeyId::new("k2".into()))).unwrap(),
+        TestKey::load(include_bytes!("../fixtures/test-idp-k1.pk8"), "k1"),
+        TestKey::load(include_bytes!("../fixtures/test-idp-k2.pk8"), "k2"),
     )
 }
 
@@ -366,8 +392,7 @@ async fn jwks(State(s): State<Arc<IdpState>>) -> Response {
     } else {
         &s.key
     };
-    let jwk: CoreJsonWebKey = key.as_verification_key();
-    json_response(StatusCode::OK, json!({ "keys": [jwk] }))
+    json_response(StatusCode::OK, json!({ "keys": [key.jwk()] }))
 }
 
 pub(crate) fn now_unix() -> i64 {
@@ -469,8 +494,6 @@ async fn token(
     if let Some(auth_time) = *s.auth_time.lock().unwrap() {
         claims_json["auth_time"] = json!(auth_time);
     }
-    let claims: openidconnect::IdTokenClaims<keyring::auth::oidc::EntraClaims, CoreGenderClaim> =
-        serde_json::from_value(claims_json).expect("mock ID token claims");
     let rolled = *s.rolled_over.lock().unwrap();
     let key = match behaviour {
         TokenBehaviour::WrongKey if rolled => &s.key,
@@ -478,14 +501,10 @@ async fn token(
         _ if rolled => &s.other_key,
         _ => &s.key,
     };
-    let id_token = EntraIdToken::new(
-        claims,
-        key,
-        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
-        None,
-        None,
-    )
-    .unwrap();
+    let id_token = key.jws(
+        &json!({"alg": "RS256", "typ": "JWT", "kid": key.kid}),
+        &claims_json,
+    );
     json_response(
         StatusCode::OK,
         json!({
@@ -493,7 +512,7 @@ async fn token(
             "token_type": "Bearer",
             "expires_in": 3600,
             "refresh_token": "user-refresh-token",
-            "id_token": id_token.to_string(),
+            "id_token": id_token,
         }),
     )
 }
@@ -653,6 +672,14 @@ pub(crate) struct ArmState {
     /// Shares (#286): assignments and schedule requests at a secret's
     /// scope. See [`share::ShareArm`].
     pub share: Mutex<share::ShareArm>,
+    /// Defender for Key Vault plan rows (`subscriptionId`, `pricingTier`)
+    /// for the `securityresources` pricings query.
+    pub defender_plans: Mutex<Vec<serde_json::Value>>,
+    /// Defender alert rows, as the alerts query projects them.
+    pub defender_alerts: Mutex<Vec<serde_json::Value>>,
+    /// Answer the `securityresources` queries with 403, as Resource
+    /// Graph does without Security Reader.
+    pub defender_forbidden: Mutex<bool>,
 }
 
 /// What the mock ARM answers for the Access reads. Like ARM, the
@@ -1144,6 +1171,9 @@ pub(crate) async fn start_arm() -> MockArm {
         keyring_partial: Mutex::new(false),
         authz: Mutex::new(AuthzMock::with_builtin_roles()),
         share: Mutex::new(share::ShareArm::default()),
+        defender_plans: Mutex::new(Vec::new()),
+        defender_alerts: Mutex::new(Vec::new()),
+        defender_forbidden: Mutex::new(false),
     });
     let app = Router::new()
         .route(
@@ -1179,7 +1209,17 @@ async fn resource_graph(
         );
     }
     let query = body["query"].as_str().unwrap_or_default();
-    let rows = if query.contains("resourcecontainers") {
+    if query.starts_with("securityresources") && *s.defender_forbidden.lock().unwrap() {
+        return json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "AuthorizationFailed", "message": "mock failure"}}),
+        );
+    }
+    let rows = if query.contains("microsoft.security/pricings") {
+        s.defender_plans.lock().unwrap().clone()
+    } else if query.contains("microsoft.security/locations/alerts") {
+        s.defender_alerts.lock().unwrap().clone()
+    } else if query.contains("resourcecontainers") {
         s.subscriptions.lock().unwrap().clone()
     } else {
         s.vaults.lock().unwrap().clone()
@@ -1219,11 +1259,10 @@ async fn arm_fallback(
         .unwrap_or_default()
         .to_owned();
     // Percent-decoded, as ARM reads it, for the share mock's filters.
-    let decoded: String =
-        openidconnect::url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("&");
+    let decoded: String = url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&");
     if let Some(res) = share::answer(&s.share, &method, &path, &decoded, &body) {
         return res;
     }
@@ -2096,7 +2135,7 @@ impl World {
         use tower::ServiceExt;
         let mut all = vec![("csrf", self.csrf.as_str())];
         all.extend_from_slice(fields);
-        let body: String = openidconnect::url::form_urlencoded::Serializer::new(String::new())
+        let body: String = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(all)
             .finish();
         let req = axum::http::Request::post(path)
@@ -2220,4 +2259,32 @@ pub(crate) fn world_notify_settings() -> keyring::config::NotifySettings {
         hook_tuning: keyring::notify::expiry::HookTuning::default(),
         health_tuning: keyring::notify::health::Tuning::default(),
     }
+}
+
+/// A Defender for Key Vault alert row, as the alerts query projects it.
+pub(crate) fn defender_alert(
+    vault: &str,
+    sub: &str,
+    severity: &str,
+    status: &str,
+) -> serde_json::Value {
+    json!({
+        "subscriptionId": sub,
+        "alertType": "KV_ListGetAnomaly",
+        "displayName": "Suspicious secret listing and query in a key vault",
+        "severity": severity,
+        "status": status,
+        "timeGenerated": "2026-11-20T03:04:05.123Z",
+        "intent": "CredentialAccess",
+        "compromisedEntity": vault,
+        "alertUri": "https://portal.azure.com/#blade/Microsoft_Azure_Security_AzureDefenderForData/AlertBlade/alertId/1",
+        "resourceIdentifiers": [
+            {"type": "AzureResource", "azureResourceId": format!("/subscriptions/{sub}/resourceGroups/rg-{vault}/providers/Microsoft.KeyVault/vaults/{vault}")}
+        ]
+    })
+}
+
+/// A Defender plan row for the pricings query.
+pub(crate) fn defender_plan(sub: &str, tier: &str) -> serde_json::Value {
+    json!({"subscriptionId": sub, "pricingTier": tier})
 }

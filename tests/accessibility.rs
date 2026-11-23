@@ -316,6 +316,7 @@ async fn pages_have_labels_headings_and_landmarks() {
         "/expiry/age".into(),
         "/vault-health".into(),
         "/vault-health?vault=kv-test".into(),
+        "/defender".into(),
         "/reports/executive".into(),
         "/search".into(),
         "/search?q=db".into(),

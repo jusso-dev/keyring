@@ -358,7 +358,7 @@ async fn targets_that_are_not_allowed_are_refused_before_any_call() {
             "{vault} {name}: only the source's properties"
         );
         // The review says so on the form instead.
-        let q = openidconnect::url::form_urlencoded::Serializer::new(String::new())
+        let q = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs([("to_vault", vault), ("to_name", name)])
             .finish();
         let res = t.w.get(&format!("{COPY}/review?{q}")).await;

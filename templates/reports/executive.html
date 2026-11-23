@@ -109,7 +109,7 @@
           <span class="kpi-value">{{ snap.posture_score }}%</span>
           <span class="badge {{ snap.posture_badge }}">{{ snap.posture_label }}</span>
         </div>
-        <div class="kpi-sub">Across 8 security controls</div>
+        <div class="kpi-sub">Across {{ snap.controls.len() }} security controls</div>
       </div>
       <div class="kpi-card">
         <span class="kpi-label">Vaults monitored</span>
@@ -121,9 +121,9 @@
         <div class="kpi-value">{{ snap.total_items }}</div>
         <div class="kpi-sub">{{ snap.secrets_count }} secrets · {{ snap.certs_count }} certs · {{ snap.keys_count }} keys</div>
       </div>
-      <div class="kpi-card {% if snap.expired + snap.expiring_30 > 0 %}kpi-danger{% else %}kpi-ok{% endif %}">
-        <span class="kpi-label">Expired / &lt;= 30d</span>
-        <div class="kpi-value">{{ snap.expired + snap.expiring_30 }}</div>
+      <div class="kpi-card {% if snap.expired + snap.expiring_warn > 0 %}kpi-danger{% else %}kpi-ok{% endif %}">
+        <span class="kpi-label">Expired / &lt;= {{ snap.expiry_warn_days }}d</span>
+        <div class="kpi-value">{{ snap.expired + snap.expiring_warn }}</div>
         <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.stale }} stale · {{ snap.no_expiry }} no expiry</div>
       </div>
     </div>

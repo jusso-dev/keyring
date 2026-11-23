@@ -13,11 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use openidconnect::PrivateSigningKey;
-use openidconnect::core::{CoreJwsSigningAlgorithm, CoreRsaPrivateSigningKey};
 use serde_json::{Map, Value, json};
 
-use super::{CLIENT_ID, MockIdp, TENANT};
+use super::{CLIENT_ID, MockIdp, TENANT, TestKey};
 
 /// Event Grid's first-party application ID.
 pub(crate) const EVENT_GRID_APP: &str = "4962773b-9cdb-44cf-a8bf-237846a00ab7";
@@ -79,35 +77,22 @@ pub(crate) fn claims_v2(idp: &MockIdp) -> Map<String, Value> {
 /// rolled over), with header `alg` RS256 and the key's `kid`.
 pub(crate) fn sign(idp: &MockIdp, claims: &Map<String, Value>) -> String {
     let rolled = *idp.state.rolled_over.lock().unwrap();
-    let (key, kid) = if rolled {
-        (&idp.state.other_key, "k2")
+    let key = if rolled {
+        &idp.state.other_key
     } else {
-        (&idp.state.key, "k1")
+        &idp.state.key
     };
     sign_with(
         key,
-        json!({"alg": "RS256", "typ": "JWT", "kid": kid}),
+        json!({"alg": "RS256", "typ": "JWT", "kid": key.kid}),
         claims,
     )
 }
 
 /// Sign with a chosen key and header. The signature is RS256 whatever the
 /// header says.
-pub(crate) fn sign_with(
-    key: &CoreRsaPrivateSigningKey,
-    header: Value,
-    claims: &Map<String, Value>,
-) -> String {
-    let h = URL_SAFE_NO_PAD.encode(header.to_string());
-    let p = URL_SAFE_NO_PAD.encode(Value::Object(claims.clone()).to_string());
-    let input = format!("{h}.{p}");
-    let sig = key
-        .sign(
-            &CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
-            input.as_bytes(),
-        )
-        .unwrap();
-    format!("{input}.{}", URL_SAFE_NO_PAD.encode(sig))
+pub(crate) fn sign_with(key: &TestKey, header: Value, claims: &Map<String, Value>) -> String {
+    key.jws(&header, &Value::Object(claims.clone()))
 }
 
 /// A token with no signature at all and `alg` `none`.

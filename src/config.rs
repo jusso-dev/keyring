@@ -74,6 +74,10 @@ pub struct Config {
     /// `KEYRING_STALE_AFTER_DAYS`: a value unchanged for more than this
     /// many days gets the "Not changed in over ..." badge.
     pub stale_after_days: u32,
+    /// `KEYRING_EXPIRY_WARN_DAYS`: an enabled item that expires within this
+    /// many days (or has expired) is a warning on vault health, Home and
+    /// the executive report.
+    pub expiry_warn_days: u32,
     /// Azure Resource Manager base URL. Only changed by tests.
     pub management_url: String,
     /// Log Analytics query API base URL. Only changed by tests.
@@ -511,8 +515,21 @@ impl Config {
                 })?,
         };
 
+        let expiry_warn_days = match get("KEYRING_EXPIRY_WARN_DAYS") {
+            None => DEFAULT_EXPIRY_WARN_DAYS,
+            Some(v) => v
+                .parse::<u32>()
+                .ok()
+                .filter(|d| (1..=MAX_EXPIRY_WARN_DAYS).contains(d))
+                .ok_or_else(|| ConfigError::Invalid {
+                    name: "KEYRING_EXPIRY_WARN_DAYS",
+                    reason: format!("use a whole number of days from 1 to {MAX_EXPIRY_WARN_DAYS}"),
+                })?,
+        };
+
         Ok(Self {
             stale_after_days,
+            expiry_warn_days,
             step_up,
             reason,
             password_policy,
@@ -978,11 +995,11 @@ pub fn checked_audience(raw: &str) -> Result<String, String> {
 /// name, path, query or fragment, and return it in normal form.
 pub fn checked_acs_endpoint(raw: &str) -> Result<String, String> {
     let rule = "must be the Communication Services resource's endpoint, https://<resource>.<geography>.communication.azure.com, with nothing after the host";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let label = host.strip_suffix(".communication.azure.com").unwrap_or("");
     let ok_host = !label.is_empty()
-        && matches!(url.host(), Some(openidconnect::url::Host::Domain(_)))
+        && matches!(url.host(), Some(url::Host::Domain(_)))
         && label.split('.').count() <= 2
         && label.split('.').all(|l| {
             (1..=63).contains(&l.len())
@@ -1031,7 +1048,7 @@ fn checked_workspace_id(raw: &str) -> Result<String, ConfigError> {
 /// in normal form.
 pub fn checked_ingestion_endpoint(raw: &str) -> Result<String, String> {
     let rule = "must be the rule's logs ingestion endpoint, https://<name>.<region>.ingest.monitor.azure.com";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let label = host.strip_suffix(".ingest.monitor.azure.com").unwrap_or("");
     let ok_host = !label.is_empty()
@@ -1075,6 +1092,37 @@ pub const DEFAULT_STALE_AFTER_DAYS: u32 = 365;
 /// Largest `KEYRING_STALE_AFTER_DAYS` accepted: ten years.
 pub const MAX_STALE_AFTER_DAYS: u32 = 3650;
 
+/// Default for `KEYRING_EXPIRY_WARN_DAYS`.
+pub const DEFAULT_EXPIRY_WARN_DAYS: u32 = 30;
+/// Largest `KEYRING_EXPIRY_WARN_DAYS` accepted: a year.
+pub const MAX_EXPIRY_WARN_DAYS: u32 = 365;
+
+/// The lifecycle thresholds the warnings use: when an expiry date is close
+/// enough to warn about, and when a value is old enough to need cycling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Thresholds {
+    pub expiry_warn_days: u32,
+    pub stale_after_days: u32,
+}
+
+impl Default for Thresholds {
+    fn default() -> Self {
+        Self {
+            expiry_warn_days: DEFAULT_EXPIRY_WARN_DAYS,
+            stale_after_days: DEFAULT_STALE_AFTER_DAYS,
+        }
+    }
+}
+
+impl Config {
+    pub fn thresholds(&self) -> Thresholds {
+        Thresholds {
+            expiry_warn_days: self.expiry_warn_days,
+            stale_after_days: self.stale_after_days,
+        }
+    }
+}
+
 /// Default Log Analytics query endpoint.
 pub const DEFAULT_LOGANALYTICS_URL: &str = "https://api.loganalytics.io";
 
@@ -1102,7 +1150,7 @@ fn checked_origin(name: &'static str, raw: &str) -> Result<String, ConfigError> 
         reason: reason.to_owned(),
     };
     let scheme_rule = "must start with https:// (http:// is only allowed for localhost)";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| invalid(scheme_rule))?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| invalid(scheme_rule))?;
     let host = url.host_str().unwrap_or_default();
     match url.scheme() {
         "https" if !host.is_empty() => {}
@@ -1426,6 +1474,28 @@ pub(crate) mod tests {
                     load(&env),
                     Err(ConfigError::Invalid {
                         name: "KEYRING_LOG_LEVEL",
+                        ..
+                    })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn expiry_warn_days_is_checked() {
+        let mut env = sample_env();
+        assert_eq!(load(&env).unwrap().expiry_warn_days, 30);
+        env.insert("KEYRING_EXPIRY_WARN_DAYS", "60".into());
+        assert_eq!(load(&env).unwrap().expiry_warn_days, 60);
+        assert_eq!(load(&env).unwrap().thresholds().expiry_warn_days, 60);
+        for bad in ["0", "366", "-3", "a month"] {
+            env.insert("KEYRING_EXPIRY_WARN_DAYS", bad.into());
+            assert!(
+                matches!(
+                    load(&env),
+                    Err(ConfigError::Invalid {
+                        name: "KEYRING_EXPIRY_WARN_DAYS",
                         ..
                     })
                 ),

@@ -61,9 +61,10 @@ impl StepUpPolicy {
             let now = unix(now);
             // Unknown counts as too old. A time a little in the future
             // (clock skew) counts as fresh.
-            let fresh = facts
-                .auth_time
-                .is_some_and(|t| now.saturating_sub(t) <= max.as_secs() as i64);
+            let fresh = facts.auth_time.is_some_and(|t| {
+                let age = now.saturating_sub(t);
+                (-crate::auth::jwt::CLOCK_SKEW_SECS..=max.as_secs() as i64).contains(&age)
+            });
             if !fresh {
                 return Err(Shortfall::Age);
             }

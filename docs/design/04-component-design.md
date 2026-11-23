@@ -17,7 +17,7 @@ One file per area. Every POST route is either wrapped in `audited(Action, handle
 | `bulk.rs`, `batch.rs` | Bulk changes, and the four-at-a-time runner shared with import |
 | `tag_rows.rs` | Tag rows and their suggestions, the tag filter |
 | `search.rs`, `every_vault.rs` | Search across vaults, and reading every vault's lists (shared with expiry and age) |
-| `expiry.rs`, `age.rs`, `vault_health.rs` | The expiry dashboard, age view and vault health, each with CSV |
+| `expiry.rs`, `age.rs`, `vault_health.rs`, `defender.rs` | The expiry dashboard, age view, vault health and Defender alerts, each with CSV |
 | `audit.rs`, `audit_keyring.rs`, `audit_across.rs`, `used_by.rs` | Key Vault's log for a vault, Keyring activity, reports across vaults, the "Used by" panel |
 | `access.rs`, `hints.rs`, `pim.rs` | Access page and sections, permission hints, PIM activation and My access |
 | `access_review.rs` | The access review, `/v/{vault}/access/review` and `/v/{vault}/access/review.csv`: every item with its owner, notify, description, value age, who used it in 90 days, who has access and rotation status. Reads only, as the person; writes no audit event |
@@ -42,6 +42,7 @@ One file per area. Every POST route is either wrapped in `audited(Action, handle
 | `client.rs` | The REST client: attaches the token, a fresh `x-ms-client-request-id`, retries once on 401, maps errors to status and code |
 | `secrets.rs`, `certs.rs`, `keys.rs`, `paging.rs` | Key Vault REST API 7.5. `nextLink` followed only on the same vault |
 | `vaults.rs` | Resource Graph vault and subscription queries, and one vault's tags (`vault_tags`) for activity emails |
+| `defender.rs` | Resource Graph queries for Defender for Key Vault's plan and alerts (`securityresources`) |
 | `audit.rs`, `audit_across.rs`, `audit_keyring.rs`, `used_by.rs` | Diagnostic settings through ARM, then Log Analytics queries. Filters reach KQL only as escaped `let` literals |
 | `authz.rs` | Role assignments, eligible assignments, role definitions, permissions, the vault resource (access model and policies) |
 | `pim.rs` | PIM eligibility, active and requested instances, policy rules, `SelfActivate` and `SelfDeactivate` |
@@ -54,7 +55,8 @@ One file per area. Every POST route is either wrapped in `audited(Action, handle
 
 | Module | Job |
 |---|---|
-| `oidc.rs` | OIDC with the `openidconnect` crate: discovery and signing keys cached for an hour, refetched once on an unknown key, last good copy kept on failure |
+| `oidc.rs` | OIDC on `reqwest`: discovery and signing keys cached for an hour, refetched once on an unknown key, last good copy kept on failure |
+| `jwt.rs` | JWT and JWK pieces on `ring`: RS256 only, `kid` required, no `crit`; ID token issuer, audience, `azp`, expiry and nonce checks; the key set Event Grid tokens are checked against |
 | `session.rs` | The in-memory session store: one hour idle, 12 hours absolute, swept every minute; per-session token, list and hint caches |
 | `cookies.rs`, `crypto.rs` | Cookie handling, AES-256-GCM sealing with keys derived from `SESSION_SECRET` (HKDF-SHA256), the cookie name bound in |
 | `return_to.rs` | Local return paths only |
@@ -83,7 +85,7 @@ One file per area. Every POST route is either wrapped in `audited(Action, handle
 | `src/telemetry.rs` | Text or JSON log lines, the request log, the panic hook |
 | `src/serve.rs` | Connection cap, header timeout, connection age |
 | `src/x509.rs`, `src/pkcs12.rs` | Reading certificate details and checking a PFX before upload |
-| `src/expiry.rs`, `src/age.rs`, `src/health.rs`, `src/dates.rs` | Expiry bands, age bands, vault health checks, date handling |
+| `src/expiry.rs`, `src/age.rs`, `src/health.rs`, `src/defender.rs`, `src/dates.rs` | Expiry bands, age bands, vault health checks (including expiring soon, not cycled and Defender), Defender alert cleaning and counts, date handling |
 | `src/generator.rs` | Values from the operating system's secure random source |
 | `src/config.rs` | Every setting (appendix A) |
 

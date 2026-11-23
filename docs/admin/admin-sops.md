@@ -486,11 +486,12 @@ Not yet confirmed on a real tenant: the step-up round trip. See the four "Step-u
 
 **Weekly steps.**
 
-1. Open **Vault health** and work through **What to look at**.
-2. Run **Refused requests** across vaults for the last 7 days, and look at anyone unexpected.
-3. Check Keyring's own config vault on **Expiry**: `entra-client-secret` (if used) shouldn't be close to expiry.
-4. Check the image digest is still the release you meant to run (SOP 12).
-5. With sharing on (SOP 15) and no PIM licensing: open the access review (walkthrough 14) on each vault and look for **Overdue share**. Ask the sharer to revoke it, or revoke it yourself.
+1. Open **Vault health** and work through **What to look at**. **Expiring soon** and **Not cycled** follow `KEYRING_EXPIRY_WARN_DAYS` (default 30) and `KEYRING_STALE_AFTER_DAYS` (default 365): set them, or `expiryWarnDays` and `staleAfterDays` in the Bicep parameters, to match your rotation policy.
+2. Open **Defender alerts**. Any subscription showing **Off** has no threat detection on its vaults: ask whoever looks after Defender for Cloud to turn on the Key Vault plan. Triage open High and Medium alerts in Defender for Cloud.
+3. Run **Refused requests** across vaults for the last 7 days, and look at anyone unexpected.
+4. Check Keyring's own config vault on **Expiry**: `entra-client-secret` (if used) shouldn't be close to expiry.
+5. Check the image digest is still the release you meant to run (SOP 12).
+6. With sharing on (SOP 15) and no PIM licensing: open the access review (walkthrough 14) on each vault and look for **Overdue share**. Ask the sharer to revoke it, or revoke it yourself.
 
 **Verification.** Record the date and anything found in your operations log.
 

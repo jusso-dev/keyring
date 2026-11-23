@@ -22,7 +22,7 @@ fn is_safe(p: &str) -> bool {
 
 /// Percent-encode a value for a query string.
 pub fn encode(v: &str) -> String {
-    openidconnect::url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
+    url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
 }
 
 #[cfg(test)]

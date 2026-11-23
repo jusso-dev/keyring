@@ -73,6 +73,19 @@ The seeded token is treated as valid for 50 minutes. Nothing can refresh it: the
 
 4. Delete the token file (`rm "$TOKEN_FILE"`). Add what you saw to "Record of runs" in the checklist, with no tenant-identifying values.
 
+### The Defender alerts query
+
+`real_defender_query_keeps_and_projects_both_casings` runs Keyring's own alerts pipeline (`ALERTS_PIPELINE` in `src/azure/defender.rs`) through real Resource Graph over four made-up rows: one with Resource Graph's PascalCase properties, one with the REST API's camelCase, one closed and past the 90-day window, and one not about a Key Vault. It checks that the first two are kept, in that order, with every field projected, and that the other two are dropped. It reads no real alert, so it works on a tenant without Defender for Cloud. It needs only an ARM token for someone who can read at least one resource:
+
+```sh
+ARM_TOKEN_FILE=$(mktemp)
+az account get-access-token --resource https://management.azure.com \
+  --query accessToken -o tsv > "$ARM_TOKEN_FILE"
+KEYRING_REAL_ARM_TOKEN_FILE="$ARM_TOKEN_FILE" \
+cargo test --test real_vault real_defender_query -- --ignored
+rm "$ARM_TOKEN_FILE"
+```
+
 ### Guard rails
 
 - The vault name must be valid and start with `kr-test-`. Anything else fails before any request is sent. Name throwaway vaults that way, and never give a vault that name if it holds anything that matters.

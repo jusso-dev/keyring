@@ -14,6 +14,7 @@ pub(crate) mod batch;
 mod bulk;
 mod certs;
 pub(crate) mod confirm;
+mod defender;
 mod details;
 pub(crate) mod environments;
 pub mod error;
@@ -411,6 +412,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/expiry/age.csv", get(age::csv))
         .route("/vault-health", get(vault_health::page))
         .route("/vault-health.csv", get(vault_health::csv))
+        .route("/defender", get(defender::page))
+        .route("/defender.csv", get(defender::csv))
         .route("/reports/executive", get(reports::page))
         .route("/reports/executive/export", get(reports::export))
         .route("/environments", get(environments::page))

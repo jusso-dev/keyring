@@ -1,33 +1,29 @@
 //! Entra ID sign-in: OpenID Connect authorisation code flow with PKCE.
 //!
-//! Token and ID token checks (issuer, audience, expiry, nonce, signature
-//! against the tenant's published keys) are done by the `openidconnect`
-//! crate, not by hand.
+//! Discovery, the authorise URL, the code exchange and the ID token checks
+//! are Keyring's own code on `reqwest` and `ring`. The token checks
+//! (signature with RS256 only against the tenant's published keys, issuer,
+//! audience, expiry, nonce) are in [`crate::auth::jwt`].
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use openidconnect::core::{
-    CoreAuthDisplay, CoreAuthPrompt, CoreAuthenticationFlow, CoreErrorResponseType,
-    CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
-    CoreRevocableToken, CoreRevocationErrorResponse, CoreTokenIntrospectionResponse, CoreTokenType,
-};
-use openidconnect::{
-    AdditionalClaims, AuthType, AuthorizationCode, ClaimsVerificationError, ClientId, ClientSecret,
-    CsrfToken, EmptyExtraTokenFields, EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields,
-    IssuerUrl, JsonWebKey, Nonce, OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier,
-    ProviderMetadataWithLogout, RedirectUrl, Scope, SignatureVerificationError,
-    StandardErrorResponse, StandardTokenResponse, TokenResponse,
-};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ring::digest::{SHA256, digest};
+use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
+use url::Url;
 
-use crate::auth::assertion::{ASSERTION_TYPE, Credential};
+use crate::auth::assertion::Credential;
+use crate::auth::crypto::random_token;
 use crate::auth::entra::{self, EntraAdvice};
+use crate::auth::jwt::{self, IdTokenCheck, Jwk, Jwks, JwtError};
 use crate::auth::session::{User, UserId, UserTokens};
 use crate::auth::step_up::{SignInFacts, auth_context_id};
 use crate::azure::token::expiry_from;
 use crate::config::Config;
-use crate::http::{OidcHttp, error_chain};
+use crate::http::HttpError;
 use crate::secret::Secret;
 
 /// Re-fetch the tenant's discovery document and signing keys this often.
@@ -135,45 +131,96 @@ pub struct EntraClaims {
     pub acrs: Option<Vec<String>>,
 }
 
-impl AdditionalClaims for EntraClaims {}
+/// What Keyring keeps from the tenant's discovery document, with the
+/// signing keys from its `jwks_uri`.
+struct Metadata {
+    issuer: String,
+    authorization_endpoint: Url,
+    token_endpoint: Url,
+    end_session_endpoint: Option<Url>,
+    jwks: Jwks,
+}
 
-type EntraTokenResponse = StandardTokenResponse<
-    IdTokenFields<
-        EntraClaims,
-        EmptyExtraTokenFields,
-        CoreGenderClaim,
-        CoreJweContentEncryptionAlgorithm,
-        CoreJwsSigningAlgorithm,
-    >,
-    CoreTokenType,
->;
+/// The fields of the discovery document Keyring reads.
+#[derive(serde::Deserialize)]
+struct Discovery {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+    jwks_uri: String,
+    #[serde(default)]
+    end_session_endpoint: Option<String>,
+}
 
-/// `CoreClient` with [`EntraClaims`] in place of no extra claims.
-type EntraClient = openidconnect::Client<
-    EntraClaims,
-    CoreAuthDisplay,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJsonWebKey,
-    CoreAuthPrompt,
-    StandardErrorResponse<CoreErrorResponseType>,
-    EntraTokenResponse,
-    CoreTokenIntrospectionResponse,
-    CoreRevocableToken,
-    CoreRevocationErrorResponse,
-    EndpointSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointMaybeSet,
-    EndpointMaybeSet,
->;
+/// A successful token response. No `Debug`, so tokens never print.
+#[derive(serde::Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    token_type: String,
+    #[serde(default)]
+    expires_in: Option<u64>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
+}
+
+/// An OAuth error response from the token endpoint.
+#[derive(serde::Deserialize)]
+struct TokenErrorResponse {
+    error: String,
+    #[serde(default)]
+    error_description: Option<String>,
+    /// Entra's numeric codes, such as `[53000]`. Preferred over the number
+    /// at the start of `error_description`.
+    #[serde(default)]
+    error_codes: Vec<u64>,
+}
+
+/// Longest discovery document or key set read, in bytes.
+const MAX_METADATA_BYTES: usize = 1024 * 1024;
+
+/// A response body, read a chunk at a time and given up on as soon as it
+/// passes `max` bytes, so a misbehaving endpoint can't make Keyring hold a
+/// huge body in memory. `None` when it was too large.
+async fn read_capped(
+    mut res: reqwest::Response,
+    max: usize,
+) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    if res.content_length().is_some_and(|n| n > max as u64) {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = res.chunk().await? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
+}
+
+/// Why discovery failed. Holds no response bodies.
+#[derive(Debug)]
+struct DiscoveryError(String);
+
+impl From<HttpError> for DiscoveryError {
+    fn from(e: HttpError) -> Self {
+        Self(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for DiscoveryError {
+    fn from(e: reqwest::Error) -> Self {
+        HttpError::from(e).into()
+    }
+}
 
 /// The discovery cache: the last good document, and when a fetch last
 /// failed so a refetch isn't tried on every request.
 #[derive(Default)]
 struct MetadataCache {
-    good: Option<(Instant, Arc<ProviderMetadataWithLogout>)>,
+    good: Option<(Instant, Arc<Metadata>)>,
     failed_at: Option<Instant>,
     /// Set when the signing keys are known to be out of date.
     stale: bool,
@@ -186,7 +233,7 @@ pub struct Oidc {
     redirect_url: String,
     signed_out_url: String,
     api_scope: String,
-    http: OidcHttp,
+    http: reqwest::Client,
     metadata: RwLock<MetadataCache>,
     /// Held while fetching, so only one fetch goes out at a time.
     fetching: Mutex<()>,
@@ -203,7 +250,7 @@ impl Oidc {
             redirect_url: config.redirect_url(),
             signed_out_url: config.signed_out_url(),
             api_scope: config.api_scope.clone(),
-            http: OidcHttp(http),
+            http,
             metadata: RwLock::new(MetadataCache::default()),
             fetching: Mutex::new(()),
             ttl: METADATA_TTL,
@@ -221,14 +268,14 @@ impl Oidc {
 
     /// The cached document if it's fresh enough, or if a fetch failed a
     /// moment ago (then the old one is better than none).
-    async fn cached(&self) -> Option<Arc<ProviderMetadataWithLogout>> {
+    async fn cached(&self) -> Option<Arc<Metadata>> {
         let c = self.metadata.read().await;
         let (fetched, doc) = c.good.as_ref()?;
         let backing_off = c.failed_at.is_some_and(|t| t.elapsed() < self.retry_after);
         ((fetched.elapsed() < self.ttl && !c.stale) || backing_off).then(|| doc.clone())
     }
 
-    async fn metadata(&self) -> Result<Arc<ProviderMetadataWithLogout>, SignInError> {
+    async fn metadata(&self) -> Result<Arc<Metadata>, SignInError> {
         if let Some(doc) = self.cached().await {
             return Ok(doc);
         }
@@ -245,9 +292,7 @@ impl Oidc {
                 "discovery failed a moment ago".into(),
             ));
         }
-        let issuer = IssuerUrl::new(self.issuer.clone())
-            .map_err(|e| SignInError::Rejected(e.to_string()))?;
-        match ProviderMetadataWithLogout::discover_async(issuer, &self.http).await {
+        match self.discover().await {
             Ok(doc) => {
                 let doc = Arc::new(doc);
                 *self.metadata.write().await = MetadataCache {
@@ -257,8 +302,7 @@ impl Oidc {
                 };
                 Ok(doc)
             }
-            Err(e) => {
-                let detail = error_chain(&e);
+            Err(DiscoveryError(detail)) => {
                 let mut c = self.metadata.write().await;
                 c.failed_at = Some(Instant::now());
                 match &c.good {
@@ -275,6 +319,72 @@ impl Oidc {
         }
     }
 
+    /// GET a JSON document: discovery or the key set. Only the status, not
+    /// the body, goes in an error.
+    async fn get_json(&self, url: &str, what: &str) -> Result<Vec<u8>, DiscoveryError> {
+        let res = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await?;
+        let status = res.status();
+        if status != reqwest::StatusCode::OK {
+            return Err(DiscoveryError(format!("{what} returned HTTP {status}")));
+        }
+        read_capped(res, MAX_METADATA_BYTES)
+            .await?
+            .ok_or_else(|| DiscoveryError(format!("{what} is too large")))
+    }
+
+    /// Fetch the discovery document and the keys it points at. The
+    /// document's `issuer` must be exactly the configured one.
+    async fn discover(&self) -> Result<Metadata, DiscoveryError> {
+        let url = format!(
+            "{}/.well-known/openid-configuration",
+            self.issuer.trim_end_matches('/')
+        );
+        let body = self.get_json(&url, "discovery").await?;
+        let doc: Discovery = serde_json::from_slice(&body)
+            .map_err(|_| DiscoveryError("discovery document unreadable".into()))?;
+        if doc.issuer != self.issuer {
+            return Err(DiscoveryError(
+                "discovery document is for another issuer".into(),
+            ));
+        }
+        let parse = |raw: &str, what: &str| {
+            Url::parse(raw).map_err(|_| DiscoveryError(format!("discovery {what} unreadable")))
+        };
+        let authorization_endpoint = parse(&doc.authorization_endpoint, "authorization_endpoint")?;
+        // The browser is sent here, outside the HTTPS-only client, so check
+        // it: HTTPS, or plain HTTP only when the configured authority is
+        // itself plain HTTP (the loopback test authority config allows).
+        if authorization_endpoint.scheme() != "https"
+            && !(authorization_endpoint.scheme() == "http" && self.issuer.starts_with("http://"))
+        {
+            return Err(DiscoveryError(
+                "discovery authorization_endpoint is not HTTPS".into(),
+            ));
+        }
+        let token_endpoint = parse(&doc.token_endpoint, "token_endpoint")?;
+        let jwks_uri = parse(&doc.jwks_uri, "jwks_uri")?;
+        let end_session_endpoint = doc
+            .end_session_endpoint
+            .as_deref()
+            .map(|u| parse(u, "end_session_endpoint"))
+            .transpose()?;
+        let body = self.get_json(jwks_uri.as_str(), "signing keys").await?;
+        let jwks = Jwks::from_json(&body)
+            .ok_or_else(|| DiscoveryError("signing keys unreadable".into()))?;
+        Ok(Metadata {
+            issuer: doc.issuer,
+            authorization_endpoint,
+            token_endpoint,
+            end_session_endpoint,
+            jwks,
+        })
+    }
+
     /// Mark cached metadata as out of date so the next call fetches fresh
     /// signing keys. The last good copy is kept as a fallback in case that
     /// fetch fails, and any back-off is cleared so the fetch happens now.
@@ -282,23 +392,6 @@ impl Oidc {
         let mut c = self.metadata.write().await;
         c.stale = true;
         c.failed_at = None;
-    }
-
-    fn client(&self, metadata: &ProviderMetadataWithLogout) -> Result<EntraClient, SignInError> {
-        let redirect = RedirectUrl::new(self.redirect_url.clone())
-            .map_err(|e| SignInError::Rejected(e.to_string()))?;
-        Ok(EntraClient::from_provider_metadata(
-            metadata.clone(),
-            ClientId::new(self.client_id.clone()),
-            // With a managed identity there is no secret: `finish` adds the
-            // assertion to the code exchange instead.
-            self.credential
-                .secret()
-                .map(|s| ClientSecret::new(s.expose().to_owned())),
-        )
-        .set_redirect_uri(redirect)
-        // Entra ID expects the client secret in the form body.
-        .set_auth_type(AuthType::RequestBody))
     }
 
     /// Build the Entra sign-in URL and the state to keep until the callback.
@@ -326,38 +419,42 @@ impl Oidc {
         mfa: bool,
     ) -> Result<(String, PendingLogin), SignInError> {
         let metadata = self.metadata().await?;
-        let client = self.client(&metadata)?;
-        let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-        let mut request = client
-            .authorize_url(
-                CoreAuthenticationFlow::AuthorizationCode,
-                CsrfToken::new_random,
-                Nonce::new_random,
-            )
-            .add_scope(Scope::new("profile".into()))
-            .add_scope(Scope::new("offline_access".into()))
-            .add_scope(Scope::new(self.api_scope.clone()))
-            .set_pkce_challenge(challenge);
-        // Entra wants more than a plain sign-in (MFA, a compliant device)
-        // for a resource Keyring calls. Pass its challenge so it asks.
-        if let Some(c) = claims {
-            request = request.add_extra_param("claims", c);
+        let state = random_token(32);
+        let nonce = random_token(32);
+        let verifier = random_token(32);
+        let challenge = pkce_challenge(&verifier);
+        let scope = format!("openid profile offline_access {}", self.api_scope);
+        let mut url = metadata.authorization_endpoint.clone();
+        {
+            let mut q = url.query_pairs_mut();
+            q.append_pair("response_type", "code")
+                .append_pair("client_id", &self.client_id)
+                .append_pair("state", &state)
+                .append_pair("code_challenge", &challenge)
+                .append_pair("code_challenge_method", "S256")
+                .append_pair("redirect_uri", &self.redirect_url)
+                .append_pair("scope", &scope)
+                .append_pair("nonce", &nonce);
+            // Entra wants more than a plain sign-in (MFA, a compliant
+            // device) for a resource Keyring calls. Pass its challenge so
+            // it asks.
+            if let Some(c) = claims.as_deref() {
+                q.append_pair("claims", c);
+            }
+            let max_age = step_up.and_then(|s| s.max_age);
+            if let Some(max_age) = max_age {
+                q.append_pair("prompt", "login")
+                    .append_pair("max_age", &max_age.as_secs().to_string());
+            } else if mfa {
+                q.append_pair("prompt", "login");
+            }
         }
-        let max_age = step_up.and_then(|s| s.max_age);
-        if let Some(max_age) = max_age {
-            request = request
-                .add_prompt(CoreAuthPrompt::Login)
-                .set_max_age(max_age);
-        } else if mfa {
-            request = request.add_prompt(CoreAuthPrompt::Login);
-        }
-        let (url, state, nonce) = request.url();
         Ok((
             url.to_string(),
             PendingLogin {
-                state: state.secret().clone(),
-                nonce: nonce.secret().clone(),
-                pkce_verifier: verifier.secret().clone(),
+                state,
+                nonce,
+                pkce_verifier: verifier,
                 return_to,
                 unsaved,
                 step_up: step_up.is_some(),
@@ -373,69 +470,54 @@ impl Oidc {
         code: String,
     ) -> Result<(User, UserTokens, SignInFacts), SignInError> {
         let metadata = self.metadata().await?;
-        let client = self.client(&metadata)?;
-        // In managed identity mode, the assertion takes the secret's place.
-        let assertion = self
-            .credential
-            .assertion()
-            .await
-            .map_err(|e| SignInError::Unreachable(e.to_string()))?;
-        let mut request = client
-            .exchange_code(AuthorizationCode::new(code))
-            .map_err(|e| SignInError::Rejected(e.to_string()))?
-            .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier));
-        if let Some(assertion) = assertion.as_ref() {
-            request = request
-                .add_extra_param("client_assertion_type", ASSERTION_TYPE)
-                .add_extra_param("client_assertion", assertion.expose());
-        }
-        let token = request
-            .request_async(&self.http)
-            .await
-            .map_err(|e| match e {
-                openidconnect::RequestTokenError::ServerResponse(r) => SignInError::Provider {
-                    code: safe_code(r.error().as_ref()),
-                    codes: aadsts_code(r.error_description().map(String::as_str))
-                        .into_iter()
-                        .collect(),
-                },
-                other => SignInError::Unreachable(error_chain(&other)),
-            })?;
+        let token = self
+            .exchange_code(&metadata, &code, &pending.pkce_verifier)
+            .await?;
 
         let id_token = token
-            .id_token()
+            .id_token
+            .as_deref()
             .ok_or_else(|| SignInError::Rejected("no ID token in response".into()))?;
-        let nonce = Nonce::new(pending.nonce);
-        let claims = match id_token.claims(&client.id_token_verifier(), &nonce) {
-            Ok(c) => c.clone(),
-            Err(e) if is_key_miss(&e) => {
+        let verify = |m: &Metadata| {
+            jwt::verify_id_token(
+                id_token,
+                &m.jwks,
+                &IdTokenCheck {
+                    issuer: &m.issuer,
+                    client_id: &self.client_id,
+                    nonce: &pending.nonce,
+                    now: jwt::now_unix(),
+                },
+            )
+        };
+        let claims = match verify(&metadata) {
+            Ok(c) => c,
+            Err(e) if e.is_key_miss() => {
                 // The signing keys may have rolled over since they were
                 // cached. Fetch them again and check this token once more,
                 // so this sign-in works and not just the next one.
                 tracing::info!("ID token signed with an unknown key; refetching signing keys");
                 self.forget_metadata().await;
-                let fresh = self.client(&*self.metadata().await?)?;
-                id_token
-                    .claims(&fresh.id_token_verifier(), &nonce)
-                    .map_err(|e| SignInError::Rejected(e.to_string()))?
-                    .clone()
+                verify(&*self.metadata().await?).map_err(rejected)?
             }
-            Err(e) => return Err(SignInError::Rejected(e.to_string())),
+            Err(e) => return Err(rejected(e)),
         };
 
-        let username = claims.preferred_username().map(|u| u.as_str().to_owned());
-        let name = claims
-            .name()
-            .and_then(|n| n.get(None))
-            .map(|n| n.as_str().to_owned())
+        let str_claim = |name: &str| claims.get(name).and_then(Value::as_str);
+        // Checked by `verify_id_token`, so always there.
+        let sub = str_claim("sub").unwrap_or_default().to_owned();
+        let username = str_claim("preferred_username").map(str::to_owned);
+        let name = str_claim("name")
+            .map(str::to_owned)
             .or_else(|| username.clone())
             .unwrap_or_else(|| "Signed in".to_owned());
-        let extra = claims.additional_claims();
+        let extra: EntraClaims = serde_json::from_value(Value::Object(claims.clone()))
+            .map_err(|_| SignInError::Rejected("ID token claims unreadable".into()))?;
         let user = User {
             name,
             username,
             subject: UserId {
-                sub: claims.subject().as_str().to_owned(),
+                sub,
                 oid: extra.oid.as_deref().and_then(guid_claim),
                 tid: extra.tid.as_deref().and_then(guid_claim),
             },
@@ -448,16 +530,80 @@ impl Oidc {
                 .flatten()
                 .filter_map(|a| auth_context_id(a))
                 .collect(),
-            auth_time: claims.auth_time().map(|t| t.timestamp()),
+            auth_time: claims.get("auth_time").and_then(jwt::timestamp),
         };
         let tokens = UserTokens {
-            access_token: Secret::new(token.access_token().secret().clone()),
-            expires_at: expiry_from(token.expires_in(), SystemTime::now()),
-            refresh_token: token
-                .refresh_token()
-                .map(|t| Secret::new(t.secret().clone())),
+            access_token: Secret::new(token.access_token),
+            expires_at: expiry_from(token.expires_in.map(Duration::from_secs), SystemTime::now()),
+            refresh_token: token.refresh_token.map(Secret::new),
         };
         Ok((user, tokens, facts))
+    }
+
+    /// POST the code to the token endpoint. The client ID and credential
+    /// (the client secret, or in managed identity mode the assertion in
+    /// its place) go in the form body, as Entra ID expects.
+    async fn exchange_code(
+        &self,
+        metadata: &Metadata,
+        code: &str,
+        verifier: &str,
+    ) -> Result<TokenResponse, SignInError> {
+        let credential = self
+            .credential
+            .form_fields()
+            .await
+            .map_err(|e| SignInError::Unreachable(e.to_string()))?;
+        let mut form: Vec<(&str, &str)> = vec![
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", self.redirect_url.as_str()),
+            ("client_id", self.client_id.as_str()),
+            ("code_verifier", verifier),
+        ];
+        form.extend(credential.iter().map(|(k, v)| (*k, v.expose())));
+        let unreachable =
+            |e: reqwest::Error| SignInError::Unreachable(HttpError::from(e).to_string());
+        let res = self
+            .http
+            .post(metadata.token_endpoint.clone())
+            .header(reqwest::header::ACCEPT, "application/json")
+            .form(&form)
+            .send()
+            .await
+            .map_err(unreachable)?;
+        let status = res.status();
+        let body = read_capped(res, MAX_METADATA_BYTES)
+            .await
+            .map_err(unreachable)?
+            .ok_or_else(|| SignInError::Unreachable("token response is too large".into()))?;
+        if status.is_success() {
+            let token: TokenResponse = serde_json::from_slice(&body)
+                .map_err(|_| SignInError::Unreachable("unreadable token response".into()))?;
+            if !token.token_type.eq_ignore_ascii_case("bearer") {
+                return Err(SignInError::Unreachable(
+                    "token response is not a bearer token".into(),
+                ));
+            }
+            return Ok(token);
+        }
+        // Only the error code, and the AADSTS number from the description,
+        // are kept. Never the rest of the body.
+        match serde_json::from_slice::<TokenErrorResponse>(&body) {
+            Ok(r) => Err(SignInError::Provider {
+                code: safe_code(&r.error),
+                codes: if r.error_codes.is_empty() {
+                    aadsts_code(r.error_description.as_deref())
+                        .into_iter()
+                        .collect()
+                } else {
+                    r.error_codes.into_iter().take(8).collect()
+                },
+            }),
+            Err(_) => Err(SignInError::Unreachable(format!(
+                "token endpoint returned HTTP {status}"
+            ))),
+        }
     }
 
     /// The tenant's published signing key with this `kid`, from the same
@@ -465,17 +611,10 @@ impl Oidc {
     /// the cache marks it out of date and fetches the keys once more, as
     /// sign-in does on a key rollover. `None` when there is no such key or
     /// the keys can't be fetched.
-    pub async fn signing_key(&self, kid: &str, refetch: bool) -> Option<CoreJsonWebKey> {
-        let find = |doc: &ProviderMetadataWithLogout| {
-            doc.jwks()
-                .keys()
-                .iter()
-                .find(|k| k.key_id().is_some_and(|id| id.as_str() == kid))
-                .cloned()
-        };
+    pub async fn signing_key(&self, kid: &str, refetch: bool) -> Option<Jwk> {
         let doc = self.metadata().await.ok()?;
-        if let Some(k) = find(&doc) {
-            return Some(k);
+        if let Some(k) = doc.jwks.find(kid) {
+            return Some(k.clone());
         }
         if !refetch {
             return None;
@@ -483,23 +622,27 @@ impl Oidc {
         tracing::info!("webhook token signed with an unknown key; refetching signing keys");
         self.forget_metadata().await;
         let fresh = self.metadata().await.ok()?;
-        find(&fresh)
+        fresh.jwks.find(kid).cloned()
     }
 
     /// Entra's sign-out URL, which sends the browser back to us afterwards.
     pub async fn end_session_url(&self) -> Option<String> {
         let metadata = self.metadata().await.ok()?;
-        let mut url = metadata
-            .additional_metadata()
-            .end_session_endpoint
-            .as_ref()?
-            .url()
-            .clone();
+        let mut url = metadata.end_session_endpoint.clone()?;
         url.query_pairs_mut()
             .append_pair("client_id", &self.client_id)
             .append_pair("post_logout_redirect_uri", &self.signed_out_url);
         Some(url.to_string())
     }
+}
+
+/// The PKCE S256 challenge for a verifier: base64url of its SHA-256.
+fn pkce_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(digest(&SHA256, verifier.as_bytes()))
+}
+
+fn rejected(e: JwtError) -> SignInError {
+    SignInError::Rejected(e.to_string())
 }
 
 /// What a step-up sign-in asks Entra for beyond the `claims` parameter.
@@ -520,16 +663,6 @@ pub fn aadsts_code(description: Option<&str>) -> Option<u64> {
         .take(9)
         .collect();
     digits.parse().ok()
-}
-
-/// True when an ID token failed because no cached key could check it.
-fn is_key_miss(e: &ClaimsVerificationError) -> bool {
-    matches!(
-        e,
-        ClaimsVerificationError::SignatureVerification(
-            SignatureVerificationError::NoMatchingKey | SignatureVerificationError::CryptoError(_)
-        )
-    )
 }
 
 /// An `oid` or `tid` claim, lower-cased, if it is a GUID. Anything else is
@@ -584,17 +717,12 @@ mod tests {
     }
 
     #[test]
-    fn key_misses_are_told_apart_from_other_failures() {
-        assert!(is_key_miss(
-            &ClaimsVerificationError::SignatureVerification(
-                SignatureVerificationError::NoMatchingKey
-            )
-        ));
-        assert!(!is_key_miss(&ClaimsVerificationError::InvalidNonce(
-            "x".into()
-        )));
-        assert!(!is_key_miss(&ClaimsVerificationError::InvalidAudience(
-            "x".into()
-        )));
+    fn pkce_challenge_is_s256() {
+        // base64url, no padding, of the verifier's SHA-256, as worked out
+        // separately with `openssl dgst -sha256 -binary | base64`.
+        assert_eq!(
+            pkce_challenge("dBjftJeZ4CVP-mJ0kXlEyJc0eEx9xBbY3XWaFAsuSZ8"),
+            "JA-ZKN9n2MQI7JGwtpFo5kyxEPO_a1SUlxjQqBYNXEQ"
+        );
     }
 }

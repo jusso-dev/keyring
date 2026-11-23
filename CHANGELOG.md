@@ -8,16 +8,23 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 
 ## [Unreleased]
 
+### Security
+- Sign-in no longer uses the `openidconnect` crate. Discovery, the authorise URL, the code exchange and the ID token checks are Keyring's own code on `reqwest` and `ring` (`src/auth/oidc.rs`, `src/auth/jwt.rs`): RS256 only with a `kid` and no `crit`, the issuer matched exactly, the client ID in `aud` (and `azp` when there are several), `exp`, `nbf` and `iat` with five minutes' skew, and the nonce compared in constant time. Event Grid webhook tokens are checked against the same keys with `ring`. This takes `rsa` 0.9 and `chrono` out of the build, so the RUSTSEC-2023-0071 (#41) and RUSTSEC-2026-0543 (#271) exceptions are gone from `deny.toml` and `.cargo/audit.toml`. `Cargo.lock` drops from 300 packages to 185.
+- `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
+
 ### Fixed
 - The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 
 ### Added
+- **Defender alerts** page (`/defender`, `/defender.csv`): Microsoft Defender for Key Vault's plan on each subscription, and its alerts on Key Vaults from the last 90 days, read from Resource Graph's `securityresources` table as the signed-in person. Alert text is cleaned and escaped, links are kept only when they point at the Azure portal, and an alert read that fails says so rather than showing none. Home gets a Defender alerts tile and the most urgent open alerts; the executive report gets a "Defender for Key Vault on" control, risk points per open alert, remediation actions and a Defender row in its CSV.
+- Three vault health checks: **Expiring soon** (an enabled item expired or expiring within `KEYRING_EXPIRY_WARN_DAYS`, default 30), **Not cycled** (no new value in more than `KEYRING_STALE_AFTER_DAYS`) and **Defender for Key Vault** (plan off, or open alerts on the vault). Each vault's three lists are now read once for every check that needs them.
+- `KEYRING_EXPIRY_WARN_DAYS` (1 to 365, default 30), and `expiryWarnDays` in both Bicep templates. Home's expiry tile and the executive report's expiring count and action follow it.
 - Twelve more real-vault checklist rows in `tests/real_vault.rs` (21 in all): typed content types, value and description limits, line breaks, tag round trips, tags replaced as a whole, certificate and key Edit details, certificate tags on backing items, `created` on list calls, `managed` backing items and rotation tags. All 21 run on 22-11-2026 against a throwaway vault, and the mock Key Vault now matches every answer (#170).
 - Microsoft Sentinel Content Hub V3 solution package under `Solutions/Keyring/` (ASIM parsers, 8 analytic rule YAMLs, 6 hunting query YAMLs, workbook, `mainTemplate.json` and `createUiDefinition.json`), one-click Deploy to Azure ARM template (`infra/sentinel/azuredeploy.json`), and packaging/validation scripts in `tools/sentinel/` (#301).
 
 ### Changed
-- Removed `chrono` from test dev-dependencies in favour of `keyring::dates` and standard library time helpers, leaving `openidconnect`/`oauth2` as the only remaining transitive source of `chrono` (#271).
+- Removed `chrono` from test dev-dependencies in favour of `keyring::dates` and standard library time helpers (#271).
 - Silenced false-positive `secure-secrets-in-params` Bicep linter warning on the non-secret `passwordPolicy` parameter in `infra/app-service/main.bicep` and `infra/container-apps/main.bicep`.
 - Updated `.env.example`, `SECURITY.md`, `README.md`, `docs/sentinel.md` and `docs/real-vault-checklist.md` to reflect `v1.0.0`, real-tenant test runs through 19-11-2026, and all production environment variables.
 - Bumped `taiki-e/install-action` from `2.90.3` to `2.90.6` in CI (#290).

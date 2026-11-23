@@ -49,14 +49,20 @@ pub(crate) async fn load_org_snapshot(
     }
 
     let wanted: Vec<String> = matching.iter().map(|v| v.name.clone()).collect();
-    let read = if wanted.is_empty() {
-        crate::azure::fanout::Fanned {
-            read: Vec::new(),
-            skipped: Vec::new(),
+    let lists = async {
+        if wanted.is_empty() {
+            crate::azure::fanout::Fanned {
+                read: Vec::new(),
+                skipped: Vec::new(),
+            }
+        } else {
+            every_vault::read(state, session, wanted).await
         }
-    } else {
-        every_vault::read(state, session, wanted).await
     };
+    let (read, defender) = tokio::join!(
+        lists,
+        crate::azure::defender::read(&state.azure, &session.0, &state.config.management_url),
+    );
     let items: Vec<_> = read
         .read
         .iter()
@@ -70,7 +76,8 @@ pub(crate) async fn load_org_snapshot(
         &items,
         &read.skipped,
         capped,
-        state.config.stale_after_days,
+        state.config.thresholds(),
+        &defender,
         now,
     ))
 }

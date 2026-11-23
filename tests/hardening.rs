@@ -120,7 +120,7 @@ fn fields_for(path: &str) -> Vec<(&'static str, String)> {
 async fn post_raw(w: &support::World, path: &str, csrf: &str, origin: Option<&str>) -> StatusCode {
     let mut all: Vec<(&str, String)> = vec![("csrf", csrf.to_owned())];
     all.extend(fields_for(path));
-    let body: String = openidconnect::url::form_urlencoded::Serializer::new(String::new())
+    let body: String = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(all.iter().map(|(k, v)| (*k, v.as_str())))
         .finish();
     let mut req = Request::post(path)
@@ -285,6 +285,8 @@ async fn headers_on_every_kind_of_response() {
         "/expiry/age.csv",
         "/vault-health",
         "/vault-health.csv",
+        "/defender",
+        "/defender.csv",
         "/search?q=db",
         "/generator",
         "/v/kv-test/audit",

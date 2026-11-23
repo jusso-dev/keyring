@@ -8,6 +8,7 @@ pub mod auth;
 pub mod azure;
 pub mod config;
 pub mod dates;
+pub mod defender;
 pub mod description;
 pub mod environments;
 pub mod executive;

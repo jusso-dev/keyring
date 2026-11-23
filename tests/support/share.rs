@@ -118,7 +118,7 @@ pub(crate) async fn start_graph() -> MockGraph {
 }
 
 fn decode(q: &str) -> String {
-    openidconnect::url::form_urlencoded::parse(q.as_bytes())
+    url::form_urlencoded::parse(q.as_bytes())
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("&")

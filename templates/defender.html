@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Defender alerts - Keyring{% endblock %}
+{% block content %}
+<div class="page-head">
+<nav class="breadcrumb" aria-label="Breadcrumb"><ol>{{ ui::crumb("/vaults", "Vaults") }}{{ ui::crumb_here("Defender alerts") }}</ol></nav>
+<div class="title-row"><h1>Defender alerts</h1>{% if open.high > 0 %}<span class="badge badge-error">{{ open.high }} high</span>{% endif %}</div>
+<p class="page-desc">What Microsoft Defender for Key Vault has seen on the vaults you can see, from the last {{ alert_days }} days.</p>
+{% call ui::about() %}
+<p>Defender for Key Vault is a plan in Microsoft Defender for Cloud. When it's on for a subscription, it raises an alert when a vault is used in an unusual way: secrets listed and read in bulk, access from a suspicious address or from Tor, or an unusual access policy change.</p>
+<p>Keyring reads the alerts and each subscription's plan from Azure Resource Graph, as you. You see the alerts for the subscriptions where you have Security Reader or Reader. Keyring doesn't change alerts: dismiss or resolve them in Defender for Cloud.</p>
+<p>Alert titles and entities come from whoever set the alert off, so they're shown as plain text.</p>
+{% endcall %}
+</div>
+
+<section aria-labelledby="coverage-heading">
+  <h2 id="coverage-heading">Coverage</h2>
+  {% if let Some(why) = plans_error %}
+  <p class="notice notice-warn">Couldn't read the Defender plans: {{ why }}.</p>
+  {% elif plans.is_empty() %}
+  <p class="muted">You can't see any vaults yet, so there are no subscriptions to show.</p>
+  {% else %}
+  {% if plans_off > 0 %}<p class="notice notice-warn">Defender for Key Vault is off on {{ plans_off }} subscription{% if plans_off != 1 %}s{% endif %}. Nothing watches those vaults for unusual access. Turn on the Key Vault plan in Defender for Cloud, under Environment settings. <a href="https://learn.microsoft.com/azure/defender-for-cloud/defender-for-key-vault-introduction" rel="noopener noreferrer">Microsoft's guide</a></p>{% endif %}
+  {% call ui::table_wrap("plans-caption") %}
+  <table class="ledger one-line">
+    <caption class="visually-hidden" id="plans-caption">Defender for Key Vault on each subscription</caption>
+    <thead><tr><th scope="col">Subscription</th><th scope="col">Vaults you can see</th><th scope="col">Defender for Key Vault</th></tr></thead>
+    <tbody>
+      {% for p in plans %}
+      <tr>
+        <th scope="row" class="item-name">{{ p.subscription }}</th>
+        <td>{{ p.vaults }}</td>
+        <td><span class="badge {{ p.plan.css() }}">{{ p.plan.label() }}</span>{% if !p.plan.reason().is_empty() %} <span class="muted small">{{ p.plan.reason() }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% endif %}
+</section>
+
+<section aria-labelledby="alerts-heading">
+  <h2 id="alerts-heading">Alerts</h2>
+  <form class="filters" method="get" action="/defender" role="search">
+    <div class="fpill"><label for="vault">Vault</label><select id="vault" name="vault">
+        <option value="">All</option>
+        {% for v in vault_names %}<option value="{{ v }}"{% if filter.vault.eq_ignore_ascii_case(v) %} selected{% endif %}>{{ v }}</option>{% endfor %}
+      </select></div>
+    <div class="fpill"><label for="severity">Severity</label><select id="severity" name="severity">
+        <option value="">Any</option>
+        {% for s in severities %}<option value="{{ s.slug() }}"{% if filter.severity == s.slug() %} selected{% endif %}>{{ s.label() }}</option>{% endfor %}
+      </select></div>
+    <div class="fpill"><label for="status">Status</label><select id="status" name="status">
+        <option value="">Open</option>
+        <option value="all"{% if filter.status == "all" %} selected{% endif %}>Open, resolved and dismissed</option>
+      </select></div>
+    <div class="filters-submit"><button type="submit" class="button-secondary">Apply</button></div>
+    <div class="filters-end"><span class="cmd-item">{{ ui::icon("csv") }}<a class="button cmd" href="{{ csv_url }}">Download CSV</a></span></div>
+  </form>
+
+  {% if let Some(why) = alerts_error %}
+  <p class="notice notice-warn">Couldn't read Defender's alerts: {{ why }}. This isn't the same as having none.</p>
+  {% else %}
+  <p>{% if plans_unknown > 0 %}At least {% endif %}{{ open.total() }} open alert{% if open.total() != 1 %}s{% endif %}{% if open.total() > 0 %}: {{ open.breakdown() }}{% endif %}{% if plans_unknown > 0 %}, on the subscriptions Keyring could read{% endif %}.{% if capped %} Only the first {{ max_alerts }} alerts were read, open ones first.{% endif %}</p>
+  {% if plans_unknown > 0 %}<p class="notice notice-warn">Keyring couldn't read Defender's plan for {{ plans_unknown }} subscription{% if plans_unknown != 1 %}s{% endif %}, so any alerts there may be missing from this list. Resource Graph only returns what you can read: you may need Security Reader there.</p>{% endif %}
+  {% if rows.is_empty() %}
+  <div class="empty-state"><p>No alerts match. Defender only raises alerts on subscriptions where its Key Vault plan is on.</p></div>
+  {% else %}
+  {% call ui::table_wrap("alerts-caption") %}
+  <table class="ledger one-line">
+    <caption class="visually-hidden" id="alerts-caption">Defender for Key Vault alerts</caption>
+    <thead><tr><th scope="col">Alert</th><th scope="col">Severity</th><th scope="col">Status</th><th scope="col">Vault</th><th scope="col">When</th><th scope="col">Tactic</th><th scope="col"><span class="visually-hidden">Open in Azure</span></th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <th scope="row" class="cell-fluid"><span class="clip clip-lg">{{ r.alert.title }}</span> <span class="mono muted small">{{ r.alert.alert_type }}</span></th>
+        <td><span class="badge {{ r.alert.severity.css() }}">{{ r.alert.severity.label() }}</span></td>
+        <td><span class="badge {{ r.alert.status.css() }}">{{ r.alert.status.label() }}</span></td>
+        <td class="item-name nowrap">{% if let Some(v) = r.vault_link %}<a href="/v/{{ v }}/secrets">{{ v }}</a>{% elif let Some(v) = r.alert.vault %}{{ v }}{% else %}<span class="muted">{{ r.subscription }}</span>{% endif %}</td>
+        <td class="nowrap">{% if let Some(iso) = r.alert.time.iso %}<time datetime="{{ iso }}">{{ r.alert.time.short }}</time>{% else %}{{ r.alert.time.short }}{% endif %}</td>
+        <td>{{ r.alert.intent }}</td>
+        <td>{% if let Some(url) = r.alert.portal_url %}<a class="button button-small" href="{{ url }}" rel="noopener noreferrer">Open in Azure<span class="visually-hidden">: {{ r.alert.title }}</span></a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

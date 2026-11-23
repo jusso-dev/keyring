@@ -44,7 +44,7 @@ use keyring::azure::{AzureError, Resource};
 use keyring::config::Config;
 use keyring::secret::Secret;
 use reqwest::Method;
-use rsa::rand_core::{OsRng, RngCore};
+use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------
@@ -91,7 +91,9 @@ fn clean_token(raw: &str) -> Result<String, String> {
 
 /// A name for something a test creates: `kr-real-` and 8 hex digits.
 fn unique_name() -> String {
-    format!("kr-real-{:08x}", OsRng.next_u32())
+    let mut b = [0u8; 4];
+    SystemRandom::new().fill(&mut b).expect("random bytes");
+    format!("kr-real-{:08x}", u32::from_be_bytes(b))
 }
 
 /// Key Vault's recovery levels that allow a purge all contain "Purgeable".
@@ -2354,4 +2356,105 @@ async fn the_mock_halves_ask_only_the_mock() {
             .all(|b| b == "Bearer mock-token-not-a-secret"),
         "the seeded token should be the only one used"
     );
+}
+
+// ---------------------------------------------------------------------
+// Defender for Key Vault: the alerts query over PascalCase and camelCase
+// rows, run by real Resource Graph
+// ---------------------------------------------------------------------
+
+/// Alert `properties` as Resource Graph's `securityresources` returns them
+/// (PascalCase, as in Microsoft's Defender for Cloud samples) and as the
+/// REST API and alert schema write them (camelCase). The query must keep
+/// and project both, keep an open alert however old, and drop a closed
+/// one past the window and one not about a Key Vault.
+const DEFENDER_FIXTURES: [&str; 4] = [
+    r#"{"AlertType":"KV_ListGetAnomaly","Severity":"High","Status":"Active","TimeGeneratedUtc":"2026-11-20T03:04:05Z","AlertDisplayName":"Pascal alert","Intent":"CredentialAccess","CompromisedEntity":"kv-pascal","AlertUri":"https://portal.azure.com/#pascal","ResourceIdentifiers":[{"Type":"AzureResource","AzureResourceId":"/subscriptions/s/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-pascal"}]}"#,
+    r#"{"alertType":"KV_SuspiciousIPAccess","severity":"Medium","status":"InProgress","timeGeneratedUtc":"2024-01-01T00:00:00Z","alertDisplayName":"Camel alert, old but open","alertUri":"https://portal.azure.com/#camel","resourceIdentifiers":[{"type":"AzureResource","azureResourceId":"/subscriptions/s/providers/Microsoft.KeyVault/vaults/kv-camel"}]}"#,
+    r#"{"AlertType":"KV_Tor","Severity":"Low","Status":"Resolved","TimeGeneratedUtc":"2024-01-01T00:00:00Z","AlertDisplayName":"Old and closed"}"#,
+    r#"{"AlertType":"VM_SomethingElse","Severity":"High","Status":"Active","TimeGeneratedUtc":"2026-11-20T00:00:00Z","AlertDisplayName":"Not a vault"}"#,
+];
+
+/// `resources | take 1` four times, each with made-up alert `properties`,
+/// then exactly the pipeline Keyring runs on real alert rows.
+fn defender_fixture_query() -> String {
+    let mut q = String::new();
+    for (i, props) in DEFENDER_FIXTURES.iter().enumerate() {
+        if i > 0 {
+            q.push_str(" | union (");
+        }
+        q.push_str(&format!(
+            "resources | take 1 | extend properties = parse_json('{props}')"
+        ));
+        if i > 0 {
+            q.push(')');
+        }
+    }
+    q.push(' ');
+    q.push_str(
+        &keyring::azure::defender::ALERTS_PIPELINE
+            .replace("{ALERT_DAYS}", &keyring::defender::ALERT_DAYS.to_string())
+            .replace("{MAX_ALERTS}", &keyring::defender::MAX_ALERTS.to_string()),
+    );
+    q
+}
+
+#[test]
+fn defender_fixture_query_runs_keyrings_own_pipeline() {
+    let q = defender_fixture_query();
+    assert_eq!(q.matches("resources | take 1").count(), 4);
+    assert!(q.ends_with("resourceIdentifiers = ids"), "{q}");
+    assert!(!q.contains("{ALERT_DAYS}") && !q.contains("{MAX_ALERTS}"));
+}
+
+/// Needs `KEYRING_REAL_ARM_TOKEN_FILE`: an ARM token (`az account
+/// get-access-token --resource https://management.azure.com`) for anyone
+/// who can read at least one resource. Reads nothing of Defender's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs an ARM token: docs/real-vault-automation.md"]
+async fn real_defender_query_keeps_and_projects_both_casings() {
+    let path = std::env::var("KEYRING_REAL_ARM_TOKEN_FILE").unwrap_or_else(|_| {
+        panic!("KEYRING_REAL_ARM_TOKEN_FILE is not set (docs/real-vault-automation.md)")
+    });
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("can't read the token file: {}", e.kind()));
+    let token = clean_token(&raw).unwrap_or_else(|e| panic!("{e}"));
+    let h = Harness::new(config(None), "kr-test-unused", "unused");
+    h.session.azure_tokens.seed_token_for_tests(
+        Resource::Management,
+        AccessToken::new(&token, SystemTime::now() + Duration::from_secs(50 * 60)),
+    );
+    let alerts = keyring::azure::defender::run_alerts_query(
+        &h.state.azure,
+        &h.session,
+        &h.state.config.management_url,
+        &defender_fixture_query(),
+    )
+    .await
+    .expect("Resource Graph answered");
+    let titles: Vec<&str> = alerts.iter().map(|a| a.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Pascal alert", "Camel alert, old but open"],
+        "open first, newest first, only Key Vault alerts in the window"
+    );
+    let (p, c) = (&alerts[0], &alerts[1]);
+    assert_eq!(p.vault.as_deref(), Some("kv-pascal"));
+    assert_eq!(p.severity, keyring::defender::Severity::High);
+    assert_eq!(p.status, keyring::defender::AlertStatus::Active);
+    assert_eq!(p.alert_type, "KV_ListGetAnomaly");
+    assert_eq!(p.intent, "CredentialAccess");
+    assert_eq!(
+        p.portal_url.as_deref(),
+        Some("https://portal.azure.com/#pascal")
+    );
+    assert!(
+        p.time
+            .iso
+            .as_deref()
+            .is_some_and(|t| t.starts_with("2026-11-20T03:04:05"))
+    );
+    assert_eq!(c.vault.as_deref(), Some("kv-camel"));
+    assert_eq!(c.severity, keyring::defender::Severity::Medium);
+    assert_eq!(c.status, keyring::defender::AlertStatus::InProgress);
 }

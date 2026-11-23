@@ -21,7 +21,7 @@ const HOME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(12);
 struct HomePage {
     shell: Shell,
     allow_purge: bool,
-    sections: [Section; 12],
+    sections: [Section; 13],
     snapshot: Option<OrgSnapshot>,
 }
 

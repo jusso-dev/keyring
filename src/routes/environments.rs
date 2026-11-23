@@ -97,7 +97,7 @@ fn repeated_vaults(raw_query: Option<&str>) -> Vec<String> {
     let Some(q) = raw_query else {
         return Vec::new();
     };
-    openidconnect::url::form_urlencoded::parse(q.as_bytes())
+    url::form_urlencoded::parse(q.as_bytes())
         .filter_map(|(k, v)| (k == "v").then(|| v.trim().to_owned()))
         .filter(|v| !v.is_empty())
         .collect()
@@ -917,7 +917,7 @@ pub(super) async fn apply(
     let mut values_by_id: BTreeMap<String, Secret> = BTreeMap::new();
     let mut vaults_by_id: BTreeMap<String, String> = BTreeMap::new();
 
-    for (k, v) in openidconnect::url::form_urlencoded::parse(&body) {
+    for (k, v) in url::form_urlencoded::parse(&body) {
         let key = k.as_ref();
         if tag_post.take(key, v.to_string()) {
             continue;

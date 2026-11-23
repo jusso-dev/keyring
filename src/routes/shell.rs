@@ -19,6 +19,7 @@ pub enum Section {
     Keys,
     Expiry,
     Health,
+    Defender,
     Generator,
     Audit,
     Access,
@@ -27,7 +28,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const NAV: [Section; 12] = [
+    pub const NAV: [Section; 13] = [
         Section::Vaults,
         Section::Environments,
         Section::Secrets,
@@ -35,6 +36,7 @@ impl Section {
         Section::Keys,
         Section::Expiry,
         Section::Health,
+        Section::Defender,
         Section::Reports,
         Section::Generator,
         Section::Audit,
@@ -52,6 +54,7 @@ impl Section {
             Self::Keys => "Keys",
             Self::Expiry => "Expiry",
             Self::Health => "Vault health",
+            Self::Defender => "Defender alerts",
             Self::Reports => "Executive reports",
             Self::Generator => "Generator",
             Self::Audit => "Audit",
@@ -83,6 +86,7 @@ impl Section {
             Self::Keys => "/keys",
             Self::Expiry => "/expiry",
             Self::Health => "/vault-health",
+            Self::Defender => "/defender",
             Self::Reports => "/reports/executive",
             Self::Generator => "/generator",
             Self::Audit => "/audit",
@@ -101,6 +105,7 @@ impl Section {
             Self::Keys => "keys",
             Self::Expiry => "expiry",
             Self::Health => "health",
+            Self::Defender => "defender",
             Self::Reports => "reports",
             Self::Generator => "generator",
             Self::Audit => "audit",
@@ -121,7 +126,10 @@ impl Section {
             Self::Certificates => "Track TLS certificates, renewal policies and uploads.",
             Self::Keys => "Manage cryptographic keys and automatic rotation policies.",
             Self::Expiry => "Review expiring credentials and stale secrets across vaults.",
-            Self::Health => "Check RBAC, purge protection, private endpoints and audit logs.",
+            Self::Health => {
+                "Check RBAC, purge protection, private endpoints, audit logs, expiry and cycling."
+            }
+            Self::Defender => "Review Microsoft Defender for Key Vault alerts and plan coverage.",
             Self::Reports => {
                 "Export continuous white-label HTML, CSV and JSON executive client reports."
             }

@@ -22,6 +22,7 @@ Every environment variable Keyring reads, from `src/config.rs`. A test in `tests
 | `KEYRING_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that add to `X-Forwarded-For`, 0 to 8. `1` on App Service and Container Apps (the templates set it) |
 | `KEYRING_ALLOW_PURGE` | Off | `true` allows permanent deletes |
 | `KEYRING_STALE_AFTER_DAYS` | `365` | Days before "Not changed in over ..." shows, 1 to 3650 |
+| `KEYRING_EXPIRY_WARN_DAYS` | `30` | Days before expiry when an item is a warning on vault health, Home and the executive report, 1 to 365 |
 | `KEYRING_STEP_UP_AUTH_CONTEXT` | Off | Conditional Access authentication context, `c1` to `c99`, before sensitive actions |
 | `KEYRING_STEP_UP_MAX_AGE` | Off | Minutes since sign-in, 1 to 720, for those actions |
 | `KEYRING_REQUIRE_REASON` | `off` | `off`, `reveal` or `all` |
@@ -142,10 +143,9 @@ Direct dependencies, from `Cargo.toml` and `Cargo.lock`. `deny.toml` allows only
 | `base64` | 0.23.1 | MIT OR Apache-2.0 | Encoding |
 | `flate2` | 1.1.11 | MIT OR Apache-2.0 | Gzip for the audit sink (pure Rust backend) |
 | `hyper`, `hyper-util` | 1.12.0, 0.1.21 | MIT | HTTP server |
-| `openidconnect` | 4.1.0 | MIT | OIDC sign-in |
 | `regex` | 1.13.1 | MIT OR Apache-2.0 | Ticket patterns and character classes (linear time) |
 | `reqwest` | 0.13.5 | MIT OR Apache-2.0 | Outbound HTTP |
-| `ring` | 0.17.14 | Apache-2.0 AND ISC | Crypto for rustls, AES-GCM, HKDF, HMAC, random |
+| `ring` | 0.17.14 | Apache-2.0 AND ISC | Crypto for rustls, AES-GCM, HKDF, HMAC, random, RS256 token signatures |
 | `rustls` | 0.23.46 | Apache-2.0 OR ISC OR MIT | TLS |
 | `serde`, `serde_json` | 1.0.229, 1.0.154 | MIT OR Apache-2.0 | JSON |
 | `tokio` | 1.54.1 | MIT | Async runtime |
@@ -153,10 +153,11 @@ Direct dependencies, from `Cargo.toml` and `Cargo.lock`. `deny.toml` allows only
 | `tracing`, `tracing-subscriber` | 0.1.44, 0.3.23 | MIT | Logging |
 | `x509-cert` | 0.3.0 | Apache-2.0 OR MIT | Certificate parsing |
 | `zeroize` | 1.9.1 | Apache-2.0 OR MIT | Clearing secrets from memory |
-| `http-body-util`, `rsa`, `url` | dev only | MIT OR Apache-2.0, MIT | Tests |
+| `url` | 2.5.9 | MIT OR Apache-2.0 | URL parsing and form encoding |
+| `http-body-util` | dev only | MIT | Tests |
 :::
 
-`Cargo.lock` holds 300 packages including build and test dependencies, every one under the allow-list. Accepted advisories: RUSTSEC-2023-0071 (`rsa` via `openidconnect`; Keyring does no RSA private-key operation; #41) and RUSTSEC-2026-0543 (`chrono` unmaintained notice; #271). CI produces a CycloneDX SBOM for the crates and one for the image.
+`Cargo.lock` holds 185 packages including build and test dependencies, every one under the allow-list. No advisories are accepted. CI produces a CycloneDX SBOM for the crates and one for the image.
 
 ## Appendix E: Azure resource names
 
