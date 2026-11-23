@@ -15,6 +15,7 @@ Every environment variable Keyring reads, from `src/config.rs`. A test in `tests
 | `SESSION_SECRET` | Required | At least 32 random characters. Key for sealed cookies and `session_ref` |
 | `IDENTITY_ENDPOINT`, `IDENTITY_HEADER` | Set by the platform | The managed identity's local token service. Must be on `localhost`, `127.0.0.1` or `169.254.0.0/16` |
 | `KEYRING_MANAGED_IDENTITY_CLIENT_ID` | None | Keyring's one user-assigned managed identity, for the federated credential (without `ENTRA_CLIENT_SECRET`), the audit sink and email |
+| `KEYRING_MANAGED_IDENTITY_MODE` | `platform` | `platform` (App Service and Container Apps using `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`) or `imds` (Azure VMs and VMSS using Azure IMDS at `169.254.169.254` with `Metadata: true`). Needs `KEYRING_MANAGED_IDENTITY_CLIENT_ID` |
 | `KEYRING_FEDERATED_IDENTITY_CLIENT_ID` | None | Deprecated alias for the above, read for one release with a warning |
 | `KEYRING_LISTEN` | `0.0.0.0:3000` | Address to listen on |
 | `KEYRING_LOG_LEVEL` | `info` | `error`, `warn`, `info`, `debug` or `trace`. `off` and filter strings refused. Audit events are written at every level |
