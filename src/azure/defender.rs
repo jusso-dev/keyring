@@ -34,6 +34,17 @@ pub fn alerts_query() -> String {
     format!(
         "securityresources \
 | where type =~ 'microsoft.security/locations/alerts' \
+{}",
+        ALERTS_PIPELINE
+            .replace("{ALERT_DAYS}", &ALERT_DAYS.to_string())
+            .replace("{MAX_ALERTS}", &MAX_ALERTS.to_string())
+    )
+}
+
+/// Everything in [`alerts_query`] after picking the alert rows: the
+/// filter, order, cap and projection. Kept apart so a test can run the
+/// same steps over rows it makes up (see `tests/real_vault.rs`).
+pub const ALERTS_PIPELINE: &str = "\
 | extend p = properties \
 | extend alertType = tostring(coalesce(p.AlertType, p.alertType)), ids = coalesce(p.ResourceIdentifiers, p.resourceIdentifiers), \
 t = todatetime(coalesce(p.TimeGeneratedUtc, p.timeGeneratedUtc, p.StartTimeUtc, p.startTimeUtc)), st = tostring(coalesce(p.Status, p.status)) \
@@ -46,9 +57,7 @@ t = todatetime(coalesce(p.TimeGeneratedUtc, p.timeGeneratedUtc, p.StartTimeUtc, 
 severity = tostring(coalesce(p.Severity, p.severity)), status = st, \
 timeGenerated = tostring(t), intent = tostring(coalesce(p.Intent, p.intent)), \
 compromisedEntity = tostring(coalesce(p.CompromisedEntity, p.compromisedEntity)), \
-alertUri = tostring(coalesce(p.AlertUri, p.alertUri)), resourceIdentifiers = ids"
-    )
-}
+alertUri = tostring(coalesce(p.AlertUri, p.alertUri)), resourceIdentifiers = ids";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +123,23 @@ pub fn reason(e: &AzureError) -> String {
         AzureError::Token(_) => "Sign-in needs refreshing".into(),
         _ => "Azure Resource Graph returned an error".into(),
     }
+}
+
+/// Run an alerts query and parse what it projects into alerts. Only for
+/// tests that check [`ALERTS_PIPELINE`] against real Resource Graph over
+/// rows they make up; Keyring itself only runs [`alerts_query`].
+#[doc(hidden)]
+pub async fn run_alerts_query(
+    azure: &AzureClient,
+    session: &Session,
+    management_url: &str,
+    query: &str,
+) -> Result<Vec<crate::defender::Alert>, AzureError> {
+    let rows = run_query::<AlertRow>(azure, session, management_url, query).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| crate::defender::Alert::from_raw(&RawAlert::from(r)))
+        .collect())
 }
 
 /// Defender plans and alerts, each kept or failed on its own.

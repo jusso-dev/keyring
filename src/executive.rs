@@ -392,9 +392,9 @@ pub struct VaultRiskRow {
     pub has_owners: bool,
     /// Enabled items expiring within the warning window, not yet expired.
     pub expiring_warn: usize,
-    /// Open Defender for Key Vault alerts on it. 0 when they couldn't be
-    /// read: see `defender_unread`.
-    pub defender_open: usize,
+    /// Open Defender for Key Vault alerts on it, or `None` when they
+    /// couldn't be read (see `defender_unread`). Never 0 for "not read".
+    pub defender_open: Option<usize>,
     /// Why its Defender alerts couldn't be read, when they couldn't.
     pub defender_unread: Option<String>,
     pub read_error: Option<String>,
@@ -829,10 +829,15 @@ impl OrgSnapshot {
                 issues.push("Vault not read".into());
             }
 
+            // Something Keyring couldn't read is never shown as a green Low:
+            // a higher risk found stays, and otherwise the row says Unknown.
+            let unread = defender_unread.is_some() || read_error.is_some();
             let (risk_label, risk_badge) = if risk >= 12 {
                 ("High", "badge-error")
             } else if risk >= 5 {
                 ("Medium", "badge-warn")
+            } else if unread {
+                ("Unknown", "badge-muted")
             } else {
                 ("Low", "badge-ok")
             };
@@ -859,7 +864,7 @@ impl OrgSnapshot {
                 private_endpoint: pe_ok,
                 has_owners: owners_ok,
                 expiring_warn: v_warn,
-                defender_open: v_alerts.total(),
+                defender_open: defender_unread.is_none().then(|| v_alerts.total()),
                 defender_unread,
                 read_error,
                 risk_score: risk,
@@ -1633,8 +1638,10 @@ mod tests {
             .unwrap();
         assert_eq!(defender.total, 0, "an unread plan counts neither way");
         assert_eq!(snap.defender.vaults_unknown, 2);
-        // Alerts not read are never "no gaps": each row says so.
+        // Alerts not read are never "no gaps", 0 or a green Low.
         assert!(snap.vault_rows.iter().all(|r| r.defender_unread.is_some()));
+        assert!(snap.vault_rows.iter().all(|r| r.defender_open.is_none()));
+        assert!(snap.vault_rows.iter().all(|r| r.risk_badge != "badge-ok"));
         assert!(
             snap.vault_rows
                 .iter()
@@ -1679,6 +1686,14 @@ mod tests {
             now,
         )];
         let snap = OrgSnapshot::build(&vaults, &items, &[], false, t, &d, now);
+        // A plan row was read, so a vault with no alerts is a real 0.
+        let dev = snap
+            .vault_rows
+            .iter()
+            .find(|r| r.name == "kv-payments-dev")
+            .unwrap();
+        assert_eq!(dev.defender_open, Some(0));
+        assert_eq!(dev.defender_unread, None);
         assert_eq!(
             snap.defender.open.high, 1,
             "only alerts on vaults in the snapshot"
