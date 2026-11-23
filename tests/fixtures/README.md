@@ -14,6 +14,7 @@ trusted or used anywhere else.
 | `test-ber.pfx` | A PFX in BER, with indefinite lengths, as older Windows tools write it. Its own throwaway key and certificate, `CN=keyring-ber.test`. Password `test-password`. See "The BER PFX" below |
 
 The private keys in these files protect nothing. Don't reuse them.
+| `test-idp-k1.pk8`, `test-idp-k2.pk8` | Two throwaway RSA 2048 private keys, PKCS#8 DER, made with `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -outform DER`. The mock Entra signs ID tokens and Event Grid tokens with them (`k1`, and `k2` after a key rollover) |
 | `test-rsa-pub.pem`, `test-rsa-n.txt` | Public half of a throwaway RSA 2048 key, as PEM and as the JWK `n` value. The private key was deleted |
 | `test-ec-pub.pem`, `test-ec-x.txt`, `test-ec-y.txt` | Public half of a throwaway EC P-256 key, as PEM and as JWK `x` and `y`. The private key was deleted |
 | `demo-cert.pem`, `demo-cert-soon.pem` | Public certificates only, self-signed, for the screenshot demo in `tests/screenshots.rs`: `CN=payments-api.demo.example` and `CN=internal-gateway.demo.example` (ends 25-11-2026). The private keys were deleted |

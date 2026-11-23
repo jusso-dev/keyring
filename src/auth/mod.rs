@@ -5,6 +5,7 @@ pub mod cookies;
 pub mod crypto;
 pub mod entra;
 pub mod eventgrid;
+pub mod jwt;
 pub mod oidc;
 pub mod return_to;
 pub mod session;

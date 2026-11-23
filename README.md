@@ -552,7 +552,7 @@ Sessions live in memory, so restarting Keyring signs everyone out. A request tha
 
 Keyring handles secrets, so the less code we pull in from strangers, the better. A typical JavaScript web app installs hundreds of npm packages, any of which can run code at install time. Keyring keeps that list short and checked:
 
-- **Rust, with few crates.** Axum on Tokio for the web server, Askama for HTML templates compiled into the binary, `openidconnect` for sign-in and `reqwest` with rustls for calls to Azure.
+- **Rust, with few crates.** Axum on Tokio for the web server, Askama for HTML templates compiled into the binary, `reqwest` with rustls for calls to Azure, and sign-in (OpenID Connect with PKCE, RS256 ID token checks) written in Keyring on `ring`.
 - **Server-rendered pages.** Pages are plain HTML and CSS. The only JavaScript is five small hand-written files (`app.js`, `behaviors.js`, `pins.js`, `share.js`, `tags.js`) for extras like copy to clipboard, keyboard navigation, pinned items, tag rows and the share picker. No npm, no bundler, no CDN scripts. The documentation site in `website/` uses Docusaurus and npm, but it is built separately, published to GitHub Pages and never shipped: the image, `Cargo.toml` and the Rust CI never touch it.
 - **Locked and checked.** `Cargo.lock` is committed, the toolchain is pinned in `rust-toolchain.toml`, and CI runs `cargo deny` (licences, advisories, banned crates, allowed sources) and `cargo audit` on every change.
 - **Small image.** A multi-stage Docker build, the build frontend and base images pinned by digest, a static musl binary on a distroless base, running as non-root with a read-only filesystem.

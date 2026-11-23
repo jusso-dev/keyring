@@ -254,7 +254,7 @@ async fn post(
 ) -> StatusCode {
     let mut all = vec![("csrf", csrf)];
     all.extend_from_slice(fields);
-    let body: String = openidconnect::url::form_urlencoded::Serializer::new(String::new())
+    let body: String = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(all)
         .finish();
     let mut req = Request::post(path)

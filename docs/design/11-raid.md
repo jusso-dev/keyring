@@ -34,7 +34,7 @@
 | R3 | A restart signs everyone out | High during upgrades | Low | Upgrade out of hours; sessions across restarts considered after the pilot (section 11.6) |
 | R4 | The ACS custom role's Write lets a stolen identity token change the one resource's settings | Low | Medium | Resource in Keyring's own group; Activity Log; Azure has no narrower role (T7) |
 | R5 | Holders of the Event Grid subscriber role send real-looking expiry notices about vaults they control | Low | Low | Keep role holders and service principal owners short; remove the deployer's assignment after setup (T11) |
-| R6 | A crate advisory with no fix | Medium | Varies | Accepted only with a reason and an issue (RUSTSEC-2023-0071 via `rsa`, #41; RUSTSEC-2026-0543 `chrono` unmaintained, #271) |
+| R6 | A crate advisory with no fix | Medium | Varies | Accepted only with a reason and an issue. None accepted today: the `rsa` (#41) and `chrono` (#271) advisories went with `openidconnect` |
 | R7 | A person relies on Keyring controls (step-up, reasons, password policy) as if Key Vault enforced them | Medium | Medium | Every page and document says they are Keyring controls; use Conditional Access on Key Vault for an everywhere control |
 | R8 | ACS sending limits on an Azure-managed domain delay email | High on a managed domain | Low | Use a custom domain beyond a trial |
 | R9 | Logs arrive late, so "Used by" or alerts miss recent use | Medium | Low | The panel never calls a change safe; rules look back past the ingestion delay |
@@ -96,7 +96,6 @@ The design decisions D1 to D12 are in section 2.3. Decisions made while building
 **Later.**
 
 - **Sessions across restarts**, after the pilot, once there is pilot data on how often restarts hurt.
-- **Drop the RUSTSEC-2023-0071 exception** when `openidconnect` moves to `rsa` 0.10 (#41), and RUSTSEC-2026-0543 when it no longer needs `chrono` (#271).
 - **Names for principals on the Access page** and **app registration credentials**. Sharing now has delegated Graph permissions for names; using them elsewhere would be a separate decision.
 - **Reason and ticket beside Key Vault's row in "Used by"**, once the `kv_request_id` to `CorrelationId` join is confirmed on a real vault.
 - **Close the mock gaps** found on real tenants (#170).

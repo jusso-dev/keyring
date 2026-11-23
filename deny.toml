@@ -9,20 +9,7 @@ all-features = false
 version = 2
 yanked = "deny"
 unmaintained = "all"
-ignore = [
-    # rsa 0.9 (via openidconnect): Marvin timing attack on RSA private-key
-    # operations. Keyring holds no RSA private key; it only verifies Entra ID
-    # token signatures with public keys. Remove when openidconnect moves to
-    # rsa 0.10. https://github.com/jusso-dev/keyring/issues/41
-    { id = "RUSTSEC-2023-0071", reason = "no RSA private-key operations; see issue 41" },
-    # chrono (via openidconnect and oauth2): marked
-    # unmaintained on 17-11-2026. A notice, not a vulnerability, and no
-    # release of either crate is without it. Keyring's own code keeps time
-    # in src/dates.rs. A vulnerability in chrono would get its own ID and
-    # still fail the build. Remove when openidconnect and oauth2 drop it.
-    # https://github.com/jusso-dev/keyring/issues/271
-    { id = "RUSTSEC-2026-0543", reason = "unmaintained notice, no upgrade available; see issue 271" },
-]
+ignore = []
 
 [licenses]
 version = 2

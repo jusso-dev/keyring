@@ -187,7 +187,7 @@ impl std::fmt::Debug for Posted {
 impl Posted {
     fn parse(body: &[u8]) -> Self {
         let mut p = Self::default();
-        for (k, v) in openidconnect::url::form_urlencoded::parse(body) {
+        for (k, v) in url::form_urlencoded::parse(body) {
             let v = v.into_owned();
             match k.as_ref() {
                 "csrf" => p.csrf = v,

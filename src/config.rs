@@ -978,11 +978,11 @@ pub fn checked_audience(raw: &str) -> Result<String, String> {
 /// name, path, query or fragment, and return it in normal form.
 pub fn checked_acs_endpoint(raw: &str) -> Result<String, String> {
     let rule = "must be the Communication Services resource's endpoint, https://<resource>.<geography>.communication.azure.com, with nothing after the host";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let label = host.strip_suffix(".communication.azure.com").unwrap_or("");
     let ok_host = !label.is_empty()
-        && matches!(url.host(), Some(openidconnect::url::Host::Domain(_)))
+        && matches!(url.host(), Some(url::Host::Domain(_)))
         && label.split('.').count() <= 2
         && label.split('.').all(|l| {
             (1..=63).contains(&l.len())
@@ -1031,7 +1031,7 @@ fn checked_workspace_id(raw: &str) -> Result<String, ConfigError> {
 /// in normal form.
 pub fn checked_ingestion_endpoint(raw: &str) -> Result<String, String> {
     let rule = "must be the rule's logs ingestion endpoint, https://<name>.<region>.ingest.monitor.azure.com";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| rule.to_owned())?;
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let label = host.strip_suffix(".ingest.monitor.azure.com").unwrap_or("");
     let ok_host = !label.is_empty()
@@ -1102,7 +1102,7 @@ fn checked_origin(name: &'static str, raw: &str) -> Result<String, ConfigError> 
         reason: reason.to_owned(),
     };
     let scheme_rule = "must start with https:// (http:// is only allowed for localhost)";
-    let url = openidconnect::url::Url::parse(raw.trim()).map_err(|_| invalid(scheme_rule))?;
+    let url = url::Url::parse(raw.trim()).map_err(|_| invalid(scheme_rule))?;
     let host = url.host_str().unwrap_or_default();
     match url.scheme() {
         "https" if !host.is_empty() => {}

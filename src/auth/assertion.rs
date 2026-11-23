@@ -15,9 +15,9 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use openidconnect::url::{Host, Url};
 use serde::Deserialize;
 use tokio::sync::Mutex;
+use url::{Host, Url};
 
 use crate::azure::token::{EXPIRY_SKEW, FAILURE_MEMORY, MAX_LIFETIME, TokenError};
 use crate::config::{ClientCredential, Config, ManagedIdentity};

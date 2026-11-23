@@ -44,7 +44,7 @@ use keyring::azure::{AzureError, Resource};
 use keyring::config::Config;
 use keyring::secret::Secret;
 use reqwest::Method;
-use rsa::rand_core::{OsRng, RngCore};
+use ring::rand::{SecureRandom, SystemRandom};
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------
@@ -91,7 +91,9 @@ fn clean_token(raw: &str) -> Result<String, String> {
 
 /// A name for something a test creates: `kr-real-` and 8 hex digits.
 fn unique_name() -> String {
-    format!("kr-real-{:08x}", OsRng.next_u32())
+    let mut b = [0u8; 4];
+    SystemRandom::new().fill(&mut b).expect("random bytes");
+    format!("kr-real-{:08x}", u32::from_be_bytes(b))
 }
 
 /// Key Vault's recovery levels that allow a purge all contain "Purgeable".

@@ -1,12 +1,8 @@
 //! The one outbound HTTP client, `reqwest` on rustls with the `ring` provider.
 
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Once;
 use std::time::Duration;
-
-use openidconnect::{HttpRequest, HttpResponse};
 
 static INSTALL_PROVIDER: Once = Once::new();
 
@@ -93,30 +89,6 @@ pub fn error_chain(err: &dyn std::error::Error) -> String {
         src = e.source();
     }
     out
-}
-
-/// Adapter so `openidconnect` sends its requests through our client.
-#[derive(Clone)]
-pub struct OidcHttp(pub reqwest::Client);
-
-impl<'c> openidconnect::AsyncHttpClient<'c> for OidcHttp {
-    type Error = HttpError;
-    type Future = Pin<Box<dyn Future<Output = Result<HttpResponse, HttpError>> + Send + 'c>>;
-
-    fn call(&'c self, request: HttpRequest) -> Self::Future {
-        Box::pin(send(&self.0, request))
-    }
-}
-
-async fn send(client: &reqwest::Client, req: HttpRequest) -> Result<HttpResponse, HttpError> {
-    let req = reqwest::Request::try_from(req)?;
-    let res = client.execute(req).await?;
-    let mut builder = openidconnect::http::Response::builder().status(res.status());
-    for (name, value) in res.headers() {
-        builder = builder.header(name, value);
-    }
-    let body = res.bytes().await?.to_vec();
-    builder.body(body).map_err(|e| HttpError(e.to_string()))
 }
 
 #[cfg(test)]

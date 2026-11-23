@@ -135,9 +135,7 @@ pub(crate) async fn gate(action: Action, req: Request, next: Next) -> Response {
         Ok(b) => b,
         Err(rejection) => return rejection.into_response(),
     };
-    let fields: Vec<(String, String)> = openidconnect::url::form_urlencoded::parse(&bytes)
-        .into_owned()
-        .collect();
+    let fields: Vec<(String, String)> = url::form_urlencoded::parse(&bytes).into_owned().collect();
     let field = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
 
     // The checks that come first. If any would refuse, let the handler

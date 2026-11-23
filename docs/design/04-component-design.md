@@ -54,7 +54,8 @@ One file per area. Every POST route is either wrapped in `audited(Action, handle
 
 | Module | Job |
 |---|---|
-| `oidc.rs` | OIDC with the `openidconnect` crate: discovery and signing keys cached for an hour, refetched once on an unknown key, last good copy kept on failure |
+| `oidc.rs` | OIDC on `reqwest`: discovery and signing keys cached for an hour, refetched once on an unknown key, last good copy kept on failure |
+| `jwt.rs` | JWT and JWK pieces on `ring`: RS256 only, `kid` required, no `crit`; ID token issuer, audience, `azp`, expiry and nonce checks; the key set Event Grid tokens are checked against |
 | `session.rs` | The in-memory session store: one hour idle, 12 hours absolute, swept every minute; per-session token, list and hint caches |
 | `cookies.rs`, `crypto.rs` | Cookie handling, AES-256-GCM sealing with keys derived from `SESSION_SECRET` (HKDF-SHA256), the cookie name bound in |
 | `return_to.rs` | Local return paths only |

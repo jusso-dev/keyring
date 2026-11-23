@@ -34,11 +34,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use openidconnect::url::Url;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{Notify, watch};
+use url::Url;
 
 use super::rate::RateLimit;
 use super::{
