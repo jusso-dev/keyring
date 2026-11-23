@@ -415,3 +415,108 @@ async fn secret_mode_still_sends_the_secret_and_never_asks_the_identity() {
     assert!(field(&reqs[0], "client_assertion").is_none());
     assert!(field(&reqs[0], "client_assertion_type").is_none());
 }
+
+#[tokio::test]
+async fn imds_mode_sends_metadata_header_and_2018_api_version() {
+    use axum::extract::Query;
+    use axum::http::HeaderMap;
+    use axum::routing::get;
+    use std::collections::HashMap;
+    use std::time::UNIX_EPOCH;
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+    let seen_clone = seen.clone();
+    let imds = axum::Router::new().route(
+        "/metadata/identity/oauth2/token",
+        get(
+            move |headers: HeaderMap, Query(q): Query<HashMap<String, String>>| {
+                let seen = seen_clone.clone();
+                async move {
+                    assert_eq!(
+                        headers.get("metadata").and_then(|v| v.to_str().ok()),
+                        Some("true"),
+                        "IMDS requests must send Metadata: true"
+                    );
+                    assert!(
+                        headers.get("x-identity-header").is_none(),
+                        "IMDS requests must not send X-IDENTITY-HEADER"
+                    );
+                    assert_eq!(q.get("api-version").map(String::as_str), Some("2018-02-01"));
+                    assert_eq!(
+                        q.get("client_id").map(String::as_str),
+                        Some(support::IDENTITY_CLIENT_ID)
+                    );
+                    let resource = q.get("resource").cloned().unwrap_or_default();
+                    seen.lock()
+                        .unwrap()
+                        .push((q["api-version"].clone(), resource));
+                    let expires = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600;
+                    support::json_response(
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "access_token": MI_ASSERTION,
+                            "expires_on": expires.to_string(),
+                        }),
+                    )
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, imds).await.unwrap() });
+
+    let idp = support::start_idp().await;
+    let authority = idp.authority();
+    let endpoint = format!("http://{addr}/metadata/identity/oauth2/token");
+    let config = keyring::config::Config::from_lookup(move |k| {
+        Some(match k {
+            "ENTRA_TENANT_ID" => support::TENANT.to_owned(),
+            "ENTRA_CLIENT_ID" => support::CLIENT_ID.to_owned(),
+            "KEYRING_MANAGED_IDENTITY_CLIENT_ID" => support::IDENTITY_CLIENT_ID.to_owned(),
+            "KEYRING_MANAGED_IDENTITY_MODE" => "imds".to_owned(),
+            "IDENTITY_ENDPOINT" => endpoint.clone(),
+            "ENTRA_AUTHORITY_HOST" => authority.clone(),
+            "APP_BASE_URL" => "http://localhost:3000".to_owned(),
+            "SESSION_SECRET" => "0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            _ => return None,
+        })
+    })
+    .unwrap();
+
+    let state = AppState::new(config);
+    let id = state.sessions.create(
+        User {
+            name: "Alex".into(),
+            username: None,
+            subject: UserId {
+                sub: "sub".into(),
+                oid: None,
+                tid: None,
+            },
+        },
+        UserTokens {
+            access_token: Secret::new("user-api-token"),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            refresh_token: None,
+        },
+    );
+    let session = state.sessions.get(&id).unwrap();
+    state
+        .azure_broker()
+        .token_for(&session, Resource::KeyVault)
+        .await
+        .unwrap();
+
+    let reqs = idp.state.requests_of(OBO_GRANT);
+    assert_eq!(reqs.len(), 1);
+    assert_asserts(&reqs[0]);
+    let calls = seen.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "2018-02-01");
+    assert_eq!(calls[0].1, "api://AzureADTokenExchange");
+}

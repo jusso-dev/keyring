@@ -1,0 +1,47 @@
+#cloud-config
+# Standalone cloud-init template for running Keyring on a stock Azure Linux 3.0
+# or Ubuntu 24.04 VM without building a custom Compute Gallery image first.
+#
+# When using the pre-baked Compute Gallery image from infra/vm/packer/, the
+# binary, fetch-config-secrets.sh and systemd unit are already baked in —
+# cloud-init only needs to write /etc/keyring/keyring.env and start the unit.
+#
+# Replace the placeholder values below or let infra/vm/main.bicep /
+# infra/terraform/stacks/vm/ generate this file automatically.
+
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - python3
+
+users:
+  - default
+  - name: keyring
+    system: true
+    shell: /usr/sbin/nologin
+    no_create_home: true
+
+write_files:
+  - path: /etc/keyring/keyring.env
+    owner: root:root
+    permissions: "0640"
+    content: |
+      ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000
+      ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000
+      APP_BASE_URL=https://keyring.example.com
+      KEYRING_LISTEN=0.0.0.0:3000
+      KEYRING_ALLOW_PURGE=false
+      KEYRING_TRUSTED_PROXY_HOPS=1
+      KEYRING_MANAGED_IDENTITY_MODE=imds
+      KEYRING_MANAGED_IDENTITY_CLIENT_ID=00000000-0000-0000-0000-000000000000
+      KEYRING_CONFIG_VAULT_URI=https://kv-keyring-config-01.vault.azure.net
+      KEYRING_USE_FEDERATED_CREDENTIAL=true
+
+runcmd:
+  - id -u keyring >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin keyring
+  - chown root:keyring /etc/keyring /etc/keyring/keyring.env
+  - chmod 0750 /etc/keyring
+  - chmod 0640 /etc/keyring/keyring.env
+  - systemctl daemon-reload
+  - test -f /etc/systemd/system/keyring.service && systemctl enable --now keyring.service || true

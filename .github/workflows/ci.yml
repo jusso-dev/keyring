@@ -150,7 +150,8 @@ jobs:
           done
           # Copy each example the way the docs say (next to its template,
           # as main.bicepparam or access.bicepparam), so a broken `using`
-          # path fails here. This covers infra/alerts and infra/sentinel.
+          # path fails here. This covers infra/alerts, infra/sentinel,
+          # infra/vm and infra/policy.
           for f in */*.example.bicepparam; do
             copy="${f%.example.bicepparam}.bicepparam"
             cp "$f" "$copy"
@@ -159,7 +160,7 @@ jobs:
           done
           # Each host template again with the audit sink on (the examples
           # above leave it off), so the audit-sink module is built as used.
-          for t in app-service container-apps; do
+          for t in app-service container-apps vm; do
             p="$t/audit-ci.bicepparam"
             { sed -e '/^param auditWorkspaceId/d' -e '/^param auditRequired/d' "$t/main.example.bicepparam"
               echo "param auditWorkspaceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sentinel/providers/Microsoft.OperationalInsights/workspaces/law-sentinel'"
@@ -170,7 +171,7 @@ jobs:
           done
           # Each host template again with email on, on an Azure-managed
           # and a custom domain, so the notify module is built as used.
-          for t in app-service container-apps; do
+          for t in app-service container-apps vm; do
             for d in AzureManaged mail.example.com; do
               p="$t/notify-ci.bicepparam"
               { sed -e '/^param notify/d' "$t/main.example.bicepparam"
@@ -183,6 +184,14 @@ jobs:
               rm "$p"
             done
           done
+          # VM template again in ConfidentialVM mode with a Compute Gallery image.
+          p="vm/cvm-ci.bicepparam"
+          { sed -e '/^param securityType/d' -e '/^param galleryImageId/d' vm/main.example.bicepparam
+            echo "param securityType = 'ConfidentialVM'"
+            echo "param galleryImageId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-images/providers/Microsoft.Compute/galleries/sig_keyring/images/keyring/versions/1.0.0'"
+          } > "$p"
+          az bicep build-params --file "$p" --stdout > /dev/null || status=1
+          rm "$p"
           # Expiry alerts in both modes: the examples above build the action
           # group mode and Keyring's webhook mode; this builds the webhook
           # mode again with dead-lettering on and an existing topic.
@@ -205,6 +214,33 @@ jobs:
             } > "$p"
             az bicep build-params --file "$p" --stdout > /dev/null || status=1
             rm "$p"
+          done
+          exit $status
+
+  terraform:
+    name: terraform validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.11.4"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive -diff infra/terraform
+
+      - name: Validate modules and stacks
+        run: |
+          status=0
+          for dir in infra/terraform/modules/* infra/terraform/stacks/*; do
+            echo "::group::$dir"
+            (cd "$dir" && terraform init -backend=false -input=false && terraform validate) || status=1
+            echo "::endgroup::"
           done
           exit $status
 

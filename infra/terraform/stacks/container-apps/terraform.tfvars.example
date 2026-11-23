@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars, fill in your values, and keep out of git.
+# Contains no secrets: store session-secret (and entra-client-secret if not
+# using federated credentials) directly in the config vault.
+
+resource_group_name      = "rg-keyring-prod"
+name                     = "keyring-prod"
+image                    = "ghcr.io/jusso-dev/keyring@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+client_id                = "00000000-0000-0000-0000-000000000000"
+app_base_url             = "https://keyring.example.com"
+config_vault_name        = "kv-keyring-config-01"
+ingress                  = "external"
+use_federated_credential = true
+replicas                 = 1
+zone_redundant           = false
+
+# Enterprise governance controls (optional)
+# step_up_auth_context  = "c1"
+# step_up_max_age       = 15
+# require_reason        = "reveal"
+# reason_ticket_pattern = "(INC|CHG)[0-9]{7}"
+# password_policy       = "min=14,upper,lower,digit,symbol,max-repeat=3,common"
+# require_owner         = true
+# expiry_warn_days      = 30
+# stale_after_days      = 365
+
+# Audit sink & Sentinel (optional)
+# audit_workspace_id                = "/subscriptions/.../workspaces/law-sentinel"
+# audit_workspace_resource_group_id = "/subscriptions/.../resourceGroups/rg-sentinel"
+# audit_required                    = true
+
+# Email notifications via ACS (optional)
+# notify_domain          = "AzureManaged"
+# notify_types           = "expiry,access-requests,watched-reads,destructive,role-use,health"
+# notify_admins          = "ops@example.com"
+# notify_allowed_domains = "example.com"

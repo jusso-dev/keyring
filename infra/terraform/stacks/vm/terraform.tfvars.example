@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars, fill in your values, and keep out of git.
+
+resource_group_name         = "rg-keyring-prod"
+name                        = "keyring-prod"
+client_id                   = "00000000-0000-0000-0000-000000000000"
+app_base_url                = "https://keyring.example.com"
+config_vault_name           = "kv-keyring-config-01"
+subnet_id                   = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-prod/subnets/snet-keyring"
+allowed_proxy_source_prefix = "10.0.1.0/24"
+ssh_public_key              = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyReplaceBeforeDeploy admin@example.com"
+security_type               = "TrustedLaunch" # or "ConfidentialVM"
+vm_size                     = "Standard_DC2as_v5"
+use_federated_credential    = true

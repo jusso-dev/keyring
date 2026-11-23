@@ -108,15 +108,30 @@ pub enum ClientCredential {
     ManagedIdentity,
 }
 
+/// Default Azure VM / VMSS Instance Metadata Service (IMDS) token endpoint.
+pub const IMDS_IDENTITY_ENDPOINT: &str = "http://169.254.169.254/metadata/identity/oauth2/token";
+
+/// How Keyring authenticates to the local managed identity token service.
+#[derive(Debug, Clone)]
+pub enum IdentityMode {
+    /// App Service and Container Apps: sends `X-IDENTITY-HEADER` with
+    /// `api-version=2019-08-01`.
+    Platform(Secret),
+    /// Azure VM and VMSS IMDS: sends `Metadata: true` with
+    /// `api-version=2018-02-01`.
+    Imds,
+}
+
 /// The user-assigned managed identity Keyring uses for its own calls.
 #[derive(Debug, Clone)]
 pub struct ManagedIdentity {
     /// The identity's client ID, lower case.
     pub client_id: String,
-    /// `IDENTITY_ENDPOINT`: the local token service, set by the platform.
+    /// Local or link-local token endpoint (`IDENTITY_ENDPOINT` on App Service
+    /// and Container Apps, or Azure IMDS on VMs).
     pub endpoint: String,
-    /// `IDENTITY_HEADER`: sent with each request to that service.
-    pub header: Secret,
+    /// Platform header auth or Azure VM IMDS.
+    pub mode: IdentityMode,
 }
 
 /// Where the audit sink sends Keyring's own audit events: a data collection
@@ -273,6 +288,26 @@ impl Config {
             });
         }
 
+        let identity_mode = match get("KEYRING_MANAGED_IDENTITY_MODE")
+            .map(|v| v.to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("platform") => false,
+            Some("imds") => true,
+            Some(_) => {
+                return Err(ConfigError::Invalid {
+                    name: "KEYRING_MANAGED_IDENTITY_MODE",
+                    reason: "use platform or imds".into(),
+                });
+            }
+        };
+        if identity_mode && identity_value.is_none() {
+            return Err(ConfigError::Invalid {
+                name: "KEYRING_MANAGED_IDENTITY_MODE",
+                reason: "needs KEYRING_MANAGED_IDENTITY_CLIENT_ID".into(),
+            });
+        }
+
         let managed_identity = match (identity_name, identity_value) {
             (Some(name), Some(identity)) => {
                 let client_id = identity.to_ascii_lowercase();
@@ -282,26 +317,41 @@ impl Config {
                         reason: "expected the managed identity's client ID, a GUID".into(),
                     });
                 }
-                let (Some(endpoint), Some(header)) =
-                    (get("IDENTITY_ENDPOINT"), get("IDENTITY_HEADER"))
-                else {
-                    return Err(ConfigError::Invalid {
-                        name,
-                        reason: "needs IDENTITY_ENDPOINT and IDENTITY_HEADER, which App Service and Container Apps set when a managed identity is assigned to the app".into(),
-                    });
-                };
-                let endpoint =
-                    crate::auth::assertion::checked_endpoint(&endpoint).map_err(|reason| {
-                        ConfigError::Invalid {
+                if identity_mode {
+                    let raw_endpoint = get("IDENTITY_ENDPOINT")
+                        .unwrap_or_else(|| IMDS_IDENTITY_ENDPOINT.to_owned());
+                    let endpoint = crate::auth::assertion::checked_endpoint(&raw_endpoint)
+                        .map_err(|reason| ConfigError::Invalid {
                             name: "IDENTITY_ENDPOINT",
                             reason,
-                        }
-                    })?;
-                Some(ManagedIdentity {
-                    client_id,
-                    endpoint,
-                    header: Secret::new(header),
-                })
+                        })?;
+                    Some(ManagedIdentity {
+                        client_id,
+                        endpoint,
+                        mode: IdentityMode::Imds,
+                    })
+                } else {
+                    let (Some(endpoint), Some(header)) =
+                        (get("IDENTITY_ENDPOINT"), get("IDENTITY_HEADER"))
+                    else {
+                        return Err(ConfigError::Invalid {
+                            name,
+                            reason: "needs IDENTITY_ENDPOINT and IDENTITY_HEADER, which App Service and Container Apps set when a managed identity is assigned to the app (or set KEYRING_MANAGED_IDENTITY_MODE=imds on an Azure VM)".into(),
+                        });
+                    };
+                    let endpoint =
+                        crate::auth::assertion::checked_endpoint(&endpoint).map_err(|reason| {
+                            ConfigError::Invalid {
+                                name: "IDENTITY_ENDPOINT",
+                                reason,
+                            }
+                        })?;
+                    Some(ManagedIdentity {
+                        client_id,
+                        endpoint,
+                        mode: IdentityMode::Platform(Secret::new(header)),
+                    })
+                }
             }
             _ => None,
         };
@@ -1824,6 +1874,48 @@ pub(crate) mod tests {
         let config = load(&env).unwrap();
         assert!(matches!(config.credential, ClientCredential::Secret(_)));
         assert!(config.managed_identity.is_some());
+    }
+
+    #[test]
+    fn imds_mode_defaults_to_link_local_imds_without_platform_headers() {
+        let mut env = sample_env();
+        env.remove("ENTRA_CLIENT_SECRET");
+        env.insert(IDENTITY_VAR, IDENTITY.into());
+        env.insert("KEYRING_MANAGED_IDENTITY_MODE", "imds".into());
+        let config = load(&env).unwrap();
+        assert!(matches!(
+            config.credential,
+            ClientCredential::ManagedIdentity
+        ));
+        let identity = config.managed_identity.as_ref().unwrap();
+        assert_eq!(identity.client_id, IDENTITY);
+        assert_eq!(identity.endpoint, IMDS_IDENTITY_ENDPOINT);
+        assert!(matches!(identity.mode, IdentityMode::Imds));
+    }
+
+    #[test]
+    fn imds_mode_validates_override_endpoint_and_requires_identity() {
+        let mut env = sample_env();
+        env.insert("KEYRING_MANAGED_IDENTITY_MODE", "imds".into());
+        assert_eq!(invalid(&env), "KEYRING_MANAGED_IDENTITY_MODE");
+
+        env.insert(IDENTITY_VAR, IDENTITY.into());
+        env.insert("KEYRING_MANAGED_IDENTITY_MODE", "bogus".into());
+        assert_eq!(invalid(&env), "KEYRING_MANAGED_IDENTITY_MODE");
+
+        env.insert("KEYRING_MANAGED_IDENTITY_MODE", "imds".into());
+        env.insert("IDENTITY_ENDPOINT", "http://evil.example/token".into());
+        assert_eq!(invalid(&env), "IDENTITY_ENDPOINT");
+
+        env.insert(
+            "IDENTITY_ENDPOINT",
+            "http://127.0.0.1:41234/metadata/identity/oauth2/token".into(),
+        );
+        let config = load(&env).unwrap();
+        assert_eq!(
+            config.managed_identity.unwrap().endpoint,
+            "http://127.0.0.1:41234/metadata/identity/oauth2/token"
+        );
     }
 
     #[test]

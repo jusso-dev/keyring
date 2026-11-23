@@ -465,6 +465,28 @@ fn sink_columns_match_the_bicep_and_the_schema() {
         declared, ours,
         "infra/modules/audit-sink.bicep streamColumns"
     );
+    // The Terraform audit-sink module must declare the exact same columns too.
+    let tf = include_str!("../infra/terraform/modules/audit-sink/main.tf");
+    let tf_start = tf.find("stream_columns = [").expect("tf stream_columns");
+    let tf_end = tf_start
+        + tf[tf_start..]
+            .find("\n  ]")
+            .expect("end of tf stream_columns");
+    let tf_declared: Vec<(String, String)> = tf[tf_start..tf_end]
+        .lines()
+        .filter_map(|l| {
+            let name = l.split("name = \"").nth(1)?.split('"').next()?;
+            let kind = l.split("type = \"").nth(1)?.split('"').next()?;
+            Some((name.to_owned(), kind.to_owned()))
+        })
+        .collect();
+    assert_eq!(
+        tf_declared, ours,
+        "infra/terraform/modules/audit-sink/main.tf stream_columns"
+    );
+    assert!(tf.contains(
+        r#"transformKql = "source | extend TimeGenerated = todatetime(['time']) | project-away ['time']""#
+    ));
     // The table is the stream with `time` as TimeGenerated.
     assert!(bicep.contains("[{ name: 'TimeGenerated', type: 'datetime' }]"));
     assert!(bicep.contains("filter(streamColumns, c => c.name != 'time')"));

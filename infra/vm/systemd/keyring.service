@@ -1,0 +1,55 @@
+[Unit]
+Description=Keyring — stateless Azure Key Vault console
+Documentation=https://jusso-dev.github.io/keyring/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keyring
+Group=keyring
+
+# Non-secret settings written at provision time (0640 root:keyring).
+EnvironmentFile=/etc/keyring/keyring.env
+# Secrets fetched from Keyring's config vault into tmpfs on each start and
+# removed on stop. Never written to persistent disk.
+EnvironmentFile=-/run/keyring/secrets.env
+
+RuntimeDirectory=keyring
+RuntimeDirectoryMode=0700
+
+ExecStartPre=/usr/local/libexec/keyring/fetch-config-secrets.sh
+ExecStart=/usr/local/bin/keyring
+ExecStopPost=-/usr/bin/rm -f /run/keyring/secrets.env
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=45s
+TimeoutStopSec=30s
+
+# Hardening: match the distroless container's read-only, unprivileged posture.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
