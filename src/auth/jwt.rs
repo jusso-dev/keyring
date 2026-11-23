@@ -310,7 +310,7 @@ fn check_id_claims(c: &Map<String, Value>, check: &IdTokenCheck<'_>) -> Result<(
     };
     // Keyring trusts no other audience, so the client ID must be the only
     // one (OIDC Core 3.1.3.7, item 3). `azp`, when sent, must be us too.
-    if audiences.is_empty() || audiences.iter().any(|a| *a != check.client_id) {
+    if audiences != [check.client_id] {
         return Err(JwtError::Audience);
     }
     match c.get("azp") {
@@ -461,6 +461,14 @@ mod tests {
             })
             .unwrap_err(),
             JwtError::Audience
+        );
+        assert_eq!(
+            with(|c| {
+                c.insert("aud".into(), json!([CLIENT, CLIENT]));
+            })
+            .unwrap_err(),
+            JwtError::Audience,
+            "exactly one audience"
         );
         assert_eq!(modulus_bits(&[0, 0, 0x80, 0]), 16);
         assert_eq!(modulus_bits(&[0x01]), 1);
