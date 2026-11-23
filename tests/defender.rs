@@ -140,3 +140,29 @@ async fn an_empty_alert_list_without_a_plan_row_is_unknown_not_zero() {
         "kv-dev</span>, Defender for Key Vault: Couldn't tell whether Defender for Key Vault is on"
     ));
 }
+
+#[tokio::test]
+async fn no_alerts_and_no_plan_rows_is_never_a_plain_zero() {
+    let w = support::world().await;
+    seed(&w);
+    *w.arm.state.defender_plans.lock().unwrap() = Vec::new();
+    *w.arm.state.defender_alerts.lock().unwrap() = Vec::new();
+    let (_, html) = w.page("/defender").await;
+    assert!(
+        html.contains("At least 0 open alerts, on the subscriptions Keyring could read."),
+        "{html}"
+    );
+    let (_, home) = w.page("/").await;
+    assert!(
+        home.contains("&ge;0") || home.contains("≥0"),
+        "Home's tile says at least"
+    );
+    let res = w.get("/reports/executive/export?format=csv").await;
+    let csv = support::body_text(res).await;
+    let row = csv
+        .lines()
+        .find(|l| l.starts_with("Defender,"))
+        .unwrap_or_else(|| panic!("{csv}"));
+    assert!(row.contains(",OpenAlerts,>=0,"), "{row}");
+    assert!(row.contains("PARTLY READ"), "{row}");
+}

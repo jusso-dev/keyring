@@ -425,6 +425,10 @@ pub struct DefenderSummary {
     pub vaults_unknown: usize,
     /// Why alerts couldn't be read, when they couldn't.
     pub alerts_error: Option<String>,
+    /// Vaults whose alerts couldn't be told: the read failed, or their
+    /// subscription has no plan row the person can read and no alert came
+    /// back. `open` then counts only what was read: at least, not exactly.
+    pub vaults_alerts_unread: usize,
     /// The most urgent open alerts, for Home.
     pub top: Vec<AlertBrief>,
 }
@@ -685,6 +689,7 @@ impl OrgSnapshot {
         let mut pass_defender = 0usize;
         let mut defender_known = 0usize;
         let (mut vaults_on, mut vaults_off, mut vaults_unknown) = (0usize, 0usize, 0usize);
+        let mut vaults_alerts_unread = 0usize;
 
         type EnvBucketKey = (u8, String, bool);
         type EnvBucketCounts = (usize, usize, usize, usize);
@@ -739,6 +744,9 @@ impl OrgSnapshot {
             let v_open = defender.for_vault(&v.name, &v.subscription_id).open;
             let v_alerts = v_open.clone().unwrap_or_default();
             let defender_unread = v_open.err();
+            if defender_unread.is_some() {
+                vaults_alerts_unread += 1;
+            }
 
             let v_items = by_vault.get(v.name.as_str()).map_or(&[][..], Vec::as_slice);
             let mut v_sec = 0usize;
@@ -1142,6 +1150,7 @@ impl OrgSnapshot {
             vaults_off,
             vaults_unknown,
             alerts_error,
+            vaults_alerts_unread,
             top,
         };
 
@@ -1400,6 +1409,19 @@ pub fn to_csv(snap: &OrgSnapshot, opts: &ReportOptions, generated_utc: &str) -> 
     let d = &snap.defender;
     let defender_detail = match &d.alerts_error {
         Some(why) => format!("NOT READ: {why}"),
+        None if d.vaults_alerts_unread > 0 => format!(
+            "PARTLY READ: alerts not read for {} vault(s), whose Defender plan couldn't be read. At least {} open alert(s): {}; plan on for {} vault(s), off for {}, unknown for {}",
+            d.vaults_alerts_unread,
+            d.open.total(),
+            if d.open.total() == 0 {
+                "none on the vaults read".to_owned()
+            } else {
+                d.open.breakdown()
+            },
+            d.vaults_on,
+            d.vaults_off,
+            d.vaults_unknown
+        ),
         None => format!(
             "{} open alert(s): {}; plan on for {} vault(s), off for {}, unknown for {}",
             d.open.total(),
@@ -1414,8 +1436,12 @@ pub fn to_csv(snap: &OrgSnapshot, opts: &ReportOptions, generated_utc: &str) -> 
         ),
     };
     // Blank when alerts weren't read, so a spreadsheet can't count them as 0.
+    // Blank when nothing was read, and ">=N" when only some vaults were,
+    // so a spreadsheet never takes a partial count for the whole.
     let open_s = if d.alerts_error.is_some() {
         String::new()
+    } else if d.vaults_alerts_unread > 0 {
+        format!(">={}", d.open.total())
     } else {
         d.open.total().to_string()
     };
@@ -1642,6 +1668,7 @@ mod tests {
         assert!(snap.vault_rows.iter().all(|r| r.defender_unread.is_some()));
         assert!(snap.vault_rows.iter().all(|r| r.defender_open.is_none()));
         assert!(snap.vault_rows.iter().all(|r| r.risk_badge != "badge-ok"));
+        assert_eq!(snap.defender.vaults_alerts_unread, 2);
         assert!(
             snap.vault_rows
                 .iter()
@@ -1727,6 +1754,26 @@ mod tests {
             .find(|c| c.label.starts_with("Defender"))
             .unwrap();
         assert_eq!((c.passed, c.total), (0, 2));
+        assert_eq!(
+            snap.defender.vaults_alerts_unread, 0,
+            "both plans were read"
+        );
+
+        // Alerts read but no plan rows: every vault is unknown, and the
+        // CSV's count is ">=0", never a plain 0.
+        let no_plans = Defender::from_rows(Ok(vec![]), Ok(vec![]));
+        let partial = OrgSnapshot::build(&vaults, &items, &[], false, t, &no_plans, now);
+        assert_eq!(partial.defender.vaults_alerts_unread, 2);
+        let opts = ReportOptions::sanitized(
+            "", "", "", "", "", "", false, true, true, true, true, "Nov 2026",
+        );
+        let csv = to_csv(&partial, &opts, "now");
+        let row = csv.lines().find(|l| l.starts_with("Defender,")).unwrap();
+        assert!(row.contains(",OpenAlerts,>=0,"), "{row}");
+        assert!(
+            row.contains("PARTLY READ: alerts not read for 2 vault(s)"),
+            "{row}"
+        );
     }
 
     #[test]

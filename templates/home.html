@@ -75,7 +75,7 @@
       <div class="kpi-value">?</div>
       <div class="kpi-sub">Couldn't read alerts</div>
       {% else %}
-      <div class="kpi-value">{{ s.defender.open.total() }}</div>
+      <div class="kpi-value">{% if s.defender.vaults_alerts_unread > 0 %}&ge;{% endif %}{{ s.defender.open.total() }}</div>
       <div class="kpi-sub">{{ s.defender.open.high }} high · {{ s.defender.vaults_off }} vault(s) unprotected{% if s.defender.vaults_unknown > 0 %} · {{ s.defender.vaults_unknown }} unknown{% endif %}</div>
       {% endif %}
     </a>

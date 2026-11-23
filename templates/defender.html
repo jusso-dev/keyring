@@ -61,7 +61,7 @@
   {% if let Some(why) = alerts_error %}
   <p class="notice notice-warn">Couldn't read Defender's alerts: {{ why }}. This isn't the same as having none.</p>
   {% else %}
-  <p>{{ open.total() }} open alert{% if open.total() != 1 %}s{% endif %}{% if open.total() > 0 %}: {{ open.breakdown() }}{% endif %}.{% if capped %} Only the first {{ max_alerts }} alerts were read, open ones first.{% endif %}</p>
+  <p>{% if plans_unknown > 0 %}At least {% endif %}{{ open.total() }} open alert{% if open.total() != 1 %}s{% endif %}{% if open.total() > 0 %}: {{ open.breakdown() }}{% endif %}{% if plans_unknown > 0 %}, on the subscriptions Keyring could read{% endif %}.{% if capped %} Only the first {{ max_alerts }} alerts were read, open ones first.{% endif %}</p>
   {% if plans_unknown > 0 %}<p class="notice notice-warn">Keyring couldn't read Defender's plan for {{ plans_unknown }} subscription{% if plans_unknown != 1 %}s{% endif %}, so any alerts there may be missing from this list. Resource Graph only returns what you can read: you may need Security Reader there.</p>{% endif %}
   {% if rows.is_empty() %}
   <div class="empty-state"><p>No alerts match. Defender only raises alerts on subscriptions where its Key Vault plan is on.</p></div>

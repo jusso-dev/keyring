@@ -234,7 +234,7 @@
     {% endif %}
 
     <h2>Executive summary</h2>
-    <p>Across <strong>{{ snap.total_vaults }}</strong> Azure Key Vault(s) in <strong>{{ snap.subscriptions }}</strong> subscription(s), this estate holds <strong>{{ snap.total_items }}</strong> managed credential(s) ({{ snap.secrets_count }} secrets, {{ snap.certs_count }} certificates and {{ snap.keys_count }} cryptographic keys). Overall security posture is rated <strong>{{ snap.posture_label }} ({{ snap.posture_score }}%)</strong> across {{ snap.controls.len() }} core governance controls.{% if snap.defender.alerts_error.is_none() %} Microsoft Defender for Key Vault reports <strong>{{ snap.defender.open.total() }}</strong> open alert(s) on these vaults ({{ snap.defender.open.high }} high){% if snap.defender.vaults_off > 0 %}, and is off for {{ snap.defender.vaults_off }} vault(s){% endif %}.{% else %} Defender for Key Vault alerts could not be read for this report.{% endif %}</p>
+    <p>Across <strong>{{ snap.total_vaults }}</strong> Azure Key Vault(s) in <strong>{{ snap.subscriptions }}</strong> subscription(s), this estate holds <strong>{{ snap.total_items }}</strong> managed credential(s) ({{ snap.secrets_count }} secrets, {{ snap.certs_count }} certificates and {{ snap.keys_count }} cryptographic keys). Overall security posture is rated <strong>{{ snap.posture_label }} ({{ snap.posture_score }}%)</strong> across {{ snap.controls.len() }} core governance controls.{% if snap.defender.alerts_error.is_none() %} Microsoft Defender for Key Vault reports {% if snap.defender.vaults_alerts_unread > 0 %}at least {% endif %}<strong>{{ snap.defender.open.total() }}</strong> open alert(s) on these vaults ({{ snap.defender.open.high }} high){% if snap.defender.vaults_off > 0 %}, and is off for {{ snap.defender.vaults_off }} vault(s){% endif %}.{% else %} Defender for Key Vault alerts could not be read for this report.{% endif %}</p>
 
     <div class="kpis">
       <div class="kpi {% if snap.posture_score >= 80 %}ok{% elif snap.posture_score >= 55 %}warn{% else %}danger{% endif %}">
@@ -266,7 +266,7 @@
       {% else %}
       <div class="kpi {% if snap.defender.open.high > 0 %}danger{% elif snap.defender.open.total() > 0 || snap.defender.vaults_off > 0 || snap.defender.vaults_unknown > 0 %}warn{% else %}ok{% endif %}">
         <div class="kpi-lbl">Defender Alerts</div>
-        <div class="kpi-num">{{ snap.defender.open.total() }}</div>
+        <div class="kpi-num">{% if snap.defender.vaults_alerts_unread > 0 %}&ge;{% endif %}{{ snap.defender.open.total() }}</div>
         <div class="kpi-sub">{{ snap.defender.open.high }} high · {{ snap.defender.vaults_off }} unprotected{% if snap.defender.vaults_unknown > 0 %} · {{ snap.defender.vaults_unknown }} unknown plan{% endif %}</div>
       </div>
       {% endif %}
