@@ -138,6 +138,7 @@ struct DefenderPage {
     rows: Vec<AlertRow>,
     open: SeverityCounts,
     plans_off: usize,
+    plans_unknown: usize,
     vault_names: Vec<String>,
     severities: [Severity; 4],
     filter: DefenderFilter,
@@ -192,6 +193,10 @@ pub(super) async fn page(
     };
     Ok(render(&DefenderPage {
         plans_off: plans.iter().filter(|p| p.plan == PlanState::Off).count(),
+        plans_unknown: plans
+            .iter()
+            .filter(|p| matches!(p.plan, PlanState::Unknown(_)))
+            .count(),
         plans_error: loaded.defender.plans.as_ref().err().cloned(),
         alerts_error: loaded.defender.alerts.as_ref().err().cloned(),
         open: loaded.defender.open_counts(),
@@ -231,7 +236,7 @@ pub(super) async fn csv(
             let mut out = to_csv(&picked, &loaded.sub_names);
             if list.len() >= MAX_ALERTS {
                 out.push_str(&not_read_row(&format!(
-                    "Only the newest {MAX_ALERTS} alerts were read"
+                    "Only the first {MAX_ALERTS} alerts were read, open ones first"
                 )));
             }
             out

@@ -122,3 +122,21 @@ async fn home_shows_defender_alerts_and_unprotected_vaults() {
     assert!(html.contains("Open Defender for Key Vault alerts"));
     assert!(html.contains("Expired &amp; &lt;= 30 days"));
 }
+
+#[tokio::test]
+async fn an_empty_alert_list_without_a_plan_row_is_unknown_not_zero() {
+    let w = support::world().await;
+    seed(&w);
+    // sub-b's plan row is gone, as when the person lacks Security Reader there.
+    *w.arm.state.defender_plans.lock().unwrap() = vec![support::defender_plan("sub-a", "Standard")];
+    let (_, html) = w.page("/").await;
+    assert!(html.contains("1 unknown"), "Home says coverage is unknown");
+    let (_, html) = w.page("/defender").await;
+    let html = html.replace("&#39;", "'");
+    assert!(html.contains("Keyring couldn't read Defender's plan for 1 subscription"));
+    let (_, html) = w.page("/vault-health").await;
+    let html = html.replace("&#39;", "'");
+    assert!(html.contains(
+        "kv-dev</span>, Defender for Key Vault: Couldn't tell whether Defender for Key Vault is on"
+    ));
+}

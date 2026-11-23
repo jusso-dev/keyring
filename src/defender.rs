@@ -405,11 +405,18 @@ impl Defender {
         Ok(c)
     }
 
+    /// What Defender says about one vault. Resource Graph returns only the
+    /// rows the person can read, so no alerts means none only when the
+    /// vault's subscription has a plan row they can read. Otherwise no
+    /// alerts is "couldn't tell", with the plan's reason; an alert that
+    /// did come back still counts.
     pub fn for_vault(&self, vault: &str, subscription_id: &str) -> VaultDefender {
-        VaultDefender {
-            plan: self.plan_for(subscription_id),
-            open: self.open_for(vault),
-        }
+        let plan = self.plan_for(subscription_id);
+        let open = match (self.open_for(vault), &plan) {
+            (Ok(c), PlanState::Unknown(why)) if c.total() == 0 => Err(why.clone()),
+            (open, _) => open,
+        };
+        VaultDefender { plan, open }
     }
 
     /// Every open alert, by severity.
@@ -617,6 +624,16 @@ mod tests {
         closed[0].status = "Active".into();
         let full_of_closed = Defender::from_rows(Ok(vec![]), Ok(closed));
         assert_eq!(full_of_closed.open_for("kv-a").unwrap().total(), 1);
+
+        // No plan row for sub-c: an empty alert list there is unknown, not 0.
+        let v = d.for_vault("kv-c", "sub-c");
+        assert_eq!(v.open, Err(NO_PLAN_ROW.into()));
+        assert_eq!(d.for_vault("kv-a", "sub-a").open.unwrap().total(), 2);
+        assert_eq!(d.for_vault("kv-b", "sub-b").open.unwrap().total(), 1);
+        assert_eq!(
+            d.for_vault("kv-x", "sub-b").open,
+            Ok(SeverityCounts::default())
+        );
 
         let failed = Defender::from_rows(Err("No access".into()), Err("No access".into()));
         assert_eq!(

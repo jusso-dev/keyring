@@ -171,6 +171,10 @@ struct TokenErrorResponse {
     error: String,
     #[serde(default)]
     error_description: Option<String>,
+    /// Entra's numeric codes, such as `[53000]`. Preferred over the number
+    /// at the start of `error_description`.
+    #[serde(default)]
+    error_codes: Vec<u64>,
 }
 
 /// Longest discovery document or key set read, in bytes.
@@ -352,6 +356,16 @@ impl Oidc {
             Url::parse(raw).map_err(|_| DiscoveryError(format!("discovery {what} unreadable")))
         };
         let authorization_endpoint = parse(&doc.authorization_endpoint, "authorization_endpoint")?;
+        // The browser is sent here, outside the HTTPS-only client, so check
+        // it: HTTPS, or plain HTTP only when the configured authority is
+        // itself plain HTTP (the loopback test authority config allows).
+        if authorization_endpoint.scheme() != "https"
+            && !(authorization_endpoint.scheme() == "http" && self.issuer.starts_with("http://"))
+        {
+            return Err(DiscoveryError(
+                "discovery authorization_endpoint is not HTTPS".into(),
+            ));
+        }
         let token_endpoint = parse(&doc.token_endpoint, "token_endpoint")?;
         let jwks_uri = parse(&doc.jwks_uri, "jwks_uri")?;
         let end_session_endpoint = doc
@@ -578,9 +592,13 @@ impl Oidc {
         match serde_json::from_slice::<TokenErrorResponse>(&body) {
             Ok(r) => Err(SignInError::Provider {
                 code: safe_code(&r.error),
-                codes: aadsts_code(r.error_description.as_deref())
-                    .into_iter()
-                    .collect(),
+                codes: if r.error_codes.is_empty() {
+                    aadsts_code(r.error_description.as_deref())
+                        .into_iter()
+                        .collect()
+                } else {
+                    r.error_codes.into_iter().take(8).collect()
+                },
             }),
             Err(_) => Err(SignInError::Unreachable(format!(
                 "token endpoint returned HTTP {status}"

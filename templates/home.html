@@ -69,14 +69,14 @@
       <div class="kpi-sub">{{ s.stale }} &gt;{{ s.stale_after_days }}d old · {{ s.no_expiry }} no expiry</div>
     </a>
 
-    <a class="kpi-card {% if s.defender.open.high > 0 %}kpi-danger{% elif s.defender.open.total() > 0 || s.defender.vaults_off > 0 %}kpi-warn{% elif s.defender.alerts_error.is_some() %}kpi-accent{% else %}kpi-ok{% endif %}" href="/defender">
+    <a class="kpi-card {% if s.defender.open.high > 0 %}kpi-danger{% elif s.defender.open.total() > 0 || s.defender.vaults_off > 0 %}kpi-warn{% elif s.defender.alerts_error.is_some() || s.defender.vaults_unknown > 0 %}kpi-accent{% else %}kpi-ok{% endif %}" href="/defender">
       <div class="kpi-top"><span class="kpi-label">Defender alerts</span></div>
       {% if s.defender.alerts_error.is_some() %}
       <div class="kpi-value">?</div>
       <div class="kpi-sub">Couldn't read alerts</div>
       {% else %}
       <div class="kpi-value">{{ s.defender.open.total() }}</div>
-      <div class="kpi-sub">{{ s.defender.open.high }} high · {{ s.defender.vaults_off }} vault(s) unprotected</div>
+      <div class="kpi-sub">{{ s.defender.open.high }} high · {{ s.defender.vaults_off }} vault(s) unprotected{% if s.defender.vaults_unknown > 0 %} · {{ s.defender.vaults_unknown }} unknown{% endif %}</div>
       {% endif %}
     </a>
   </div>

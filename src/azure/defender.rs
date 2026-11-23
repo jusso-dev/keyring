@@ -20,6 +20,11 @@ pub const PLANS_QUERY: &str = "securityresources \
 | where type =~ 'microsoft.security/pricings' and name =~ 'KeyVaults' \
 | project subscriptionId, pricingTier = tostring(properties.pricingTier)";
 
+/// Resource Graph's `securityresources` rows use PascalCase property names
+/// (`properties.AlertType`, `Severity`, `Status`, `ResourceIdentifiers`, as
+/// in Microsoft's Defender for Cloud samples), while the REST API and
+/// alert schema use camelCase. Each field reads either, PascalCase first.
+///
 /// Defender alerts on Key Vaults: alert types `KV_*`, or any alert whose
 /// resource identifiers name a vault. Every alert still open, however old,
 /// and closed ones from the last [`ALERT_DAYS`] days. Open alerts come
@@ -30,17 +35,18 @@ pub fn alerts_query() -> String {
         "securityresources \
 | where type =~ 'microsoft.security/locations/alerts' \
 | extend p = properties \
-| extend alertType = tostring(p.alertType), ids = p.resourceIdentifiers, t = todatetime(p.timeGeneratedUtc), st = tostring(p.status) \
+| extend alertType = tostring(coalesce(p.AlertType, p.alertType)), ids = coalesce(p.ResourceIdentifiers, p.resourceIdentifiers), \
+t = todatetime(coalesce(p.TimeGeneratedUtc, p.timeGeneratedUtc, p.StartTimeUtc, p.startTimeUtc)), st = tostring(coalesce(p.Status, p.status)) \
 | extend isOpen = st !~ 'Resolved' and st !~ 'Dismissed' \
 | where isOpen or t > ago({ALERT_DAYS}d) \
 | where alertType startswith 'KV_' or tostring(ids) contains 'microsoft.keyvault/vaults' \
 | order by isOpen desc, t desc \
 | take {MAX_ALERTS} \
-| project subscriptionId, alertType, displayName = tostring(p.alertDisplayName), \
-severity = tostring(p.severity), status = st, \
-timeGenerated = tostring(p.timeGeneratedUtc), intent = tostring(p.intent), \
-compromisedEntity = tostring(p.compromisedEntity), alertUri = tostring(p.alertUri), \
-resourceIdentifiers = ids"
+| project subscriptionId, alertType, displayName = tostring(coalesce(p.AlertDisplayName, p.alertDisplayName)), \
+severity = tostring(coalesce(p.Severity, p.severity)), status = st, \
+timeGenerated = tostring(t), intent = tostring(coalesce(p.Intent, p.intent)), \
+compromisedEntity = tostring(coalesce(p.CompromisedEntity, p.compromisedEntity)), \
+alertUri = tostring(coalesce(p.AlertUri, p.alertUri)), resourceIdentifiers = ids"
     )
 }
 
@@ -134,6 +140,29 @@ pub async fn read(azure: &AzureClient, session: &Session, management_url: &str) 
 mod tests {
     use super::*;
 
+    /// A row the way Resource Graph returns one from Microsoft's own sample
+    /// (PascalCase properties), after the query's projection.
+    #[test]
+    fn projected_rows_parse_into_alerts() {
+        let row: AlertRow = serde_json::from_value(serde_json::json!({
+            "subscriptionId": "sub-a",
+            "alertType": "KV_SuspiciousIPAccess",
+            "displayName": "Access from a suspicious IP address to a key vault",
+            "severity": "Medium",
+            "status": "Active",
+            "timeGenerated": "2026-11-20T03:04:05.0000000Z",
+            "intent": "CredentialAccess",
+            "compromisedEntity": "kv-prod",
+            "alertUri": "https://portal.azure.com/#blade/x",
+            "resourceIdentifiers": [{"Type": "AzureResource", "AzureResourceId": "/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv-prod"}]
+        }))
+        .unwrap();
+        let a = crate::defender::Alert::from_raw(&RawAlert::from(row));
+        assert_eq!(a.vault.as_deref(), Some("kv-prod"));
+        assert_eq!(a.severity, crate::defender::Severity::Medium);
+        assert_eq!(a.time.iso.as_deref(), Some("2026-11-20T03:04:05.000Z"));
+    }
+
     #[test]
     fn queries_read_only_the_security_tables() {
         assert!(PLANS_QUERY.starts_with("securityresources"));
@@ -147,5 +176,16 @@ mod tests {
             "open alerts are never dropped for age or by the cap"
         );
         assert!(q.contains("startswith 'KV_'"));
+        for field in [
+            "AlertType",
+            "ResourceIdentifiers",
+            "Status",
+            "Severity",
+            "AlertDisplayName",
+            "AlertUri",
+            "CompromisedEntity",
+        ] {
+            assert!(q.contains(&format!("p.{field}")), "{field}");
+        }
     }
 }

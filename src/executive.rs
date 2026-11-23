@@ -392,8 +392,11 @@ pub struct VaultRiskRow {
     pub has_owners: bool,
     /// Enabled items expiring within the warning window, not yet expired.
     pub expiring_warn: usize,
-    /// Open Defender for Key Vault alerts on it. 0 when they couldn't be read.
+    /// Open Defender for Key Vault alerts on it. 0 when they couldn't be
+    /// read: see `defender_unread`.
     pub defender_open: usize,
+    /// Why its Defender alerts couldn't be read, when they couldn't.
+    pub defender_unread: Option<String>,
     pub read_error: Option<String>,
     pub risk_score: u32,
     pub risk_label: &'static str,
@@ -733,7 +736,9 @@ impl OrgSnapshot {
                 }
                 PlanState::Unknown(_) => vaults_unknown += 1,
             }
-            let v_alerts = defender.open_for(&v.name).unwrap_or_default();
+            let v_open = defender.for_vault(&v.name, &v.subscription_id).open;
+            let v_alerts = v_open.clone().unwrap_or_default();
+            let defender_unread = v_open.err();
 
             let v_items = by_vault.get(v.name.as_str()).map_or(&[][..], Vec::as_slice);
             let mut v_sec = 0usize;
@@ -812,6 +817,9 @@ impl OrgSnapshot {
                     + (v_alerts.low + v_alerts.informational) as u32;
                 issues.push(format!("{} Defender alert(s)", v_alerts.total()));
             }
+            if defender_unread.is_some() {
+                issues.push("Defender alerts not read".into());
+            }
             if plan == PlanState::Off {
                 risk += if is_prod { 3 } else { 1 };
                 issues.push("Defender for Key Vault off".into());
@@ -852,6 +860,7 @@ impl OrgSnapshot {
                 has_owners: owners_ok,
                 expiring_warn: v_warn,
                 defender_open: v_alerts.total(),
+                defender_unread,
                 read_error,
                 risk_score: risk,
                 risk_label,
@@ -1446,10 +1455,13 @@ pub fn to_csv(snap: &OrgSnapshot, opts: &ReportOptions, generated_utc: &str) -> 
         let e30 = v.expiring_30.to_string();
         let st = v.stale.to_string();
         let ne = v.no_expiry.to_string();
-        let detail = match &v.read_error {
+        let mut detail = match &v.read_error {
             Some(err) => format!("NOT READ: {err}; {}", v.issues_summary),
             None => v.issues_summary.clone(),
         };
+        if let Some(why) = &v.defender_unread {
+            detail.push_str(&format!("; Defender alerts NOT READ: {why}"));
+        }
         push_row(
             &mut out,
             &[
@@ -1621,6 +1633,13 @@ mod tests {
             .unwrap();
         assert_eq!(defender.total, 0, "an unread plan counts neither way");
         assert_eq!(snap.defender.vaults_unknown, 2);
+        // Alerts not read are never "no gaps": each row says so.
+        assert!(snap.vault_rows.iter().all(|r| r.defender_unread.is_some()));
+        assert!(
+            snap.vault_rows
+                .iter()
+                .all(|r| r.issues_summary.contains("Defender alerts not read"))
+        );
     }
 
     #[test]

@@ -165,6 +165,11 @@ impl Jwk {
     /// True when `signature` is this key's RSASSA-PKCS1-v1_5 SHA-256
     /// signature of `signing_input`. Keys under 2048 bits never verify.
     pub fn verify_rs256(&self, signing_input: &[u8], signature: &[u8]) -> bool {
+        // `ring` rounds the modulus up to whole bytes before its 2048-bit
+        // floor, so a 2041-bit key would pass it. Count the real bits.
+        if modulus_bits(&self.n) < 2048 {
+            return false;
+        }
         RsaPublicKeyComponents {
             n: self.n.as_slice(),
             e: self.e.as_slice(),
@@ -172,6 +177,15 @@ impl Jwk {
         .verify(&RSA_PKCS1_2048_8192_SHA256, signing_input, signature)
         .is_ok()
     }
+}
+
+/// Bits in a big-endian unsigned number, leading zero bytes ignored.
+fn modulus_bits(n: &[u8]) -> usize {
+    let n = match n.iter().position(|b| *b != 0) {
+        Some(i) => &n[i..],
+        None => return 0,
+    };
+    (n.len() - 1) * 8 + (8 - n[0].leading_zeros() as usize)
 }
 
 /// The tenant's published signing keys (`jwks_uri`).
@@ -294,13 +308,12 @@ fn check_id_claims(c: &Map<String, Value>, check: &IdTokenCheck<'_>) -> Result<(
             .ok_or(JwtError::Audience)?,
         _ => return Err(JwtError::Audience),
     };
-    if !audiences.contains(&check.client_id) {
+    // Keyring trusts no other audience, so the client ID must be the only
+    // one (OIDC Core 3.1.3.7, item 3). `azp`, when sent, must be us too.
+    if audiences.is_empty() || audiences.iter().any(|a| *a != check.client_id) {
         return Err(JwtError::Audience);
     }
-    // With more than one audience, `azp` must say the token is for us. When
-    // it is there at all, it must be us.
     match c.get("azp") {
-        None if audiences.len() > 1 => return Err(JwtError::Audience),
         None => {}
         Some(azp) if azp.as_str() == Some(check.client_id) => {}
         Some(_) => return Err(JwtError::Audience),
@@ -433,14 +446,25 @@ mod tests {
             .is_ok()
         );
         assert!(check(&sign(K1, &json!({"alg": "RS256", "kid": "k1"}), &claims())).is_ok());
-        // Several audiences are fine when azp says it's ours.
-        assert!(
+        // An audience Keyring doesn't trust is refused, even with azp ours.
+        assert_eq!(
             with(|c| {
                 c.insert("aud".into(), json!([CLIENT, "other"]));
                 c.insert("azp".into(), json!(CLIENT));
             })
-            .is_ok()
+            .unwrap_err(),
+            JwtError::Audience
         );
+        assert_eq!(
+            with(|c| {
+                c.insert("aud".into(), json!([]));
+            })
+            .unwrap_err(),
+            JwtError::Audience
+        );
+        assert_eq!(modulus_bits(&[0, 0, 0x80, 0]), 16);
+        assert_eq!(modulus_bits(&[0x01]), 1);
+        assert_eq!(modulus_bits(&[0, 0]), 0);
         // Clock skew either side.
         assert!(
             with(|c| {
