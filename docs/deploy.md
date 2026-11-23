@@ -1,6 +1,6 @@
 # Deploying Keyring
 
-This guide takes you from nothing to a running Keyring in Azure, on App Service or Container Apps. Allow about an hour the first time.
+This guide takes you from nothing to a running Keyring in Azure, on App Service, Container Apps or a hardened Azure VM (Trusted Launch or Confidential VM), using either Bicep (`infra/`) or Terraform (`infra/terraform/`). Allow about an hour the first time.
 
 Nothing in this repository deploys anything by itself. You run each step.
 
@@ -15,7 +15,8 @@ You'll need:
 
 Decide:
 
-- **App Service or Container Apps.** App Service is simplest. Container Apps suits teams already using it, and supports an internal-only environment.
+- **App Service, Container Apps or Azure VM.** App Service is simplest. Container Apps suits teams already using it, and supports an internal-only environment and zone redundancy. For VM-only estates, Azure Compute Gallery golden images, or Confidential VMs (AMD SEV-SNP encrypted memory for in-memory OBO sessions), see [infra/vm/README.md](../infra/vm/README.md).
+- **Bicep or Terraform.** Every hosting target ships in both Bicep (`infra/app-service/`, `infra/container-apps/`, `infra/vm/`, plus Azure Policy guardrails in `infra/policy/`) and modular Terraform (`infra/terraform/`, including an optional `modules/entra-app` module to automate the Entra app registration and federated credential). See [infra/terraform/README.md](../infra/terraform/README.md).
 - **Public or private.** If any vaults people need are private, Keyring must run inside a network that can reach them. Read [private-vaults.md](private-vaults.md) first.
 - **The address people will use**, for example `https://keyring.example.com`. You need it for the app registration. Keyring must be at the root of that host; it can't run under a path such as `/keyring`.
 

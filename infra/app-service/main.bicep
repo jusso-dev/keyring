@@ -44,6 +44,14 @@ param configVaultName string
 @description('App Service plan size. B1 or above is enough for a small team, and Basic supports VNet integration and private endpoints.')
 param skuName string = 'P0v3'
 
+@description('Plan instance count. When greater than 1, ARR session affinity is turned on so in-memory sessions stay on one instance.')
+@minValue(1)
+@maxValue(10)
+param replicas int = 1
+
+@description('Spread the App Service plan across availability zones (requires a Premium v2/v3 SKU and at least 2 or 3 instances depending on region).')
+param zoneRedundant bool = false
+
 @description('Allow permanent deletes (purge) in Keyring.')
 param allowPurge bool = false
 
@@ -278,9 +286,11 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   kind: 'linux'
   sku: {
     name: skuName
+    capacity: replicas
   }
   properties: {
     reserved: true
+    zoneRedundant: zoneRedundant
   }
 }
 
@@ -317,6 +327,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
     serverFarmId: plan.id
     httpsOnly: true
     clientCertEnabled: false
+    clientAffinityEnabled: replicas > 1
     publicNetworkAccess: publicInbound ? 'Enabled' : 'Disabled'
     keyVaultReferenceIdentity: identityId
     virtualNetworkSubnetId: empty(vnetIntegrationSubnetId) ? null : vnetIntegrationSubnetId

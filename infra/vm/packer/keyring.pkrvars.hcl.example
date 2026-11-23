@@ -1,0 +1,13 @@
+# Copy to keyring.pkrvars.hcl and fill in your values.
+# .gitignore keeps *.pkrvars.hcl out of source control.
+
+subscription_id        = "00000000-0000-0000-0000-000000000000"
+location               = "australiaeast"
+gallery_resource_group = "rg-images"
+gallery_name           = "sig_keyring"
+image_name             = "keyring"
+image_version          = "1.0.0"
+replication_regions    = ["australiaeast", "australiasoutheast"]
+keyring_binary_path    = "../../../target/x86_64-unknown-linux-musl/release/keyring"
+security_type          = "TrustedLaunch"
+vm_size                = "Standard_DC2as_v5"

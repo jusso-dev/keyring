@@ -149,6 +149,9 @@ param expiryWarnDays int = 0
 @maxValue(10)
 param replicas int = 1
 
+@description('Spread the Container Apps environment across availability zones for enterprise high availability. Requires infrastructureSubnetId.')
+param zoneRedundant bool = false
+
 @description('Sign in to Entra with the app\'s managed identity instead of a client secret. Needs a federated credential on the app registration first (see docs/deploy.md). When true, no entra-client-secret is read from the config vault.')
 param useFederatedCredential bool = false
 
@@ -195,6 +198,8 @@ var privateVaultCheck = privateVaultOk ? 'ok' : fail('configVaultPrivateEndpoint
 var internalCheck = ingress == 'external' || !empty(infrastructureSubnetId) ? 'ok' : fail('Internal ingress needs infrastructureSubnetId.')
 // The DNS zone only makes sense for an internal environment.
 var dnsCheck = empty(privateDnsVnetId) || ingress == 'internal' ? 'ok' : fail('privateDnsVnetId is only used with internal ingress.')
+// Azure Container Apps requires a VNet subnet for zone redundancy.
+var zoneCheck = !zoneRedundant || !empty(infrastructureSubnetId) ? 'ok' : fail('zoneRedundant requires infrastructureSubnetId.')
 
 var identityName = '${name}-id'
 var identityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', identityName)
@@ -215,7 +220,7 @@ var credentialEnv = concat(
 // The deployment name depends on the checks, so a failed check stops the
 // deployment before anything is created.
 module config '../modules/config-vault.bicep' = {
-  name: '${name}-config${privateVaultCheck == 'ok' && internalCheck == 'ok' && dnsCheck == 'ok' ? '' : '-invalid'}'
+  name: '${name}-config${privateVaultCheck == 'ok' && internalCheck == 'ok' && dnsCheck == 'ok' && zoneCheck == 'ok' ? '' : '-invalid'}'
   params: {
     location: location
     vaultName: configVaultName
@@ -313,6 +318,7 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = if (!configOnly) {
   location: location
   tags: tags
   properties: {
+    zoneRedundant: zoneRedundant
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -476,7 +482,7 @@ output fqdn string = configOnly ? '' : app!.properties.configuration.ingress.fqd
 output defaultDomain string = configOnly ? '' : env!.properties.defaultDomain
 @description('The environment\'s address: private with internal ingress, public with external.')
 output staticIp string = configOnly ? '' : env!.properties.staticIp
-output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck} ${auditCheck} ${notifyCheck}'
+output checks string = '${privateVaultCheck} ${internalCheck} ${dnsCheck} ${zoneCheck} ${auditCheck} ${notifyCheck}'
 output configVaultName string = config.outputs.vaultName
 output identityPrincipalId string = config.outputs.identityPrincipalId
 @description('The audit data collection rule\'s immutable ID, when the audit sink is on.')

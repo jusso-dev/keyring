@@ -8,6 +8,23 @@
 *.bicepparam
 !*.example.bicepparam
 
+# Terraform state, caches, plans and filled-in variable files.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Packer filled-in variable files and manifests.
+*.auto.pkrvars.hcl
+*.pkrvars.hcl
+!*.pkrvars.hcl.example
+packer-manifest.json
+
 # The docs site in website/: never commit its packages or build output.
 website/node_modules
 website/build

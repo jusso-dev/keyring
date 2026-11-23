@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use url::{Host, Url};
 
 use crate::azure::token::{EXPIRY_SKEW, FAILURE_MEMORY, MAX_LIFETIME, TokenError};
-use crate::config::{ClientCredential, Config, ManagedIdentity};
+use crate::config::{ClientCredential, Config, IdentityMode, ManagedIdentity};
 use crate::http::{HttpError, local_client};
 use crate::secret::Secret;
 
@@ -33,6 +33,9 @@ pub const ASSERTION_AUDIENCE: &str = "api://AzureADTokenExchange";
 /// Version of the local token service's API, as App Service and Container
 /// Apps document it.
 const IDENTITY_API_VERSION: &str = "2019-08-01";
+
+/// Version of the Azure VM / VMSS Instance Metadata Service (IMDS) token API.
+const IMDS_API_VERSION: &str = "2018-02-01";
 
 /// Check `IDENTITY_ENDPOINT` is a plain HTTP address on this machine or a
 /// link-local address, and return it in normal form. The client that calls
@@ -87,7 +90,7 @@ struct IdentityToken {
 /// before it expires.
 pub struct ManagedIdentityTokens {
     endpoint: String,
-    header: Secret,
+    mode: IdentityMode,
     identity_client_id: String,
     http: reqwest::Client,
     /// One slot per resource. The slot's lock is held while fetching, so
@@ -110,9 +113,28 @@ impl ManagedIdentityTokens {
         identity_client_id: String,
         http: reqwest::Client,
     ) -> Self {
+        Self::with_mode(
+            endpoint,
+            IdentityMode::Platform(header),
+            identity_client_id,
+            http,
+        )
+    }
+
+    /// Build a token source that speaks Azure VM / VMSS IMDS (`Metadata: true`).
+    pub fn new_imds(endpoint: String, identity_client_id: String, http: reqwest::Client) -> Self {
+        Self::with_mode(endpoint, IdentityMode::Imds, identity_client_id, http)
+    }
+
+    fn with_mode(
+        endpoint: String,
+        mode: IdentityMode,
+        identity_client_id: String,
+        http: reqwest::Client,
+    ) -> Self {
         Self {
             endpoint,
-            header,
+            mode,
             identity_client_id,
             http,
             cached: std::sync::Mutex::new(HashMap::new()),
@@ -121,9 +143,9 @@ impl ManagedIdentityTokens {
 
     /// From the configured identity, with the local-only client.
     pub fn for_identity(identity: &ManagedIdentity) -> Result<Self, HttpError> {
-        Ok(Self::new(
+        Ok(Self::with_mode(
             identity.endpoint.clone(),
-            identity.header.clone(),
+            identity.mode.clone(),
             identity.client_id.clone(),
             local_client()?,
         ))
@@ -198,22 +220,27 @@ impl ManagedIdentityTokens {
     async fn fetch(&self, resource: &str) -> Result<(Secret, SystemTime), TokenError> {
         let mut url = Url::parse(&self.endpoint)
             .map_err(|_| TokenError::Unreachable("identity endpoint is not a URL".into()))?;
+        let api_version = match &self.mode {
+            IdentityMode::Platform(_) => IDENTITY_API_VERSION,
+            IdentityMode::Imds => IMDS_API_VERSION,
+        };
         url.query_pairs_mut()
             .append_pair("resource", resource)
-            .append_pair("api-version", IDENTITY_API_VERSION)
+            .append_pair("api-version", api_version)
             .append_pair("client_id", &self.identity_client_id);
         let unreachable = |e: reqwest::Error| {
             let e = HttpError::from(e);
             tracing::warn!(error = %e, "managed identity token service unreachable");
             TokenError::from(e)
         };
-        let res = self
-            .http
-            .get(url)
-            .header("X-IDENTITY-HEADER", self.header.expose())
-            .send()
-            .await
-            .map_err(unreachable)?;
+        let req = match &self.mode {
+            IdentityMode::Platform(header) => self
+                .http
+                .get(url)
+                .header("X-IDENTITY-HEADER", header.expose()),
+            IdentityMode::Imds => self.http.get(url).header("Metadata", "true"),
+        };
+        let res = req.send().await.map_err(unreachable)?;
         let status = res.status();
         if !status.is_success() {
             // The body is not read or logged: it may describe the request.

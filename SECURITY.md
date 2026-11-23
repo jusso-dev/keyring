@@ -34,7 +34,8 @@ If the command fails, don't deploy that image.
 
 - The Keyring application in `src/`, `templates/` and `static/`
 - The container image built from `Dockerfile`
-- The Bicep templates in `infra/` and the Microsoft Sentinel Content Hub package in `Solutions/Keyring/`
+- The Bicep, VM/Packer, Azure Policy and Terraform packaging in `infra/` and the Microsoft Sentinel Content Hub package in `Solutions/Keyring/`
+- Automated supply-chain checks in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and [`.github/workflows/scorecard.yml`](.github/workflows/scorecard.yml) (OpenSSF Scorecard)
 
 Out of scope: Azure Key Vault, Entra ID and other Microsoft services themselves (report those to the [Microsoft Security Response Center](https://msrc.microsoft.com/)), and problems that need an attacker to already control a signed-in person's browser or the server.
 

@@ -4,6 +4,8 @@
 
 # Keyring
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/jusso-dev/keyring/badge)](https://scorecard.dev/viewer/?uri=github.com/jusso-dev/keyring)
+
 Keyring is a self-hosted secrets console for teams whose secrets, certificates and keys live in Azure Key Vault. People sign in with Entra ID and act as themselves, so Key Vault's own RBAC decides what each person can see and change. Every action leaves an audit trail, which Keyring can send to Log Analytics, with Microsoft Sentinel content to watch it. Approval goes through Privileged Identity Management (PIM): Keyring can ask PIM to turn on an eligible role from the page that refused you. Where PIM isn't available, Keyring can email an access request to the vault's owners, who grant it in Azure. Key Vault's expiry events reach people through Event Grid, and Keyring can email them through Azure Communication Services, along with notices when a watched item is read, something is deleted or changed in bulk, a PIM role is used, or Keyring itself needs attention. Keyring stores nothing: values, notes and owners stay in Key Vault. If you can't do it in the portal, you can't do it in Keyring.
 
 Keyring is written in Rust (Axum and Askama) and ships as a single Docker image. There's no Node.js or npm anywhere in the build.
@@ -75,7 +77,7 @@ These are Keyring controls. Key Vault doesn't know about them, and the Azure CLI
 
 - **Health**: `/healthz`, `/healthz/audit` and `/healthz/notify` for probes, and **vault health** for each vault's audit logs, RBAC, soft delete, purge protection, network access, owners, items without expiry or rotation, items expiring soon, items not cycled in a while, and Defender for Key Vault ([Vault health](docs/architecture.md#vault-health)).
 - **Defender alerts**: Microsoft Defender for Key Vault's plan on each subscription and its alerts on your vaults, with a CSV, on Home, vault health and the executive report ([Defender for Key Vault](docs/architecture.md#defender-for-key-vault)).
-- **Deploy** to App Service or Container Apps with the Bicep templates in `infra/`, as a managed identity with no role on any vault ([docs/deploy.md](docs/deploy.md)).
+- **Deploy** to App Service, Container Apps or hardened Azure VMs (Trusted Launch or Confidential VM) with the Bicep templates in `infra/` (including the Key Vault Guardrails Azure Policy initiative in `infra/policy/`) or the modular Terraform stacks in `infra/terraform/`, as a managed identity with no role on any vault ([docs/deploy.md](docs/deploy.md), [infra/vm/README.md](infra/vm/README.md), [infra/terraform/README.md](infra/terraform/README.md)).
 - **Private networks**: reach vaults that only accept private traffic ([docs/private-vaults.md](docs/private-vaults.md)).
 
 ## What covers what
