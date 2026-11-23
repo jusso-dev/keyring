@@ -353,7 +353,7 @@ The threats reviewers ask about first:
 | T1 | Keyring used to reach vaults a person can't | Every call that reads or changes a vault carries the person's own on-behalf-of token. Keyring has no identity with vault access | Nothing beyond the person's own Azure access |
 | T2 | Stolen session cookie | Random 256-bit ID in an http-only `__Host-` cookie, 1 hour idle and 12 hours absolute, server-side sign-out, optional step-up | Works until the session ends. Set `KEYRING_STEP_UP_MAX_AGE` |
 | T3 | Managed identity used with nobody signed in | The app registration is delegated-only, and on-behalf-of needs a person's token | Holds only while no application permission is added |
-| T5 | Cross-site request forgery | Vault-bound form token and an Origin check on every mutating route, tested | None known |
+| T5 | Cross-site request forgery | Vault-bound form token and an Origin check on every mutating route, tested | The Event Grid webhook is exempt and checks an Entra token instead (T10) |
 | T6 | Made-up audit rows | The identity can only append to one rule; it can't read, change or delete rows | Check a row that matters against Key Vault's own log |
 | T12 | Values or tokens in logs | Redacting, zeroised wrappers; tests capture every log line at TRACE and look for them | Copies inside upstream crates aren't zeroised |
 | T14 | Cross-site scripting | Escaped templates, `default-src 'none'` CSP, no inline code, no `innerHTML` | None known |

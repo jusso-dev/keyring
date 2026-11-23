@@ -61,7 +61,7 @@ param vnetIntegrationSubnetId string = ''
 @description('Subnet for an inbound private endpoint to the app, so people reach Keyring over your VNet, VPN or ExpressRoute only. Public access is then off. Leave empty to use allowedIpRanges instead.')
 param inboundPrivateEndpointSubnetId string = ''
 
-@description('Without inboundPrivateEndpointSubnetId: the trusted IP ranges (CIDR) that may reach Keyring\'s public address, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so one of the two is required.')
+@description('Without inboundPrivateEndpointSubnetId: the trusted IP ranges (CIDR) that may reach Keyring\'s public address, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so one of the two is required. Each entry is one IPv4 CIDR, /16 or narrower, so no list can open Keyring to the internet.')
 param allowedIpRanges array = []
 
 @description('Private DNS zone ID for privatelink.azurewebsites.net, used with the inbound private endpoint.')
@@ -195,7 +195,7 @@ var privateVaultCheck = privateVaultNeedsVnet ? 'ok' : fail('configVaultPrivateE
 
 var publicInbound = empty(inboundPrivateEndpointSubnetId)
 // Keyring is never open to the whole internet: private, or trusted ranges only.
-var ingressCheck = (!publicInbound || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => r == '*' || endsWith(trim(r), '/0') || toLower(trim(r)) == 'internet')) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Set inboundPrivateEndpointSubnetId for private access, or allowedIpRanges to the trusted ranges (no /0, * or Internet).')
+var ingressCheck = (!publicInbound || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => !contains(r, '/') || contains(r, ',') || contains(r, ':') || parseCidr(r).cidr < 16)) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Set inboundPrivateEndpointSubnetId for private access, or allowedIpRanges to the trusted ranges (each one IPv4 CIDR, /16 or narrower, no commas).')
 var expiryCheck = !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry') ? 'ok' : fail('expiry in notifyTypes needs Event Grid to reach Keyring from the internet, which this template never allows. Send expiry email with infra/alerts and notifyVia = \'actionGroup\' instead (docs/alerts.md).')
 var identityName = '${name}-id'
 // Known before deployment, as the site's identity block needs.

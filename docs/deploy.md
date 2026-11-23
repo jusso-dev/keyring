@@ -76,6 +76,7 @@ App Service:
 ```sh
 cp infra/app-service/main.example.bicepparam infra/app-service/main.bicepparam
 # Edit: name, image, clientId, appBaseUrl, configVaultName, and logAnalyticsWorkspaceId (see Logs below)
+# Edit: allowedIpRanges to your office or VPN egress, or set inboundPrivateEndpointSubnetId and allowedIpRanges = [] (see Network access)
 az deployment group create -g <rg> -f infra/app-service/main.bicep -p infra/app-service/main.bicepparam
 ```
 
@@ -86,6 +87,7 @@ Container Apps reads the secrets when it creates the app, so deploy in two runs:
 ```sh
 cp infra/container-apps/main.example.bicepparam infra/container-apps/main.bicepparam
 # Edit: name, image, clientId, appBaseUrl, configVaultName, ingress
+# Edit: allowedIpRanges to your office or VPN egress, or set ingress = 'internal' and allowedIpRanges = [] (see Network access)
 
 # First run: only the config vault and identity.
 az deployment group create -g <rg> -f infra/container-apps/main.bicep -p infra/container-apps/main.bicepparam -p configOnly=true
@@ -115,7 +117,7 @@ Keyring is a console for secrets, so it must only be reachable from networks you
 | Container Apps | `ingress = 'internal'` with `infrastructureSubnetId` | `ingress = 'external'` with `allowedIpRanges` |
 | VM | Always private: no public IP, and the NSG allows only `allowedProxySourcePrefix` | Put the trusted-range rule on your front end (Application Gateway, Front Door) |
 
-`allowedIpRanges` takes CIDR ranges and refuses `0.0.0.0/0`, `::/0`, `*` and `Internet`. Terraform has the same rules as `allowed_ip_ranges` and `inbound_private_endpoint_subnet_id`.
+`allowedIpRanges` takes one IPv4 CIDR per entry, /16 or narrower (a /32 for one address), with no commas, so no list can add up to the whole internet. Terraform has the same rules as `allowed_ip_ranges` and `inbound_private_endpoint_subnet_id`.
 
 Sign-in still works over a private address: the browser goes to Entra ID and comes back, and Keyring's own calls go out to Azure. Only one feature needs inbound traffic from the internet, Keyring's own expiry emails through Event Grid, so the templates refuse `expiry` in `notifyTypes`. Send expiry emails with an action group instead ([alerts.md](alerts.md#expiry-alerts), `notifyVia = 'actionGroup'`); it needs no access to Keyring.
 

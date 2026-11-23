@@ -213,7 +213,7 @@ var privateVaultCheck = privateVaultOk ? 'ok' : fail('configVaultPrivateEndpoint
 var isConfidential = securityType == 'ConfidentialVM'
 
 module config '../modules/config-vault.bicep' = {
-  name: '${name}-config${privateVaultCheck == 'ok' ? '' : '-invalid'}'
+  name: '${name}-config${privateVaultCheck == 'ok' && expiryCheck == 'ok' ? '' : '-invalid'}'
   params: {
     location: location
     vaultName: configVaultName
@@ -257,6 +257,8 @@ module notify '../modules/notify.bicep' = if (useNotify) {
 
 var notifyTypesList = map(split(toLower(notifyTypes), ','), t => trim(t))
 var hasExpiryNotify = contains(notifyTypesList, 'expiry')
+// Keyring is never reachable from the internet, so Event Grid can't deliver.
+var expiryCheck = !hasExpiryNotify ? 'ok' : fail('expiry in notifyTypes needs Event Grid to reach Keyring from the internet, which this template never allows. Send expiry email with infra/alerts and notifyVia = \'actionGroup\' instead (docs/alerts.md).')
 
 var envLines = concat(
   [
@@ -479,6 +481,6 @@ output privateIpAddress string = nic.properties.ipConfigurations[0].properties.p
 output configVaultName string = config.outputs.vaultName
 output identityClientId string = config.outputs.identityClientId
 output identityPrincipalId string = config.outputs.identityPrincipalId
-output checks string = '${privateVaultCheck} ${auditCheck} ${notifyCheck}'
+output checks string = '${privateVaultCheck} ${expiryCheck} ${auditCheck} ${notifyCheck}'
 output auditRuleId string = useAuditSink ? audit!.outputs.ruleImmutableId : ''
 output notifyEndpoint string = useNotify ? notify!.outputs.endpoint : ''

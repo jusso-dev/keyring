@@ -22,7 +22,7 @@ The diagram is drawn by `tools/docs/build-threat-model.py`. Run it again after c
 
 | Boundary | Crossed by | What is trusted | What isn't |
 | --- | --- | --- | --- |
-| Your network to Keyring | Browsers on a private network (VPN, ExpressRoute) or from trusted IP ranges. Never the whole internet: the templates refuse it (T39) | A random session ID in an http-only cookie, checked on every request | Anything a request carries: every form field, name, header and path is checked again on the server |
+| Your network to Keyring | Browsers on a private network (VPN, ExpressRoute) or from trusted IP ranges. Never the whole internet: the templates refuse it (T39) | A random session ID in an http-only cookie, checked on every request except `/hooks/eventgrid`, which checks an Entra token instead (T10) | Anything a request carries: every form field, name, header and path is checked again on the server |
 | Keyring to Azure | Keyring's calls out, with the person's on-behalf-of token or the managed identity's token | Azure's answers: Entra ID, Key Vault and ARM make every authorisation decision, as the person | Keyring has no access of its own to any vault, so a fault in Keyring can't reach further than the signed-in person can |
 | Azure to Keyring | Event Grid's delivery to `/hooks/eventgrid` | That Event Grid delivered it, proved by an app-only Entra token | The event's contents beyond fixed fields, checked names and the topic |
 
@@ -80,7 +80,7 @@ STRIDE categories: **S** spoofing, **T** tampering, **R** repudiation, **I** inf
 | T36 | T | A multi-environment write weakening a reveal limit | C23, C28: the stricter limit is carried to every target | A narrow race with a concurrent admin change |
 | T37 | T | Script, links or formulas in a Defender alert's text | C29: cleaned, escaped, formula-guarded; Azure portal links only | The text still reads as the attacker wrote it |
 | T38 | R | A real Defender alert hidden by a cap or failed read | C29: open alerts first; a cap or failure shows Unknown | Without Security Reader, the check shows Unknown |
-| T39 | S, D, E | Keyring reachable by anyone on the internet: password spraying, probing, floods, a stolen cookie used from anywhere | Templates deploy privately or with trusted IP ranges only (deny by default, SCM too) and refuse `/0`, `*` and `Internet`; the inbound Event Grid route is refused | A hand-built front end can still open it. Trusted ranges are only as safe as the networks behind them |
+| T39 | S, D, E | Keyring reachable by anyone on the internet: password spraying, probing, floods, a stolen cookie used from anywhere | Templates deploy privately or with trusted IP ranges only (deny by default, SCM too) and accept only single IPv4 ranges of /16 or narrower; the inbound Event Grid route is refused | A hand-built front end can still open it. Trusted ranges are only as safe as the networks behind them |
 
 ## The limits that matter most
 

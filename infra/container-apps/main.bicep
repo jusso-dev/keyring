@@ -54,7 +54,7 @@ param configVaultName string
 ])
 param ingress string = 'external'
 
-@description('With external ingress: the trusted IP ranges (CIDR) that may reach Keyring, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so external ingress needs at least one.')
+@description('With external ingress: the trusted IP ranges (CIDR) that may reach Keyring, such as your office or VPN egress. Everything else is refused. Keyring is never open to the whole internet, so external ingress needs at least one. Each entry is one IPv4 CIDR, /16 or narrower, so no list can open Keyring to the internet.')
 param allowedIpRanges array = []
 
 @description('Subnet for the environment (at least /27, delegated to Microsoft.App/environments). Needed for internal ingress and to reach private vaults. Leave empty for a Microsoft-managed network.')
@@ -200,7 +200,7 @@ var privateVaultCheck = privateVaultOk ? 'ok' : fail('configVaultPrivateEndpoint
 // An internal environment only has an address inside a VNet, so it needs one.
 var internalCheck = ingress == 'external' || !empty(infrastructureSubnetId) ? 'ok' : fail('Internal ingress needs infrastructureSubnetId.')
 // Keyring is never open to the whole internet: internal, or trusted ranges only.
-var ingressCheck = (ingress == 'internal' || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => r == '*' || endsWith(trim(r), '/0') || toLower(trim(r)) == 'internet')) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Use ingress = \'internal\', or set allowedIpRanges to the trusted ranges (no /0, * or Internet).')
+var ingressCheck = (ingress == 'internal' || !empty(allowedIpRanges)) && length(filter(allowedIpRanges, r => !contains(r, '/') || contains(r, ',') || contains(r, ':') || parseCidr(r).cidr < 16)) == 0 ? 'ok' : fail('Keyring must not be reachable from the whole internet. Use ingress = \'internal\', or set allowedIpRanges to the trusted ranges (each one IPv4 CIDR, /16 or narrower, no commas).')
 var expiryCheck = !contains(map(split(toLower(notifyTypes), ','), t => trim(t)), 'expiry') ? 'ok' : fail('expiry in notifyTypes needs Event Grid to reach Keyring from the internet, which this template never allows. Send expiry email with infra/alerts and notifyVia = \'actionGroup\' instead (docs/alerts.md).')
 // The DNS zone only makes sense for an internal environment.
 var dnsCheck = empty(privateDnsVnetId) || ingress == 'internal' ? 'ok' : fail('privateDnsVnetId is only used with internal ingress.')
