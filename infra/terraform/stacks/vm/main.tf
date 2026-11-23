@@ -62,13 +62,17 @@ locals {
     #cloud-config
     write_files:
       - path: /etc/keyring/keyring.env
-        owner: root:keyring
+        owner: root:root
         permissions: "0640"
         content: |
           ${join("\n      ", local.env_lines)}
     runcmd:
+      - id -u keyring >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin keyring
+      - chown root:keyring /etc/keyring /etc/keyring/keyring.env
+      - chmod 0750 /etc/keyring
+      - chmod 0640 /etc/keyring/keyring.env
       - systemctl daemon-reload
-      - systemctl enable --now keyring.service
+      - test -f /etc/systemd/system/keyring.service && systemctl enable --now keyring.service || true
   EOT
 }
 
@@ -184,7 +188,7 @@ resource "azurerm_linux_virtual_machine" "this" {
   custom_data                     = base64encode(local.cloud_init)
   secure_boot_enabled             = true
   vtpm_enabled                    = true
-  encryption_at_host_enabled      = !local.is_confidential
+  encryption_at_host_enabled      = !local.is_confidential && var.encryption_at_host
   patch_mode                      = "AutomaticByPlatform"
   patch_assessment_mode           = "AutomaticByPlatform"
   source_image_id                 = var.gallery_image_id != "" ? var.gallery_image_id : null

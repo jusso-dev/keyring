@@ -24,7 +24,7 @@ users:
 
 write_files:
   - path: /etc/keyring/keyring.env
-    owner: root:keyring
+    owner: root:root
     permissions: "0640"
     content: |
       ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000
@@ -39,5 +39,9 @@ write_files:
       KEYRING_USE_FEDERATED_CREDENTIAL=true
 
 runcmd:
+  - id -u keyring >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin keyring
+  - chown root:keyring /etc/keyring /etc/keyring/keyring.env
+  - chmod 0750 /etc/keyring
+  - chmod 0640 /etc/keyring/keyring.env
   - systemctl daemon-reload
-  - systemctl enable --now keyring.service
+  - test -f /etc/systemd/system/keyring.service && systemctl enable --now keyring.service || true

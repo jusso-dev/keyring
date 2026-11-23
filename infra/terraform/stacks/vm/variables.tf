@@ -80,6 +80,12 @@ variable "confidential_disk_encryption_type" {
   description = "Confidential VM OS disk encryption type (VMGuestStateOnly or DiskWithVMGuestState)."
 }
 
+variable "encryption_at_host" {
+  type        = bool
+  default     = false
+  description = "Enable Azure Encryption at Host (requires Microsoft.Compute/EncryptionAtHost feature registered on the subscription; ignored for ConfidentialVM)."
+}
+
 variable "availability_zone" {
   type        = string
   default     = ""

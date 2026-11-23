@@ -40,7 +40,7 @@ session_secret="$(fetch_secret "session-secret")"
 printf 'SESSION_SECRET=%s\n' "$session_secret" > "$tmp_file"
 unset session_secret
 
-if [[ "${KEYRING_USE_FEDERATED_CREDENTIAL:-false}" != "true" ]]; then
+if [[ "${KEYRING_USE_FEDERATED_CREDENTIAL,,}" != "true" ]]; then
   client_secret="$(fetch_secret "entra-client-secret")"
   printf 'ENTRA_CLIENT_SECRET=%s\n' "$client_secret" >> "$tmp_file"
   unset client_secret

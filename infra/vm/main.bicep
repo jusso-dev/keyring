@@ -63,6 +63,9 @@ param securityType string = 'TrustedLaunch'
 ])
 param confidentialDiskEncryptionType string = 'VMGuestStateOnly'
 
+@description('Enable Azure Encryption at Host on the VM (requires registering Microsoft.Compute/EncryptionAtHost on the subscription; ignored for ConfidentialVM).')
+param encryptionAtHost bool = false
+
 @description('Availability zone for the VM (1, 2, or 3). Leave empty for non-zonal placement.')
 @allowed([
   ''
@@ -261,12 +264,12 @@ var envLines = concat(
     'ENTRA_CLIENT_ID=${clientId}'
     'APP_BASE_URL=${appBaseUrl}'
     'KEYRING_LISTEN=0.0.0.0:3000'
-    'KEYRING_ALLOW_PURGE=${string(allowPurge)}'
+    'KEYRING_ALLOW_PURGE=${allowPurge ? 'true' : 'false'}'
     'KEYRING_TRUSTED_PROXY_HOPS=${string(trustedProxyHops)}'
     'KEYRING_MANAGED_IDENTITY_MODE=imds'
     'KEYRING_MANAGED_IDENTITY_CLIENT_ID=${config.outputs.identityClientId}'
     'KEYRING_CONFIG_VAULT_URI=${config.outputs.vaultUri}'
-    'KEYRING_USE_FEDERATED_CREDENTIAL=${string(useFederatedCredential)}'
+    'KEYRING_USE_FEDERATED_CREDENTIAL=${useFederatedCredential ? 'true' : 'false'}'
   ],
   empty(apiScope) ? [] : ['ENTRA_API_SCOPE=${apiScope}'],
   empty(logLevel) ? [] : ['KEYRING_LOG_LEVEL=${logLevel}'],
@@ -286,7 +289,7 @@ var envLines = concat(
         'KEYRING_AUDIT_INGESTION_ENDPOINT=${audit!.outputs.ingestionEndpoint}'
         'KEYRING_AUDIT_DCR_ID=${audit!.outputs.ruleImmutableId}'
         'KEYRING_AUDIT_STREAM=${audit!.outputs.streamName}'
-        'KEYRING_AUDIT_REQUIRED=${string(auditRequired)}'
+        'KEYRING_AUDIT_REQUIRED=${auditRequired ? 'true' : 'false'}'
         'KEYRING_AUDIT_WORKSPACE_ID=${auditWorkspaceId}'
       ]
     : [],
@@ -306,9 +309,12 @@ var envLines = concat(
 )
 
 // Non-secret cloud-init payload writing /etc/keyring/keyring.env and starting
-// keyring.service. Secrets are never placed in customData; they are fetched at
-// boot from the config vault into tmpfs RAM by fetch-config-secrets.sh.
-var cloudInit = '#cloud-config\nwrite_files:\n  - path: /etc/keyring/keyring.env\n    owner: root:keyring\n    permissions: "0640"\n    content: |\n      ${join(envLines, '\n      ')}\nruncmd:\n  - systemctl daemon-reload\n  - systemctl enable --now keyring.service\n'
+// keyring.service. Uses root:root in write_files (since write_files runs before
+// user creation on stock images) and fixes ownership in runcmd so both Packer
+// gallery images and stock Azure Linux 3.0 images boot cleanly. Secrets are
+// never placed in customData; they are fetched at boot from the config vault
+// into tmpfs RAM by fetch-config-secrets.sh.
+var cloudInit = '#cloud-config\nwrite_files:\n  - path: /etc/keyring/keyring.env\n    owner: root:root\n    permissions: "0640"\n    content: |\n      ${join(envLines, '\n      ')}\nruncmd:\n  - id -u keyring >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin keyring\n  - chown root:keyring /etc/keyring /etc/keyring/keyring.env\n  - chmod 0750 /etc/keyring\n  - chmod 0640 /etc/keyring/keyring.env\n  - systemctl daemon-reload\n  - test -f /etc/systemd/system/keyring.service && systemctl enable --now keyring.service || true\n'
 
 resource nsg 'Microsoft.Network/networkSecurityGroups@2024-03-01' = {
   name: '${name}-nsg'
@@ -402,7 +408,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = {
         secureBootEnabled: true
         vTpmEnabled: true
       }
-      encryptionAtHost: !isConfidential
+      encryptionAtHost: (!isConfidential && encryptionAtHost) ? true : null
     }
     storageProfile: {
       imageReference: empty(galleryImageId)

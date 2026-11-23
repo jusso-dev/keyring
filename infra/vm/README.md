@@ -57,3 +57,6 @@ Keyring then calls `http://169.254.169.254/metadata/identity/oauth2/token` (`api
    ```
 
 4. Deploy the VM via Bicep (`infra/vm/main.bicep`) or Terraform (`infra/terraform/stacks/vm/`), passing the gallery image version ID, and put a TLS-terminating Azure Application Gateway or Front Door Private Link in front of port `3000`.
+
+> **Outbound networking note:** The VM template creates a private-only NIC with no public IP. Because Azure subnets no longer provide default outbound internet access, ensure the target subnet has explicit outbound connectivity to Entra ID, ARM and Key Vault (via Azure NAT Gateway, Azure Firewall, or Private Endpoints + DNS).
+
