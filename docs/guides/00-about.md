@@ -23,7 +23,7 @@ Keyring has no roles of its own. You use it with your own Azure roles, the same 
 | Certificates officer | Key Vault Certificates Officer. Key Vault Certificate User to download a private key | Platform and web teams who look after TLS certificates | 01, 03, 04, 07, 08 |
 | Crypto officer | Key Vault Crypto Officer | Teams whose apps sign, encrypt or wrap with keys | 01, 03, 05, 07, 08 |
 | Vault administrator | Key Vault Administrator, or the three officer roles together. To share a secret, also Owner, User Access Administrator or Key Vault Data Access Administrator | The people who own a vault | All of 01 to 13, and 16 |
-| Auditor | Reader on the vaults, and Log Analytics Reader on the workspaces they send their logs to | Security, risk and audit staff | 11, 14, 15 |
+| Auditor | Reader on the vaults, Log Analytics Reader on the workspaces they send their logs to, and Security Reader on the subscriptions for Defender alerts | Security, risk and audit staff | 11, 14, 15, 18 |
 
 The README's role table lists the role for every action, one row at a time. Ask whoever looks after your vaults for a role; Keyring can't grant one.
 
@@ -52,7 +52,7 @@ Two different logs come up in these walkthroughs:
 - Key Vault's audit log is what Key Vault writes for every call it receives, from Keyring or anything else, when the vault sends its logs to a Log Analytics workspace. The **Audit** page and **Who used it** read it as you.
 - Keyring's own audit events are what Keyring writes for each thing you do through it, including what it refused before asking Key Vault. They go to Keyring's own log and, when set up, to a table in Log Analytics that the **Keyring activity** view reads.
 
-Each walkthrough names the Keyring audit actions its steps write, such as `secret.reveal`. Pages that only read names and properties (lists, search, expiry, vault health, the audit pages) write no audit event.
+Each walkthrough names the Keyring audit actions its steps write, such as `secret.reveal`. Pages that only read names and properties (lists, search, expiry, vault health, Defender alerts, the audit pages) write no audit event.
 
 ## The walkthroughs
 
@@ -75,3 +75,4 @@ Each walkthrough names the Keyring audit actions its steps write, such as `secre
 | 15 | For auditors |
 | 16 | Share a secret |
 | 17 | Collaborate across environments |
+| 18 | Defender alerts |

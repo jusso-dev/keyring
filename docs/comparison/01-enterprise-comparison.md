@@ -14,6 +14,7 @@ Keyring removes that gap without introducing a second vault, a second database o
 | Multi-environment collaboration | Teams compare `dev`, `test`, `staging` and `prod` vaults side by side without revealing values, spot missing or drifting secrets, export release-readiness CSVs, and set separate values per environment with built-in duplicate-value protection |
 | Lower total cost of ownership | Eliminates per-user / per-secret commercial vault licences, dedicated SQL Server / IIS / cluster infrastructure, backup jobs and database HA maintenance |
 | Audit and SIEM ready | Combines Key Vault's native `AuditEvent` logs with Keyring's structured `KeyringAudit_CL` table (capturing reasons, tickets and refusals), backed by Microsoft Sentinel ASIM parsers, analytics rules and workbooks |
+| Threat detection in view | Shows Microsoft Defender for Key Vault's plan coverage and alerts (bulk secret reads, suspicious addresses, unusual policy changes) on Home, vault health, a Defender alerts page and executive reports, alongside expiring-soon and not-cycled warnings |
 
 ## Where commercial PAM tools still fit
 

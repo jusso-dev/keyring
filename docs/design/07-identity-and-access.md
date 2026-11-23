@@ -62,7 +62,8 @@ Keyring has no access of its own. Each person needs Azure roles, the same as in 
 | List and view keys, copy public keys | Key Vault Reader (or Key Vault Crypto User) | Vault |
 | Create, rotate, enable or disable, edit rotation policy, delete and recover keys | Key Vault Crypto Officer | Vault |
 | See where a vault sends its logs; vault health settings checks | Reader | Vault or resource group |
-| Vault health counts of expiry, renewal and rotation | Key Vault Reader | Vault |
+| Vault health counts of expiry, renewal and rotation, expiring soon and not cycled | Key Vault Reader | Vault |
+| Defender alerts, and vault health's Defender for Key Vault check | Security Reader (or Reader) | Subscription |
 | Read Key Vault's audit events, reports, Used by | Log Analytics Reader | The workspace the vault logs to |
 | Read Keyring activity | Log Analytics Reader | The workspace holding `KeyringAudit_CL` |
 | Turn on an eligible Key Vault role, My access, turn it off | An eligible PIM assignment (Entra ID P2 or Governance), Reader to see role names | Vault, or above it |
