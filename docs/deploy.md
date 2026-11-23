@@ -107,7 +107,7 @@ Until the secrets are set in step 4, the app has nothing to start with.
 
 ### Network access
 
-Keyring is a console for secrets, so it must only be reachable from networks you trust. Every template enforces this and stops the deployment otherwise:
+Keyring is a console for secrets, so it must only be reachable from networks you trust (threat T39 in the [threat model](threat-model.md)). Every template enforces this and stops the deployment otherwise:
 
 | Host | Private (recommended) | Trusted IP ranges |
 | --- | --- | --- |

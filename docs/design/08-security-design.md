@@ -54,6 +54,8 @@ Each control has a stable number, used in the overlay diagram (Figure 4) and the
 
 ## STRIDE threat model
 
+![Threat model: trust boundaries and where each threat is stopped. Red T-numbers match the register below.](../images/threat-model.png)
+
 Built from `docs/architecture.md`, "Threat model", and extended for notifications, the webhook and the managed identity. Each threat names its STRIDE category (S spoofing, T tampering, R repudiation, I information disclosure, D denial of service, E elevation of privilege), the controls that answer it and what is left. New threats are added at the end.
 
 ::: {.compact .landscape}
