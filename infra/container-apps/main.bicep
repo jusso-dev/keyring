@@ -139,6 +139,11 @@ param trustedProxyHops int = 1
 @maxValue(3650)
 param staleAfterDays int = 0
 
+@description('Days before expiry when secrets, certificates and keys count as expiring soon on vault health, Home and the executive report. 0 for the default, 30.')
+@minValue(0)
+@maxValue(365)
+param expiryWarnDays int = 0
+
 @description('Replicas. Sessions live in memory, so keep this at 1 unless you add session affinity (enabled below for more than 1).')
 @minValue(1)
 @maxValue(10)
@@ -411,6 +416,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
             empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
             empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
             staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
+            expiryWarnDays == 0 ? [] : [{ name: 'KEYRING_EXPIRY_WARN_DAYS', value: string(expiryWarnDays) }],
             empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
             [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
             empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],

@@ -43,7 +43,7 @@ fn row_statuses(html: &str, vault: &str) -> Vec<String> {
         .collect()
 }
 
-const CHECKS: usize = 10;
+const CHECKS: usize = 13;
 
 /// The page with apostrophes unescaped, so assertions read as the text.
 async fn page(w: &support::World, path: &str) -> (StatusCode, String) {
@@ -54,10 +54,19 @@ async fn page(w: &support::World, path: &str) -> (StatusCode, String) {
 fn seed_content(w: &support::World, healthy_content: bool) {
     let n = keyring::azure::secrets::now_ts();
     if healthy_content {
+        // Outside the default 30-day warning window.
         w.kv.state
-            .put_with("db-password", "VALUE-1", |v| v.exp = Some(n + 86_400 * 30));
+            .put_with("db-password", "VALUE-1", |v| v.exp = Some(n + 86_400 * 60));
+        *w.arm.state.defender_plans.lock().unwrap() =
+            vec![support::defender_plan("sub-a", "Standard")];
     } else {
         w.kv.state.put("db-password", "VALUE-1");
+        // Expired, and unchanged for over a year.
+        w.kv.state.put_with("old-token", "VALUE-2", |v| {
+            v.created = n - 86_400 * 400;
+            v.exp = Some(n - 86_400);
+        });
+        *w.arm.state.defender_plans.lock().unwrap() = vec![support::defender_plan("sub-a", "Free")];
     }
     let mut policy = support::certs::default_policy(false, false);
     if !healthy_content {
@@ -124,7 +133,7 @@ async fn every_check_warns_on_a_badly_set_vault() {
     let (status, html) = page(&w, "/vault-health?vault=kv-test").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(row_statuses(&html, "kv-test"), vec!["Warn"; CHECKS]);
-    assert!(html.contains("10 warnings and 0 checks"));
+    assert!(html.contains("13 warnings and 0 checks"));
     for (check, words, guide) in [
         (
             "Audit logs",
@@ -168,6 +177,17 @@ async fn every_check_warns_on_a_badly_set_vault() {
             "It has no keyring-owners tag",
             "management/tag-resources",
         ),
+        ("Expiring soon", "1 item has expired", "event-grid-overview"),
+        (
+            "Not cycled",
+            "1 item hasn't had a new value in over a year",
+            "tutorial-rotation",
+        ),
+        (
+            "Defender for Key Vault",
+            "Defender for Key Vault is off",
+            "defender-for-key-vault-introduction",
+        ),
     ] {
         let at = html
             .find(&format!("kv-test</span>, {check}:"))
@@ -199,7 +219,7 @@ async fn checks_that_cant_be_read_are_unknown_with_the_reason() {
         got,
         [
             "Unknown", "Pass", "Unknown", "Pass", "Unknown", "Pass", "Unknown", "Unknown",
-            "Unknown", "Pass"
+            "Unknown", "Pass", "Unknown", "Unknown", "Unknown"
         ]
     );
     for words in [
@@ -209,6 +229,9 @@ async fn checks_that_cant_be_read_are_unknown_with_the_reason() {
         "Secret expiry: Couldn't list its secrets: you don't have a Key Vault role on it",
         "Certificate renewal: Couldn't list its certificates",
         "Key rotation: Couldn't list its keys",
+        "Expiring soon: Couldn't list what's in it: you don't have a Key Vault role on it",
+        "Not cycled: Couldn't list what's in it: you don't have a Key Vault role on it",
+        "Defender for Key Vault: Couldn't tell whether Defender for Key Vault is on: resource Graph returned no Defender plan",
     ] {
         assert!(html.contains(words), "{words}");
     }
@@ -392,7 +415,10 @@ async fn vault_owners_are_shown_and_a_missing_tag_warns() {
     assert!(html.contains("Tags blade") && html.contains("az tag update"));
     // No more calls than before: the tag comes with the Resource Graph rows.
     let queries = w.arm.state.requests.lock().unwrap().len();
-    assert_eq!(queries, 2, "the vault and subscription queries only");
+    assert_eq!(
+        queries, 4,
+        "the vault, subscription and two Defender queries only"
+    );
 
     // The vault list shows them too.
     let (status, html) = w.page("/vaults").await;
@@ -401,4 +427,37 @@ async fn vault_owners_are_shown_and_a_missing_tag_warns() {
     assert!(html.contains("<a href=\"mailto:ops@example.com\">ops@example.com</a>"));
     assert!(html.contains("&#60;script&#62;x&#60;/script&#62;"));
     assert!(html.contains("az tag update"));
+}
+
+#[tokio::test]
+async fn defender_alerts_warn_on_the_vault_they_name() {
+    let w = support::world().await;
+    *w.arm.state.vaults.lock().unwrap() = vec![healthy("kv-a"), healthy("kv-b")];
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
+    *w.arm.state.defender_plans.lock().unwrap() = vec![support::defender_plan("sub-a", "Standard")];
+    *w.arm.state.defender_alerts.lock().unwrap() = vec![
+        support::defender_alert("kv-a", "sub-a", "High", "Active"),
+        support::defender_alert("kv-a", "sub-a", "Low", "Resolved"),
+    ];
+    let (_, html) = page(&w, "/vault-health").await;
+    assert_eq!(row_statuses(&html, "kv-a")[12], "Warn");
+    assert_eq!(row_statuses(&html, "kv-b")[12], "Pass");
+    assert!(
+        html.contains(
+            "kv-a</span>, Defender for Key Vault: Defender has 1 open alert on it (1 high)"
+        )
+    );
+}
+
+#[tokio::test]
+async fn expiry_warning_window_follows_the_setting() {
+    let w = support::world_with(&[("KEYRING_EXPIRY_WARN_DAYS", "90")]).await;
+    *w.arm.state.vaults.lock().unwrap() = vec![healthy("kv-test")];
+    *w.arm.state.diagnostics.lock().unwrap() = Some(support::audit_settings(true));
+    seed_content(&w, true);
+    let (_, html) = page(&w, "/vault-health?vault=kv-test").await;
+    // The healthy secret expires in 60 days: inside a 90-day window.
+    assert_eq!(row_statuses(&html, "kv-test")[10], "Warn");
+    assert!(html.contains("Expiring soon: 1 item expires within 90 days"));
+    assert!(html.contains("within 90 days. <strong>Not cycled</strong>"));
 }

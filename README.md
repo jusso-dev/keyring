@@ -73,7 +73,8 @@ These are Keyring controls. Key Vault doesn't know about them, and the Azure CLI
 
 ### Operations
 
-- **Health**: `/healthz`, `/healthz/audit` and `/healthz/notify` for probes, and **vault health** for each vault's audit logs, RBAC, soft delete, purge protection, network access, owners, and items without expiry or rotation ([Vault health](docs/architecture.md#vault-health)).
+- **Health**: `/healthz`, `/healthz/audit` and `/healthz/notify` for probes, and **vault health** for each vault's audit logs, RBAC, soft delete, purge protection, network access, owners, items without expiry or rotation, items expiring soon, items not cycled in a while, and Defender for Key Vault ([Vault health](docs/architecture.md#vault-health)).
+- **Defender alerts**: Microsoft Defender for Key Vault's plan on each subscription and its alerts on your vaults, with a CSV, on Home, vault health and the executive report ([Defender for Key Vault](docs/architecture.md#defender-for-key-vault)).
 - **Deploy** to App Service or Container Apps with the Bicep templates in `infra/`, as a managed identity with no role on any vault ([docs/deploy.md](docs/deploy.md)).
 - **Private networks**: reach vaults that only accept private traffic ([docs/private-vaults.md](docs/private-vaults.md)).
 
@@ -450,6 +451,7 @@ Keyring has no access of its own. Each person needs Azure roles, the same as the
 | See where a vault sends its logs (audit view, vault list, vault health) | Reader | Vault or resource group |
 | Vault health: settings checks | Reader | Vault or resource group |
 | Vault health: secret expiry, certificate renewal and key rotation counts | Key Vault Reader | Vault |
+| Defender alerts, and the Defender for Key Vault check | Security Reader (or Reader) | Subscription |
 | Read audit events | Log Analytics Reader | The workspace the vault's diagnostic setting uses |
 | Turn on an eligible Key Vault role (PIM), see My access, turn it off | An eligible PIM assignment of that role (Entra ID P2 or Governance). Reader on the vault to see role names | Vault, or above it |
 | Audit reports across vaults | Reader and Log Analytics Reader, as above | Each vault, and each workspace they log to. Vaults and workspaces you can't read are listed, not hidden |
@@ -536,7 +538,8 @@ All optional. Email is off unless `KEYRING_NOTIFY_ACS_ENDPOINT` is set, and ever
 | `KEYRING_LOG_LEVEL` | `info` | `error`, `warn`, `info` (default), `debug` or `trace`, in any case. Anything else, including `off` and filter strings such as `info,keyring=trace`, stops Keyring starting. Keyring's audit events are written at every level |
 | `KEYRING_LOG_FORMAT` | `text` | `text` or `json`: one JSON object per line, with Keyring's audit events marked `"kind":"audit"`. See [Logs](docs/deploy.md#logs) |
 | `KEYRING_TRUSTED_PROXY_HOPS` | `0` | How many proxies in front of Keyring add to `X-Forwarded-For`, so audit events record the browser's address, 0 to 8. `0` ignores the header. `1` on App Service and Container Apps (the templates set it). Too high a value lets a browser choose the address recorded. See [Client address](docs/deploy.md#client-address) |
-| `KEYRING_STALE_AFTER_DAYS` | `365` | Days without a new value before a secret, certificate or key shows "Not changed in over a year" (or "over N days"). A whole number from 1 to 3650, default 365 |
+| `KEYRING_STALE_AFTER_DAYS` | `365` | Days without a new value before a secret, certificate or key shows "Not changed in over a year" (or "over N days"). A whole number from 1 to 3650, default 365. Vault health's **Not cycled** check warns about these too |
+| `KEYRING_EXPIRY_WARN_DAYS` | `30` | Days before expiry when an enabled secret, certificate or key becomes a warning: vault health's **Expiring soon** check, the Home tile and the executive report. A whole number from 1 to 365, default 30 |
 
 Seven more variables exist for the test suite only: `ENTRA_AUTHORITY_HOST`, `KEYRING_TEST_MANAGEMENT_URL`, `KEYRING_TEST_KEYVAULT_URL`, `KEYRING_TEST_LOGANALYTICS_URL`, `KEYRING_TEST_GRAPH_URL`, `KEYRING_TEST_AUDIT_INGESTION_URL` and `KEYRING_TEST_NOTIFY_ACS_URL`. They send people's tokens (and, for the authority host, the audit ingestion URL and the ACS URL, the client secret or the managed identity's token) to another server. Leave them unset. Keyring logs a warning at start naming any that are set.
 

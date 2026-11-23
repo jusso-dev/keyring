@@ -285,6 +285,8 @@ async fn headers_on_every_kind_of_response() {
         "/expiry/age.csv",
         "/vault-health",
         "/vault-health.csv",
+        "/defender",
+        "/defender.csv",
         "/search?q=db",
         "/generator",
         "/v/kv-test/audit",

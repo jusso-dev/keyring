@@ -672,6 +672,14 @@ pub(crate) struct ArmState {
     /// Shares (#286): assignments and schedule requests at a secret's
     /// scope. See [`share::ShareArm`].
     pub share: Mutex<share::ShareArm>,
+    /// Defender for Key Vault plan rows (`subscriptionId`, `pricingTier`)
+    /// for the `securityresources` pricings query.
+    pub defender_plans: Mutex<Vec<serde_json::Value>>,
+    /// Defender alert rows, as the alerts query projects them.
+    pub defender_alerts: Mutex<Vec<serde_json::Value>>,
+    /// Answer the `securityresources` queries with 403, as Resource
+    /// Graph does without Security Reader.
+    pub defender_forbidden: Mutex<bool>,
 }
 
 /// What the mock ARM answers for the Access reads. Like ARM, the
@@ -1163,6 +1171,9 @@ pub(crate) async fn start_arm() -> MockArm {
         keyring_partial: Mutex::new(false),
         authz: Mutex::new(AuthzMock::with_builtin_roles()),
         share: Mutex::new(share::ShareArm::default()),
+        defender_plans: Mutex::new(Vec::new()),
+        defender_alerts: Mutex::new(Vec::new()),
+        defender_forbidden: Mutex::new(false),
     });
     let app = Router::new()
         .route(
@@ -1198,7 +1209,17 @@ async fn resource_graph(
         );
     }
     let query = body["query"].as_str().unwrap_or_default();
-    let rows = if query.contains("resourcecontainers") {
+    if query.starts_with("securityresources") && *s.defender_forbidden.lock().unwrap() {
+        return json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": {"code": "AuthorizationFailed", "message": "mock failure"}}),
+        );
+    }
+    let rows = if query.contains("microsoft.security/pricings") {
+        s.defender_plans.lock().unwrap().clone()
+    } else if query.contains("microsoft.security/locations/alerts") {
+        s.defender_alerts.lock().unwrap().clone()
+    } else if query.contains("resourcecontainers") {
         s.subscriptions.lock().unwrap().clone()
     } else {
         s.vaults.lock().unwrap().clone()
@@ -2238,4 +2259,32 @@ pub(crate) fn world_notify_settings() -> keyring::config::NotifySettings {
         hook_tuning: keyring::notify::expiry::HookTuning::default(),
         health_tuning: keyring::notify::health::Tuning::default(),
     }
+}
+
+/// A Defender for Key Vault alert row, as the alerts query projects it.
+pub(crate) fn defender_alert(
+    vault: &str,
+    sub: &str,
+    severity: &str,
+    status: &str,
+) -> serde_json::Value {
+    json!({
+        "subscriptionId": sub,
+        "alertType": "KV_ListGetAnomaly",
+        "displayName": "Suspicious secret listing and query in a key vault",
+        "severity": severity,
+        "status": status,
+        "timeGenerated": "2026-11-20T03:04:05.123Z",
+        "intent": "CredentialAccess",
+        "compromisedEntity": vault,
+        "alertUri": "https://portal.azure.com/#blade/Microsoft_Azure_Security_AzureDefenderForData/AlertBlade/alertId/1",
+        "resourceIdentifiers": [
+            {"type": "AzureResource", "azureResourceId": format!("/subscriptions/{sub}/resourceGroups/rg-{vault}/providers/Microsoft.KeyVault/vaults/{vault}")}
+        ]
+    })
+}
+
+/// A Defender plan row for the pricings query.
+pub(crate) fn defender_plan(sub: &str, tier: &str) -> serde_json::Value {
+    json!({"subscriptionId": sub, "pricingTier": tier})
 }

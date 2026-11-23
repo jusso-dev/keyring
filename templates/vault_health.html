@@ -9,6 +9,8 @@
 {% call ui::about() %}
 <p>The checks cover whether each vault keeps audit logs, who can reach it, whether deletes can be undone, and how well its contents are looked after.</p>
 <p>Pick one vault to also check certificate renewal and key rotation, which need a call per item.</p>
+<p><strong>Expiring soon</strong> warns about enabled secrets, certificates and keys that have expired or expire within {{ expiry_warn_days }} days. <strong>Not cycled</strong> warns about those without a new value in over {{ stale_after_days }} days. Whoever runs Keyring sets both, with <span class="mono">KEYRING_EXPIRY_WARN_DAYS</span> and <span class="mono">KEYRING_STALE_AFTER_DAYS</span>.</p>
+<p><strong>Defender for Key Vault</strong> comes from Microsoft Defender for Cloud: whether its Key Vault plan is on for the vault's subscription, and its open alerts on the vault. Reading it needs Security Reader or Reader on the subscription. See <a href="/defender">Defender alerts</a>.</p>
 {% endcall %}
 </div>
 <p class="notice">Each check is Pass, Warn, or Unknown when Keyring couldn't read it. Unknown is never counted as a pass.</p>

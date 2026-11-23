@@ -545,12 +545,27 @@ A **Pin** button under the heading of each vault list (secrets, certificates, ke
 | Secret expiry | Every enabled secret, other than a certificate's backing secret, has an expiry date | Secrets list | Key Vault Reader |
 | Certificate renewal | Every enabled certificate's policy has an `AutoRenew` action | One policy read per certificate | Key Vault Reader |
 | Key rotation | Every enabled key, other than a certificate's own, has a rotation policy with a Rotate action | One rotation policy read per key | Key Vault Reader |
+| Owners | The vault's `keyring-owners` ARM tag names at least one email address | Resource Graph | Reader |
+| Expiring soon | No enabled secret, certificate or key (other than a certificate's own) has expired or expires within `KEYRING_EXPIRY_WARN_DAYS` (default 30) | Secrets, certificates and keys lists | Key Vault Reader |
+| Not cycled | No enabled secret, certificate or key (other than a certificate's own) has gone more than `KEYRING_STALE_AFTER_DAYS` (default 365) without a new value, from the current version's `created` | Secrets, certificates and keys lists | Key Vault Reader |
+| Defender for Key Vault | The vault's subscription has the `KeyVaults` plan on the Standard tier, and Defender has no open alert on the vault. An open alert warns whatever the plan read says | `securityresources` in Resource Graph | Security Reader (or Reader) on the subscription |
 
 - Vaults are read through `src/azure/fanout.rs`, as on the expiry dashboard: six at a time, 20 seconds each, a minute in all, and the first 100 by name across all vaults. A vault not read in time shows Unknown for the checks that need a read, with the reason; the Resource Graph checks still show.
+- Each vault's three lists are read once per page and used for Secret expiry, Expiring soon and Not cycled. If one or two of them can't be read, the counts cover the rest, the warning says which list was missing, and a check with nothing failing is Unknown rather than Pass.
+- Defender is one pair of Resource Graph queries for the whole page, not one per vault. A subscription with no plan row (no Security Reader, or Defender for Cloud never set up) is Unknown, never Pass.
 - Certificate renewal and key rotation need a call per item, so they only run when one vault is picked. Across all vaults they're shown as "Pick this vault". In one vault, up to 200 certificates and 200 keys are checked, six at a time within 15 seconds. Items past that or not read in time make the check Unknown if nothing else failed it, and are named in the warning if something did.
 - Each warning and unknown is listed under the table with one sentence on why it matters and what to do, and a link to Microsoft's guide for the setting.
 - The CSV export has one line per vault and check (vault, subscription, resource group, check, result, detail, guide), with formula guarding, and `NOT READ` lines for a vault not in the list or vaults past the first 100.
 - Only properties are read: no secret value, no private key. The page changes nothing, so it writes no audit event.
+
+## Defender for Key Vault
+
+`/defender` (`src/routes/defender.rs`) shows Microsoft Defender for Key Vault's plan on each subscription the person's vaults are in, and its alerts on Key Vaults from the last 90 days, with a CSV. `src/azure/defender.rs` reads both from Resource Graph's `securityresources` table as the signed-in person: the `microsoft.security/pricings` row named `KeyVaults`, and `microsoft.security/locations/alerts` rows whose `alertType` starts with `KV_` or whose resource identifiers name a Key Vault, newest first, at most 1,000.
+
+- **Untrusted text.** An alert's title and entity can carry an address, a name or a path from whoever set it off. `src/defender.rs` drops control and bidirectional characters, collapses whitespace and cuts each field short. The page escapes it, the CSV guards it against formulas, and none of it is logged. The alert type must be letters, digits, `_` and `.`. The only link kept is `alertUri` when it starts with an Azure portal address.
+- **Which vault.** The first `.../providers/Microsoft.KeyVault/vaults/<name>` in `resourceIdentifiers`, or else `compromisedEntity` if it's a valid vault name. An alert that names neither still shows, under its subscription.
+- **Not read is not none.** Without Security Reader (or Reader) Resource Graph either refuses the query or returns no rows for that subscription. A refused query shows "Couldn't read Defender's alerts" and a `NOT READ` CSV line, and a subscription with no plan row is Unknown with the reason.
+- **Where else it shows.** The Defender for Key Vault check on vault health, a Defender alerts tile and the most urgent open alerts on Home, a "Defender for Key Vault on" control, risk points and remediation actions in the executive report, and a Defender row in its CSV. Keyring never changes an alert: people dismiss or resolve them in Defender for Cloud.
 
 ## Environments
 

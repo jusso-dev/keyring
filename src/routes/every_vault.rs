@@ -18,10 +18,10 @@ use axum::response::Response;
 use crate::AppState;
 use crate::auth::CurrentSession;
 use crate::auth::session::Session;
-use crate::azure::certs::CertsApi;
+use crate::azure::certs::{CertItem, CertsApi};
 use crate::azure::fanout::{self, Fanned, reason};
-use crate::azure::keys::KeysApi;
-use crate::azure::secrets::SecretsApi;
+use crate::azure::keys::{KeyItem, KeysApi};
+use crate::azure::secrets::{SecretItem, SecretsApi};
 use crate::azure::vaults::{self, is_valid_vault_name};
 use crate::azure::{AzureClient, AzureError};
 use crate::expiry::{Item, ItemType};
@@ -188,6 +188,19 @@ async fn read_vault(
     vault_url: String,
     vault: &str,
 ) -> (Vec<Item>, Option<String>) {
+    let lists = read_lists(azure, session, vault_url).await;
+    let (items, failed) = items_of(vault, &lists);
+    (items, failed_reason(&failed))
+}
+
+/// One vault's three list calls, made together.
+pub(super) struct Lists {
+    pub secrets: Result<Vec<SecretItem>, AzureError>,
+    pub certs: Result<Vec<CertItem>, AzureError>,
+    pub keys: Result<Vec<KeyItem>, AzureError>,
+}
+
+pub(super) async fn read_lists(azure: &AzureClient, session: &Session, vault_url: String) -> Lists {
     let secrets = SecretsApi {
         azure,
         session,
@@ -203,11 +216,22 @@ async fn read_vault(
         session,
         vault_url,
     };
-    let (s, c, k) = tokio::join!(secrets.list(), certs.list(), keys.list());
+    let (secrets, certs, keys) = tokio::join!(secrets.list(), certs.list(), keys.list());
+    Lists {
+        secrets,
+        certs,
+        keys,
+    }
+}
+
+/// The items in `lists`, and which kinds couldn't be read, and why.
+pub(super) fn items_of<'a>(
+    vault: &str,
+    lists: &'a Lists,
+) -> (Vec<Item>, Vec<(&'static str, &'a AzureError)>) {
     let mut items = Vec::new();
-    // Which kinds failed, and why.
-    let mut failed: Vec<(&'static str, AzureError)> = Vec::new();
-    match s {
+    let mut failed = Vec::new();
+    match &lists.secrets {
         Ok(list) => items.extend(list.iter().map(|x| Item {
             vault: vault.to_owned(),
             kind: ItemType::Secret,
@@ -222,7 +246,7 @@ async fn read_vault(
         })),
         Err(e) => failed.push(("secrets", e)),
     }
-    match c {
+    match &lists.certs {
         // The list call doesn't give a certificate's content type.
         Ok(list) => items.extend(list.iter().map(|x| Item {
             vault: vault.to_owned(),
@@ -238,7 +262,7 @@ async fn read_vault(
         })),
         Err(e) => failed.push(("certificates", e)),
     }
-    match k {
+    match &lists.keys {
         Ok(list) => items.extend(list.iter().map(|x| Item {
             vault: vault.to_owned(),
             kind: ItemType::Key,
@@ -253,9 +277,13 @@ async fn read_vault(
         })),
         Err(e) => failed.push(("keys", e)),
     }
-    // Show what could be read, and say what couldn't. With every kind
-    // failing, the whole vault is listed as not read.
-    let why = match failed.as_slice() {
+    (items, failed)
+}
+
+/// Show what could be read, and say what couldn't. With every kind
+/// failing, the whole vault is listed as not read.
+pub(super) fn failed_reason(failed: &[(&'static str, &AzureError)]) -> Option<String> {
+    match failed {
         [] => None,
         [(_, e), _, _] => Some(reason(e)),
         some => {
@@ -263,11 +291,10 @@ async fn read_vault(
             Some(format!(
                 "Its {} couldn't be read ({}). The rest is included",
                 kinds.join(" and "),
-                lower_first(&reason(&some[0].1))
+                lower_first(&reason(some[0].1))
             ))
         }
-    };
-    (items, why)
+    }
 }
 
 /// Middleware on the vault pages: a form posted to a vault drops that

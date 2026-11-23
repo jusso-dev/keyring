@@ -6,7 +6,11 @@
 
 use crate::azure::audit::AuditSinks;
 use crate::azure::vaults::Vault;
-use crate::expiry::csv_field;
+use crate::config::Thresholds;
+use crate::defender::{PlanState, VaultDefender};
+use crate::expiry::{Item, csv_field};
+
+const DAY: i64 = 86_400;
 
 /// The result of one check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,10 +52,13 @@ pub(crate) enum Kind {
     CertRenewal,
     KeyRotation,
     Owners,
+    ExpiringSoon,
+    NotCycled,
+    Defender,
 }
 
 impl Kind {
-    pub(crate) const ALL: [Kind; 10] = [
+    pub(crate) const ALL: [Kind; 13] = [
         Kind::AuditLogs,
         Kind::Rbac,
         Kind::SoftDelete,
@@ -62,6 +69,9 @@ impl Kind {
         Kind::CertRenewal,
         Kind::KeyRotation,
         Kind::Owners,
+        Kind::ExpiringSoon,
+        Kind::NotCycled,
+        Kind::Defender,
     ];
 
     pub(crate) fn label(self) -> &'static str {
@@ -76,6 +86,9 @@ impl Kind {
             Self::CertRenewal => "Certificate renewal",
             Self::KeyRotation => "Key rotation",
             Self::Owners => "Owners",
+            Self::ExpiringSoon => "Expiring soon",
+            Self::NotCycled => "Not cycled",
+            Self::Defender => "Defender for Key Vault",
         }
     }
 
@@ -84,7 +97,12 @@ impl Kind {
     pub(crate) fn needs_read(self) -> bool {
         matches!(
             self,
-            Self::AuditLogs | Self::SecretExpiry | Self::CertRenewal | Self::KeyRotation
+            Self::AuditLogs
+                | Self::SecretExpiry
+                | Self::CertRenewal
+                | Self::KeyRotation
+                | Self::ExpiringSoon
+                | Self::NotCycled
         )
     }
 
@@ -114,6 +132,15 @@ impl Kind {
             }
             Self::Owners => {
                 "https://learn.microsoft.com/azure/azure-resource-manager/management/tag-resources"
+            }
+            Self::ExpiringSoon => {
+                "https://learn.microsoft.com/azure/key-vault/general/event-grid-overview"
+            }
+            Self::NotCycled => {
+                "https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation"
+            }
+            Self::Defender => {
+                "https://learn.microsoft.com/azure/defender-for-cloud/defender-for-key-vault-introduction"
             }
         }
     }
@@ -194,6 +221,11 @@ pub(crate) struct Reads {
     pub(crate) secrets_without_expiry: Count,
     pub(crate) certs_not_renewing: Count,
     pub(crate) keys_without_rotation: Count,
+    /// Expired, expiring and long-unchanged items, or why the vault's
+    /// lists couldn't be read.
+    pub(crate) lifecycle: Result<Lifecycle, String>,
+    /// What Defender for Key Vault says about it.
+    pub(crate) defender: VaultDefender,
     /// The vault wasn't read at all (too slow, out of time). The checks
     /// that need a read are Unknown with this reason as it stands.
     pub(crate) not_read: Option<String>,
@@ -207,8 +239,163 @@ impl Reads {
             secrets_without_expiry: Count::Failed(why.to_owned()),
             certs_not_renewing: Count::Failed(why.to_owned()),
             keys_without_rotation: Count::Failed(why.to_owned()),
+            lifecycle: Err(why.to_owned()),
+            defender: VaultDefender::default(),
             not_read: Some(why.to_owned()),
         }
+    }
+}
+
+/// The lifecycle counts for one vault's enabled items, other than the
+/// secrets and keys a certificate manages (they change with it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Lifecycle {
+    pub(crate) expired: usize,
+    /// Expire within `thresholds.expiry_warn_days`, not yet expired.
+    pub(crate) expiring: usize,
+    /// No new value in more than `thresholds.stale_after_days`.
+    pub(crate) stale: usize,
+    pub(crate) thresholds: Thresholds,
+    /// Some of its lists couldn't be read, in plain words, when that is so.
+    pub(crate) partly: Option<String>,
+}
+
+impl Lifecycle {
+    /// Count `items` as of `now`.
+    pub(crate) fn of(items: &[Item], t: Thresholds, partly: Option<String>, now: i64) -> Self {
+        let warn = i64::from(t.expiry_warn_days) * DAY;
+        let mut out = Self {
+            expired: 0,
+            expiring: 0,
+            stale: 0,
+            thresholds: t,
+            partly,
+        };
+        for i in items.iter().filter(|i| i.enabled && !i.managed) {
+            match i.expires {
+                Some(e) if e <= now => out.expired += 1,
+                Some(e) if e - now <= warn => out.expiring += 1,
+                _ => {}
+            }
+            if crate::age::is_stale(i.created, t.stale_after_days, now) {
+                out.stale += 1;
+            }
+        }
+        out
+    }
+}
+
+/// "1 item", "3 items".
+fn items(n: usize) -> String {
+    if n == 1 {
+        "1 item".into()
+    } else {
+        format!("{n} items")
+    }
+}
+
+fn lifecycle_findings(l: &Result<Lifecycle, String>) -> [Finding; 2] {
+    let l = match l {
+        Ok(l) => l,
+        Err(why) => {
+            let f = |k| {
+                Finding::unknown(
+                    k,
+                    format!("Couldn't list what's in it: {}", lower_first(why)),
+                )
+            };
+            return [f(Kind::ExpiringSoon), f(Kind::NotCycled)];
+        }
+    };
+    let partly = l
+        .partly
+        .as_deref()
+        .map(|p| format!(" ({})", lower_first(p)))
+        .unwrap_or_default();
+    let days = l.thresholds.expiry_warn_days;
+    let expiring = if l.expired + l.expiring > 0 {
+        let what = match (l.expired, l.expiring) {
+            (0, n) => format!(
+                "{} {} within {days} days",
+                items(n),
+                if n == 1 { "expires" } else { "expire" }
+            ),
+            (n, 0) => format!(
+                "{} {} expired",
+                items(n),
+                if n == 1 { "has" } else { "have" }
+            ),
+            (x, n) => format!(
+                "{} expired and {n} more expire within {days} days",
+                items(x)
+            ),
+        };
+        Finding::warn(
+            Kind::ExpiringSoon,
+            format!("{what}{partly}: renew or replace them before the apps that use them fail"),
+        )
+    } else if let Some(p) = &l.partly {
+        Finding::unknown(Kind::ExpiringSoon, format!("{p}. The rest pass"))
+    } else {
+        Finding::pass(Kind::ExpiringSoon)
+    };
+    let cycled = if l.stale > 0 {
+        Finding::warn(
+            Kind::NotCycled,
+            format!(
+                "{} {} had a new value in {}{partly}: rotate them, or move the apps that use them to managed identities",
+                items(l.stale),
+                if l.stale == 1 { "hasn't" } else { "haven't" },
+                crate::age::stale_phrase(l.thresholds.stale_after_days)
+            ),
+        )
+    } else if let Some(p) = &l.partly {
+        Finding::unknown(Kind::NotCycled, format!("{p}. The rest pass"))
+    } else {
+        Finding::pass(Kind::NotCycled)
+    };
+    [expiring, cycled]
+}
+
+fn defender(d: &VaultDefender) -> Finding {
+    const FIX_PLAN: &str =
+        "turn on the Key Vault plan in Microsoft Defender for Cloud for its subscription";
+    if let Ok(c) = &d.open
+        && c.total() > 0
+    {
+        let n = c.total();
+        return Finding::warn(
+            Kind::Defender,
+            format!(
+                "Defender has {n} open alert{} on it ({}): look into {} on the Defender alerts page",
+                if n == 1 { "" } else { "s" },
+                c.breakdown(),
+                if n == 1 { "it" } else { "them" }
+            ),
+        );
+    }
+    match (&d.plan, &d.open) {
+        (PlanState::Off, _) => Finding::warn(
+            Kind::Defender,
+            format!(
+                "Defender for Key Vault is off, so unusual access such as secrets being listed and read in bulk goes unnoticed: {FIX_PLAN}"
+            ),
+        ),
+        (PlanState::On, Ok(_)) => Finding::pass(Kind::Defender),
+        (PlanState::On, Err(why)) => Finding::unknown(
+            Kind::Defender,
+            format!(
+                "Defender for Key Vault is on, but its alerts couldn't be read: {}",
+                lower_first(why)
+            ),
+        ),
+        (PlanState::Unknown(why), _) => Finding::unknown(
+            Kind::Defender,
+            format!(
+                "Couldn't tell whether Defender for Key Vault is on: {}",
+                lower_first(why)
+            ),
+        ),
     }
 }
 
@@ -380,6 +567,8 @@ pub(crate) fn assess(v: &Vault, r: &Reads) -> Vec<Finding> {
         "Needs a call per key, so it's checked when you pick this vault on its own",
     ));
     out.push(owners(&v.tags));
+    out.extend(lifecycle_findings(&r.lifecycle));
+    out.push(defender(&r.defender));
     if let Some(why) = &r.not_read {
         for f in out.iter_mut().filter(|f| f.kind.needs_read()) {
             *f = Finding::unknown(f.kind, why.clone());
@@ -545,6 +734,8 @@ pub(crate) fn not_read_row(vault: &str, reason: &str) -> String {
 mod tests {
     use super::*;
     use crate::azure::vaults::HealthProps;
+    use crate::defender::SeverityCounts;
+    use crate::expiry::ItemType;
 
     fn vault() -> Vault {
         Vault {
@@ -582,6 +773,17 @@ mod tests {
             secrets_without_expiry: Count::all_read(0),
             certs_not_renewing: Count::all_read(0),
             keys_without_rotation: Count::all_read(0),
+            lifecycle: Ok(Lifecycle {
+                expired: 0,
+                expiring: 0,
+                stale: 0,
+                thresholds: Thresholds::default(),
+                partly: None,
+            }),
+            defender: VaultDefender {
+                plan: PlanState::On,
+                open: Ok(SeverityCounts::default()),
+            },
             not_read: None,
         }
     }
@@ -727,7 +929,11 @@ mod tests {
 
     #[test]
     fn nothing_read_leaves_the_resource_graph_checks() {
-        let f = assess(&vault(), &Reads::none("Took too long to answer"));
+        let mut r = Reads::none("Took too long to answer");
+        // Defender comes from Resource Graph, so the route fills it in
+        // for a vault that wasn't read.
+        r.defender = reads().defender;
+        let f = assess(&vault(), &r);
         for x in &f {
             if x.kind.needs_read() {
                 assert_eq!(x.status, Status::Unknown, "{:?}", x.kind);
@@ -790,6 +996,103 @@ mod tests {
         );
     }
 
+    fn item(expires: Option<i64>, created: Option<i64>, enabled: bool, managed: bool) -> Item {
+        Item {
+            vault: "kv".into(),
+            kind: ItemType::Secret,
+            name: "x".into(),
+            enabled,
+            expires,
+            not_before: None,
+            created,
+            content_type: String::new(),
+            managed,
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_counts_follow_the_thresholds() {
+        let now = 1_800_000_000;
+        let t = Thresholds {
+            expiry_warn_days: 14,
+            stale_after_days: 90,
+        };
+        let list = [
+            item(Some(now - 1), Some(now), true, false),
+            item(Some(now + 10 * DAY), Some(now - 100 * DAY), true, false),
+            item(Some(now + 20 * DAY), None, true, false),
+            item(Some(now - 1), Some(now - 400 * DAY), false, false),
+            item(Some(now - 1), Some(now - 400 * DAY), true, true),
+        ];
+        let l = Lifecycle::of(&list, t, None, now);
+        assert_eq!((l.expired, l.expiring, l.stale), (1, 1, 1));
+        let [e, c] = lifecycle_findings(&Ok(l));
+        assert_eq!(e.status, Status::Warn);
+        assert!(
+            e.detail
+                .starts_with("1 item expired and 1 more expire within 14 days"),
+            "{}",
+            e.detail
+        );
+        assert_eq!(c.status, Status::Warn);
+        assert!(
+            c.detail
+                .starts_with("1 item hasn't had a new value in over 90 days"),
+            "{}",
+            c.detail
+        );
+
+        let clean = Lifecycle::of(&[], t, None, now);
+        let [e, c] = lifecycle_findings(&Ok(clean.clone()));
+        assert_eq!((e.status, c.status), (Status::Pass, Status::Pass));
+        let partly = Lifecycle {
+            partly: Some("Its certificates couldn't be read".into()),
+            ..clean
+        };
+        let [e, _] = lifecycle_findings(&Ok(partly));
+        assert_eq!(e.status, Status::Unknown, "never a pass on a partial read");
+        let [e, _] = lifecycle_findings(&Err("Blocked by the vault's firewall".into()));
+        assert_eq!(
+            e.detail,
+            "Couldn't list what's in it: blocked by the vault's firewall"
+        );
+    }
+
+    #[test]
+    fn defender_plan_and_alerts() {
+        let mut counts = SeverityCounts::default();
+        counts.add(crate::defender::Severity::High);
+        let d = |plan, open| defender(&VaultDefender { plan, open });
+        assert_eq!(
+            d(PlanState::On, Ok(SeverityCounts::default())).status,
+            Status::Pass
+        );
+        let f = d(PlanState::On, Ok(counts));
+        assert_eq!(f.status, Status::Warn);
+        assert!(
+            f.detail
+                .starts_with("Defender has 1 open alert on it (1 high)"),
+            "{}",
+            f.detail
+        );
+        let f = d(PlanState::Off, Ok(SeverityCounts::default()));
+        assert_eq!(f.status, Status::Warn);
+        assert!(f.detail.contains("Defender for Key Vault is off"));
+        let f = d(
+            PlanState::Unknown("You don't have Security Reader".into()),
+            Ok(SeverityCounts::default()),
+        );
+        assert_eq!(f.status, Status::Unknown);
+        assert!(f.detail.ends_with("you don't have Security Reader"));
+        assert_eq!(d(PlanState::On, Err("x".into())).status, Status::Unknown);
+        assert_eq!(
+            d(PlanState::Unknown("x".into()), Ok(counts)).status,
+            Status::Warn,
+            "an open alert warns whatever the plan read"
+        );
+    }
+
     #[test]
     fn warnings_are_one_sentence_without_em_dashes() {
         let mut v = vault();
@@ -805,6 +1108,17 @@ mod tests {
             secrets_without_expiry: Count::all_read(2),
             certs_not_renewing: Count::all_read(2),
             keys_without_rotation: Count::all_read(2),
+            lifecycle: Ok(Lifecycle {
+                expired: 1,
+                expiring: 2,
+                stale: 3,
+                thresholds: Thresholds::default(),
+                partly: Some("Its keys couldn't be read".into()),
+            }),
+            defender: VaultDefender {
+                plan: PlanState::Off,
+                open: Ok(SeverityCounts::default()),
+            },
             not_read: None,
         };
         let f = assess(&v, &r);

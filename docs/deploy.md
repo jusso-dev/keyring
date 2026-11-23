@@ -150,6 +150,7 @@ App Service (`infra/app-service/main.bicep`):
 | `shareMaxDays` | Sets `KEYRING_SHARE_MAX_DAYS`, the longest a share may last (1 to 365). `0` keeps Keyring's default of 30 | `0` |
 | `eventGridAudience` | Sets `KEYRING_EVENTGRID_AUDIENCE` when `expiry` is in `notifyTypes`. Set it to the client ID if the app registration issues v2 access tokens (`requestedAccessTokenVersion` 2), and use the same value for `entraAudience` in `infra/alerts` | Empty (`api://<client ID>`) |
 | `staleAfterDays` | Sets `KEYRING_STALE_AFTER_DAYS`, the days before the "Not changed in over a year" badge. `0` leaves it unset | `0` (365 days) |
+| `expiryWarnDays` | Sets `KEYRING_EXPIRY_WARN_DAYS`, the days before expiry when an item counts as expiring soon. `0` leaves it unset | `0` (30 days) |
 | `logAnalyticsWorkspaceId` | Send the container's output and HTTP logs to this workspace (see Logs) | None (7 days on the app's own storage) |
 | `auditWorkspaceId` | Turn on the audit sink, writing to `KeyringAudit_CL` in this workspace, in any resource group or subscription, and the audit page's Keyring activity view, which reads it (see Logs, "Audit sink" and "Keyring activity") | None (off) |
 | `auditRetentionInDays` | How long `KeyringAudit_CL` keeps rows | `365` |
@@ -175,7 +176,7 @@ Container Apps (`infra/container-apps/main.bicep`) has the same required paramet
 | `infrastructureSubnetId` | Put the environment in your VNet. Needed for `internal` and for private vaults | None |
 | `replicas` | Copies to run. Sessions are in memory, so more than 1 turns on sticky sessions | `1` |
 
-Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `passwordPolicy`, `requireOwner`, `sharing`, `shareMaxDays`, `eventGridAudience`, `staleAfterDays`, `auditWorkspaceId`, `auditRetentionInDays`, `auditRequired` and the `notify*` parameters too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
+Container Apps takes `apiScope`, `logLevel`, `logFormat`, `trustedProxyHops`, `stepUpAuthContext`, `stepUpMaxAge`, `requireReason`, `reasonTicketPattern`, `passwordPolicy`, `requireOwner`, `sharing`, `shareMaxDays`, `eventGridAudience`, `staleAfterDays`, `expiryWarnDays`, `auditWorkspaceId`, `auditRetentionInDays`, `auditRequired` and the `notify*` parameters too, but not `skuName`, `logAnalyticsWorkspaceId` or the App Service network parameters. It always sends logs to the workspace it creates.
 
 Both templates list every app setting, so a setting added by hand in the portal is removed by the next deployment. Use the parameters instead.
 

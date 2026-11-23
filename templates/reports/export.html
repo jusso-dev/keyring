@@ -234,7 +234,7 @@
     {% endif %}
 
     <h2>Executive summary</h2>
-    <p>Across <strong>{{ snap.total_vaults }}</strong> Azure Key Vault(s) in <strong>{{ snap.subscriptions }}</strong> subscription(s), this estate holds <strong>{{ snap.total_items }}</strong> managed credential(s) ({{ snap.secrets_count }} secrets, {{ snap.certs_count }} certificates and {{ snap.keys_count }} cryptographic keys). Overall security posture is rated <strong>{{ snap.posture_label }} ({{ snap.posture_score }}%)</strong> across eight core governance controls.</p>
+    <p>Across <strong>{{ snap.total_vaults }}</strong> Azure Key Vault(s) in <strong>{{ snap.subscriptions }}</strong> subscription(s), this estate holds <strong>{{ snap.total_items }}</strong> managed credential(s) ({{ snap.secrets_count }} secrets, {{ snap.certs_count }} certificates and {{ snap.keys_count }} cryptographic keys). Overall security posture is rated <strong>{{ snap.posture_label }} ({{ snap.posture_score }}%)</strong> across {{ snap.controls.len() }} core governance controls.{% if snap.defender.alerts_error.is_none() %} Microsoft Defender for Key Vault reports <strong>{{ snap.defender.open.total() }}</strong> open alert(s) on these vaults ({{ snap.defender.open.high }} high){% if snap.defender.vaults_off > 0 %}, and is off for {{ snap.defender.vaults_off }} vault(s){% endif %}.{% else %} Defender for Key Vault alerts could not be read for this report.{% endif %}</p>
 
     <div class="kpis">
       <div class="kpi {% if snap.posture_score >= 80 %}ok{% elif snap.posture_score >= 55 %}warn{% else %}danger{% endif %}">
@@ -252,10 +252,15 @@
         <div class="kpi-num">{{ snap.total_items }}</div>
         <div class="kpi-sub">{{ snap.secrets_count }}S · {{ snap.certs_count }}C · {{ snap.keys_count }}K</div>
       </div>
-      <div class="kpi {% if snap.expired + snap.expiring_30 > 0 %}danger{% else %}ok{% endif %}">
-        <div class="kpi-lbl">Expired / &lt;=30d</div>
-        <div class="kpi-num">{{ snap.expired + snap.expiring_30 }}</div>
-        <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.expiring_30 }} soon</div>
+      <div class="kpi {% if snap.expired + snap.expiring_warn > 0 %}danger{% else %}ok{% endif %}">
+        <div class="kpi-lbl">Expired / &lt;={{ snap.expiry_warn_days }}d</div>
+        <div class="kpi-num">{{ snap.expired + snap.expiring_warn }}</div>
+        <div class="kpi-sub">{{ snap.expired }} expired · {{ snap.expiring_warn }} soon</div>
+      </div>
+      <div class="kpi {% if snap.defender.open.high > 0 %}danger{% elif snap.defender.open.total() > 0 || snap.defender.vaults_off > 0 %}warn{% else %}ok{% endif %}">
+        <div class="kpi-lbl">Defender Alerts</div>
+        <div class="kpi-num">{% if snap.defender.alerts_error.is_some() %}n/a{% else %}{{ snap.defender.open.total() }}{% endif %}</div>
+        <div class="kpi-sub">{{ snap.defender.open.high }} high · {{ snap.defender.vaults_off }} unprotected</div>
       </div>
       <div class="kpi {% if snap.stale + snap.no_expiry > 0 %}warn{% else %}ok{% endif %}">
         <div class="kpi-lbl">Stale / No Expiry</div>

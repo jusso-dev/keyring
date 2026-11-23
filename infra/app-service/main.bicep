@@ -132,6 +132,11 @@ param trustedProxyHops int = 1
 @maxValue(3650)
 param staleAfterDays int = 0
 
+@description('Days before expiry when secrets, certificates and keys count as expiring soon on vault health, Home and the executive report. 0 for the default, 30.')
+@minValue(0)
+@maxValue(365)
+param expiryWarnDays int = 0
+
 @description('Resource ID of a Log Analytics workspace to send the container\'s output and HTTP logs to. Leave empty to keep a short local log on the app instead (7 days, see docs/deploy.md).')
 param logAnalyticsWorkspaceId string = ''
 
@@ -345,6 +350,7 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         empty(apiScope) ? [] : [{ name: 'ENTRA_API_SCOPE', value: apiScope }],
         empty(logLevel) ? [] : [{ name: 'KEYRING_LOG_LEVEL', value: logLevel }],
         staleAfterDays == 0 ? [] : [{ name: 'KEYRING_STALE_AFTER_DAYS', value: string(staleAfterDays) }],
+        expiryWarnDays == 0 ? [] : [{ name: 'KEYRING_EXPIRY_WARN_DAYS', value: string(expiryWarnDays) }],
         empty(logFormat) ? [] : [{ name: 'KEYRING_LOG_FORMAT', value: logFormat }],
         [{ name: 'KEYRING_TRUSTED_PROXY_HOPS', value: string(trustedProxyHops) }],
         empty(stepUpAuthContext) ? [] : [{ name: 'KEYRING_STEP_UP_AUTH_CONTEXT', value: stepUpAuthContext }],

@@ -202,7 +202,7 @@ fn map_vaults(rows: Vec<VaultRow>, subs: &HashMap<String, String>) -> Vec<Vault>
     vaults
 }
 
-async fn run_query<T: serde::de::DeserializeOwned>(
+pub(crate) async fn run_query<T: serde::de::DeserializeOwned>(
     azure: &AzureClient,
     session: &Session,
     management_url: &str,

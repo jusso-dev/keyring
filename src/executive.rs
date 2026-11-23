@@ -10,7 +10,9 @@ use serde::Serialize;
 
 use crate::azure::fanout::Skipped;
 use crate::azure::vaults::Vault;
+use crate::config::Thresholds;
 use crate::dates;
+use crate::defender::{self, Defender, PlanState, SeverityCounts};
 use crate::environments::{self, EnvLabel};
 use crate::expiry::{Item, ItemType, csv_field};
 use crate::owner;
@@ -388,6 +390,10 @@ pub struct VaultRiskRow {
     pub network_restricted: bool,
     pub private_endpoint: bool,
     pub has_owners: bool,
+    /// Enabled items expiring within the warning window, not yet expired.
+    pub expiring_warn: usize,
+    /// Open Defender for Key Vault alerts on it. 0 when they couldn't be read.
+    pub defender_open: usize,
     pub read_error: Option<String>,
     pub risk_score: u32,
     pub risk_label: &'static str,
@@ -403,6 +409,33 @@ pub struct ActionItem {
     pub title: String,
     pub detail: String,
     pub href: &'static str,
+}
+
+/// Defender for Key Vault across the vaults in the snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct DefenderSummary {
+    /// Open alerts on the snapshot's vaults, by severity.
+    pub open: SeverityCounts,
+    /// Vaults whose subscription has the plan on, off, or couldn't be told.
+    pub vaults_on: usize,
+    pub vaults_off: usize,
+    pub vaults_unknown: usize,
+    /// Why alerts couldn't be read, when they couldn't.
+    pub alerts_error: Option<String>,
+    /// The most urgent open alerts, for Home.
+    pub top: Vec<AlertBrief>,
+}
+
+/// One alert, as Home and the report show it. Text is already cleaned.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertBrief {
+    pub title: String,
+    pub severity: &'static str,
+    #[serde(skip)]
+    pub severity_css: &'static str,
+    pub vault: String,
+    pub time: String,
+    pub portal_url: Option<String>,
 }
 
 /// Summary of one discovered environment group (`dev -> test -> prod`).
@@ -455,6 +488,11 @@ pub struct OrgSnapshot {
     pub top_risks: Vec<VaultRiskRow>,
     pub actions: Vec<ActionItem>,
     pub stale_after_days: u32,
+    /// `KEYRING_EXPIRY_WARN_DAYS`.
+    pub expiry_warn_days: u32,
+    /// Enabled items expiring within `expiry_warn_days`, not yet expired.
+    pub expiring_warn: usize,
+    pub defender: DefenderSummary,
 }
 
 fn is_network_restricted(v: &Vault) -> bool {
@@ -514,9 +552,15 @@ impl OrgSnapshot {
         items: &[Item],
         skipped: &[Skipped],
         capped: bool,
-        stale_after_days: u32,
+        thresholds: Thresholds,
+        defender: &Defender,
         now: i64,
     ) -> Self {
+        let stale_after_days = thresholds.stale_after_days;
+        let expiry_warn_days = thresholds.expiry_warn_days;
+        let warn_secs = i64::from(expiry_warn_days) * DAY;
+        let in_snapshot: BTreeSet<String> =
+            vaults.iter().map(|v| v.name.to_ascii_lowercase()).collect();
         let skipped_map: BTreeMap<&str, &str> = skipped
             .iter()
             .map(|s| (s.vault.as_str(), s.reason.as_str()))
@@ -561,6 +605,7 @@ impl OrgSnapshot {
         let mut enabled_items = 0usize;
         let mut enabled_with_valid_expiry = 0usize;
         let mut enabled_fresh = 0usize;
+        let mut expiring_warn = 0usize;
 
         let stale_secs = i64::from(stale_after_days) * DAY;
 
@@ -592,6 +637,12 @@ impl OrgSnapshot {
                 enabled_fresh += 1;
             }
 
+            if item
+                .expires
+                .is_some_and(|e| e > now && e - now <= warn_secs)
+            {
+                expiring_warn += 1;
+            }
             match item.expires {
                 None => {
                     no_expiry += 1;
@@ -628,6 +679,9 @@ impl OrgSnapshot {
         let mut pass_network = 0usize;
         let mut pass_pe = 0usize;
         let mut pass_owners = 0usize;
+        let mut pass_defender = 0usize;
+        let mut defender_known = 0usize;
+        let (mut vaults_on, mut vaults_off, mut vaults_unknown) = (0usize, 0usize, 0usize);
 
         type EnvBucketKey = (u8, String, bool);
         type EnvBucketCounts = (usize, usize, usize, usize);
@@ -666,6 +720,20 @@ impl OrgSnapshot {
             if owners_ok {
                 pass_owners += 1;
             }
+            let plan = defender.plan_for(&v.subscription_id);
+            match plan {
+                PlanState::On => {
+                    vaults_on += 1;
+                    pass_defender += 1;
+                    defender_known += 1;
+                }
+                PlanState::Off => {
+                    vaults_off += 1;
+                    defender_known += 1;
+                }
+                PlanState::Unknown(_) => vaults_unknown += 1,
+            }
+            let v_alerts = defender.open_for(&v.name).unwrap_or_default();
 
             let v_items = by_vault.get(v.name.as_str()).map_or(&[][..], Vec::as_slice);
             let mut v_sec = 0usize;
@@ -675,6 +743,7 @@ impl OrgSnapshot {
             let mut v_exp30 = 0usize;
             let mut v_stale = 0usize;
             let mut v_no_exp = 0usize;
+            let mut v_warn = 0usize;
 
             for it in v_items {
                 match it.kind {
@@ -687,6 +756,9 @@ impl OrgSnapshot {
                 }
                 if it.created.is_some_and(|c| now - c > stale_secs) {
                     v_stale += 1;
+                }
+                if it.expires.is_some_and(|e| e > now && e - now <= warn_secs) {
+                    v_warn += 1;
                 }
                 match it.expires {
                     None => v_no_exp += 1,
@@ -734,6 +806,16 @@ impl OrgSnapshot {
                 risk += v_stale as u32;
                 issues.push(format!("{v_stale} stale"));
             }
+            if v_alerts.total() > 0 {
+                risk += (v_alerts.high as u32) * 6
+                    + (v_alerts.medium as u32) * 3
+                    + (v_alerts.low + v_alerts.informational) as u32;
+                issues.push(format!("{} Defender alert(s)", v_alerts.total()));
+            }
+            if plan == PlanState::Off {
+                risk += if is_prod { 3 } else { 1 };
+                issues.push("Defender for Key Vault off".into());
+            }
             let read_error = skipped_map.get(v.name.as_str()).map(|s| (*s).to_owned());
             if read_error.is_some() {
                 issues.push("Vault not read".into());
@@ -768,6 +850,8 @@ impl OrgSnapshot {
                 network_restricted: net_ok,
                 private_endpoint: pe_ok,
                 has_owners: owners_ok,
+                expiring_warn: v_warn,
+                defender_open: v_alerts.total(),
                 read_error,
                 risk_score: risk,
                 risk_label,
@@ -799,6 +883,8 @@ impl OrgSnapshot {
             ),
             control_bar("Approved private endpoint", pass_pe, total_vaults),
             control_bar("Named vault owners", pass_owners, total_vaults),
+            // Vaults whose plan couldn't be read aren't counted either way.
+            control_bar("Defender for Key Vault on", pass_defender, defender_known),
             control_bar(
                 "Credentials with valid expiry",
                 enabled_with_valid_expiry,
@@ -1011,8 +1097,54 @@ impl OrgSnapshot {
             })
             .collect();
 
+        // Defender for Key Vault, only for the vaults in this snapshot.
+        let mut open = SeverityCounts::default();
+        let alerts_error = defender.alerts.as_ref().err().cloned();
+        let mut top = Vec::new();
+        if let Ok(list) = &defender.alerts {
+            let mine: Vec<defender::Alert> = list
+                .iter()
+                .filter(|a| a.vault.as_ref().is_some_and(|v| in_snapshot.contains(v)))
+                .cloned()
+                .collect();
+            for a in mine.iter().filter(|a| a.status.is_open()) {
+                open.add(a.severity);
+            }
+            top = defender::most_urgent(&mine, 5)
+                .into_iter()
+                .map(|a| AlertBrief {
+                    title: a.title,
+                    severity: a.severity.label(),
+                    severity_css: a.severity.css(),
+                    vault: a.vault.unwrap_or_default(),
+                    time: a.time.short,
+                    portal_url: a.portal_url,
+                })
+                .collect();
+        }
+        let defender_summary = DefenderSummary {
+            open,
+            vaults_on,
+            vaults_off,
+            vaults_unknown,
+            alerts_error,
+            top,
+        };
+
         // Executive remediation action items
         let mut actions = Vec::new();
+        if open.high + open.medium > 0 {
+            actions.push(ActionItem {
+                priority: "Critical",
+                badge_class: "badge-error",
+                title: format!(
+                    "Investigate {} open high or medium Defender for Key Vault alert(s)",
+                    open.high + open.medium
+                ),
+                detail: "Defender saw unusual use of these vaults, such as secrets listed and read in bulk or access from a suspicious address. Confirm who it was and rotate anything exposed.".to_owned(),
+                href: "/defender",
+            });
+        }
         if expired > 0 {
             actions.push(ActionItem {
                 priority: "Critical",
@@ -1022,11 +1154,11 @@ impl OrgSnapshot {
                 href: "/expiry?group=expired",
             });
         }
-        if expiring_30 > 0 {
+        if expiring_warn > 0 {
             actions.push(ActionItem {
                 priority: "High",
                 badge_class: "badge-error",
-                title: format!("Schedule renewal for {expiring_30} credential(s) expiring within 30 days"),
+                title: format!("Schedule renewal for {expiring_warn} credential(s) expiring within {expiry_warn_days} days"),
                 detail: "Confirm owners and notify lists on each expiring item and rotate before expiry to prevent service disruption.".to_owned(),
                 href: "/expiry?group=30",
             });
@@ -1049,6 +1181,15 @@ impl OrgSnapshot {
                 title: format!("Restrict public network access on {open_net} Key Vault(s)"),
                 detail: "Set default firewall action to Deny or disable public access and route workloads and Keyring over Azure Private Endpoints.".to_owned(),
                 href: "/vault-health",
+            });
+        }
+        if vaults_off > 0 {
+            actions.push(ActionItem {
+                priority: "High",
+                badge_class: "badge-warn",
+                title: format!("Turn on Defender for Key Vault for {vaults_off} vault(s)"),
+                detail: "Without the Key Vault plan in Defender for Cloud, nothing raises an alert when a vault is used in an unusual way.".to_owned(),
+                href: "/defender",
             });
         }
         let unowned_vaults = total_vaults.saturating_sub(pass_owners);
@@ -1117,6 +1258,9 @@ impl OrgSnapshot {
             top_risks,
             actions,
             stale_after_days,
+            expiry_warn_days,
+            expiring_warn,
+            defender: defender_summary,
         }
     }
 
@@ -1234,6 +1378,46 @@ pub fn to_csv(snap: &OrgSnapshot, opts: &ReportOptions, generated_utc: &str) -> 
                 snap.certs_count,
                 snap.keys_count
             ),
+        ],
+    );
+
+    let d = &snap.defender;
+    let defender_detail = match &d.alerts_error {
+        Some(why) => format!("NOT READ: {why}"),
+        None => format!(
+            "{} open alert(s): {}; plan on for {} vault(s), off for {}, unknown for {}",
+            d.open.total(),
+            if d.open.total() == 0 {
+                "none".to_owned()
+            } else {
+                d.open.breakdown()
+            },
+            d.vaults_on,
+            d.vaults_off,
+            d.vaults_unknown
+        ),
+    };
+    let open_s = d.open.total().to_string();
+    push_row(
+        &mut out,
+        &[
+            "Defender",
+            "Defender for Key Vault",
+            opts.scope.label(),
+            "",
+            "OpenAlerts",
+            &open_s,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            &defender_detail,
         ],
     );
 
@@ -1395,7 +1579,15 @@ mod tests {
                 now - 5 * DAY,
             ),
         ];
-        let snap = OrgSnapshot::build(&vaults, &items, &[], false, 365, now);
+        let snap = OrgSnapshot::build(
+            &vaults,
+            &items,
+            &[],
+            false,
+            Thresholds::default(),
+            &Defender::not_read("Not read"),
+            now,
+        );
 
         assert_eq!(snap.total_vaults, 2);
         assert_eq!(snap.prod_vaults, 1);
@@ -1414,13 +1606,101 @@ mod tests {
         assert_eq!(snap.health_donut.len(), 5);
         assert_eq!(snap.horizon.len(), 6);
         assert!(!snap.actions.is_empty());
+        assert_eq!(snap.expiring_warn, 1);
+        let defender = snap
+            .controls
+            .iter()
+            .find(|c| c.label.starts_with("Defender"))
+            .unwrap();
+        assert_eq!(defender.total, 0, "an unread plan counts neither way");
+        assert_eq!(snap.defender.vaults_unknown, 2);
+    }
+
+    #[test]
+    fn defender_alerts_and_plans_raise_risk_and_actions() {
+        use crate::defender::RawAlert;
+        let now = 1_760_000_000_i64;
+        let vaults = vec![
+            make_vault("kv-payments-dev", "dev", true, true, true),
+            make_vault("kv-payments-prod", "prod", true, true, true),
+        ];
+        let alert = |vault: &str, sev: &str| RawAlert {
+            subscription_id: "sub-1".into(),
+            alert_type: "KV_SuspiciousIPAccess".into(),
+            display_name: "Access from a suspicious IP address to a key vault".into(),
+            severity: sev.into(),
+            status: "Active".into(),
+            time_generated: "2026-11-20T00:00:00Z".into(),
+            compromised_entity: vault.into(),
+            ..RawAlert::default()
+        };
+        let d = Defender::from_rows(
+            Ok(vec![("sub-1".into(), "Free".into())]),
+            Ok(vec![
+                alert("kv-payments-prod", "High"),
+                alert("kv-elsewhere", "High"),
+            ]),
+        );
+        let t = Thresholds {
+            expiry_warn_days: 60,
+            stale_after_days: 365,
+        };
+        let items = vec![make_item(
+            "kv-payments-dev",
+            "soon",
+            ItemType::Secret,
+            Some(now + 45 * DAY),
+            now,
+        )];
+        let snap = OrgSnapshot::build(&vaults, &items, &[], false, t, &d, now);
+        assert_eq!(
+            snap.defender.open.high, 1,
+            "only alerts on vaults in the snapshot"
+        );
+        assert_eq!(snap.defender.top.len(), 1);
+        assert_eq!(snap.defender.vaults_off, 2);
+        assert_eq!(snap.expiring_warn, 1, "45 days is inside a 60-day window");
+        assert_eq!(
+            snap.vault_rows[0].name, "kv-payments-prod",
+            "the alert puts it first"
+        );
+        assert!(
+            snap.vault_rows[0]
+                .issues_summary
+                .contains("1 Defender alert(s)")
+        );
+        assert!(snap.actions[0].title.starts_with("Investigate 1 open"));
+        assert!(
+            snap.actions
+                .iter()
+                .any(|a| a.title.contains("expiring within 60 days"))
+        );
+        assert!(
+            snap.actions
+                .iter()
+                .any(|a| a.title.starts_with("Turn on Defender"))
+        );
+        let c = snap
+            .controls
+            .iter()
+            .find(|c| c.label.starts_with("Defender"))
+            .unwrap();
+        assert_eq!((c.passed, c.total), (0, 2));
     }
 
     #[test]
     fn white_label_csv_and_json_guard_formulas_and_hide_keyring_brand() {
         let now = 1_760_000_000_i64;
         let vaults = vec![make_vault("kv-payments-prod", "prod", true, true, true)];
-        let snap = OrgSnapshot::build(&vaults, &[], &[], false, 365, now);
+        let snap = OrgSnapshot::build(
+            &vaults,
+            &[],
+            &[],
+            false,
+            Thresholds::default(),
+            &Defender::not_read("Not read"),
+            now,
+        );
         let opts = ReportOptions::sanitized(
             "=HYPERLINK(\"http://evil\")",
             "Board Security Pack",

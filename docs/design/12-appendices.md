@@ -22,6 +22,7 @@ Every environment variable Keyring reads, from `src/config.rs`. A test in `tests
 | `KEYRING_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that add to `X-Forwarded-For`, 0 to 8. `1` on App Service and Container Apps (the templates set it) |
 | `KEYRING_ALLOW_PURGE` | Off | `true` allows permanent deletes |
 | `KEYRING_STALE_AFTER_DAYS` | `365` | Days before "Not changed in over ..." shows, 1 to 3650 |
+| `KEYRING_EXPIRY_WARN_DAYS` | `30` | Days before expiry when an item is a warning on vault health, Home and the executive report, 1 to 365 |
 | `KEYRING_STEP_UP_AUTH_CONTEXT` | Off | Conditional Access authentication context, `c1` to `c99`, before sensitive actions |
 | `KEYRING_STEP_UP_MAX_AGE` | Off | Minutes since sign-in, 1 to 720, for those actions |
 | `KEYRING_REQUIRE_REASON` | `off` | `off`, `reveal` or `all` |
