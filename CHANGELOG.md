@@ -16,6 +16,7 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
 
 ### Fixed
+- Email: the sender waited for each email's delivery result (up to three checks, each up to 30 seconds) before sending the next, so during a burst of expiry or activity email the last recipients heard many minutes late. Results are now checked beside the sender, up to eight at once. At shutdown an email whose result is still being checked counts as sent with its result unknown, not as dropped.
 - The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 
