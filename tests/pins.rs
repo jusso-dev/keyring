@@ -177,3 +177,18 @@ async fn sign_out_form_and_signed_out_page_clear_the_list() {
     assert!(out.contains("data-pins-signed-out"));
     pins_tag(&out);
 }
+
+#[tokio::test]
+async fn sign_in_after_a_timeout_clears_the_list_but_a_plain_sign_in_does_not() {
+    // An idle or absolute timeout lands here, not on the signed-out page,
+    // so the next person on this browser would otherwise see the list.
+    let w = support::world().await;
+    for reason in ["expired", "unsaved"] {
+        let (status, html) = w.page(&format!("/auth/sign-in?reason={reason}")).await;
+        assert_eq!(status, StatusCode::OK, "{reason}");
+        assert!(html.contains("data-pins-signed-out"), "{reason}");
+        pins_tag(&html);
+    }
+    let (_, html) = w.page("/auth/sign-in").await;
+    assert!(!html.contains("data-pins-signed-out"));
+}

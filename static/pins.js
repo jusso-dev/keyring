@@ -150,8 +150,23 @@
     var button = el("button", "button-link", "Clear");
     button.type = "button";
     button.addEventListener("click", function () {
-      clear();
-      mount.hidden = true;
+      var gone = function () {
+        clear();
+        mount.hidden = true;
+      };
+      // The button that had focus is about to vanish: keep the keyboard
+      // user's place on the page's heading.
+      var B = window.KeyringBehaviors;
+      var heading = document.querySelector("main h1");
+      if (heading && !heading.hasAttribute("tabindex")) {
+        heading.setAttribute("tabindex", "-1");
+      }
+      if (B) {
+        B.recover(mount, gone, [heading]);
+      } else {
+        gone();
+        if (heading) heading.focus();
+      }
     });
     note.appendChild(button);
     mount.appendChild(note);

@@ -58,6 +58,12 @@
     }
 
     function choose(r) {
+      // A search still waiting, or still on its way, would reopen the list.
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      asked++;
       hidden.value = r.id;
       input.value = r.name || r.mail || r.upn || r.id;
       clear();

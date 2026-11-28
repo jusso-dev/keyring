@@ -89,9 +89,9 @@ test("Remove takes the row out, so its tag isn't posted", () => {
   assert.equal(rows(main).length, 1);
   assert.equal(main.querySelector('input[name="tag-name-1"]'), null);
   assert.equal(doc.activeElement, button(main, "tag-add"));
-  // Numbers aren't reused: the next row is after the highest left.
+  // The lowest free number is used, so a gap at the limit can be filled.
   button(main, "tag-add").click();
-  assert.ok(main.querySelector('input[name="tag-name-3"]'));
+  assert.ok(main.querySelector('input[name="tag-name-1"]'));
 });
 
 test("no more rows than the server reads", () => {
@@ -102,6 +102,17 @@ test("no more rows than the server reads", () => {
   assert.equal(add.hidden, true);
   add.click();
   assert.equal(rows(main).length, 3);
+});
+
+test("removing a row at the limit lets Add a tag fill the gap", () => {
+  const { main } = form({ rows: [["a", "1"], ["b", "2"], ["c", "3"]], max: 3 });
+  const add = button(main, "tag-add");
+  rows(main)[1].querySelector("button").click();
+  assert.equal(add.hidden, false);
+  add.click();
+  assert.equal(rows(main).length, 3);
+  assert.ok(main.querySelector('input[name="tag-name-2"]'), "the free number is used");
+  assert.equal(add.hidden, true);
 });
 
 test("text goes in as text", () => {

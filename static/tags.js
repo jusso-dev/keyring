@@ -107,16 +107,20 @@
       removable(row, add);
     });
     add.addEventListener("click", function () {
-      var rows = rowsOf(box);
-      var last = 0;
-      rows.forEach(function (r) {
-        last = Math.max(last, number(r));
+      // The lowest free number, so a row removed at the limit can be
+      // added back.
+      var used = {};
+      var count = 0;
+      rowsOf(box).forEach(function (r) {
+        used[number(r)] = true;
+        count++;
       });
-      if (last >= max) {
+      var n = 1;
+      while (used[n]) n++;
+      if (n > max) {
         add.hidden = true;
         return;
       }
-      var n = last + 1;
       var row = el("div");
       row.className = "tag-row";
       row.setAttribute("data-tag-row", "");
@@ -125,7 +129,7 @@
       box.insertBefore(row, add);
       watch(row);
       removable(row, add);
-      add.hidden = n >= max;
+      add.hidden = count + 1 >= max;
       row.querySelector("input[data-tag-name]").focus();
     });
     box.appendChild(add);
