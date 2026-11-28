@@ -16,6 +16,9 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
 
 ### Fixed
+- Stopping could lose audit events and email. Keyring needs up to 40 seconds to stop (20 for requests in flight, then 10 each to send queued email and audit events), but the VM unit allowed 30 and Container Apps and App Service default to about 30. The templates now give it 60: `terminationGracePeriodSeconds` (Container Apps, Bicep and Terraform), `WEBSITES_CONTAINER_STOP_TIME_LIMIT` (App Service, Bicep and Terraform) and `TimeoutStopSec` (VM).
+- The `keyring listening` line now says which build is running: `version`, and the image's `image` and `commit` from `KEYRING_VERSION` and `KEYRING_VCS_REF`, which the Dockerfile set but nothing read.
+- `docs/deploy.md` said the audit sink didn't work on Azure VMs; it does, with `KEYRING_MANAGED_IDENTITY_MODE=imds`. `docs/troubleshooting.md` has rows for VM start-up and IMDS tokens.
 - The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 

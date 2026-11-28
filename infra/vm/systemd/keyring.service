@@ -25,7 +25,9 @@ ExecStopPost=-/usr/bin/rm -f /run/keyring/secrets.env
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=45s
-TimeoutStopSec=30s
+# Keyring needs up to 40 seconds to stop: 20 for requests in flight, then 10
+# each to send queued email and audit events. Past this, systemd kills it.
+TimeoutStopSec=60s
 
 # Hardening: match the distroless container's read-only, unprivileged posture.
 NoNewPrivileges=true

@@ -364,7 +364,7 @@ Use a different workspace from the sink only if the table is copied there; Keyri
 
 **Sentinel.** `infra/sentinel` adds an ASIM parser, analytic rules (all off by default), hunting queries and a workbook for this table. See [sentinel.md](sentinel.md).
 
-**Other hosts.** AKS workload identity and Azure VMs (IMDS) are still a managed identity but get tokens another way, and aren't supported yet. Hosts without a managed identity can't use the sink; their events still go to standard output.
+**Other hosts.** On an Azure VM or VMSS, set `KEYRING_MANAGED_IDENTITY_MODE=imds` and the sink gets its token from the Instance Metadata Service; `infra/vm/main.bicep` sets this up. AKS workload identity gets tokens another way and isn't supported yet. Hosts without a managed identity can't use the sink; their events still go to standard output.
 
 ```kusto
 KeyringAudit_CL
