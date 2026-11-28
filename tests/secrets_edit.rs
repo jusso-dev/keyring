@@ -53,6 +53,35 @@ async fn create_adds_a_secret_with_its_properties() {
 }
 
 #[tokio::test]
+async fn a_write_that_gets_a_503_is_not_sent_twice() {
+    // The first PUT may have been done, so Keyring reports the failure
+    // rather than repeat it; only reads are retried.
+    let w = support::world().await;
+    w.kv.state.fail_each.lock().unwrap().push((
+        axum::http::Method::PUT,
+        "/secrets/db-password".into(),
+        503,
+        "ServiceUnavailable",
+    ));
+    let res = w
+        .post(
+            "/v/kv-test/secrets/-/new",
+            &[("name", "db-password"), ("value", "x"), ("enabled", "on")],
+        )
+        .await;
+    assert_ne!(res.status(), StatusCode::SEE_OTHER);
+    let puts =
+        w.kv.state
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("PUT "))
+            .count();
+    assert_eq!(puts, 1, "the PUT was sent once");
+}
+
+#[tokio::test]
 async fn create_explains_bad_names_and_keeps_other_fields() {
     let w = support::world().await;
     let res = w

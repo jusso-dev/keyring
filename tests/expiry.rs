@@ -103,6 +103,18 @@ async fn throttling_is_retried() {
 }
 
 #[tokio::test]
+async fn a_read_briefly_unavailable_is_retried() {
+    let w = support::world().await;
+    seed_vaults(&w, &["kv-test"]);
+    w.kv.state.put("a", "x");
+    *w.kv.state.unavailable_next.lock().unwrap() = 2;
+    let (status, html) = w.page("/expiry").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(">a<"), "503 on a read retried and succeeded");
+    assert!(!html.contains("couldn't be read"));
+}
+
+#[tokio::test]
 async fn filters_by_vault_type_tag_and_group() {
     let w = support::world().await;
     seed_vaults(&w, &["kv-a", "kv-test"]);

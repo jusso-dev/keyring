@@ -72,6 +72,8 @@ pub(crate) struct KvState {
     pub key_creates: Mutex<Vec<serde_json::Value>>,
     /// Answer this many requests with 429 before serving normally.
     pub throttle_next: Mutex<u32>,
+    /// Answer this many requests with 503 and `Retry-After: 0` first.
+    pub unavailable_next: Mutex<u32>,
     /// Wait this long before answering each request, as a slow vault does.
     pub delay: Mutex<std::time::Duration>,
     /// Whether the vault allows HSM keys.
@@ -545,6 +547,16 @@ async fn record(
         if *t > 0 {
             *t -= 1;
             let mut res = err(429, "Throttled");
+            res.headers_mut()
+                .insert("retry-after", axum::http::HeaderValue::from_static("0"));
+            return res;
+        }
+    }
+    {
+        let mut t = s.unavailable_next.lock().unwrap();
+        if *t > 0 {
+            *t -= 1;
+            let mut res = err(503, "ServiceUnavailable");
             res.headers_mut()
                 .insert("retry-after", axum::http::HeaderValue::from_static("0"));
             return res;
