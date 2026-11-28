@@ -28,11 +28,21 @@ FROM rust:1.100.0-alpine3.22@sha256:f8ddfd4b265d9a9e7fd7c36821af4a55771aee2ac389
 # written in two places only, and Dependabot moves both together.
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+# Dependencies first, against an empty crate, so this layer is reused until
+# Cargo.toml or Cargo.lock change. The cache mounts below don't survive in a
+# CI layer cache (type=gha keeps layers only), so without this every change
+# under src/ rebuilt all the crates.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    mkdir src \
+ && echo 'fn main() {}' > src/main.rs \
+ && : > src/lib.rs \
+ && cargo build --release --locked \
+ && rm -rf src target/release/keyring target/release/deps/keyring-* \
+      target/release/deps/libkeyring-* target/release/.fingerprint/keyring-*
 COPY src ./src
 COPY templates ./templates
 COPY static ./static
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
     cargo build --release --locked \
  && cp target/release/keyring /keyring
 
