@@ -32,6 +32,9 @@ param privateEndpointSubnetId string = ''
 @description('Resource ID of the privatelink.vaultcore.azure.net private DNS zone. Needed with a private endpoint.')
 param privateDnsZoneId string = ''
 
+@description('Resource ID of a Log Analytics workspace for the config vault\'s own audit log (who read the session and client secrets). Leave empty for none.')
+param diagnosticsWorkspaceId string = ''
+
 param tags object = {}
 
 var secretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
@@ -71,6 +74,23 @@ resource readSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRole)
+  }
+}
+
+// The config vault holds the session secret: whoever reads it can forge
+// sessions. Its audit log says who did, and Keyring's own Vault health
+// check (and infra/policy) flag a vault without one.
+resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(diagnosticsWorkspaceId)) {
+  name: 'keyring-config-audit'
+  scope: vault
+  properties: {
+    workspaceId: diagnosticsWorkspaceId
+    logs: [
+      {
+        categoryGroup: 'audit'
+        enabled: true
+      }
+    ]
   }
 }
 

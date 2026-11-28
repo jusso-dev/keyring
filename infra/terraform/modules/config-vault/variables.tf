@@ -41,6 +41,12 @@ variable "private_dns_zone_id" {
   description = "Resource ID of the privatelink.vaultcore.azure.net private DNS zone."
 }
 
+variable "diagnostics_workspace_id" {
+  type        = string
+  default     = ""
+  description = "Resource ID of a Log Analytics workspace for the config vault's own audit log (who read the session and client secrets). Empty for none."
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}

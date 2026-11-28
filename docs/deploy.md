@@ -182,6 +182,7 @@ App Service (`infra/app-service/main.bicep`):
 | `inboundPrivateEndpointSubnetId`, `appPrivateDnsZoneId` | Private inbound access only, over your VNet, VPN or ExpressRoute | None: then `allowedIpRanges` is required |
 | `allowedIpRanges` | Without a private endpoint: the trusted CIDR ranges that may reach Keyring. See [Network access](#network-access) | None |
 | `configVaultPrivateEndpointSubnetId`, `vaultPrivateDnsZoneId` | Make the config vault private. Needs `vnetIntegrationSubnetId` too (the deployment stops if not) | None |
+| (config vault audit log) | Not a parameter: the config vault's audit log goes to `auditWorkspaceId`, or else `logAnalyticsWorkspaceId`, so a read of the session secret is recorded. Container Apps and the VM use `auditWorkspaceId` | Off with neither |
 | `tags` | Tags on everything | None |
 
 Container Apps (`infra/container-apps/main.bicep`) has the same required parameters, plus:

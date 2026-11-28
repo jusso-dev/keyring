@@ -76,6 +76,7 @@ module "config_vault" {
   disable_public_access      = var.config_vault_private_endpoint_subnet_id != ""
   private_endpoint_subnet_id = var.config_vault_private_endpoint_subnet_id
   private_dns_zone_id        = var.vault_private_dns_zone_id
+  diagnostics_workspace_id   = var.audit_workspace_id != "" ? var.audit_workspace_id : var.log_analytics_workspace_id
   tags                       = var.tags
 }
 
