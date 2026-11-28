@@ -287,6 +287,26 @@ test("a clear refused in a background tab is tried again on return", async () =>
   assert.deepEqual(p.clipboard.writes, [SECRET, ""]);
 });
 
+test("a clear refused on return is tried again on the next click or key press", async () => {
+  const p = reveal();
+  p.copy.click();
+  await settle();
+  p.clipboard.refuseWrites = true;
+  p.clock.advance(31_000);
+  await spoken(p);
+  p.win.dispatch("focus");
+  await spoken(p);
+  assert.equal(p.clipboard.text, SECRET, "focus isn't a gesture, so still refused");
+  p.clipboard.refuseWrites = false;
+  p.doc.dispatch("pointerdown");
+  await spoken(p);
+  assert.equal(p.clipboard.text, "");
+  assert.equal(p.status.textContent, "Value hidden. Clipboard cleared.");
+  p.doc.dispatch("keydown");
+  await settle();
+  assert.deepEqual(p.clipboard.writes, [SECRET, ""], "nothing left to clear");
+});
+
 test("coming back after the deadline hides the value at once", async () => {
   const p = reveal();
   p.clock.skip(60_000);
@@ -391,6 +411,20 @@ test("each field of a typed secret has its own Copy, and the clipboard is cleare
   assert.equal(p.clipboard.text, "", "the last copied field is cleared");
   assert.equal(p.fields.every((f) => f.hidden && f.value === ""), true, "every field hidden");
   assert.equal(p.copies.every((c) => c.hidden), true);
+});
+
+test("a failed second copy still clears the value that is on the clipboard", async () => {
+  const p = typedReveal();
+  p.copies[0].click();
+  await settle();
+  assert.equal(p.clipboard.text, "svc-user");
+  p.clipboard.refuseWrites = true;
+  p.copies[1].click();
+  await settle();
+  p.clipboard.refuseWrites = false;
+  p.hideLink.click();
+  await spoken(p);
+  assert.equal(p.clipboard.text, "", "the first field, still on the clipboard, is cleared");
 });
 
 test("each field is hidden when time runs out", async () => {

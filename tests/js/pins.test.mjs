@@ -107,9 +107,21 @@ test("home shows Pinned and Recently opened as safe links, with Clear", () => {
   const clear = all(mount, "button")[0];
   assert.equal(clear.textContent, "Clear");
   assert.match(mount.textContent, /cleared when you sign out/);
+  clear.focus();
   clear.click();
   assert.equal(storage.getItem(KEY), null);
   assert.equal(mount.hidden, true);
+});
+
+test("Clear moves focus to the page heading, not the body", () => {
+  const storage = new Storage({ [KEY]: JSON.stringify({ pinned: [vaultEntry()], recent: [] }) });
+  const { main, doc } = homePage(storage);
+  const clear = main.querySelector("button");
+  clear.focus();
+  clear.click();
+  const h1 = main.querySelector("h1");
+  assert.equal(doc.activeElement, h1);
+  assert.equal(h1.getAttribute("tabindex"), "-1");
 });
 
 test("nothing shows when the lists are empty", () => {

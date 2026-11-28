@@ -9,6 +9,11 @@
       <span class="auth-kicker">Privileged Secret Access</span>
     </div>
     <h1>Sign in to Keyring</h1>
+    {% if expired %}
+    {#- Signed out by time, not by the button: static/pins.js clears the
+        pinned and recent lists here too. #}
+    <div hidden data-pins-signed-out></div>
+    {% endif %}
     {% if unsaved %}
     <p class="notice notice-warn">You were signed out before that was saved, so nothing changed. Sign in again, then enter it again.</p>
     {% else if expired %}

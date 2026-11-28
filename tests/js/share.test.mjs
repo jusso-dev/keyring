@@ -60,6 +60,24 @@ test("searches after a pause, with the query encoded, and shows results as text"
   assert.match(status.textContent, /Picked/);
 });
 
+test("a pick cancels the search still waiting, so the list stays closed", async () => {
+  const { main, clock, fetches } = form(
+    answer({ results: [{ id: BLAIR, name: "Blair", mail: "blair@example.com", upn: "blair@example.com", type: "Person" }] }),
+  );
+  type(main, clock, "bla");
+  await settle();
+  const { input, list, hidden, status } = parts(main);
+  input.value = "blai";
+  input.dispatch("input");
+  list.querySelectorAll("button")[0].click();
+  clock.advance(400);
+  await settle();
+  assert.equal(fetches.length, 1, "the waiting search never ran");
+  assert.equal(hidden.value, BLAIR);
+  assert.equal(list.hidden, true);
+  assert.match(status.textContent, /Picked Blair/);
+});
+
 test("short queries, emails and object IDs don't search, and typing drops a pick", async () => {
   const { main, clock, fetches } = form(answer({ results: [] }));
   const { hidden } = parts(main);

@@ -133,7 +133,7 @@
         });
       }).then(null, function () {
         say(status, message + " Keyring couldn't clear the clipboard yet. " +
-          "It will try again when you come back to this page, or clear it yourself.");
+          "It will try again when you come back to this page or click on it, or clear it yourself.");
       }).then(function () {
         clearing = null;
       });
@@ -197,8 +197,11 @@
       var own = document.getElementById(copy.getAttribute("data-copy") || "") || field;
       copy.hidden = false;
       copy.addEventListener("click", function () {
-        value = own.value;
-        navigator.clipboard.writeText(value).then(function () {
+        var next = own.value;
+        navigator.clipboard.writeText(next).then(function () {
+          // Only once it's on the clipboard: a failed copy leaves the
+          // earlier value there, and that is the one to clear.
+          value = next;
           copied = true;
           restart();
           say(status, "Copied. Keyring will try to clear the clipboard in " + delay + " seconds.");
@@ -288,6 +291,16 @@
       }
     }
     window.addEventListener("focus", back);
+    // Safari and Firefox only let a page write the clipboard during a click
+    // or key press, so a clear refused from the timer or on focus is tried
+    // again on the next one.
+    function gesture() {
+      if (gone && copied) {
+        clearClipboard("Value hidden.");
+      }
+    }
+    document.addEventListener("pointerdown", gesture, true);
+    document.addEventListener("keydown", gesture, true);
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") {
         back();

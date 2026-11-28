@@ -16,6 +16,11 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
 
 ### Fixed
+- A copied secret could stay on the clipboard: Safari and Firefox refuse a clipboard write that isn't part of a click or key press, so the clear at 30 seconds and the retry on return both failed there. A pending clear is now tried again on the next click or key press on the page. A Copy that failed also replaced the value Keyring meant to clear, so the value still on the clipboard was left there; it now changes only once the copy succeeds.
+- Pinned and recently opened items stayed in the browser after an idle or absolute timeout, because only Sign out and the signed-out page cleared them. The sign-in page reached after a timeout now clears them too.
+- Clear under Pinned and Recently opened left keyboard focus on the page body; it now moves to the page heading.
+- Picking someone in the Share picker while a search was still waiting reopened the list and replaced "Picked ..." with the search's count.
+- With the most tag rows, removing one showed Add a tag, but it did nothing, because row numbers weren't reused. Add now takes the lowest free number.
 - The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 
