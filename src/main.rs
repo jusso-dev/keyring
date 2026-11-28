@@ -109,7 +109,16 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    tracing::info!(addr = %listen, "keyring listening");
+    // Which build this is, so a log can be tied to an image and a commit.
+    let image = keyring::telemetry::build_label(std::env::var("KEYRING_VERSION").ok().as_deref());
+    let commit = keyring::telemetry::build_label(std::env::var("KEYRING_VCS_REF").ok().as_deref());
+    tracing::info!(
+        addr = %listen,
+        version = env!("CARGO_PKG_VERSION"),
+        image = image.as_deref().unwrap_or("-"),
+        commit = commit.as_deref().unwrap_or("-"),
+        "keyring listening"
+    );
 
     let app = keyring::app(state);
     let served = keyring::serve::serve(listener, app, shutdown_signal()).await;

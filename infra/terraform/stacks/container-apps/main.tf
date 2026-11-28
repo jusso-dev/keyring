@@ -203,6 +203,9 @@ resource "azurerm_container_app" "this" {
   template {
     min_replicas = var.replicas
     max_replicas = var.replicas
+    # Keyring needs up to 40 seconds to stop: 20 for requests in flight, then
+    # 10 each to send queued email and audit events (src/main.rs).
+    termination_grace_period_seconds = 60
 
     container {
       name   = "keyring"

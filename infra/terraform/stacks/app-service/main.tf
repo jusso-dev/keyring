@@ -21,12 +21,15 @@ locals {
     {
       WEBSITES_PORT                       = "3000"
       WEBSITES_ENABLE_APP_SERVICE_STORAGE = "false"
-      ENTRA_TENANT_ID                     = local.tenant_id
-      ENTRA_CLIENT_ID                     = var.client_id
-      APP_BASE_URL                        = var.app_base_url
-      SESSION_SECRET                      = local.session_secret_ref
-      KEYRING_ALLOW_PURGE                 = tostring(var.allow_purge)
-      KEYRING_TRUSTED_PROXY_HOPS          = tostring(var.trusted_proxy_hops)
+      # Time to stop before the container is killed: Keyring needs up to 40
+      # seconds to finish requests and send queued email and audit events.
+      WEBSITES_CONTAINER_STOP_TIME_LIMIT = "60"
+      ENTRA_TENANT_ID                    = local.tenant_id
+      ENTRA_CLIENT_ID                    = var.client_id
+      APP_BASE_URL                       = var.app_base_url
+      SESSION_SECRET                     = local.session_secret_ref
+      KEYRING_ALLOW_PURGE                = tostring(var.allow_purge)
+      KEYRING_TRUSTED_PROXY_HOPS         = tostring(var.trusted_proxy_hops)
     },
     var.use_federated_credential || local.use_audit_sink || local.use_notify ? {
       KEYRING_MANAGED_IDENTITY_CLIENT_ID = module.config_vault.identity_client_id

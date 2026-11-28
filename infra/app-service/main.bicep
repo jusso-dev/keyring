@@ -365,6 +365,10 @@ resource site 'Microsoft.Web/sites@2024-04-01' = {
         [
           { name: 'WEBSITES_PORT', value: '3000' }
           { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
+          // Time to stop before the container is killed: Keyring needs up to
+          // 40 seconds to finish requests and send queued email and audit
+          // events (src/main.rs).
+          { name: 'WEBSITES_CONTAINER_STOP_TIME_LIMIT', value: '60' }
           { name: 'ENTRA_TENANT_ID', value: tenantId }
           { name: 'ENTRA_CLIENT_ID', value: clientId }
           { name: 'APP_BASE_URL', value: appBaseUrl }

@@ -469,6 +469,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!configOnly) {
           ]
         }
       ]
+      // Keyring needs up to 40 seconds to stop: 20 for requests in flight,
+      // then 10 each to send queued email and audit events (src/main.rs).
+      // The default 30 could cut the audit flush off.
+      terminationGracePeriodSeconds: 60
       scale: {
         minReplicas: replicas
         maxReplicas: replicas

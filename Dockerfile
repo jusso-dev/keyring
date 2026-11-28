@@ -47,7 +47,8 @@ LABEL org.opencontainers.image.title="Keyring" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
-# For the binary to report at start. Version and commit only, nothing else.
+# Logged on the "keyring listening" line (src/main.rs). Version and commit
+# only, nothing else.
 ENV KEYRING_VERSION="${VERSION}" \
     KEYRING_VCS_REF="${VCS_REF}"
 # 65532 is distroless's nonroot user. Numeric so Kubernetes' runAsNonRoot

@@ -49,6 +49,24 @@ pub fn init(level: &str, format: LogFormat) {
     }
 }
 
+/// The image's version or commit, from `KEYRING_VERSION` or
+/// `KEYRING_VCS_REF` (set by the Dockerfile from its build arguments), for
+/// the start-up line. `None` when unset, empty or the Dockerfile's
+/// `unknown`. Only letters, digits and `.-_+` are kept, at most 64, so a
+/// stray value can't forge another log line.
+pub fn build_label(raw: Option<&str>) -> Option<String> {
+    let v = raw?.trim();
+    if v.is_empty() || v == "unknown" {
+        return None;
+    }
+    let clean: String = v
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+        .take(64)
+        .collect();
+    (!clean.is_empty()).then_some(clean)
+}
+
 /// Lines at `level` and above, plus Keyring's audit events whatever the
 /// level, so `KEYRING_LOG_LEVEL=warn` can't drop the record of a reveal.
 pub fn filter(level: LevelFilter) -> tracing_subscriber::filter::Targets {
@@ -142,4 +160,27 @@ pub fn quiet_panics() {
             .unwrap_or_default();
         tracing::error!(%location, "panicked");
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_label;
+
+    #[test]
+    fn build_label_keeps_a_version_or_commit_and_drops_the_rest() {
+        assert_eq!(build_label(Some("1.0.0")).as_deref(), Some("1.0.0"));
+        assert_eq!(
+            build_label(Some("598606d0c1")).as_deref(),
+            Some("598606d0c1")
+        );
+        for unset in [None, Some(""), Some("  "), Some("unknown")] {
+            assert_eq!(build_label(unset), None, "{unset:?}");
+        }
+        // No line breaks or quotes, so it can't start another log line.
+        assert_eq!(
+            build_label(Some("1.0\n\"level\":\"error\"")).as_deref(),
+            Some("1.0levelerror")
+        );
+        assert_eq!(build_label(Some(&"a".repeat(200))).unwrap().len(), 64);
+    }
 }

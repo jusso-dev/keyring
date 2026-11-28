@@ -21,6 +21,10 @@ Most problems show a plain message in Keyring that says what's wrong and who to 
 | `/healthz` doesn't answer | Check the container logs. App Service needs `WEBSITES_PORT=3000`, which the template sets |
 | A setting you added in the portal is gone after a deployment | The templates list every setting. Use the `apiScope` and `logLevel` parameters instead (see [deploy.md](deploy.md#parameters)) |
 | Internal Container Apps: the address doesn't resolve or times out from the VNet | The environment's default domain needs a private DNS zone with a wildcard record for its `staticIp`. See [deploy.md](deploy.md#internal-container-apps) |
+| VM: `keyring.service` fails before Keyring starts, in `fetch-config-secrets.sh` | Read `journalctl -u keyring`. `KEYRING_CONFIG_VAULT_URI` and `KEYRING_MANAGED_IDENTITY_CLIENT_ID` must be set in `/etc/keyring/keyring.env`; the identity must be attached to the VM and have Key Vault Secrets User on the config vault; the vault must be reachable from the VM's subnet (private endpoint and DNS) |
+| VM: the audit sink or email can't get a token | Set `KEYRING_MANAGED_IDENTITY_MODE=imds`. The platform default needs `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which only App Service and Container Apps set |
+| The log doesn't say which build is running | The `keyring listening` line has `version`, plus `image` and `commit` from the Docker image's `VERSION` and `VCS_REF` build arguments. `-` means the image was built without them |
+| Audit events or email from the last few seconds before a restart are missing | Keyring needs up to 40 seconds to stop. The templates give it 60 (`terminationGracePeriodSeconds`, `WEBSITES_CONTAINER_STOP_TIME_LIMIT`, `TimeoutStopSec`); a shorter limit set by hand kills it before the queues are sent |
 | Every form post says "This request didn't come from Keyring" | `APP_BASE_URL` doesn't match the address in the browser, often because of a proxy in front. See the README, "Behind a proxy" |
 
 ## Signing in
