@@ -347,6 +347,51 @@ async fn polls_at_most_three_times_then_counts_unknown() {
 }
 
 #[tokio::test]
+async fn a_slow_result_check_does_not_hold_up_the_next_email() {
+    // Each result check waits a second before asking. Sent one after the
+    // other, ten emails would take ten seconds or more; checked beside the
+    // sender, they all go out at once.
+    let r = rig_with(|s| s.tuning.poll_wait_max = Duration::from_secs(1)).await;
+    *r.acs.state.poll_after.lock().unwrap() = 1;
+    let started = Instant::now();
+    for n in 0..10 {
+        assert!(
+            r.n.enqueue(notice(&[&format!("u{n}@example.com")]))
+                .is_queued()
+        );
+    }
+    until("all sent", || {
+        r.acs.state.attempts.lock().unwrap().len() == 10
+    })
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "sends waited on result checks: {:?}",
+        started.elapsed()
+    );
+    until("delivered", || r.n.health().delivered == 10).await;
+    assert_eq!(notify_rows(&r, 10).await.len(), 10);
+}
+
+#[tokio::test]
+async fn shutdown_counts_a_result_still_being_checked_as_unknown() {
+    let r = rig_with(|s| {
+        s.tuning.poll_wait_max = Duration::from_secs(30);
+        s.tuning.shutdown_grace = Duration::from_millis(300);
+    })
+    .await;
+    *r.acs.state.poll_after.lock().unwrap() = 30;
+    assert!(r.n.enqueue(notice(&["alex@example.com"])).is_queued());
+    until("accepted", || {
+        r.acs.state.attempts.lock().unwrap().len() == 1
+    })
+    .await;
+    r.n.shutdown().await;
+    let h = r.n.health();
+    assert_eq!((h.unknown, h.dropped_at_shutdown, h.delivered), (1, 0, 0));
+}
+
+#[tokio::test]
 async fn a_failed_result_records_only_its_status() {
     let r = rig().await;
     r.acs.state.statuses.lock().unwrap().push_back("Failed");

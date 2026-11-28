@@ -22,7 +22,9 @@
 //!   same scheme, host and port as the endpoint, under
 //!   `/emails/operations/`, before it is fetched with the token, so a
 //!   wrong or hostile answer can't send the token anywhere else. It is
-//!   polled at most [`MAX_POLLS`] times. Each email is then counted as
+//!   polled at most [`MAX_POLLS`] times, beside the sender (up to
+//!   [`MAX_POLLING`] at once), so a slow answer doesn't hold up the emails
+//!   queued behind it. Each email is then counted as
 //!   delivered, failed or unknown, and gets one audit event, `notify.sent`
 //!   or `notify.failed`.
 //! - **Never logged.** Recipient addresses, bodies, tokens and Azure's
@@ -59,6 +61,10 @@ pub const API_VERSION: &str = "2025-09-01";
 
 /// Most times a result is polled before it is counted as unknown.
 pub const MAX_POLLS: u32 = 3;
+
+/// Accepted emails whose result is checked at once. The checks run beside
+/// the sender, so one slow answer doesn't hold up the emails behind it.
+pub const MAX_POLLING: usize = 8;
 
 /// Timings and sizes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,6 +233,10 @@ pub struct Notifier {
     failing_since: Mutex<Option<Instant>>,
     /// The job being sent, so shutdown can count it.
     in_flight: Mutex<Option<JobRef>>,
+    /// Accepted jobs whose result is still being checked, by a number of
+    /// their own, so shutdown can count them.
+    polling: Mutex<Vec<(u64, JobRef)>>,
+    next_poll_id: AtomicU64,
     stop: watch::Sender<bool>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -285,6 +295,8 @@ impl Notifier {
             counts: Counts::default(),
             failing_since: Mutex::new(None),
             in_flight: Mutex::new(None),
+            polling: Mutex::new(Vec::new()),
+            next_poll_id: AtomicU64::new(0),
             stop,
             task: Mutex::new(None),
         });
@@ -490,6 +502,11 @@ impl Notifier {
             for (kind, item, to) in &left {
                 self.finish(*kind, item.as_ref(), to, Ending::Shutdown);
             }
+            // Accepted by ACS, so probably sent; only the result is unknown.
+            let checking = std::mem::take(&mut *lock(&self.polling));
+            for (_, (kind, item, to)) in &checking {
+                self.finish(*kind, item.as_ref(), to, Ending::AcceptedUnknown);
+            }
             tracing::warn!(
                 dropped = left.len(),
                 "notify: shutdown grace ran out; emails still queued were not sent"
@@ -498,10 +515,14 @@ impl Notifier {
     }
 
     async fn run(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
+        // Dropped with this task, which aborts the checks still running.
+        let mut checks = tokio::task::JoinSet::new();
         loop {
+            while checks.try_join_next().is_some() {}
             let job = lock(&self.queue).pop_front();
             let Some(job) = job else {
                 if *stop.borrow() {
+                    while checks.join_next().await.is_some() {}
                     return;
                 }
                 tokio::select! {
@@ -511,9 +532,43 @@ impl Notifier {
                 continue;
             };
             *lock(&self.in_flight) = Some((job.kind, job.item.clone(), job.to.clone()));
-            let ending = self.deliver(&job).await;
+            let sent = self.submit(&job).await;
             lock(&self.in_flight).take();
-            self.finish(job.kind, job.item.as_ref(), &job.to, ending);
+            let (poll_url, wait) = match sent {
+                Err(ending) => {
+                    self.finish(job.kind, job.item.as_ref(), &job.to, ending);
+                    continue;
+                }
+                Ok(None) => {
+                    self.finish(
+                        job.kind,
+                        job.item.as_ref(),
+                        &job.to,
+                        Ending::AcceptedUnknown,
+                    );
+                    continue;
+                }
+                Ok(Some(op)) => op,
+            };
+            while checks.len() >= MAX_POLLING {
+                checks.join_next().await;
+            }
+            let id = self.next_poll_id.fetch_add(1, Ordering::Relaxed);
+            lock(&self.polling).push((id, (job.kind, job.item.clone(), job.to.clone())));
+            let me = self.clone();
+            checks.spawn(async move {
+                let ending = me.result(&poll_url, wait).await;
+                // Gone already if shutdown counted it.
+                let mine = {
+                    let mut p = lock(&me.polling);
+                    p.iter()
+                        .position(|(i, _)| *i == id)
+                        .map(|at| p.swap_remove(at))
+                };
+                if mine.is_some() {
+                    me.finish(job.kind, job.item.as_ref(), &job.to, ending);
+                }
+            });
         }
     }
 
@@ -565,8 +620,9 @@ impl Notifier {
         lock(&self.failing_since).get_or_insert_with(Instant::now);
     }
 
-    /// Send one email and poll for its result.
-    async fn deliver(&self, job: &Job) -> Ending {
+    /// Send one email until ACS accepts or refuses it. `Ok` with the poll
+    /// URL and first wait when its result can be checked.
+    async fn submit(&self, job: &Job) -> Result<Option<(String, Duration)>, Ending> {
         let t = self.settings.tuning;
         let started = Instant::now();
         let request_id = crate::audit::new_uuid();
@@ -577,7 +633,7 @@ impl Notifier {
         let op = loop {
             let left = t.give_up_after.saturating_sub(started.elapsed());
             if left.is_zero() {
-                return self.gave_up(maybe_sent);
+                return Err(self.gave_up(maybe_sent));
             }
             let wait = match self.send(job, &request_id, &first_sent).await {
                 Send::Accepted(op) => {
@@ -586,11 +642,11 @@ impl Notifier {
                 }
                 Send::Rejected => {
                     self.note_failure();
-                    return Ending::Rejected;
+                    return Err(Ending::Rejected);
                 }
                 Send::TooOld => {
                     self.note_failure();
-                    return Ending::GaveUpMaybeSent;
+                    return Err(Ending::GaveUpMaybeSent);
                 }
                 Send::Retry { after, reached } => {
                     self.note_failure();
@@ -608,16 +664,19 @@ impl Notifier {
             let left = t.give_up_after.saturating_sub(started.elapsed());
             if wait >= left {
                 tokio::time::sleep(left).await;
-                return self.gave_up(maybe_sent);
+                return Err(self.gave_up(maybe_sent));
             }
             tokio::time::sleep(wait).await;
         };
-        let Some((poll_url, mut wait)) = op else {
-            return Ending::AcceptedUnknown;
-        };
+        Ok(op)
+    }
+
+    /// Check an accepted email's result, at most [`MAX_POLLS`] times.
+    async fn result(&self, poll_url: &str, mut wait: Duration) -> Ending {
+        let t = self.settings.tuning;
         for _ in 0..MAX_POLLS {
             tokio::time::sleep(wait.min(t.poll_wait_max)).await;
-            match self.poll(&poll_url).await {
+            match self.poll(poll_url).await {
                 Poll::Final(e) => return e,
                 Poll::Pending(after) => {
                     wait = if after.is_zero() {
