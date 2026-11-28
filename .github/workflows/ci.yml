@@ -27,9 +27,10 @@ jobs:
   rust:
     name: fmt, clippy, test, build
     runs-on: ubuntu-24.04
-    # Test plus a release build of the whole tree runs 16-26 minutes on a
-    # hosted runner; 20 cut the release build off on main and on PRs.
-    timeout-minutes: 35
+    # No release build here: the container build job compiles the release
+    # binary that ships (musl, LTO), so a second one for glibc only cost
+    # runner time. The name stays, since branch protection requires it.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,9 +73,6 @@ jobs:
       # Node, no packages.
       - name: Browser script tests
         run: node --test tests/js/*.test.mjs
-
-      - name: Release build
-        run: cargo build --release --locked
 
   supply-chain:
     name: cargo-deny, cargo-audit
@@ -233,6 +231,19 @@ jobs:
 
       - name: Format check
         run: terraform fmt -check -recursive -diff infra/terraform
+
+      # Seven directories each need the azurerm provider (about 100 MB).
+      # One shared cache, kept between runs, downloads it once.
+      - name: Provider cache directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/terraform-plugins"
+          echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/terraform-plugins" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugins
+          key: terraform-plugins-${{ runner.os }}-${{ hashFiles('infra/terraform/**/versions.tf') }}
+          restore-keys: terraform-plugins-${{ runner.os }}-
 
       - name: Validate modules and stacks
         run: |

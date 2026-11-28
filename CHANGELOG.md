@@ -36,6 +36,7 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - Microsoft Sentinel Content Hub V3 solution package under `Solutions/Keyring/` (ASIM parsers, 8 analytic rule YAMLs, 6 hunting query YAMLs, workbook, `mainTemplate.json` and `createUiDefinition.json`), one-click Deploy to Azure ARM template (`infra/sentinel/azuredeploy.json`), and packaging/validation scripts in `tools/sentinel/` (#301).
 
 ### Changed
+- Faster CI and image builds: the Dockerfile builds the dependencies in their own layer, reused until `Cargo.toml` or `Cargo.lock` change (the GitHub Actions layer cache keeps no cache mounts, so every change under `src/` rebuilt all the crates); the Rust job no longer does a second, glibc release build the container job already covers; and the Terraform job shares one provider cache across its seven directories.
 - Removed `chrono` from test dev-dependencies in favour of `keyring::dates` and standard library time helpers (#271).
 - Silenced false-positive `secure-secrets-in-params` Bicep linter warning on the non-secret `passwordPolicy` parameter in `infra/app-service/main.bicep` and `infra/container-apps/main.bicep`.
 - Updated `.env.example`, `SECURITY.md`, `README.md`, `docs/sentinel.md` and `docs/real-vault-checklist.md` to reflect `v1.0.0`, real-tenant test runs through 19-11-2026, and all production environment variables.
