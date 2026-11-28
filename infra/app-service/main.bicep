@@ -212,6 +212,8 @@ module config '../modules/config-vault.bicep' = {
     disablePublicAccess: !empty(configVaultPrivateEndpointSubnetId)
     privateEndpointSubnetId: configVaultPrivateEndpointSubnetId
     privateDnsZoneId: vaultPrivateDnsZoneId
+    // Who read the session and client secrets.
+    diagnosticsWorkspaceId: !empty(auditWorkspaceId) ? auditWorkspaceId : logAnalyticsWorkspaceId
     tags: tags
   }
 }

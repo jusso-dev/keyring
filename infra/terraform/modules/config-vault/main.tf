@@ -45,6 +45,21 @@ resource "azurerm_role_assignment" "read_secrets" {
   principal_type       = "ServicePrincipal"
 }
 
+# The config vault holds the session secret: whoever reads it can forge
+# sessions. Its audit log says who did, and Keyring's own Vault health check
+# (and infra/policy) flag a vault without one.
+resource "azurerm_monitor_diagnostic_setting" "audit" {
+  count = var.diagnostics_workspace_id != "" ? 1 : 0
+
+  name                       = "keyring-config-audit"
+  target_resource_id         = azurerm_key_vault.this.id
+  log_analytics_workspace_id = var.diagnostics_workspace_id
+
+  enabled_log {
+    category_group = "audit"
+  }
+}
+
 resource "azurerm_private_endpoint" "this" {
   count = var.private_endpoint_subnet_id != "" ? 1 : 0
 

@@ -9,6 +9,7 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 ## [Unreleased]
 
 ### Security
+- The config vault the templates create (holding the session and client secrets) now sends its audit log to the audit workspace (`auditWorkspaceId` / `audit_workspace_id`; on App Service, `logAnalyticsWorkspaceId` when there is no audit workspace), so a read of the session secret is recorded. Before, it had no diagnostic setting, and Keyring's own Vault health check flagged it.
 - **Breaking for deployments: Keyring is never reachable from the whole internet.** The App Service and Container Apps templates (Bicep and Terraform) now stop unless Keyring is private (an App Service private endpoint or internal Container Apps, reached over VPN or ExpressRoute) or limited to `allowedIpRanges` / `allowed_ip_ranges` (deny by default, the App Service SCM site included). Each range must be one IPv4 CIDR, /16 or narrower. Existing parameter files that relied on the open public default must add one or the other. See docs/deploy.md, "Network access", and threat T39.
 - The templates refuse `expiry` in `notifyTypes`, because Keyring's Event Grid webhook needs inbound internet access. Send expiry email with `infra/alerts` and `notifyVia = 'actionGroup'` instead.
 - Start-up warns when `KEYRING_SHARING` is on without both step-up and the reason gate (T29), and when `watched-reads` is on without `KEYRING_NOTIFY_ALLOWED_DOMAINS` (T26).
