@@ -523,6 +523,31 @@ async fn a_refused_identity_is_retried_with_a_new_token() {
 }
 
 #[tokio::test]
+async fn an_identity_refused_twice_is_rejected_at_once_not_retried_for_minutes() {
+    // A missing role on the Communication Services resource: every email
+    // would otherwise retry for the whole repeat window, holding up the
+    // queue behind it.
+    let r = rig().await;
+    {
+        let mut script = r.acs.state.script.lock().unwrap();
+        script.push_back(Answer::Status(403, None));
+        script.push_back(Answer::Status(403, None));
+    }
+    let started = Instant::now();
+    assert!(r.n.enqueue(notice(&["alex@example.com"])).is_queued());
+    until("failed", || r.n.health().failed == 1).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "gave up after {:?}, not at the end of the window",
+        started.elapsed()
+    );
+    assert_eq!(r.n.health().delivered, 0);
+    // The next email gets its own fresh try.
+    assert!(r.n.enqueue(notice(&["sam@example.com"])).is_queued());
+    until("delivered", || r.n.health().delivered == 1).await;
+}
+
+#[tokio::test]
 async fn shutdown_sends_what_is_queued() {
     let r = rig().await;
     for n in 0..3 {

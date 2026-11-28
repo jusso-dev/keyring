@@ -409,6 +409,10 @@ impl Notifier {
             let mut q = lock(&self.queue);
             if q.len() >= self.settings.tuning.queue_capacity {
                 drop(q);
+                // Never sent, so it costs nobody their count.
+                for a in &to {
+                    self.rate.give_back(n.kind, a);
+                }
                 self.counts
                     .dropped_queue_full
                     .fetch_add(1, Ordering::Relaxed);
@@ -574,6 +578,10 @@ impl Notifier {
         let mut backoff = t.backoff_first;
         // Did a try possibly reach ACS and get processed?
         let mut maybe_sent = false;
+        // A refused identity gets one more try with a new token. Refused
+        // again, a role is missing: waiting out the five-minute window for
+        // every queued email would only hold up the rest.
+        let mut refused = false;
         let op = loop {
             let left = t.give_up_after.saturating_sub(started.elapsed());
             if left.is_zero() {
@@ -591,6 +599,17 @@ impl Notifier {
                 Send::TooOld => {
                     self.note_failure();
                     return Ending::GaveUpMaybeSent;
+                }
+                Send::Refused if refused => {
+                    self.note_failure();
+                    return Ending::Rejected;
+                }
+                Send::Refused => {
+                    self.note_failure();
+                    refused = true;
+                    let w = backoff;
+                    backoff = (backoff * 2).min(t.backoff_max);
+                    w
                 }
                 Send::Retry { after, reached } => {
                     self.note_failure();
@@ -694,10 +713,7 @@ impl Notifier {
                     "notify: ACS refused Keyring's managed identity. Check its role on the Communication Services resource"
                 );
                 self.identity.forget(ACS_RESOURCE).await;
-                Send::Retry {
-                    after: Duration::ZERO,
-                    reached: false,
-                }
+                Send::Refused
             }
             409 => {
                 tracing::info!("notify: ACS is still processing the first try; will check again");
@@ -788,6 +804,9 @@ enum Send {
     Retry { after: Duration, reached: bool },
     /// 412: ACS no longer matches this request.
     TooOld,
+    /// 401 or 403: Keyring's identity was refused. The token is dropped,
+    /// so one more try gets a new one.
+    Refused,
     /// Refused for good.
     Rejected,
 }

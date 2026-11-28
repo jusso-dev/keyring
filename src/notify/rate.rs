@@ -82,6 +82,21 @@ impl RateLimit {
         true
     }
 
+    /// Return a send taken by [`allow`](Self::allow) for an email that was
+    /// then not queued, so it doesn't count against `to`. A window that has
+    /// since started again is left alone.
+    pub fn give_back(&self, kind: NotifyType, to: &Address) {
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entry) = seen.get_mut(&(kind, to.mailbox_key()))
+            && Instant::now().duration_since(entry.0) < self.window
+        {
+            entry.1 = entry.1.saturating_sub(1);
+        }
+    }
+
     /// Pairs tracked now.
     pub fn tracked(&self) -> usize {
         self.seen
@@ -130,6 +145,21 @@ mod tests {
         assert_eq!(r.tracked(), 1);
         // A different mailbox is still its own.
         assert!(r.allow_at(NotifyType::Expiry, &a("alexa@example.com"), t0));
+    }
+
+    #[test]
+    fn a_send_given_back_can_be_taken_again() {
+        let r = RateLimit::new(1, Duration::from_secs(3600), 100);
+        let alex = a("alex@example.com");
+        assert!(r.allow(NotifyType::Expiry, &alex));
+        assert!(!r.allow(NotifyType::Expiry, &alex));
+        r.give_back(NotifyType::Expiry, &a("Alex+x@example.com"));
+        assert!(r.allow(NotifyType::Expiry, &alex));
+        // Nothing to give back for a pair never taken, and never below zero.
+        r.give_back(NotifyType::Health, &alex);
+        r.give_back(NotifyType::Health, &alex);
+        assert!(r.allow(NotifyType::Health, &alex));
+        assert!(!r.allow(NotifyType::Health, &alex));
     }
 
     #[test]

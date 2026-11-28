@@ -201,9 +201,11 @@ impl AzureClient {
 
     /// See [`AzureClient::send`]. If
     /// Azure says the token is no good (401), get a fresh one and try once
-    /// more. If Azure is throttling (429), wait as asked (up to
+    /// more. If Azure is throttling (429), or a GET finds it briefly
+    /// unavailable (502, 503, 504), wait as asked (up to
     /// [`MAX_RETRY_WAIT`]) and try again, at most [`MAX_THROTTLE_RETRIES`]
-    /// times.
+    /// times in all. Writes are never repeated after a 5xx: the first may
+    /// have been done.
     async fn send_inner(
         &self,
         session: &Session,
@@ -253,15 +255,16 @@ impl AzureClient {
                 retried = true;
                 continue;
             }
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && throttled < MAX_THROTTLE_RETRIES
-            {
+            let busy = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || (method == Method::GET && is_transient(status));
+            if busy && throttled < MAX_THROTTLE_RETRIES {
                 throttled += 1;
                 let wait = retry_after(res.headers().get(reqwest::header::RETRY_AFTER), throttled)
                     .max(quota_resets_after(
                         res.headers().get("x-ms-user-quota-resets-after"),
                     ))
                     .min(MAX_RETRY_WAIT);
-                tracing::info!(resource = ?resource, wait_ms = wait.as_millis() as u64, "Azure throttled, waiting");
+                tracing::info!(resource = ?resource, status = status.as_u16(), wait_ms = wait.as_millis() as u64, "Azure throttled or briefly unavailable, waiting");
                 tokio::time::sleep(wait).await;
                 continue;
             }
@@ -307,6 +310,12 @@ fn network(resource: Resource, method: &Method, url: &str, err: reqwest::Error) 
 fn unreadable(resource: Resource, what: &str) -> AzureError {
     tracing::warn!(resource = ?resource, request = %what, "unreadable answer from Azure");
     AzureError::Unreadable
+}
+
+/// 502, 503 and 504: a gateway or service that is usually back in a
+/// moment. Not 500, which is as often a request Azure can't handle.
+fn is_transient(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 502..=504)
 }
 
 /// Throttled calls are tried again at most this many times.

@@ -16,6 +16,9 @@ Releases are tagged `vX.Y.Z`, and each tag's container image is built by `.githu
 - `url` 2.5.8 to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in `Url::origin()` on nested `blob:` URLs). Keyring never calls `origin()`, but the advisory fails `cargo audit`.
 
 ### Fixed
+- Email: when ACS refused Keyring's managed identity (401 or 403), each email was retried for ACS's whole five-minute window, so with a role missing 1,000 queued emails took days to fail, the health email warning about it included. A refusal now gets one more try with a new token, then the email is counted as failed.
+- Email: an email refused because the queue filled up still used up each recipient's hourly allowance. It is now given back.
+- A read (GET) that Azure answered with 502, 503 or 504 failed the page at once. It is now tried again like a 429, honouring `Retry-After`, within the same limit of two retries and five seconds' wait. Writes are never repeated after a 5xx, since the first may have been done.
 - The deleted-key page failed on a real vault: "Get Deleted Key" sends the key's `kid` inside `key`, not at the top as the list does, so Keyring couldn't read it. Both shapes are now read (#170).
 - Secret values in non-ASCII text were refused below Key Vault's real limit. Key Vault allows 25,600 characters counted in UTF-16 code units, not 25 KB of UTF-8, and the create, edit, import, multi-environment and typed-secret checks now count the same way (#170).
 
